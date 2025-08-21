@@ -1,0 +1,28 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sakura.Framework", "Sakura.Framework\Sakura.Framework.csproj", "{0A0B83A1-B7D9-47A8-AEB1-8C79A66B0E07}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sakura.Framework.NativeLibraries", "Sakura.Framework.NativeLibraries\Sakura.Framework.NativeLibraries.csproj", "{77257820-DB89-4720-B7FA-E121B6668B87}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sakura.Framework.Tests", "Sakura.Framework.Tests\Sakura.Framework.Tests.csproj", "{59A9F0BE-B0EC-4C6F-994A-36A462A76A18}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{0A0B83A1-B7D9-47A8-AEB1-8C79A66B0E07}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0A0B83A1-B7D9-47A8-AEB1-8C79A66B0E07}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0A0B83A1-B7D9-47A8-AEB1-8C79A66B0E07}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0A0B83A1-B7D9-47A8-AEB1-8C79A66B0E07}.Release|Any CPU.Build.0 = Release|Any CPU
+		{77257820-DB89-4720-B7FA-E121B6668B87}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{77257820-DB89-4720-B7FA-E121B6668B87}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{77257820-DB89-4720-B7FA-E121B6668B87}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{77257820-DB89-4720-B7FA-E121B6668B87}.Release|Any CPU.Build.0 = Release|Any CPU
+		{59A9F0BE-B0EC-4C6F-994A-36A462A76A18}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{59A9F0BE-B0EC-4C6F-994A-36A462A76A18}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{59A9F0BE-B0EC-4C6F-994A-36A462A76A18}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{59A9F0BE-B0EC-4C6F-994A-36A462A76A18}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

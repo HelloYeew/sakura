@@ -1,0 +1,19 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.2"/>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1"/>
+    <PackageReference Include="NUnit" Version="4.3.2"/>
+    <PackageReference Include="NUnit.Analyzers" Version="4.9.2"/>
+    <PackageReference Include="NUnit3TestAdapter" Version="4.6.0"/>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Sakura.Framework\Sakura.Framework.csproj" />
+  </ItemGroup>
+</Project>
