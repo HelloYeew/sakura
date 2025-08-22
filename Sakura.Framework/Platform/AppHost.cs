@@ -198,6 +198,13 @@ public abstract class AppHost : IDisposable
     {
         Renderer = CreateRenderer();
         Renderer.Initialize(Window.GraphicsSurface);
+
+        Window.Update += () =>
+        {
+            Renderer.Clear();
+            Renderer.StartFrame();
+            Renderer.Draw();
+        };
     }
 
     private void unhandledExceptionHandler(object sender, UnhandledExceptionEventArgs args)

@@ -11,4 +11,10 @@ public interface IRenderer
     /// Initializes the renderer to be used with the specified window.
     /// </summary>
     protected internal void Initialize(IGraphicsSurface graphicsSurface);
+
+    void Clear();
+
+    void StartFrame();
+
+    void Draw();
 }

@@ -36,7 +36,23 @@ public class GLRenderer : IRenderer
         glInfo = gl.GetString(StringName.Vendor);
         Logger.Verbose($"GL Vendor: {new string((sbyte*)glInfo)}");
         Logger.Verbose($"GL Extensions: {GetExtensions()}");
-        gl.ClearColor(Color.DarkBlue);
+        gl.ClearColor(Color.Black);
+    }
+
+    public void Clear()
+    {
+        gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
+    }
+
+    public void StartFrame()
+    {
+        // TODO: Implement frame start logic if needed.
+    }
+
+    public void Draw()
+    {
+        // TODO: GL.Draw() should contain the rendering logic.
+        Logger.Verbose("Drawing frame using OpenGL.");
     }
 
     /// <summary>
