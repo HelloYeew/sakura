@@ -28,6 +28,8 @@ public abstract class AppHost : IDisposable
 
     private ExecutionState executionState = ExecutionState.Idle;
 
+    private readonly ManualResetEventSlim exitEvent = new ManualResetEventSlim(false);
+
     protected AppHost([NotNull] string appName, [CanBeNull] HostOptions options = null)
     {
         Options = options ?? new HostOptions();
@@ -154,6 +156,14 @@ public abstract class AppHost : IDisposable
 
             SetupForRun();
 
+            Console.CancelKeyPress += (_, _) =>
+            {
+                // Try to gracefully stop the application without missing any events before exiting.
+                Window.Close();
+                Dispose(true);
+                exitEvent.Set();
+            };
+
             executionState = ExecutionState.Running;
 
             Logger.Initialize();
@@ -228,12 +238,16 @@ public abstract class AppHost : IDisposable
         if (isDisposed)
             return;
 
+        executionState = ExecutionState.Stopping;
+
         isDisposed = true;
 
         AppDomain.CurrentDomain.UnhandledException -= unhandledExceptionHandler;
         TaskScheduler.UnobservedTaskException -= unobservedTaskExceptionHandler;
 
         Logger.Shutdown();
+
+        executionState = ExecutionState.Stopped;
     }
 
     public void Dispose()
