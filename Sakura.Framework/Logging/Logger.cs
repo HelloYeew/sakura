@@ -69,6 +69,14 @@ public class Logger
     #region Public Methods
 
     /// <summary>
+    /// Log a message to the logger with a specified log level.
+    /// </summary>
+    /// <param name="message">The message to log.</param>
+    /// <param name="level">The log level of the message. Default is <see cref="LogLevel.Verbose"/>.</param>
+    /// <param name="target">The target to write the log message to. Default is <see cref="LoggingTarget.Runtime"/>.</param>
+    public static void Log(string message, LogLevel level = LogLevel.Verbose, LoggingTarget target = LoggingTarget.Runtime) => log(message, level, target);
+
+    /// <summary>
     /// Log a <see cref="LogLevel.Debug"/> message to the logger.
     /// </summary>
     /// <param name="message">The message to log.</param>
@@ -134,17 +142,11 @@ public class Logger
     public static void Fatal(string message, Exception ex, LoggingTarget target = LoggingTarget.Runtime) => log($"{message}\n{ex}", LogLevel.Fatal, target);
 
     /// <summary>
-    /// Log a message to the logger with a specified <see cref="LogLevel"/> and <see cref="LoggingTarget"/>, also prints it to the debug output if in a debug build.
+    /// Log a message directly to the console, bypassing the log queue and file writers.
     /// </summary>
-    /// <param name="message"> The message to log.</param>
-    /// <param name="level"> The log level of the message. Default is <see cref="LogLevel.Verbose"/>.</param>
-    /// <param name="target"> The target to write the log message to. Default is <see cref="LoggingTarget.Runtime"/>.</param>
-    public static void LogPrint(string message, LogLevel level = LogLevel.Verbose, LoggingTarget target = LoggingTarget.Runtime)
-    {
-        if (DebugUtils.IsDebugBuild)
-            System.Diagnostics.Debug.Print(message);
-        log(message, level, target);
-    }
+    /// <param name="message">The message to log.</param>
+    public static void LogPrint(string message) => logToConsole(
+        getFormattedMessage(DateTime.UtcNow, LogLevel.Verbose, message));
 
     #endregion
 
@@ -294,23 +296,30 @@ public class Logger
     {
         foreach (string message in logMessage.Message.Split(new[] { '\n' }, StringSplitOptions.None))
         {
-            string formattedMessage = $"{logMessage.Timestamp:yyyy-MM-dd HH:mm:ss} [{getLogLevelPrefix(logMessage.Level)}]: {message}";
+            string formattedMessage = getFormattedMessage(logMessage);
 
             var writer = getFileWriter(logMessage.Target);
             await writer.WriteLineAsync(formattedMessage);
 
-            formattedMessage = $"[{logMessage.Target.ToString().ToLower()}] " + formattedMessage;
-
             if (LogToConsole)
             {
-                lock (console_lock)
-                {
-                    // For debug listeners
-                    System.Diagnostics.Debug.Print(formattedMessage);
-                    // For console output
-                    Console.WriteLine(formattedMessage);
-                }
+                logToConsole(formattedMessage, logMessage.Target);
             }
+        }
+    }
+
+    private static void logToConsole(string message, LoggingTarget target = LoggingTarget.Runtime)
+    {
+        if (!LogToConsole) return;
+
+        message = $"[{target.ToString().ToLower()}] " + message;
+
+        lock (console_lock)
+        {
+            // For debug listeners
+            System.Diagnostics.Debug.Print(message);
+            // For console output
+            Console.WriteLine(message);
         }
     }
 
@@ -346,6 +355,10 @@ public class Logger
     }
 
     private static string getLogLevelPrefix(LogLevel level) => level.ToString().ToLower();
+
+    private static string getFormattedMessage(LogMessage logMessage) => $"{logMessage.Timestamp:yyyy-MM-dd HH:mm:ss} [{getLogLevelPrefix(logMessage.Level)}]: {logMessage.Message}";
+
+    private static string getFormattedMessage(DateTime timestamp, LogLevel level, string message) => $"{timestamp:yyyy-MM-dd HH:mm:ss} [{getLogLevelPrefix(level)}]: {message}";
 }
 
 /// <summary>

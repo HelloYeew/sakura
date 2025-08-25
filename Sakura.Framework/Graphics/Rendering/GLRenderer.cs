@@ -52,7 +52,7 @@ public class GLRenderer : IRenderer
     public void Draw()
     {
         // TODO: GL.Draw() should contain the rendering logic.
-        Logger.Verbose("Drawing frame using OpenGL.");
+        Logger.LogPrint("GLRenderer.Draw() called - rendering logic not implemented yet.");
     }
 
     /// <summary>
