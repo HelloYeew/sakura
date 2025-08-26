@@ -135,7 +135,7 @@ public class SDLWindow : IWindow
 
     public void Close()
     {
-        throw new NotImplementedException();
+        running = false;
     }
 
     public void Dispose()
