@@ -6,7 +6,8 @@ using SystemVector2 = System.Numerics.Vector2;
 
 namespace Sakura.Framework.Maths;
 
-public readonly struct Vector2
+[MathStruct]
+public readonly partial struct Vector2
 {
     public readonly SystemVector2 Value;
 

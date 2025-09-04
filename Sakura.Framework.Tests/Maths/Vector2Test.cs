@@ -17,9 +17,8 @@ public class Vector2Test
         Assert.That(vec.X, Is.EqualTo(1.0f));
         Assert.That(vec.Y, Is.EqualTo(2.0f));
 
-        Vector2 unitVector = Vector2.Divide(vec, vec); // Using Vector2 methods
-
-        System.Numerics.Vector2 backToSysVec = vec; // Implicit conversion back to System.Numerics.Vector2
-        Assert.AreEqual(sysVec, backToSysVec);
+        var sakuraVector = new Vector2(1, 2);
+        float distance = Vector2.Distance(sakuraVector, new Vector2(4, 6));
+        Assert.That(distance, Is.EqualTo(5.0f).Within(0.0001f));
     }
 }

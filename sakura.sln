@@ -6,6 +6,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sakura.Framework.NativeLibr
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sakura.Framework.Tests", "Sakura.Framework.Tests\Sakura.Framework.Tests.csproj", "{59A9F0BE-B0EC-4C6F-994A-36A462A76A18}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sakura.Framework.SourceGenerators", "Sakura.Framework.SourceGenerators\Sakura.Framework.SourceGenerators.csproj", "{08E482EA-7A7A-43B4-BCB2-B28B7AA586C4}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -24,5 +26,9 @@ Global
 		{59A9F0BE-B0EC-4C6F-994A-36A462A76A18}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{59A9F0BE-B0EC-4C6F-994A-36A462A76A18}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{59A9F0BE-B0EC-4C6F-994A-36A462A76A18}.Release|Any CPU.Build.0 = Release|Any CPU
+		{08E482EA-7A7A-43B4-BCB2-B28B7AA586C4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{08E482EA-7A7A-43B4-BCB2-B28B7AA586C4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{08E482EA-7A7A-43B4-BCB2-B28B7AA586C4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{08E482EA-7A7A-43B4-BCB2-B28B7AA586C4}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
