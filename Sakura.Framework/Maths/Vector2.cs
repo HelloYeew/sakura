@@ -18,10 +18,6 @@ public readonly partial struct Vector2
     public float X => Value.X;
     public float Y => Value.Y;
 
-    public Vector2(float x, float y) => Value = new SystemVector2(x, y);
-
-    public Vector2(float value) => Value = new SystemVector2(value);
-
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static implicit operator Vector2(SystemVector2 v) => new Vector2(v.X, v.Y);
 
@@ -30,4 +26,7 @@ public readonly partial struct Vector2
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static implicit operator SilkVector2(Vector2 v) => new SilkVector2(v.X, v.Y);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static implicit operator Vector2(SilkVector2 v) => new Vector2(v.X, v.Y);
 }

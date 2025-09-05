@@ -117,6 +117,30 @@ public class MathStructGenerator : IIncrementalGenerator
 
         var members = underlyingType.GetMembers();
 
+        // Constructors
+        foreach (var member in members.OfType<IMethodSymbol>().Where(m =>
+                     m.MethodKind == MethodKind.Constructor &&
+                     m.DeclaredAccessibility == Accessibility.Public &&
+                     !m.Parameters.IsEmpty))
+        {
+            string docXml = member.GetDocumentationCommentXml(cancellationToken: context.CancellationToken);
+            if (!string.IsNullOrEmpty(docXml))
+                code.AppendLine(formatDocumentation(docXml));
+
+            // Build the parameter list (e.g., "float x, float y")
+            string parameters = string.Join(", ", member.Parameters.Select(p => $"{getMappedTypeName(p.Type, typeMap)} {p.Name}"));
+
+            // Build the argument list for the 'new' call (e.g., "x, y")
+            string arguments = string.Join(", ", member.Parameters.Select(p => p.Name));
+
+            code.AppendLine($"    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");
+            code.AppendLine($"    public {wrapperName}({parameters})");
+            code.AppendLine($"    {{");
+            code.AppendLine($"        this.Value = new {underlyingTypeName}({arguments});");
+            code.AppendLine($"    }}");
+            code.AppendLine();
+        }
+
         // Operator overloads
         foreach (var member in members.OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.UserDefinedOperator && m.IsStatic))
         {
