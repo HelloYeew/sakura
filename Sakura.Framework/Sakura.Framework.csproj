@@ -32,8 +32,8 @@
     <None Remove="SourceGenerated\**" />
   </ItemGroup>
   <PropertyGroup>
-<!--    Path where the source generator should emit its generated files. -->
-    <SakuraGenerator_EnableSourceDebugging>true</SakuraGenerator_EnableSourceDebugging>
+    <!--    Setting to enable source debugging in the generated files. -->
+    <SakuraGenerator_EnableSourceDebugging>false</SakuraGenerator_EnableSourceDebugging>
     <SakuraGenerator_EmitSourcePath>$(MSBuildProjectDirectory)/SourceGenerated</SakuraGenerator_EmitSourcePath>
   </PropertyGroup>
   <ItemGroup>
