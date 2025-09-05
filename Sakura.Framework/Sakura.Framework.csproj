@@ -30,4 +30,17 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
+  <PropertyGroup>
+<!--    Path where the source generator should emit its generated files. -->
+    <SakuraGenerator_EnableSourceDebugging>true</SakuraGenerator_EnableSourceDebugging>
+    <SakuraGenerator_EmitSourcePath>$(MSBuildProjectDirectory)/SourceGenerated</SakuraGenerator_EmitSourcePath>
+  </PropertyGroup>
+  <ItemGroup>
+    <CompilerVisibleProperty Include="SakuraGenerator_EnableSourceDebugging" />
+    <CompilerVisibleProperty Include="SakuraGenerator_EmitSourcePath" />
+  </ItemGroup>
+  <ItemGroup>
+    <!--    Prevent the generated files from being included in the project as normal source files. -->
+    <Compile Remove="$(SakuraGenerator_EmitSourcePath)/**/*.cs" />
+  </ItemGroup>
 </Project>
