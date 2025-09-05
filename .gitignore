@@ -511,3 +511,6 @@ fabric.properties
 **/.idea/**/*.iml
 **/.idea/**/contentModel.xml
 **/.idea/**/modules.xml
+
+# Source generator emitted files
+**/SourceGenerated

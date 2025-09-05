@@ -29,6 +29,7 @@
     <None Include="runtimes\**\native\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Remove="SourceGenerated\**" />
   </ItemGroup>
   <PropertyGroup>
 <!--    Path where the source generator should emit its generated files. -->
@@ -42,5 +43,9 @@
   <ItemGroup>
     <!--    Prevent the generated files from being included in the project as normal source files. -->
     <Compile Remove="$(SakuraGenerator_EmitSourcePath)/**/*.cs" />
+    <Compile Remove="SourceGenerated\**" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Remove="SourceGenerated\**" />
   </ItemGroup>
 </Project>
