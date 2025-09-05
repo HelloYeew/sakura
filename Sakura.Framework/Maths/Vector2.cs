@@ -3,9 +3,13 @@
 
 using System.Runtime.CompilerServices;
 using SystemVector2 = System.Numerics.Vector2;
+using SilkVector2 = Silk.NET.Maths.Vector2D<float>;
 
 namespace Sakura.Framework.Maths;
 
+/// <summary>
+/// A 2D vector struct with implicit conversions to and from <see cref="System.Numerics.Vector2"/>.
+/// </summary>
 [MathStruct]
 public readonly partial struct Vector2
 {
@@ -23,4 +27,7 @@ public readonly partial struct Vector2
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static implicit operator SystemVector2(Vector2 v) => v.Value;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static implicit operator SilkVector2(Vector2 v) => new SilkVector2(v.X, v.Y);
 }
