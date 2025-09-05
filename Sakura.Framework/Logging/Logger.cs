@@ -1,6 +1,8 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+#nullable disable
+
 using System;
 using System.Collections.Concurrent;
 using System.IO;
@@ -176,7 +178,8 @@ public class Logger
 
         processingTask = Task.Run(() => processLogQueue(cancellationTokenSource.Token));
 
-        Debug($"Log location : {storage.GetFullPath(string.Empty)}");
+        if (storage != null)
+            Debug($"Log location : {storage.GetFullPath(string.Empty)}");
     }
 
     /// <summary>
@@ -185,6 +188,8 @@ public class Logger
     /// <param name="retentionDays"></param>
     private static void clearOldLogs(int retentionDays = 7)
     {
+        if (storage == null) return;
+
         if (!storage.ExistsDirectory(string.Empty)) return;
 
         var files = new DirectoryInfo(storage.GetFullPath(string.Empty)).GetFiles("*.log");

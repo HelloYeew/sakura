@@ -83,4 +83,10 @@ public static class RuntimeInfo
         iOS = 4,
         Android = 5
     }
+
+    /// <summary>
+    /// Whether SIMD intrinsics are supported on this platform.
+    /// This is determined by checking if <see cref="System.Numerics.Vector.IsHardwareAccelerated"/> is true.
+    /// </summary>
+    public static bool IsIntrinsicSupported => System.Numerics.Vector.IsHardwareAccelerated;
 }

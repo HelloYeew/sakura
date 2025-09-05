@@ -23,6 +23,9 @@
     <!-- TODO: PackageReference to NativeLibs when published to NuGet-->
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\Sakura.Framework.SourceGenerators\Sakura.Framework.SourceGenerators.csproj" ReferenceOutputAssembly="false" OutputItemType="Analyzer" />
+  </ItemGroup>
+  <ItemGroup>
     <None Include="runtimes\**\native\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

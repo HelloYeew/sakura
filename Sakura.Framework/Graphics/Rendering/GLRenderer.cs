@@ -36,6 +36,10 @@ public class GLRenderer : IRenderer
         glInfo = gl.GetString(StringName.Vendor);
         Logger.Verbose($"GL Vendor: {new string((sbyte*)glInfo)}");
         Logger.Verbose($"GL Extensions: {GetExtensions()}");
+
+        Logger.Verbose("🚅 Hardware Acceleration Information");
+        Logger.Verbose($"JIT intrinsic support: {RuntimeInfo.IsIntrinsicSupported}");
+
         gl.ClearColor(Color.Black);
     }
 
