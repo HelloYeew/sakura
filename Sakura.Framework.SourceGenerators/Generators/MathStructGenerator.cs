@@ -109,9 +109,6 @@ public class MathStructGenerator : IIncrementalGenerator
         code.AppendLine($"// </auto-generated>");
         code.AppendLine($"namespace {namespaceName};");
         code.AppendLine();
-        code.AppendLine($"/// <summary>");
-        code.AppendLine($"/// Additional methods and operator overloads for <see cref=\"{wrapperName}\"/> that forward calls to <see cref=\"{underlyingTypeName}\"/>.");
-        code.AppendLine($"/// </summary>");
 
         // Add IEquatable<T> to the struct definition if the underlying type supports it.
         string interfaceDeclaration = iEquatableInterface != null ? $" : System.IEquatable<{wrapperName}>" : "";
