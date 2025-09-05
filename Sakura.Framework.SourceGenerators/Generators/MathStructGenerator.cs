@@ -108,7 +108,7 @@ public class MathStructGenerator : IIncrementalGenerator
         var members = underlyingType.GetMembers();
 
         // Operator overloads
-        foreach (var member in members.OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.BuiltinOperator && m.IsStatic))
+        foreach (var member in members.OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.UserDefinedOperator && m.IsStatic))
         {
             // We only generate operators where all parameters can be mapped to our wrappers or are primitives.
             if (!member.Parameters.All(p => typeMap.ContainsKey(p.Type.ToDisplayString()) || p.Type.SpecialType != SpecialType.None))
@@ -116,15 +116,35 @@ public class MathStructGenerator : IIncrementalGenerator
 
             string operatorSymbol = getOperatorSymbol(member.Name);
 
+            // Skip operators we don't have a symbol for.
+            if (operatorSymbol is null)
+                continue;
+
             string returnTypeName = getMappedTypeName(member.ReturnType, typeMap);
             string parameters = string.Join(", ", member.Parameters.Select(p => $"{getMappedTypeName(p.Type, typeMap)} {p.Name}"));
-            string arguments = string.Join(", ", member.Parameters.Select(p => p.Name));
+
+            // Correctly construct the implementation body (e.g., "left + right" or "-value")
+            string implementation;
+            if (member.Parameters.Length == 1)
+            {
+                implementation = $"{operatorSymbol}{member.Parameters[0].Name}";
+            }
+            else if (member.Parameters.Length == 2)
+            {
+                implementation = $"{member.Parameters[0].Name} {operatorSymbol} {member.Parameters[1].Name}";
+            }
+            else
+            {
+                // Not a unary or binary operator we can handle, so skip.
+                continue;
+            }
 
             string docXml = member.GetDocumentationCommentXml(cancellationToken: context.CancellationToken);
             if (!string.IsNullOrEmpty(docXml))
                 code.AppendLine(formatDocumentation(docXml));
+
             code.AppendLine($"    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");
-            code.AppendLine($"    public static {returnTypeName} operator {operatorSymbol}({parameters}) => {arguments};");
+            code.AppendLine($"    public static {returnTypeName} operator {operatorSymbol}({parameters}) => {implementation};");
             code.AppendLine();
         }
 
