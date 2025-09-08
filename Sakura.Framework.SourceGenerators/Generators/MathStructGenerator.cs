@@ -195,8 +195,8 @@ public class MathStructGenerator : IIncrementalGenerator
             if (member.IsGenericMethod) continue;
 
             string returnTypeName = getMappedTypeName(member.ReturnType, typeMap);
-            string parameters = string.Join(", ", member.Parameters.Select(p => $"{getMappedTypeName(p.Type, typeMap)} {p.Name}"));
-            string arguments = string.Join(", ", member.Parameters.Select(p => p.Name));
+            string parameters = string.Join(", ", member.Parameters.Select(p => $"{getParameterModifier(p)}{getMappedTypeName(p.Type, typeMap)} {p.Name}"));
+            string arguments = string.Join(", ", member.Parameters.Select(p => $"{getParameterModifier(p)}{p.Name}"));
 
             string docXml = member.GetDocumentationCommentXml(cancellationToken: context.CancellationToken);
             if (!string.IsNullOrEmpty(docXml))
@@ -347,6 +347,22 @@ public class MathStructGenerator : IIncrementalGenerator
             case "op_Inequality": return "!=";
             default: return null; // Unknown operator
         }
+    }
+
+    /// <summary>
+    /// Get the parameter modifier (ref, out, in) for a given parameter symbol.
+    /// </summary>
+    /// <param name="parameter">The parameter symbol to check.</param>
+    /// <returns>The parameter modifier as a string for use in method signatures.</returns>
+    private string getParameterModifier(IParameterSymbol parameter)
+    {
+        return parameter.RefKind switch
+        {
+            RefKind.Out => "out ",
+            RefKind.Ref => "ref ",
+            RefKind.In => "in ",
+            _ => ""
+        };
     }
 
     /// <summary>
