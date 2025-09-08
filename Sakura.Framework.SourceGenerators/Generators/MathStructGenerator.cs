@@ -196,13 +196,80 @@ public class MathStructGenerator : IIncrementalGenerator
 
             string returnTypeName = getMappedTypeName(member.ReturnType, typeMap);
             string parameters = string.Join(", ", member.Parameters.Select(p => $"{getParameterModifier(p)}{getMappedTypeName(p.Type, typeMap)} {p.Name}"));
-            string arguments = string.Join(", ", member.Parameters.Select(p => $"{getParameterModifier(p)}{p.Name}"));
 
             string docXml = member.GetDocumentationCommentXml(cancellationToken: context.CancellationToken);
             if (!string.IsNullOrEmpty(docXml))
                 code.AppendLine(formatDocumentation(docXml));
             code.AppendLine($"    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");
-            code.AppendLine($"    public static {returnTypeName} {member.Name}({parameters}) => {underlyingTypeName}.{member.Name}({arguments});");
+
+            // Check if any parameter is 'out' or 'ref'.
+            // Since 'out' keyword is not support the implicit conversion so we need to handle it manually.
+            bool hasRefOutParams = member.Parameters.Any(p => p.RefKind is RefKind.Out or RefKind.Ref);
+
+            if (hasRefOutParams)
+            {
+                // Generate a full method body to handle the conversion manually.
+                code.AppendLine($"    public static {returnTypeName} {member.Name}({parameters})");
+                code.AppendLine($"    {{");
+
+                // Create temporary local variables for each 'out' or 'ref' parameter.
+                var arguments = new List<string>();
+                foreach (var p in member.Parameters)
+                {
+                    if (p.RefKind is RefKind.Out or RefKind.Ref)
+                    {
+                        string tempVarName = $"{p.Name}Underlying";
+                        // For 'ref', initialize the temp var with the input value. For 'out', it's uninitialized.
+                        string initialization = p.RefKind == RefKind.Ref ? $" = {p.Name}.Value;" : ";";
+                        code.AppendLine($"        {p.Type.ToDisplayString()} {tempVarName}{initialization}");
+                        arguments.Add($"{getParameterModifier(p)}{tempVarName}");
+                    }
+                    else
+                    {
+                        arguments.Add(p.Name);
+                    }
+                }
+
+                string argumentsString = string.Join(", ", arguments);
+                string returnStatement;
+                string methodCall;
+
+                if (member.ReturnsVoid)
+                {
+                    methodCall = $"        {underlyingTypeName}.{member.Name}({argumentsString});";
+                    returnStatement = "";
+                }
+                else
+                {
+                    // Capture the result in a uniquely named variable.
+                    methodCall = $"        var returnValue = {underlyingTypeName}.{member.Name}({argumentsString});";
+                    returnStatement = "        return returnValue;";
+                }
+
+                // Call the underlying method.
+                code.AppendLine(methodCall);
+                // Assign the results from the temporary variables back to the original 'out'/'ref' parameters.
+                foreach (var p in member.Parameters)
+                {
+                    if (p.RefKind is RefKind.Out or RefKind.Ref)
+                    {
+                        code.AppendLine($"        {p.Name} = {p.Name}Underlying;");
+                    }
+                }
+
+                if (!member.ReturnsVoid)
+                {
+                    code.AppendLine(returnStatement);
+                }
+
+                code.AppendLine($"    }}");
+            }
+            else
+            {
+                // Original logic for simple expression-bodied methods.
+                string arguments = string.Join(", ", member.Parameters.Select(p => $"{getParameterModifier(p)}{p.Name}"));
+                code.AppendLine($"    public static {returnTypeName} {member.Name}({parameters}) => {underlyingTypeName}.{member.Name}({arguments});");
+            }
             code.AppendLine();
         }
 
