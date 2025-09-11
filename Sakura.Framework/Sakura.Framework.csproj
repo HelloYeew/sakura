@@ -29,5 +29,23 @@
     <None Include="runtimes\**\native\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Remove="SourceGenerated\**" />
+  </ItemGroup>
+  <PropertyGroup>
+    <!--    Setting to enable source debugging in the generated files. -->
+    <SakuraGenerator_EnableSourceDebugging>false</SakuraGenerator_EnableSourceDebugging>
+    <SakuraGenerator_EmitSourcePath>$(MSBuildProjectDirectory)/SourceGenerated</SakuraGenerator_EmitSourcePath>
+  </PropertyGroup>
+  <ItemGroup>
+    <CompilerVisibleProperty Include="SakuraGenerator_EnableSourceDebugging" />
+    <CompilerVisibleProperty Include="SakuraGenerator_EmitSourcePath" />
+  </ItemGroup>
+  <ItemGroup>
+    <!--    Prevent the generated files from being included in the project as normal source files. -->
+    <Compile Remove="$(SakuraGenerator_EmitSourcePath)/**/*.cs" />
+    <Compile Remove="SourceGenerated\**" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Remove="SourceGenerated\**" />
   </ItemGroup>
 </Project>
