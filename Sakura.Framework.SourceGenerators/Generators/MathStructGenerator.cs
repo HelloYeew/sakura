@@ -17,6 +17,7 @@ namespace Sakura.Framework.SourceGenerators.Generators;
 /// The source generator that generates wrapper methods for struct name "MathStruct" to
 /// generate operator overloads and static methods that forward calls to the underlying System.Numerics type.
 /// This allows for seamless integration and usage of these math structs in the Sakura framework.
+/// (System.Numerics source: https://github.com/dotnet/runtime/tree/main/src/libraries/System.Private.CoreLib/src/System/Numerics
 /// </summary>
 [Generator]
 public class MathStructGenerator : IIncrementalGenerator
