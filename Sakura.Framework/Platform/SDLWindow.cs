@@ -5,7 +5,6 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
-using Silk.NET.OpenGL;
 using Silk.NET.SDL;
 using Sakura.Framework.Logging;
 using Version = Silk.NET.SDL.Version;
@@ -15,8 +14,6 @@ namespace Sakura.Framework.Platform;
 [SuppressMessage("ReSharper", "InconsistentNaming")]
 public class SDLWindow : IWindow
 {
-    // TODO: OpenGL need to be moved to a separate class i.e. IRenderer since we want to support other renderers in the future (Vulkan, DirectX, etc.)
-    // All rendering code need to be moved to the separate class as well.
     private static Sdl sdl;
     private static unsafe void* glContext;
     private static unsafe Window* window;
@@ -24,7 +21,6 @@ public class SDLWindow : IWindow
     private IGraphicsSurface graphicsSurface = new SDLGraphicsSurface();
 
     private bool initialized;
-    private bool running;
 
     private string title = "Window";
     private bool resizable = true;
@@ -45,6 +41,11 @@ public class SDLWindow : IWindow
 
     public IGraphicsSurface GraphicsSurface => graphicsSurface;
 
+    public bool IsActive { get; private set; } = true;
+    public bool IsExiting { get; private set; }
+    public int DisplayHz { get; private set; } = 60;
+
+    // TODO: This update action also no longer needed since it's handled in host's main loop
     public event Action Update = delegate { };
     public event Action Suspended = delegate { };
     public event Action Resumed = delegate { };
@@ -100,39 +101,18 @@ public class SDLWindow : IWindow
         }
 
         sdl.GLMakeCurrent(window, glContext);
-        // sdl.GLSetSwapInterval(1); // Enable VSync
+
+        DisplayHz = getDisplayRefreshRate();
+        Logger.Verbose($"Display refresh rate: {DisplayHz} Hz");
 
         Logger.Verbose("SDL window created successfully");
 
         graphicsSurface.GetFunctionAddress = proc => (nint)sdl.GLGetProcAddress(proc);
-
-        running = true;
-    }
-
-    public void Run()
-    {
-        if (!initialized)
-            throw new InvalidOperationException("Window must be initialized before running.");
-
-        while (running)
-        {
-            runFrame();
-            swapBuffers();
-        }
-    }
-
-    private void runFrame()
-    {
-        if (!running)
-            return;
-
-        handleSdlEvents();
-        Update.Invoke();
     }
 
     public void Close()
     {
-        running = false;
+        IsExiting = true;
     }
 
     public void Dispose()
@@ -149,11 +129,11 @@ public class SDLWindow : IWindow
             {
                 case EventType.Quit:
                     ExitRequested.Invoke();
-                    running = false;
+                    IsExiting = true;
                     break;
 
                 case EventType.Windowevent:
-                    // TODO: Handle window events like resize, minimize, etc.
+                    handleWindowEvent(sdlEvent.Window);
                     break;
 
                 case EventType.Keydown:
@@ -163,36 +143,79 @@ public class SDLWindow : IWindow
         }
     }
 
+    private void handleWindowEvent(WindowEvent sdlWindowEvent)
+    {
+        switch ((WindowEventID)sdlWindowEvent.Event)
+        {
+            case WindowEventID.FocusGained:
+                IsActive = true;
+                Resumed.Invoke();
+                break;
+
+            case WindowEventID.FocusLost:
+                IsActive = false;
+                Suspended.Invoke();
+                break;
+        }
+    }
+
+    private unsafe int getDisplayRefreshRate()
+    {
+        DisplayMode mode = new DisplayMode();
+        int displayIndex = sdl.GetWindowDisplayIndex(window);
+
+        if (sdl.GetCurrentDisplayMode(displayIndex, &mode) == 0)
+        {
+            return mode.RefreshRate;
+        }
+
+        return 60;
+    }
+
+    /// <summary>
+    /// Process all pending window events.
+    /// </summary>
+    public void PollEvents()
+    {
+        handleSdlEvents();
+    }
+
+    public void SwapBuffers()
+    {
+        swapBuffers();
+    }
+
+    /// <summary>
+    /// Swap the front and back buffers to present the rendered frame.
+    /// </summary>
     private unsafe void swapBuffers()
     {
-        if (window == null)
-            return;
+        if (window != null)
+            sdl.GLSwapWindow(window);
+    }
 
-        sdl.GLSwapWindow(window);
+    /// <summary>
+    /// Enable or disable VSync.
+    /// </summary>
+    /// <param name="enabled">True to enable VSync, false to disable.</param>
+    public void SetVSync(bool enabled)
+    {
+        sdl.GLSetSwapInterval(enabled ? 1 : 0);
     }
 
     private unsafe void setTitle(string newTitle)
     {
         title = newTitle;
 
-        if (window == null)
-            return;
-
-        sdl.SetWindowTitle(window, newTitle);
+        if (window != null)
+            sdl.SetWindowTitle(window, newTitle);
     }
 
     private unsafe void setResizable(bool isResizable)
     {
         resizable = isResizable;
 
-        if (window == null)
-            return;
-
-        if (isResizable)
-            windowFlags |= WindowFlags.Resizable;
-        else
-            windowFlags &= ~WindowFlags.Resizable;
-
-        sdl.SetWindowResizable(window, (SdlBool)(isResizable ? 1 : 0));
+        if (window != null)
+            sdl.SetWindowResizable(window, (SdlBool)(isResizable ? 1 : 0));
     }
 }

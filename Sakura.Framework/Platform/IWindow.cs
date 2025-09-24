@@ -18,6 +18,21 @@ public interface IWindow : IDisposable
     bool Resizable { get; set; }
 
     /// <summary>
+    /// Whether the window is currently active and has focus.
+    /// </summary>
+    bool IsActive { get; }
+
+    /// <summary>
+    /// Whether the user has requested to exit the window.
+    /// </summary>
+    bool IsExiting { get; }
+
+    /// <summary>
+    /// The refresh rate of the display the window is on.
+    /// </summary>
+    int DisplayHz { get; }
+
+    /// <summary>
     /// The graphic surface associated with this window to render graphics to.
     /// This is a value that the graphic API will use to render graphics to the window.
     /// </summary>
@@ -34,10 +49,11 @@ public interface IWindow : IDisposable
     /// </summary>
     void Create();
 
-    /// <summary>
-    /// Start the window's main loop.
-    /// </summary>
-    void Run();
+    void PollEvents();
+
+    void SwapBuffers();
+
+    void SetVSync(bool enabled);
 
     event Action Update;
 

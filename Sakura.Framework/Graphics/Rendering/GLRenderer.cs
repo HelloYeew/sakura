@@ -10,6 +10,7 @@ using System.Text;
 using Silk.NET.OpenGL;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
+using Sakura.Framework.Timing;
 
 namespace Sakura.Framework.Graphics.Rendering;
 
@@ -53,10 +54,10 @@ public class GLRenderer : IRenderer
         // TODO: Implement frame start logic if needed.
     }
 
-    public void Draw()
+    public void Draw(IClock clock)
     {
         // TODO: GL.Draw() should contain the rendering logic.
-        Logger.LogPrint("GLRenderer.Draw() called - rendering logic not implemented yet.");
+        Logger.LogPrint($"Drawing frame. Time: {clock.CurrentTime:F2}ms");
     }
 
     /// <summary>

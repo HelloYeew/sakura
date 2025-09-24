@@ -13,6 +13,8 @@ using Sakura.Framework.Extensions.ExceptionExtensions;
 using Sakura.Framework.Extensions.IEnumerableExtensions;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Logging;
+using Sakura.Framework.Reactive;
+using Sakura.Framework.Timing;
 
 namespace Sakura.Framework.Platform;
 
@@ -20,6 +22,18 @@ public abstract class AppHost : IDisposable
 {
     public IWindow Window { get; private set; }
     public IRenderer Renderer { get; private set; }
+
+    public Reactive<FrameSync> FrameLimiter { get; protected set; }
+    protected IClock AppClock { get; private set; }
+    private readonly ThrottledFrameClock inputClock = new ThrottledFrameClock(1000);
+    private readonly ThrottledFrameClock soundClock = new ThrottledFrameClock(1000);
+    private double lastUpdateTime;
+
+    /// <summary>
+    /// Determines whether the host should run without a window or renderer.
+    /// Override this in a headless host implementation.
+    /// </summary>
+    protected virtual bool IsHeadless => false;
 
     [NotNull]
     public HostOptions Options { get; private set; }
@@ -154,6 +168,8 @@ public abstract class AppHost : IDisposable
             Logger.AppIdentifier = Name;
             Logger.VersionIdentifier = RuntimeInfo.EntryAssembly.GetName().Version?.ToString() ?? Logger.VersionIdentifier;
 
+            Logger.Initialize();
+
             SetupForRun();
 
             Console.CancelKeyPress += (_, _) =>
@@ -164,57 +180,158 @@ public abstract class AppHost : IDisposable
                 exitEvent.Set();
             };
 
+            FrameLimiter = new Reactive<FrameSync>(FrameSync.Unlimited);
+            FrameLimiter.ValueChanged += onFrameLimiterChanged;
+
             executionState = ExecutionState.Running;
 
-            Logger.Initialize();
+            if (!IsHeadless)
+            {
+                FrameLimiter.ValueChanged += onFrameLimiterChanged;
 
-            // TODO: Testing purpose only, will remove later.
-            Logger.Verbose($"Starting {Options.FriendlyAppName}...");
+                Window = CreateWindow();
+                Window.Title = Options.FriendlyAppName;
+                Window.Initialize();
+                Window.Create();
 
-            Window = CreateWindow();
-            Window.Title = Options.FriendlyAppName;
-            Window.Initialize();
-            Window.Create();
+                onFrameLimiterChanged(new ValueChangedEvent<FrameSync>(default, FrameLimiter.Value));
 
-            SetupRenderer();
+                SetupRenderer();
+            }
 
-            Window.Run();
+            AppClock = new Clock(true);
+            lastUpdateTime = AppClock.CurrentTime;
 
             try
             {
-                if (Window != null)
+                while (executionState == ExecutionState.Running)
                 {
-                    // Update window event
-                }
-                else
-                {
-                    while (executionState != ExecutionState.Stopping)
-                    {
-                        // Update window event
-                    }
+                    AppClock.Update();
+                    Window?.PollEvents();
+
+                    if (Window?.IsExiting == true)
+                        Exit();
+
+                    if (inputClock.Process(AppClock.CurrentTime))
+                        PerformInput();
+
+                    if (soundClock.Process(AppClock.CurrentTime))
+                        PerformSoundUpdate();
+
+                    PerformUpdate();
+
+                    if (!IsHeadless)
+                        PerformDraw();
                 }
             }
             catch (OutOfMemoryException)
             {
             }
         }
+        catch (Exception ex)
+        {
+            Logger.Error("An unhandled exception occurred during runtime.", ex);
+        }
         finally
         {
+            Dispose(true);
             host_running_mutex.Release();
         }
+    }
+
+    /// <summary>
+    /// Requests the host to exit gracefully.
+    /// </summary>
+    public virtual void Exit()
+    {
+        executionState = ExecutionState.Stopping;
     }
 
     protected virtual void SetupRenderer()
     {
         Renderer = CreateRenderer();
         Renderer.Initialize(Window.GraphicsSurface);
+    }
 
-        Window.Update += () =>
+    private void onFrameLimiterChanged(ValueChangedEvent<FrameSync> e)
+    {
+        // VSync need to be set on window, other frame limiters are handled in the clock.
+        Window?.SetVSync(e.NewValue == FrameSync.VSync);
+    }
+
+    /// <summary>
+    /// This method is called at a fixed 1000Hz for precise input handling.
+    /// </summary>
+    protected virtual void PerformInput() { }
+
+    /// <summary>
+    /// This method is called at a fixed 1000Hz for precise audio processing.
+    /// </summary>
+    protected virtual void PerformSoundUpdate() { }
+
+    /// <summary>
+    /// This method runs the main game logic updates. It uses a fixed-step approach
+    /// to ensure updates are deterministic and independent of the draw rate.
+    /// </summary>
+    protected virtual void PerformUpdate()
+    {
+        double targetHz = getTargetUpdateHz();
+        if (targetHz == 0) // Unlimited mode
         {
-            Renderer.Clear();
-            Renderer.StartFrame();
-            Renderer.Draw();
-        };
+            // In unlimited mode, we just update once per loop iteration.
+            // TODO: might want to pass AppClock.ElapsedFrameTime to your update logic here.
+            lastUpdateTime = AppClock.CurrentTime;
+            return;
+        }
+
+        double timeStep = 1000.0 / targetHz;
+
+        // Run as many updates as needed to catch up with the current time.
+        while (AppClock.CurrentTime - lastUpdateTime >= timeStep)
+        {
+            // TODO: This is main loop here, might want to pass timeStep to
+            // The update that happened in the drawable need to be aware of the timeStep.
+
+            lastUpdateTime += timeStep;
+        }
+    }
+
+    /// <summary>
+    /// This method handles all rendering. It's typically called once per loop iteration,
+    /// and its frequency is limited by VSync or by sleeping in unlimited mode.
+    /// </summary>
+    protected virtual void PerformDraw()
+    {
+        Renderer?.Clear();
+        Renderer?.StartFrame();
+        Renderer?.Draw(AppClock);
+        Window?.SwapBuffers();
+    }
+
+    /// <summary>
+    /// Get the target update rate in Hz based on the current frame limiter setting.
+    /// </summary>
+    /// <returns>The target update rate in Hz, or 0 for unlimited.</returns>
+    private double getTargetUpdateHz()
+    {
+        // In headless mode, default to a sensible refresh rate for update calculations.
+        double refreshRate = Window?.DisplayHz > 0 ? Window.DisplayHz : 60;
+
+        switch (FrameLimiter.Value)
+        {
+            case FrameSync.VSync:
+                return refreshRate;
+            case FrameSync.Limit2x:
+                return refreshRate * 2;
+            case FrameSync.Limit4x:
+                return refreshRate * 4;
+            case FrameSync.Limit8x:
+                return refreshRate * 8;
+            case FrameSync.Unlimited:
+                return 0; // Special value for unlimited
+            default:
+                return refreshRate;
+        }
     }
 
     private void unhandledExceptionHandler(object sender, UnhandledExceptionEventArgs args)

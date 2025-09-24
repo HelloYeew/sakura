@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using Sakura.Framework.Platform;
+using Sakura.Framework.Timing;
 
 namespace Sakura.Framework.Graphics.Rendering;
 
@@ -16,5 +17,5 @@ public interface IRenderer
 
     void StartFrame();
 
-    void Draw();
+    void Draw(IClock clock);
 }
