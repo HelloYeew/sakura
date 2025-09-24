@@ -18,7 +18,6 @@ public class SDLWindow : IWindow
     // TODO: OpenGL need to be moved to a separate class i.e. IRenderer since we want to support other renderers in the future (Vulkan, DirectX, etc.)
     // All rendering code need to be moved to the separate class as well.
     private static Sdl sdl;
-    private static GL gl;
     private static unsafe void* glContext;
     private static unsafe Window* window;
 
@@ -92,6 +91,7 @@ public class SDLWindow : IWindow
             throw new Exception("SDL window creation failed.");
         }
 
+        // TODO: This should move to the renderer class but still need to figure out how to pass the context to the renderer
         glContext = sdl.GLCreateContext(window);
         if (glContext == null)
         {
@@ -100,12 +100,10 @@ public class SDLWindow : IWindow
         }
 
         sdl.GLMakeCurrent(window, glContext);
-        sdl.GLSetSwapInterval(1); // Enable VSync
+        // sdl.GLSetSwapInterval(1); // Enable VSync
 
         Logger.Verbose("SDL window created successfully");
 
-        // TODO: Remove this line after the renderer is moved to a separate class
-        gl = GL.GetApi(proc => (nint)sdl.GLGetProcAddress(proc));
         graphicsSurface.GetFunctionAddress = proc => (nint)sdl.GLGetProcAddress(proc);
 
         running = true;
@@ -119,8 +117,7 @@ public class SDLWindow : IWindow
         while (running)
         {
             runFrame();
-            // TODO: Remove this to IRenderer class
-            render();
+            swapBuffers();
         }
     }
 
@@ -166,13 +163,10 @@ public class SDLWindow : IWindow
         }
     }
 
-    private unsafe void render()
+    private unsafe void swapBuffers()
     {
         if (window == null)
             return;
-
-        gl.Clear((uint)ClearBufferMask.ColorBufferBit);
-
 
         sdl.GLSwapWindow(window);
     }
