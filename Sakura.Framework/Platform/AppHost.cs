@@ -262,7 +262,10 @@ public abstract class AppHost : IDisposable
     /// <summary>
     /// This method is called at a fixed 1000Hz for precise input handling.
     /// </summary>
-    protected virtual void PerformInput() { }
+    protected virtual void PerformInput()
+    {
+        Logger.LogPrint($"Input tick. Time: {AppClock.CurrentTime:F2}ms (delta: {AppClock.ElapsedFrameTime:F2}ms, frame: {AppClock.FramesPerSecond})");
+    }
 
     /// <summary>
     /// This method is called at a fixed 1000Hz for precise audio processing.
@@ -276,6 +279,7 @@ public abstract class AppHost : IDisposable
     protected virtual void PerformUpdate()
     {
         double targetHz = getTargetUpdateHz();
+
         if (targetHz == 0) // Unlimited mode
         {
             // In unlimited mode, we just update once per loop iteration.
