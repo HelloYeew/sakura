@@ -5,6 +5,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,6 +13,7 @@ using JetBrains.Annotations;
 using Sakura.Framework.Extensions.ExceptionExtensions;
 using Sakura.Framework.Extensions.IEnumerableExtensions;
 using Sakura.Framework.Graphics.Rendering;
+using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Reactive;
 using Sakura.Framework.Timing;
@@ -28,6 +30,7 @@ public abstract class AppHost : IDisposable
     private readonly ThrottledFrameClock inputClock = new ThrottledFrameClock(1000);
     private readonly ThrottledFrameClock soundClock = new ThrottledFrameClock(1000);
     private double lastUpdateTime;
+    private readonly Stopwatch gameLoopStopwatch = new Stopwatch();
 
     /// <summary>
     /// Determines whether the host should run without a window or renderer.
@@ -182,6 +185,7 @@ public abstract class AppHost : IDisposable
 
             FrameLimiter = new Reactive<FrameSync>(FrameSync.Unlimited);
             FrameLimiter.ValueChanged += onFrameLimiterChanged;
+            FrameLimiter.ValueChanged += e => Logger.Verbose($"Frame limiter changed from {e.OldValue} to {e.NewValue}");
 
             executionState = ExecutionState.Running;
 
@@ -191,6 +195,10 @@ public abstract class AppHost : IDisposable
 
                 Window = CreateWindow();
                 Window.Title = Options.FriendlyAppName;
+
+                Window.OnKeyDown += OnKeyDown;
+                Window.OnKeyUp += OnKeyUp;
+
                 Window.Initialize();
                 Window.Create();
 
@@ -201,11 +209,13 @@ public abstract class AppHost : IDisposable
 
             AppClock = new Clock(true);
             lastUpdateTime = AppClock.CurrentTime;
+            gameLoopStopwatch.Start();
 
             try
             {
                 while (executionState == ExecutionState.Running)
                 {
+                    double frameStartTime = gameLoopStopwatch.Elapsed.TotalMilliseconds;
                     AppClock.Update();
                     Window?.PollEvents();
 
@@ -222,6 +232,27 @@ public abstract class AppHost : IDisposable
 
                     if (!IsHeadless)
                         PerformDraw();
+
+                    if (FrameLimiter.Value != FrameSync.Unlimited)
+                    {
+                        // In non-VSync or unlimited modes, we need to limit the loop ourselves to the target frame rate.
+                        double targetHz = getTargetUpdateHz();
+                        if (targetHz > 0)
+                        {
+                            double targetFrameTime = 1000.0 / targetHz;
+                            // Logger.LogPrint("targetFrameTime: " + targetFrameTime);
+
+                            // A simple, busy-wait loop for precision.
+                            // For better CPU usage, a hybrid Thread.Sleep/SpinWait would be better,
+                            // but this is the most straightforward fix to ensure accuracy.
+                            var spin = new SpinWait();
+                            // Logger.LogPrint($"Spinning... (elapsed: {gameLoopStopwatch.Elapsed.TotalMilliseconds - frameStartTime:F2}ms, target: {targetFrameTime:F2}ms)");
+                            while (gameLoopStopwatch.Elapsed.TotalMilliseconds - frameStartTime < targetFrameTime)
+                            {
+                                spin.SpinOnce();
+                            }
+                        }
+                    }
                 }
             }
             catch (OutOfMemoryException)
@@ -245,6 +276,25 @@ public abstract class AppHost : IDisposable
     public virtual void Exit()
     {
         executionState = ExecutionState.Stopping;
+    }
+
+    protected virtual void OnKeyDown(KeyEvent e)
+    {
+        // TODO: OnKeyDown drawable handle here
+
+        // Global hotkey
+        // TODO: Global hotkey should be in list (don't have to be able to change since it's framework level)
+        if (!e.IsRepeat && e.Key == Key.F11 && (e.Modifiers & KeyModifiers.Control) > 0)
+        {
+            int currentValue = (int)FrameLimiter.Value;
+            int nextValue = (currentValue + 1) % Enum.GetValues(typeof(FrameSync)).Length;
+            FrameLimiter.Value = (FrameSync)nextValue;
+        }
+    }
+
+    protected virtual void OnKeyUp(KeyEvent e)
+    {
+        // TODO: OnKeyUp drawable handle here
     }
 
     protected virtual void SetupRenderer()
