@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using Sakura.Framework.Input;
 
 namespace Sakura.Framework.Platform;
 
@@ -56,14 +57,20 @@ public interface IWindow : IDisposable
     void SetVSync(bool enabled);
 
     event Action Update;
-
     event Action Suspended;
-
     event Action Resumed;
-
     event Action ExitRequested;
-
     event Action Exited;
+
+    /// <summary>
+    /// Invoked when a key is pressed.
+    /// </summary>
+    event Action<KeyEvent> OnKeyDown;
+
+    /// <summary>
+    /// Invoked when a key is released.
+    /// </summary>
+    event Action<KeyEvent> OnKeyUp;
 
     /// <summary>
     /// Close the window peacefully.

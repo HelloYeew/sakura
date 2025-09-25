@@ -5,6 +5,7 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using Sakura.Framework.Input;
 using Silk.NET.SDL;
 using Sakura.Framework.Logging;
 using Version = Silk.NET.SDL.Version;
@@ -51,6 +52,9 @@ public class SDLWindow : IWindow
     public event Action Resumed = delegate { };
     public event Action ExitRequested = delegate { };
     public event Action Exited = delegate { };
+
+    public event Action<KeyEvent> OnKeyDown = delegate { };
+    public event Action<KeyEvent> OnKeyUp = delegate { };
 
     public unsafe void Initialize()
     {
@@ -137,7 +141,11 @@ public class SDLWindow : IWindow
                     break;
 
                 case EventType.Keydown:
-                    // TODO: Handle key down events
+                    handleKeyEvent(sdlEvent.Key, OnKeyDown);
+                    break;
+
+                case EventType.Keyup:
+                    handleKeyEvent(sdlEvent.Key, OnKeyUp);
                     break;
             }
         }
@@ -157,6 +165,24 @@ public class SDLWindow : IWindow
                 Suspended.Invoke();
                 break;
         }
+    }
+
+    private void handleKeyEvent(KeyboardEvent keyboardEvent, Action<KeyEvent> action)
+    {
+        var key = SDLKeyMapping.ToSakuraKey(keyboardEvent.Keysym.Scancode);
+        if (key == Key.Unknown)
+            return;
+
+        var modifiers = KeyModifiers.None;
+        var modState = sdl.GetModState();
+
+        if ((modState & Keymod.Ctrl) > 0) modifiers |= KeyModifiers.Control;
+        if ((modState & Keymod.Shift) > 0) modifiers |= KeyModifiers.Shift;
+        if ((modState & Keymod.Alt) > 0) modifiers |= KeyModifiers.Alt;
+
+        bool isRepeat = keyboardEvent.Repeat != 0;
+
+        action.Invoke(new KeyEvent(key, modifiers, isRepeat));
     }
 
     private unsafe int getDisplayRefreshRate()
