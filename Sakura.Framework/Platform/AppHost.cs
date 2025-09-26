@@ -314,7 +314,7 @@ public abstract class AppHost : IDisposable
     /// </summary>
     protected virtual void PerformInput()
     {
-        Logger.LogPrint($"Input tick. Time: {AppClock.CurrentTime:F2}ms (delta: {AppClock.ElapsedFrameTime:F2}ms, frame: {AppClock.FramesPerSecond})");
+        // Logger.LogPrint($"Input tick. Time: {AppClock.CurrentTime:F2}ms (delta: {AppClock.ElapsedFrameTime:F2}ms, frame: {AppClock.FramesPerSecond})");
     }
 
     /// <summary>

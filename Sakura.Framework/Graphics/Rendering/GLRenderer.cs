@@ -57,7 +57,7 @@ public class GLRenderer : IRenderer
     public void Draw(IClock clock)
     {
         // TODO: GL.Draw() should contain the rendering logic.
-        Logger.LogPrint($"Drawing frame. Time: {clock.CurrentTime:F2}ms (delta: {clock.ElapsedFrameTime:F2}ms, FPS: {clock.FramesPerSecond:F2})");
+        // Logger.LogPrint($"Drawing frame. Time: {clock.CurrentTime:F2}ms (delta: {clock.ElapsedFrameTime:F2}ms, FPS: {clock.FramesPerSecond:F2})");
     }
 
     /// <summary>
