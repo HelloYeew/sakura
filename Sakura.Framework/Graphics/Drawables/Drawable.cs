@@ -37,6 +37,11 @@ public class Drawable
     public RectangleF DrawRectangle { get; private set; }
     public Matrix4x4 ModelMatrix = Matrix4x4.Identity;
 
+    public Drawable()
+    {
+        Texture = Texture.WhitePixel;
+    }
+
     public virtual void Update()
     {
         UpdateTransforms();
@@ -44,21 +49,34 @@ public class Drawable
 
     protected virtual void UpdateTransforms()
     {
-        Vector2 parentSize = Parent?.ChildSize ?? new Vector2(800, 600); // Fallback to a default size
+        // Get the parent's size for anchor calculations. Fallback to a default if no parent.
+        Vector2 parentSize = Parent?.ChildSize ?? new Vector2(800, 600);
 
+        // Note: If you have relative sizing, you would calculate the final drawSize here.
+        // For this example, we'll just use the drawable's local Size.
         Vector2 drawSize = Size;
+
         if ((RelativeSizeAxes & Axes.X) != 0) drawSize.X *= parentSize.X;
         if ((RelativeSizeAxes & Axes.Y) != 0) drawSize.Y *= parentSize.Y;
 
-        Vector2 anchorOffset = GetAnchorOriginVector(Anchor) * parentSize;
+        // 2. Calculate the anchor's position in world coordinates.
+        // This finds the point within the parent that we are "anchored" to.
+        Vector2 anchorPosition = GetAnchorOriginVector(Anchor) * parentSize;
+
+        // 3. Calculate the origin's offset in local coordinates.
+        // This finds the offset from the top-left of our drawable to its pivot point.
         Vector2 originOffset = GetAnchorOriginVector(Origin) * drawSize;
 
-        Vector2 position = Position + anchorOffset - originOffset;
+        // 4. Calculate the final position for the top-left corner of the drawable.
+        // Final Position = (Parent's Anchor Point) + (Relative Position) - (Our Origin Offset)
+        Vector2 finalDrawPosition = anchorPosition + Position - originOffset;
 
-        DrawRectangle = new RectangleF(position.X, position.Y, drawSize.X, drawSize.Y);
+        // 5. Create the transformation matrices.
+        // The order is important: scale first, then translate.
+        var scaleMatrix = Matrix4x4.CreateScale(new Vector3(drawSize.X, drawSize.Y, 1));
+        var translationMatrix = Matrix4x4.CreateTranslation(new Vector3(finalDrawPosition.X, finalDrawPosition.Y, 0));
 
-        // Simple 2D model matrix (translation and scale)
-        ModelMatrix = Matrix4x4.CreateScale(drawSize.X, drawSize.Y, 1) * Matrix4x4.CreateTranslation(position.X, position.Y, 0);
+        ModelMatrix = scaleMatrix * translationMatrix;
     }
 
     public static Vector2 GetAnchorOriginVector(Anchor anchor)
@@ -74,7 +92,7 @@ public class Drawable
             case Anchor.BottomLeft: return new Vector2(0.0f, 1.0f);
             case Anchor.BottomCentre: return new Vector2(0.5f, 1.0f);
             case Anchor.BottomRight: return new Vector2(1.0f, 1.0f);
-            default: throw new ArgumentOutOfRangeException(nameof(anchor), anchor, null);
+            default: return Vector2.Zero;
         }
     }
 

@@ -15,7 +15,7 @@ public class Texture : IDisposable
     private readonly GL _gl;
     private bool _disposed;
 
-    public static Texture WhitePixel;
+    public static Texture WhitePixel { get; private set; }
 
     public Texture(GL gl, int width, int height, ReadOnlySpan<byte> data)
     {

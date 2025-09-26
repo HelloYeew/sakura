@@ -145,7 +145,7 @@ public class GLRenderer : IRenderer
 
         // This is a placeholder for a proper colour system.
         // It would normally be passed as a vertex attribute for batching.
-        gl.ProgramUniform4(shader.Handle, gl.GetUniformLocation(shader.Handle, "aColour"), finalColor);
+        gl.ProgramUniform4(shader.Handle, gl.GetUniformLocation(shader.Handle, "u_Color"), finalColor);
 
         shader.SetUniform("u_Model", drawable.ModelMatrix);
 

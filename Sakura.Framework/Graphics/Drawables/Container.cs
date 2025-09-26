@@ -56,7 +56,6 @@ public class Container : Drawable
 
     public override void Draw(IRenderer renderer)
     {
-        base.Draw(renderer);
         foreach (var child in children)
         {
             child.Draw(renderer);

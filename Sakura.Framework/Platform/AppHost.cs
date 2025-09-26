@@ -224,7 +224,8 @@ public abstract class AppHost : IDisposable
                 RelativeSizeAxes = Axes.Both
             };
             Renderer?.SetRoot(_root);
-            _app.Load(_root);
+            app.SetRoot(_root);
+            _app.Load();
 
             AppClock = new Clock(true);
             lastUpdateTime = AppClock.CurrentTime;
