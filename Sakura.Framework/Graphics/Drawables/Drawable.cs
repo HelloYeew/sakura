@@ -46,11 +46,9 @@ public class Drawable
     {
         Vector2 parentSize = Parent?.ChildSize ?? new Vector2(800, 600); // Fallback to a default size
 
-        Vector2 relativeSize = Vector2.Zero;
-        if ((RelativeSizeAxes & Axes.X) != 0) relativeSize.X = parentSize.X;
-        if ((RelativeSizeAxes & Axes.Y) != 0) relativeSize.Y = parentSize.Y;
-
-        var drawSize = Size * (Vector2.One - relativeSize) + Size * relativeSize;
+        Vector2 drawSize = Size;
+        if ((RelativeSizeAxes & Axes.X) != 0) drawSize.X *= parentSize.X;
+        if ((RelativeSizeAxes & Axes.Y) != 0) drawSize.Y *= parentSize.Y;
 
         Vector2 anchorOffset = GetAnchorOriginVector(Anchor) * parentSize;
         Vector2 originOffset = GetAnchorOriginVector(Origin) * drawSize;
