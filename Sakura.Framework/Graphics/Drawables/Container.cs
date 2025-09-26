@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using System.Collections.Generic;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Maths;
@@ -16,6 +17,19 @@ public class Container : Drawable
 
     public void Add(Drawable drawable)
     {
+        // A drawable cannot be its own parent.
+        if (drawable == this)
+            throw new InvalidOperationException("A container cannot be added to itself.");
+
+        // A drawable cannot be added to one of its own children, as this would create a circular dependency.
+        // To check, we walk up the hierarchy from the potential parent ('this'). If we find the `drawable`
+        // we're trying to add, it means 'this' is a descendant of `drawable`.
+        for (var p = Parent; p != null; p = p.Parent)
+        {
+            if (p == drawable)
+                throw new InvalidOperationException("Cannot add an ancestor drawable as a child. This would create a circular dependency.");
+        }
+
         if (drawable.Parent != null)
             drawable.Parent.Remove(drawable);
 
