@@ -233,7 +233,7 @@ public abstract class AppHost : IDisposable
                     if (!IsHeadless)
                         PerformDraw();
 
-                    if (FrameLimiter.Value != FrameSync.Unlimited)
+                    if (FrameLimiter.Value != FrameSync.VSync && FrameLimiter.Value != FrameSync.Unlimited)
                     {
                         // In non-VSync or unlimited modes, we need to limit the loop ourselves to the target frame rate.
                         double targetHz = getTargetUpdateHz();

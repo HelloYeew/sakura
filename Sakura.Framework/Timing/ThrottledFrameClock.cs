@@ -33,8 +33,17 @@ public class ThrottledFrameClock
         if (currentTime - lastProcessTime < timeBetweenUpdates)
             return false;
 
-        // Use the current time as the last process time to avoid drift
-        lastProcessTime = currentTime;
+        // Adding a fixed interval to prevent drift over time
+        // If the clock is really lacking behind, this will allow it to "catch up"
+        // by processing multiple ticks in a row.
+        lastProcessTime += timeBetweenUpdates;
+
+        // Check to prevent a spiral of death if the processing is really slow.
+        if (currentTime - lastProcessTime > timeBetweenUpdates * 10)
+        {
+            lastProcessTime = currentTime;
+        }
+
         return true;
     }
 }

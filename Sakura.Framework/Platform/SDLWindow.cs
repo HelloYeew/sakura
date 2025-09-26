@@ -119,9 +119,19 @@ public class SDLWindow : IWindow
         IsExiting = true;
     }
 
-    public void Dispose()
+    public unsafe void Dispose()
     {
-        throw new NotImplementedException();
+        if (glContext != null)
+        {
+            sdl.GLDeleteContext(glContext);
+            glContext = null;
+        }
+
+        if (window != null)
+        {
+            sdl.DestroyWindow(window);
+            window = null;
+        }
     }
 
     private unsafe void handleSdlEvents()
