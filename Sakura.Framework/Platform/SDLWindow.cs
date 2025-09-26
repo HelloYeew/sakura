@@ -8,6 +8,7 @@ using System.Diagnostics.CodeAnalysis;
 using Sakura.Framework.Input;
 using Silk.NET.SDL;
 using Sakura.Framework.Logging;
+using Silk.NET.OpenGL;
 using Version = Silk.NET.SDL.Version;
 
 namespace Sakura.Framework.Platform;
@@ -56,10 +57,18 @@ public class SDLWindow : IWindow
     public event Action<KeyEvent> OnKeyDown = delegate { };
     public event Action<KeyEvent> OnKeyUp = delegate { };
     public event Action<int> DisplayChanged = delegate { };
+    public event Action<int, int> Resized = delegate { };
 
     public unsafe void Initialize()
     {
         sdl = Sdl.GetApi();
+
+        // Make sure SDL video backend is fully initialized
+        // To make it support for OpenGL context and process advance hint like profile version
+        if (sdl.Init(Sdl.InitVideo) < 0)
+        {
+            throw new Exception($"Failed to initialize SDL: {sdl.GetErrorS()}");
+        }
 
         Version sdlVersion = new Version();
         sdl.GetVersion(ref sdlVersion);
@@ -81,6 +90,12 @@ public class SDLWindow : IWindow
         {
             windowFlags |= WindowFlags.Resizable;
         }
+
+        // Make sure SDL use OpenGL 3.3 or later
+        sdl.GLSetAttribute(GLattr.ContextMajorVersion, 3);
+        sdl.GLSetAttribute(GLattr.ContextMinorVersion, 3);
+        sdl.GLSetAttribute(GLattr.ContextFlags, (int)ContextFlagMask.ForwardCompatibleBit);
+        sdl.GLSetAttribute(GLattr.ContextProfileMask, (int)GLprofile.Core);
 
         window = sdl.CreateWindow(
             title,
@@ -185,6 +200,11 @@ public class SDLWindow : IWindow
                     Logger.Verbose($"Display refresh rate changed from {oldHz} Hz to {DisplayHz} Hz.");
                     DisplayChanged.Invoke(DisplayHz); // Invoke the new event
                 }
+                break;
+
+            case WindowEventID.SizeChanged:
+            case WindowEventID.Resized:
+                Resized.Invoke(sdlWindowEvent.Data1, sdlWindowEvent.Data2);
                 break;
         }
     }

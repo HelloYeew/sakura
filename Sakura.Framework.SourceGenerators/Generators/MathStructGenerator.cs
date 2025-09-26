@@ -114,7 +114,7 @@ public class MathStructGenerator : IIncrementalGenerator
 
         // Add IEquatable<T> to the struct definition if the underlying type supports it.
         string interfaceDeclaration = iEquatableInterface != null ? $" : System.IEquatable<{wrapperName}>" : "";
-        code.AppendLine($"public readonly partial struct {wrapperName}{interfaceDeclaration}");
+        code.AppendLine($"public partial struct {wrapperName}{interfaceDeclaration}");
         code.AppendLine("{");
 
         var members = underlyingType.GetMembers();

@@ -73,6 +73,7 @@ public interface IWindow : IDisposable
     event Action<KeyEvent> OnKeyUp;
 
     event Action<int> DisplayChanged;
+    event Action<int, int> Resized;
 
     /// <summary>
     /// Close the window peacefully.

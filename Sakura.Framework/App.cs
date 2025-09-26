@@ -4,6 +4,7 @@
 #nullable disable
 
 using System;
+using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Platform;
 
 namespace Sakura.Framework;
@@ -13,6 +14,13 @@ public class App : IDisposable
     public IWindow Window => Host?.Window;
 
     protected AppHost Host { get; private set; }
+
+    internal void SetHost(AppHost host) => Host = host;
+
+    public virtual void Load(Container root)
+    {
+
+    }
 
     /// <summary>
     /// Create a default <see cref="Storage"/> that

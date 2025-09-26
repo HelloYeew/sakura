@@ -5,12 +5,14 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
-using System.Drawing;
 using System.Text;
+using Sakura.Framework.Graphics.Drawables;
 using Silk.NET.OpenGL;
 using Sakura.Framework.Logging;
+using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Timing;
+using Color = Sakura.Framework.Graphics.Colors.Color;
 
 namespace Sakura.Framework.Graphics.Rendering;
 
@@ -18,6 +20,29 @@ namespace Sakura.Framework.Graphics.Rendering;
 public class GLRenderer : IRenderer
 {
     private static GL gl;
+    private Shader shader;
+    private uint vao;
+    private uint vbo;
+    private uint ebo;
+
+    private Matrix4x4 projectionMatrix;
+
+    private readonly float[] _vertices =
+    {
+        // Positions      // Tex Coords
+        0.0f, 1.0f, 0.0f, 0.0f, 1.0f, // Top-left
+        1.0f, 1.0f, 0.0f, 1.0f, 1.0f, // Top-right
+        1.0f, 0.0f, 0.0f, 1.0f, 0.0f, // Bottom-right
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, // Bottom-left
+    };
+
+    private readonly uint[] _indices =
+    {
+        0, 1, 2,
+        2, 3, 0
+    };
+
+    private Drawable root;
 
     public unsafe void Initialize(IGraphicsSurface graphicsSurface)
     {
@@ -42,6 +67,47 @@ public class GLRenderer : IRenderer
         Logger.Verbose($"JIT intrinsic support: {RuntimeInfo.IsIntrinsicSupported}");
 
         gl.ClearColor(Color.Black);
+
+        gl.Enable(EnableCap.Blend);
+        gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+
+        Textures.Texture.CreateWhitePixel(gl);
+
+        shader = new Shader(gl, "Resources/Shaders/shader.vert", "Resources/Shaders/shader.frag");
+
+        vao = gl.GenVertexArray();
+        gl.BindVertexArray(vao);
+
+        vbo = gl.GenBuffer();
+        gl.BindBuffer(BufferTargetARB.ArrayBuffer, vbo);
+        fixed(float* v = &_vertices[0])
+            gl.BufferData(BufferTargetARB.ArrayBuffer, (nuint)(_vertices.Length * sizeof(float)), v, BufferUsageARB.StaticDraw);
+
+        ebo = gl.GenBuffer();
+        gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, ebo);
+        fixed(uint* i = &_indices[0])
+            gl.BufferData(BufferTargetARB.ElementArrayBuffer, (nuint)(_indices.Length * sizeof(uint)), i, BufferUsageARB.StaticDraw);
+
+        // Position attribute
+        gl.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 5 * sizeof(float), (void*)0);
+        gl.EnableVertexAttribArray(0);
+
+        // Texture coord attribute
+        gl.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+        gl.EnableVertexAttribArray(1);
+
+        gl.BindVertexArray(0);
+    }
+
+    public void SetRoot(Drawable root)
+    {
+        this.root = root;
+    }
+
+    public void Resize(int width, int height)
+    {
+        gl.Viewport(0, 0, (uint)width, (uint)height);
+        projectionMatrix = Matrix4x4.CreateOrthographicOffCenter(0, width, height, 0, -1, 1);
     }
 
     public void Clear()
@@ -56,8 +122,34 @@ public class GLRenderer : IRenderer
 
     public void Draw(IClock clock)
     {
-        // TODO: GL.Draw() should contain the rendering logic.
-        // Logger.LogPrint($"Drawing frame. Time: {clock.CurrentTime:F2}ms (delta: {clock.ElapsedFrameTime:F2}ms, FPS: {clock.FramesPerSecond:F2})");
+        if (root == null) return;
+
+        shader.Use();
+        shader.SetUniform("u_Projection", projectionMatrix);
+        shader.SetUniform("u_Texture", 0);
+
+        gl.BindVertexArray(vao);
+        root.Draw(this);
+        gl.BindVertexArray(0);
+    }
+
+    public unsafe void DrawDrawable(Drawable drawable)
+    {
+        if (drawable.Alpha <= 0) return;
+        if (drawable.Texture == null) return;
+
+        drawable.Texture.Bind();
+
+        var color = drawable.Color;
+        var finalColor = new Vector4(color.R / 255f, color.G / 255f, color.B / 255f, color.A / 255f * drawable.Alpha);
+
+        // This is a placeholder for a proper colour system.
+        // It would normally be passed as a vertex attribute for batching.
+        gl.ProgramUniform4(shader.Handle, gl.GetUniformLocation(shader.Handle, "aColour"), finalColor);
+
+        shader.SetUniform("u_Model", drawable.ModelMatrix);
+
+        gl.DrawElements(PrimitiveType.Triangles, (uint)_indices.Length, DrawElementsType.UnsignedInt, null);
     }
 
     /// <summary>
