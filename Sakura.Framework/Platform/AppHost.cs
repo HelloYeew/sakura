@@ -5,6 +5,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,7 +13,10 @@ using JetBrains.Annotations;
 using Sakura.Framework.Extensions.ExceptionExtensions;
 using Sakura.Framework.Extensions.IEnumerableExtensions;
 using Sakura.Framework.Graphics.Rendering;
+using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
+using Sakura.Framework.Reactive;
+using Sakura.Framework.Timing;
 
 namespace Sakura.Framework.Platform;
 
@@ -20,6 +24,19 @@ public abstract class AppHost : IDisposable
 {
     public IWindow Window { get; private set; }
     public IRenderer Renderer { get; private set; }
+
+    public Reactive<FrameSync> FrameLimiter { get; protected set; }
+    protected IClock AppClock { get; private set; }
+    private readonly ThrottledFrameClock inputClock = new ThrottledFrameClock(1000);
+    private readonly ThrottledFrameClock soundClock = new ThrottledFrameClock(1000);
+    private double lastUpdateTime;
+    private readonly Stopwatch gameLoopStopwatch = new Stopwatch();
+
+    /// <summary>
+    /// Determines whether the host should run without a window or renderer.
+    /// Override this in a headless host implementation.
+    /// </summary>
+    protected virtual bool IsHeadless => false;
 
     [NotNull]
     public HostOptions Options { get; private set; }
@@ -154,6 +171,8 @@ public abstract class AppHost : IDisposable
             Logger.AppIdentifier = Name;
             Logger.VersionIdentifier = RuntimeInfo.EntryAssembly.GetName().Version?.ToString() ?? Logger.VersionIdentifier;
 
+            Logger.Initialize();
+
             SetupForRun();
 
             Console.CancelKeyPress += (_, _) =>
@@ -164,33 +183,75 @@ public abstract class AppHost : IDisposable
                 exitEvent.Set();
             };
 
+            FrameLimiter = new Reactive<FrameSync>(FrameSync.Unlimited);
+            FrameLimiter.ValueChanged += onFrameLimiterChanged;
+            FrameLimiter.ValueChanged += e => Logger.Verbose($"Frame limiter changed from {e.OldValue} to {e.NewValue}");
+
             executionState = ExecutionState.Running;
 
-            Logger.Initialize();
+            if (!IsHeadless)
+            {
+                FrameLimiter.ValueChanged += onFrameLimiterChanged;
 
-            // TODO: Testing purpose only, will remove later.
-            Logger.Verbose($"Starting {Options.FriendlyAppName}...");
+                Window = CreateWindow();
+                Window.Title = Options.FriendlyAppName;
 
-            Window = CreateWindow();
-            Window.Title = Options.FriendlyAppName;
-            Window.Initialize();
-            Window.Create();
+                Window.OnKeyDown += OnKeyDown;
+                Window.OnKeyUp += OnKeyUp;
 
-            SetupRenderer();
+                Window.Initialize();
+                Window.Create();
 
-            Window.Run();
+                onFrameLimiterChanged(new ValueChangedEvent<FrameSync>(default, FrameLimiter.Value));
+
+                SetupRenderer();
+            }
+
+            AppClock = new Clock(true);
+            lastUpdateTime = AppClock.CurrentTime;
+            gameLoopStopwatch.Start();
 
             try
             {
-                if (Window != null)
+                while (executionState == ExecutionState.Running)
                 {
-                    // Update window event
-                }
-                else
-                {
-                    while (executionState != ExecutionState.Stopping)
+                    double frameStartTime = gameLoopStopwatch.Elapsed.TotalMilliseconds;
+                    AppClock.Update();
+                    Window?.PollEvents();
+
+                    if (Window?.IsExiting == true)
+                        Exit();
+
+                    if (inputClock.Process(AppClock.CurrentTime))
+                        PerformInput();
+
+                    if (soundClock.Process(AppClock.CurrentTime))
+                        PerformSoundUpdate();
+
+                    PerformUpdate();
+
+                    if (!IsHeadless)
+                        PerformDraw();
+
+                    if (FrameLimiter.Value != FrameSync.VSync && FrameLimiter.Value != FrameSync.Unlimited)
                     {
-                        // Update window event
+                        // In non-VSync or unlimited modes, we need to limit the loop ourselves to the target frame rate.
+                        double targetHz = getTargetUpdateHz();
+                        if (targetHz > 0)
+                        {
+                            double targetFrameTime = 1000.0 / targetHz;
+                            // Logger.LogPrint("targetFrameTime: " + targetFrameTime);
+
+                            // A simple, busy-wait loop for precision.
+                            // For better CPU usage, a hybrid Thread.Sleep/SpinWait would be better,
+                            // but this is the most straightforward fix to ensure accuracy.
+                            var spin = new SpinWait();
+                            // Logger.LogPrint($"Spinning... (elapsed: {gameLoopStopwatch.Elapsed.TotalMilliseconds - frameStartTime:F2}ms, target: {targetFrameTime:F2}ms)");
+                            while (gameLoopStopwatch.Elapsed.TotalMilliseconds - frameStartTime < targetFrameTime)
+                            {
+                                spin.SpinOnce();
+                            }
+                        }
                     }
                 }
             }
@@ -198,23 +259,133 @@ public abstract class AppHost : IDisposable
             {
             }
         }
+        catch (Exception ex)
+        {
+            Logger.Error("An unhandled exception occurred during runtime.", ex);
+        }
         finally
         {
+            Dispose(true);
             host_running_mutex.Release();
         }
+    }
+
+    /// <summary>
+    /// Requests the host to exit gracefully.
+    /// </summary>
+    public virtual void Exit()
+    {
+        executionState = ExecutionState.Stopping;
+    }
+
+    protected virtual void OnKeyDown(KeyEvent e)
+    {
+        // TODO: OnKeyDown drawable handle here
+
+        // Global hotkey
+        // TODO: Global hotkey should be in list (don't have to be able to change since it's framework level)
+        if (!e.IsRepeat && e.Key == Key.F11 && (e.Modifiers & KeyModifiers.Control) > 0)
+        {
+            int currentValue = (int)FrameLimiter.Value;
+            int nextValue = (currentValue + 1) % Enum.GetValues(typeof(FrameSync)).Length;
+            FrameLimiter.Value = (FrameSync)nextValue;
+        }
+    }
+
+    protected virtual void OnKeyUp(KeyEvent e)
+    {
+        // TODO: OnKeyUp drawable handle here
     }
 
     protected virtual void SetupRenderer()
     {
         Renderer = CreateRenderer();
         Renderer.Initialize(Window.GraphicsSurface);
+    }
 
-        Window.Update += () =>
+    private void onFrameLimiterChanged(ValueChangedEvent<FrameSync> e)
+    {
+        // VSync need to be set on window, other frame limiters are handled in the clock.
+        Window?.SetVSync(e.NewValue == FrameSync.VSync);
+    }
+
+    /// <summary>
+    /// This method is called at a fixed 1000Hz for precise input handling.
+    /// </summary>
+    protected virtual void PerformInput()
+    {
+        // Logger.LogPrint($"Input tick. Time: {AppClock.CurrentTime:F2}ms (delta: {AppClock.ElapsedFrameTime:F2}ms, frame: {AppClock.FramesPerSecond})");
+    }
+
+    /// <summary>
+    /// This method is called at a fixed 1000Hz for precise audio processing.
+    /// </summary>
+    protected virtual void PerformSoundUpdate() { }
+
+    /// <summary>
+    /// This method runs the main game logic updates. It uses a fixed-step approach
+    /// to ensure updates are deterministic and independent of the draw rate.
+    /// </summary>
+    protected virtual void PerformUpdate()
+    {
+        double targetHz = getTargetUpdateHz();
+
+        if (targetHz == 0) // Unlimited mode
         {
-            Renderer.Clear();
-            Renderer.StartFrame();
-            Renderer.Draw();
-        };
+            // In unlimited mode, we just update once per loop iteration.
+            // TODO: might want to pass AppClock.ElapsedFrameTime to your update logic here.
+            lastUpdateTime = AppClock.CurrentTime;
+            return;
+        }
+
+        double timeStep = 1000.0 / targetHz;
+
+        // Run as many updates as needed to catch up with the current time.
+        while (AppClock.CurrentTime - lastUpdateTime >= timeStep)
+        {
+            // TODO: This is main loop here, might want to pass timeStep to
+            // The update that happened in the drawable need to be aware of the timeStep.
+
+            lastUpdateTime += timeStep;
+        }
+    }
+
+    /// <summary>
+    /// This method handles all rendering. It's typically called once per loop iteration,
+    /// and its frequency is limited by VSync or by sleeping in unlimited mode.
+    /// </summary>
+    protected virtual void PerformDraw()
+    {
+        Renderer?.Clear();
+        Renderer?.StartFrame();
+        Renderer?.Draw(AppClock);
+        Window?.SwapBuffers();
+    }
+
+    /// <summary>
+    /// Get the target update rate in Hz based on the current frame limiter setting.
+    /// </summary>
+    /// <returns>The target update rate in Hz, or 0 for unlimited.</returns>
+    private double getTargetUpdateHz()
+    {
+        // In headless mode, default to a sensible refresh rate for update calculations.
+        double refreshRate = Window?.DisplayHz > 0 ? Window.DisplayHz : 60;
+
+        switch (FrameLimiter.Value)
+        {
+            case FrameSync.VSync:
+                return refreshRate;
+            case FrameSync.Limit2x:
+                return refreshRate * 2;
+            case FrameSync.Limit4x:
+                return refreshRate * 4;
+            case FrameSync.Limit8x:
+                return refreshRate * 8;
+            case FrameSync.Unlimited:
+                return 0; // Special value for unlimited
+            default:
+                return refreshRate;
+        }
     }
 
     private void unhandledExceptionHandler(object sender, UnhandledExceptionEventArgs args)

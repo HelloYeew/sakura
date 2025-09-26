@@ -5,7 +5,7 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
-using Silk.NET.OpenGL;
+using Sakura.Framework.Input;
 using Silk.NET.SDL;
 using Sakura.Framework.Logging;
 using Version = Silk.NET.SDL.Version;
@@ -15,17 +15,13 @@ namespace Sakura.Framework.Platform;
 [SuppressMessage("ReSharper", "InconsistentNaming")]
 public class SDLWindow : IWindow
 {
-    // TODO: OpenGL need to be moved to a separate class i.e. IRenderer since we want to support other renderers in the future (Vulkan, DirectX, etc.)
-    // All rendering code need to be moved to the separate class as well.
     private static Sdl sdl;
-    private static GL gl;
     private static unsafe void* glContext;
     private static unsafe Window* window;
 
     private IGraphicsSurface graphicsSurface = new SDLGraphicsSurface();
 
     private bool initialized;
-    private bool running;
 
     private string title = "Window";
     private bool resizable = true;
@@ -46,11 +42,20 @@ public class SDLWindow : IWindow
 
     public IGraphicsSurface GraphicsSurface => graphicsSurface;
 
+    public bool IsActive { get; private set; } = true;
+    public bool IsExiting { get; private set; }
+    public int DisplayHz { get; private set; } = 60;
+
+    // TODO: This update action also no longer needed since it's handled in host's main loop
     public event Action Update = delegate { };
     public event Action Suspended = delegate { };
     public event Action Resumed = delegate { };
     public event Action ExitRequested = delegate { };
     public event Action Exited = delegate { };
+
+    public event Action<KeyEvent> OnKeyDown = delegate { };
+    public event Action<KeyEvent> OnKeyUp = delegate { };
+    public event Action<int> DisplayChanged = delegate { };
 
     public unsafe void Initialize()
     {
@@ -92,6 +97,7 @@ public class SDLWindow : IWindow
             throw new Exception("SDL window creation failed.");
         }
 
+        // TODO: This should move to the renderer class but still need to figure out how to pass the context to the renderer
         glContext = sdl.GLCreateContext(window);
         if (glContext == null)
         {
@@ -100,47 +106,33 @@ public class SDLWindow : IWindow
         }
 
         sdl.GLMakeCurrent(window, glContext);
-        sdl.GLSetSwapInterval(1); // Enable VSync
+
+        DisplayHz = getDisplayRefreshRate();
+        Logger.Verbose($"Display refresh rate: {DisplayHz} Hz");
 
         Logger.Verbose("SDL window created successfully");
 
-        // TODO: Remove this line after the renderer is moved to a separate class
-        gl = GL.GetApi(proc => (nint)sdl.GLGetProcAddress(proc));
         graphicsSurface.GetFunctionAddress = proc => (nint)sdl.GLGetProcAddress(proc);
-
-        running = true;
-    }
-
-    public void Run()
-    {
-        if (!initialized)
-            throw new InvalidOperationException("Window must be initialized before running.");
-
-        while (running)
-        {
-            runFrame();
-            // TODO: Remove this to IRenderer class
-            render();
-        }
-    }
-
-    private void runFrame()
-    {
-        if (!running)
-            return;
-
-        handleSdlEvents();
-        Update.Invoke();
     }
 
     public void Close()
     {
-        running = false;
+        IsExiting = true;
     }
 
-    public void Dispose()
+    public unsafe void Dispose()
     {
-        throw new NotImplementedException();
+        if (glContext != null)
+        {
+            sdl.GLDeleteContext(glContext);
+            glContext = null;
+        }
+
+        if (window != null)
+        {
+            sdl.DestroyWindow(window);
+            window = null;
+        }
     }
 
     private unsafe void handleSdlEvents()
@@ -152,53 +144,126 @@ public class SDLWindow : IWindow
             {
                 case EventType.Quit:
                     ExitRequested.Invoke();
-                    running = false;
+                    IsExiting = true;
                     break;
 
                 case EventType.Windowevent:
-                    // TODO: Handle window events like resize, minimize, etc.
+                    handleWindowEvent(sdlEvent.Window);
                     break;
 
                 case EventType.Keydown:
-                    // TODO: Handle key down events
+                    handleKeyEvent(sdlEvent.Key, OnKeyDown);
+                    break;
+
+                case EventType.Keyup:
+                    handleKeyEvent(sdlEvent.Key, OnKeyUp);
                     break;
             }
         }
     }
 
-    private unsafe void render()
+    private void handleWindowEvent(WindowEvent sdlWindowEvent)
     {
-        if (window == null)
+        switch ((WindowEventID)sdlWindowEvent.Event)
+        {
+            case WindowEventID.FocusGained:
+                IsActive = true;
+                Resumed.Invoke();
+                break;
+
+            case WindowEventID.FocusLost:
+                IsActive = false;
+                Suspended.Invoke();
+                break;
+
+            case WindowEventID.Moved:
+                int oldHz = DisplayHz;
+                DisplayHz = getDisplayRefreshRate();
+
+                if (oldHz != DisplayHz)
+                {
+                    Logger.Verbose($"Display refresh rate changed from {oldHz} Hz to {DisplayHz} Hz.");
+                    DisplayChanged.Invoke(DisplayHz); // Invoke the new event
+                }
+                break;
+        }
+    }
+
+    private void handleKeyEvent(KeyboardEvent keyboardEvent, Action<KeyEvent> action)
+    {
+        var key = SDLKeyMapping.ToSakuraKey(keyboardEvent.Keysym.Scancode);
+        if (key == Key.Unknown)
             return;
 
-        gl.Clear((uint)ClearBufferMask.ColorBufferBit);
+        var modifiers = KeyModifiers.None;
+        var modState = sdl.GetModState();
 
+        if ((modState & Keymod.Ctrl) > 0) modifiers |= KeyModifiers.Control;
+        if ((modState & Keymod.Shift) > 0) modifiers |= KeyModifiers.Shift;
+        if ((modState & Keymod.Alt) > 0) modifiers |= KeyModifiers.Alt;
 
-        sdl.GLSwapWindow(window);
+        bool isRepeat = keyboardEvent.Repeat != 0;
+
+        action.Invoke(new KeyEvent(key, modifiers, isRepeat));
+    }
+
+    private unsafe int getDisplayRefreshRate()
+    {
+        DisplayMode mode = new DisplayMode();
+        int displayIndex = sdl.GetWindowDisplayIndex(window);
+
+        if (sdl.GetCurrentDisplayMode(displayIndex, &mode) == 0)
+        {
+            return mode.RefreshRate;
+        }
+
+        return 60;
+    }
+
+    /// <summary>
+    /// Process all pending window events.
+    /// </summary>
+    public void PollEvents()
+    {
+        handleSdlEvents();
+    }
+
+    public void SwapBuffers()
+    {
+        swapBuffers();
+    }
+
+    /// <summary>
+    /// Swap the front and back buffers to present the rendered frame.
+    /// </summary>
+    private unsafe void swapBuffers()
+    {
+        if (window != null)
+            sdl.GLSwapWindow(window);
+    }
+
+    /// <summary>
+    /// Enable or disable VSync.
+    /// </summary>
+    /// <param name="enabled">True to enable VSync, false to disable.</param>
+    public void SetVSync(bool enabled)
+    {
+        sdl.GLSetSwapInterval(enabled ? 1 : 0);
     }
 
     private unsafe void setTitle(string newTitle)
     {
         title = newTitle;
 
-        if (window == null)
-            return;
-
-        sdl.SetWindowTitle(window, newTitle);
+        if (window != null)
+            sdl.SetWindowTitle(window, newTitle);
     }
 
     private unsafe void setResizable(bool isResizable)
     {
         resizable = isResizable;
 
-        if (window == null)
-            return;
-
-        if (isResizable)
-            windowFlags |= WindowFlags.Resizable;
-        else
-            windowFlags &= ~WindowFlags.Resizable;
-
-        sdl.SetWindowResizable(window, (SdlBool)(isResizable ? 1 : 0));
+        if (window != null)
+            sdl.SetWindowResizable(window, (SdlBool)(isResizable ? 1 : 0));
     }
 }

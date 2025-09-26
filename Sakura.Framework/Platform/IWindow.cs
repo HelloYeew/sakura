@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using Sakura.Framework.Input;
 
 namespace Sakura.Framework.Platform;
 
@@ -16,6 +17,21 @@ public interface IWindow : IDisposable
     /// Whether the window can be resizable by the user.
     /// </summary>
     bool Resizable { get; set; }
+
+    /// <summary>
+    /// Whether the window is currently active and has focus.
+    /// </summary>
+    bool IsActive { get; }
+
+    /// <summary>
+    /// Whether the user has requested to exit the window.
+    /// </summary>
+    bool IsExiting { get; }
+
+    /// <summary>
+    /// The refresh rate of the display the window is on.
+    /// </summary>
+    int DisplayHz { get; }
 
     /// <summary>
     /// The graphic surface associated with this window to render graphics to.
@@ -34,20 +50,29 @@ public interface IWindow : IDisposable
     /// </summary>
     void Create();
 
-    /// <summary>
-    /// Start the window's main loop.
-    /// </summary>
-    void Run();
+    void PollEvents();
+
+    void SwapBuffers();
+
+    void SetVSync(bool enabled);
 
     event Action Update;
-
     event Action Suspended;
-
     event Action Resumed;
-
     event Action ExitRequested;
-
     event Action Exited;
+
+    /// <summary>
+    /// Invoked when a key is pressed.
+    /// </summary>
+    event Action<KeyEvent> OnKeyDown;
+
+    /// <summary>
+    /// Invoked when a key is released.
+    /// </summary>
+    event Action<KeyEvent> OnKeyUp;
+
+    event Action<int> DisplayChanged;
 
     /// <summary>
     /// Close the window peacefully.
