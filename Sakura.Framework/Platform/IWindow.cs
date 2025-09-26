@@ -72,6 +72,8 @@ public interface IWindow : IDisposable
     /// </summary>
     event Action<KeyEvent> OnKeyUp;
 
+    event Action<int> DisplayChanged;
+
     /// <summary>
     /// Close the window peacefully.
     /// </summary>

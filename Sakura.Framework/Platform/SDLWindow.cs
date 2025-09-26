@@ -55,6 +55,7 @@ public class SDLWindow : IWindow
 
     public event Action<KeyEvent> OnKeyDown = delegate { };
     public event Action<KeyEvent> OnKeyUp = delegate { };
+    public event Action<int> DisplayChanged = delegate { };
 
     public unsafe void Initialize()
     {
@@ -173,6 +174,17 @@ public class SDLWindow : IWindow
             case WindowEventID.FocusLost:
                 IsActive = false;
                 Suspended.Invoke();
+                break;
+
+            case WindowEventID.Moved:
+                int oldHz = DisplayHz;
+                DisplayHz = getDisplayRefreshRate();
+
+                if (oldHz != DisplayHz)
+                {
+                    Logger.Verbose($"Display refresh rate changed from {oldHz} Hz to {DisplayHz} Hz.");
+                    DisplayChanged.Invoke(DisplayHz); // Invoke the new event
+                }
                 break;
         }
     }
