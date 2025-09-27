@@ -150,6 +150,20 @@ public class SDLWindow : IWindow
         }
     }
 
+    public unsafe void GetDrawableSize(out int width, out int height)
+    {
+        if (window == null)
+        {
+            width = 0;
+            height = 0;
+        }
+
+        int drawableWidth, drawableHeight;
+        sdl.GLGetDrawableSize(window, &drawableWidth, &drawableHeight);
+        width = drawableWidth;
+        height = drawableHeight;
+    }
+
     private unsafe void handleSdlEvents()
     {
         Event sdlEvent;
@@ -177,7 +191,7 @@ public class SDLWindow : IWindow
         }
     }
 
-    private void handleWindowEvent(WindowEvent sdlWindowEvent)
+    private unsafe void handleWindowEvent(WindowEvent sdlWindowEvent)
     {
         switch ((WindowEventID)sdlWindowEvent.Event)
         {
@@ -204,7 +218,10 @@ public class SDLWindow : IWindow
 
             case WindowEventID.SizeChanged:
             case WindowEventID.Resized:
-                Resized.Invoke(sdlWindowEvent.Data1, sdlWindowEvent.Data2);
+                int drawableWidth, drawableHeight;
+                sdl.GLGetDrawableSize(window, &drawableWidth, &drawableHeight);
+                Logger.Verbose($"Window resized to {drawableWidth}x{drawableHeight}");
+                Resized.Invoke(drawableWidth, drawableHeight);
                 break;
         }
     }

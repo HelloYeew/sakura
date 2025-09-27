@@ -3,6 +3,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Maths;
 
@@ -13,7 +15,30 @@ public class Container : Drawable
     private readonly List<Drawable> children = new();
     public IReadOnlyList<Drawable> Children => children;
 
-    public Vector2 ChildSize => new Vector2(DrawRectangle.Width - Padding.Total.X, DrawRectangle.Height - Padding.Total.Y);
+    public Vector2 ChildSize
+    {
+        get
+        {
+            // Start with the container's full drawable size.
+            var containerSize = DrawRectangle.Size;
+
+            // Calculate padding, scaling it relative to our own size if needed.
+            MarginPadding relativePadding = Padding;
+            if ((RelativeSizeAxes & Axes.X) != 0)
+            {
+                relativePadding.Left *= containerSize.X;
+                relativePadding.Right *= containerSize.X;
+            }
+            if ((RelativeSizeAxes & Axes.Y) != 0)
+            {
+                relativePadding.Top *= containerSize.Y;
+                relativePadding.Bottom *= containerSize.Y;
+            }
+
+            // Subtract the total scaled padding to get the area for children.
+            return new Vector2(containerSize.X - relativePadding.Total.X, containerSize.Y - relativePadding.Total.Y);
+        }
+    }
 
     public void Add(Drawable drawable)
     {
@@ -56,7 +81,7 @@ public class Container : Drawable
 
     public override void Draw(IRenderer renderer)
     {
-        foreach (var child in children)
+        foreach (var child in children.OrderBy(c => c.Depth))
         {
             child.Draw(renderer);
         }

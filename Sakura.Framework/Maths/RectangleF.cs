@@ -45,4 +45,9 @@ public struct RectangleF
         Width = size.X;
         Height = size.Y;
     }
+
+    public override string ToString()
+    {
+        return $"[X={X}, Y={Y}, Width={Width}, Height={Height}]";
+    }
 }

@@ -20,8 +20,8 @@ public class Drawable
     public Anchor Anchor { get; set; } = Anchor.Centre;
     public Anchor Origin { get; set; } = Anchor.TopLeft;
 
-    public Vector2 Position { get; set; }
-    public Vector2 Size { get; set; } = new(100, 100);
+    public Vector2 Position { get; set; } = Vector2.Zero;
+    public Vector2 Size { get; set; } = Vector2.Zero;
 
     public Axes RelativeSizeAxes { get; set; } = Axes.None;
 
@@ -32,6 +32,12 @@ public class Drawable
 
     public MarginPadding Margin { get; set; }
     public MarginPadding Padding { get; set; }
+
+    /// <summary>
+    /// The depth at which this drawable should be drawn.
+    /// A higher value means the drawable will be drawn in front of others.
+    /// </summary>
+    public float Depth { get; set; }
 
     // Caches for computed values
     public RectangleF DrawRectangle { get; private set; }
@@ -49,34 +55,53 @@ public class Drawable
 
     protected virtual void UpdateTransforms()
     {
-        // Get the parent's size for anchor calculations. Fallback to a default if no parent.
-        Vector2 parentSize = Parent?.ChildSize ?? new Vector2(800, 600);
+        // Determine the size of our parent's drawable area.
+        Vector2 parentSize = Parent?.ChildSize ?? Vector2.Zero;
 
-        // Note: If you have relative sizing, you would calculate the final drawSize here.
-        // For this example, we'll just use the drawable's local Size.
+        // Calculate our final draw size based on our local Size and relative axes.
         Vector2 drawSize = Size;
+        if ((RelativeSizeAxes & Axes.X) != 0)
+            drawSize.X *= parentSize.X;
+        if ((RelativeSizeAxes & Axes.Y) != 0)
+            drawSize.Y *= parentSize.Y;
 
-        if ((RelativeSizeAxes & Axes.X) != 0) drawSize.X *= parentSize.X;
-        if ((RelativeSizeAxes & Axes.Y) != 0) drawSize.Y *= parentSize.Y;
+        // Calculate margin, padding and position based on relative axes settings.
+        Vector2 relativePosition = Position;
+        MarginPadding relativeMargin = Margin;
 
-        // 2. Calculate the anchor's position in world coordinates.
-        // This finds the point within the parent that we are "anchored" to.
-        Vector2 anchorPosition = GetAnchorOriginVector(Anchor) * parentSize;
+        if ((RelativeSizeAxes & Axes.X) != 0)
+        {
+            relativePosition.X *= parentSize.X;
+            relativeMargin.Left *= parentSize.X;
+            relativeMargin.Right *= parentSize.X;
+        }
+        if ((RelativeSizeAxes & Axes.Y) != 0)
+        {
+            relativePosition.Y *= parentSize.Y;
+            relativeMargin.Top *= parentSize.Y;
+            relativeMargin.Bottom *= parentSize.Y;
+        }
 
-        // 3. Calculate the origin's offset in local coordinates.
-        // This finds the offset from the top-left of our drawable to its pivot point.
+        // Determine the space we are being positioned within.
+        Vector2 positioningSpace = Parent?.ChildSize ?? drawSize;
+        Vector2 anchorPosition = GetAnchorOriginVector(Anchor) * positioningSpace;
         Vector2 originOffset = GetAnchorOriginVector(Origin) * drawSize;
 
-        // 4. Calculate the final position for the top-left corner of the drawable.
-        // Final Position = (Parent's Anchor Point) + (Relative Position) - (Our Origin Offset)
-        Vector2 finalDrawPosition = anchorPosition + Position - originOffset;
+        // Apply the now-relative margin to get the margin offset.
+        var marginOffset = new Vector2(relativeMargin.Left - relativeMargin.Right, relativeMargin.Top - relativeMargin.Bottom);
 
-        // 5. Create the transformation matrices.
-        // The order is important: scale first, then translate.
+        // Calculate the final position using the now-relative position and margin.
+        Vector2 finalDrawPosition = anchorPosition + relativePosition + marginOffset - originOffset;
+
+        // Create the transformation matrices.
         var scaleMatrix = Matrix4x4.CreateScale(new Vector3(drawSize.X, drawSize.Y, 1));
-        var translationMatrix = Matrix4x4.CreateTranslation(new Vector3(finalDrawPosition.X, finalDrawPosition.Y, 0));
+        // Use the Depth property for the Z-coordinate of the translation.
+        var translationMatrix = Matrix4x4.CreateTranslation(new Vector3(finalDrawPosition.X, finalDrawPosition.Y, Depth));
 
         ModelMatrix = scaleMatrix * translationMatrix;
+
+        // Update the final absolute draw rectangle.
+        DrawRectangle = new RectangleF(finalDrawPosition, drawSize);
     }
 
     public static Vector2 GetAnchorOriginVector(Anchor anchor)

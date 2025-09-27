@@ -56,6 +56,11 @@ public interface IWindow : IDisposable
 
     void SetVSync(bool enabled);
 
+    /// <summary>
+    /// Gets the underlying drawable surface size in physical pixels.
+    /// </summary>
+    void GetDrawableSize(out int width, out int height);
+
     event Action Update;
     event Action Suspended;
     event Action Resumed;

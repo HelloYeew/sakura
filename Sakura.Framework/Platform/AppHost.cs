@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetBrains.Annotations;
@@ -215,16 +216,20 @@ public abstract class AppHost : IDisposable
                 onFrameLimiterChanged(new ValueChangedEvent<FrameSync>(default, FrameLimiter.Value));
 
                 SetupRenderer();
-
-                onResize(800, 600);
             }
 
             _root = new Container
             {
-                RelativeSizeAxes = Axes.Both
+                RelativeSizeAxes = Axes.None,
+                Size = new Vector2(1,1)
             };
             Renderer?.SetRoot(_root);
             app.SetRoot(_root);
+
+            // Set initial size to current window size.
+            Window.GetDrawableSize(out int initialWidth, out int initialHeight);
+            onResize(initialWidth, initialHeight);
+
             _app.Load();
 
             AppClock = new Clock(true);
@@ -310,6 +315,14 @@ public abstract class AppHost : IDisposable
             int nextValue = (currentValue + 1) % Enum.GetValues(typeof(FrameSync)).Length;
             FrameLimiter.Value = (FrameSync)nextValue;
         }
+        if (!e.IsRepeat && e.Key == Key.F1)
+        {
+            var builder = new StringBuilder();
+            builder.AppendLine("--- HIERARCHY DUMP ---");
+            PrintHierarchy(_root, builder);
+            Logger.Log(builder.ToString());
+            Logger.Log("Hierarchy dumped to console. Press F1 to dump again.");
+        }
     }
 
     protected virtual void OnKeyUp(KeyEvent e)
@@ -333,6 +346,24 @@ public abstract class AppHost : IDisposable
     {
         // VSync need to be set on window, other frame limiters are handled in the clock.
         Window?.SetVSync(e.NewValue == FrameSync.VSync);
+    }
+
+    public void PrintHierarchy(Drawable drawable, StringBuilder builder, string indent = "")
+    {
+        builder.AppendLine($"{indent}- {drawable.GetType().Name}");
+        builder.AppendLine($"{indent}  Size: {drawable.Size}");
+        builder.AppendLine($"{indent}  Position (Relative): {drawable.Position}");
+        builder.AppendLine($"{indent}  DrawRectangle (Absolute): {drawable.DrawRectangle}");
+        builder.AppendLine($"{indent}  ModelMatrix: {drawable.ModelMatrix}");
+
+        if (drawable is Container container)
+        {
+            builder.AppendLine($"{indent}  Children ({container.Children.Count}):");
+            foreach (var child in container.Children)
+            {
+                PrintHierarchy(child, builder, indent + "  ");
+            }
+        }
     }
 
     /// <summary>
