@@ -205,7 +205,7 @@ public class SDLWindow : IWindow
                 Suspended.Invoke();
                 break;
 
-            case WindowEventID.Moved:
+            case WindowEventID.DisplayChanged:
                 int oldHz = DisplayHz;
                 DisplayHz = getDisplayRefreshRate();
 
