@@ -34,6 +34,24 @@ public interface IWindow : IDisposable
     int DisplayHz { get; }
 
     /// <summary>
+    /// Current width of the window's drawable area in pixels.
+    /// <remarks>
+    /// This value got update when the window is resized, to get it in real-time use <see cref="GetDrawableSize"/> method instead,
+    /// but use this for general purpose.
+    /// </remarks>
+    /// </summary>
+    int Width { get; }
+
+    /// <summary>
+    /// Current height of the window's drawable area in pixels.
+    /// <remarks>
+    /// This value got update when the window is resized, to get it in real-time use <see cref="GetDrawableSize"/> method instead,
+    /// but use this for general purpose.
+    /// </remarks>
+    /// </summary>
+    int Height { get; }
+
+    /// <summary>
     /// The graphic surface associated with this window to render graphics to.
     /// This is a value that the graphic API will use to render graphics to the window.
     /// </summary>

@@ -26,6 +26,8 @@ public class SDLWindow : IWindow
 
     private string title = "Window";
     private bool resizable = true;
+    private int currentWidth;
+    private int currentHeight;
 
     private WindowFlags windowFlags = WindowFlags.Opengl | WindowFlags.AllowHighdpi;
 
@@ -40,6 +42,9 @@ public class SDLWindow : IWindow
         get => resizable;
         set => setResizable(value);
     }
+
+    public int Width => currentWidth;
+    public int Height => currentHeight;
 
     public IGraphicsSurface GraphicsSurface => graphicsSurface;
 
@@ -124,6 +129,8 @@ public class SDLWindow : IWindow
 
         DisplayHz = getDisplayRefreshRate();
         Logger.Verbose($"Display refresh rate: {DisplayHz} Hz");
+
+        GetDrawableSize(out currentWidth, out currentHeight);
 
         Logger.Verbose("SDL window created successfully");
 
@@ -220,7 +227,13 @@ public class SDLWindow : IWindow
             case WindowEventID.Resized:
                 int drawableWidth, drawableHeight;
                 sdl.GLGetDrawableSize(window, &drawableWidth, &drawableHeight);
+                // SDL sometimes sends multiple resize events with the same size, ignore them
+                // to prevent resize event got invoke multiple times
+                if (drawableWidth == currentWidth && drawableHeight == currentHeight)
+                    break;
                 Logger.Verbose($"Window resized to {drawableWidth}x{drawableHeight}");
+                currentWidth = drawableWidth;
+                currentHeight = drawableHeight;
                 Resized.Invoke(drawableWidth, drawableHeight);
                 break;
         }
