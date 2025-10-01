@@ -8,6 +8,7 @@ using System.Diagnostics.CodeAnalysis;
 using Sakura.Framework.Input;
 using Silk.NET.SDL;
 using Sakura.Framework.Logging;
+using Silk.NET.OpenGL;
 using Version = Silk.NET.SDL.Version;
 
 namespace Sakura.Framework.Platform;
@@ -25,6 +26,8 @@ public class SDLWindow : IWindow
 
     private string title = "Window";
     private bool resizable = true;
+    private int currentWidth;
+    private int currentHeight;
 
     private WindowFlags windowFlags = WindowFlags.Opengl | WindowFlags.AllowHighdpi;
 
@@ -39,6 +42,9 @@ public class SDLWindow : IWindow
         get => resizable;
         set => setResizable(value);
     }
+
+    public int Width => currentWidth;
+    public int Height => currentHeight;
 
     public IGraphicsSurface GraphicsSurface => graphicsSurface;
 
@@ -56,10 +62,18 @@ public class SDLWindow : IWindow
     public event Action<KeyEvent> OnKeyDown = delegate { };
     public event Action<KeyEvent> OnKeyUp = delegate { };
     public event Action<int> DisplayChanged = delegate { };
+    public event Action<int, int> Resized = delegate { };
 
     public unsafe void Initialize()
     {
         sdl = Sdl.GetApi();
+
+        // Make sure SDL video backend is fully initialized
+        // To make it support for OpenGL context and process advance hint like profile version
+        if (sdl.Init(Sdl.InitVideo) < 0)
+        {
+            throw new Exception($"Failed to initialize SDL: {sdl.GetErrorS()}");
+        }
 
         Version sdlVersion = new Version();
         sdl.GetVersion(ref sdlVersion);
@@ -81,6 +95,12 @@ public class SDLWindow : IWindow
         {
             windowFlags |= WindowFlags.Resizable;
         }
+
+        // Make sure SDL use OpenGL 3.3 or later
+        sdl.GLSetAttribute(GLattr.ContextMajorVersion, 3);
+        sdl.GLSetAttribute(GLattr.ContextMinorVersion, 3);
+        sdl.GLSetAttribute(GLattr.ContextFlags, (int)ContextFlagMask.ForwardCompatibleBit);
+        sdl.GLSetAttribute(GLattr.ContextProfileMask, (int)GLprofile.Core);
 
         window = sdl.CreateWindow(
             title,
@@ -110,6 +130,8 @@ public class SDLWindow : IWindow
         DisplayHz = getDisplayRefreshRate();
         Logger.Verbose($"Display refresh rate: {DisplayHz} Hz");
 
+        GetDrawableSize(out currentWidth, out currentHeight);
+
         Logger.Verbose("SDL window created successfully");
 
         graphicsSurface.GetFunctionAddress = proc => (nint)sdl.GLGetProcAddress(proc);
@@ -133,6 +155,20 @@ public class SDLWindow : IWindow
             sdl.DestroyWindow(window);
             window = null;
         }
+    }
+
+    public unsafe void GetDrawableSize(out int width, out int height)
+    {
+        if (window == null)
+        {
+            width = 0;
+            height = 0;
+        }
+
+        int drawableWidth, drawableHeight;
+        sdl.GLGetDrawableSize(window, &drawableWidth, &drawableHeight);
+        width = drawableWidth;
+        height = drawableHeight;
     }
 
     private unsafe void handleSdlEvents()
@@ -162,7 +198,7 @@ public class SDLWindow : IWindow
         }
     }
 
-    private void handleWindowEvent(WindowEvent sdlWindowEvent)
+    private unsafe void handleWindowEvent(WindowEvent sdlWindowEvent)
     {
         switch ((WindowEventID)sdlWindowEvent.Event)
         {
@@ -176,7 +212,7 @@ public class SDLWindow : IWindow
                 Suspended.Invoke();
                 break;
 
-            case WindowEventID.Moved:
+            case WindowEventID.DisplayChanged:
                 int oldHz = DisplayHz;
                 DisplayHz = getDisplayRefreshRate();
 
@@ -185,6 +221,20 @@ public class SDLWindow : IWindow
                     Logger.Verbose($"Display refresh rate changed from {oldHz} Hz to {DisplayHz} Hz.");
                     DisplayChanged.Invoke(DisplayHz); // Invoke the new event
                 }
+                break;
+
+            case WindowEventID.SizeChanged:
+            case WindowEventID.Resized:
+                int drawableWidth, drawableHeight;
+                sdl.GLGetDrawableSize(window, &drawableWidth, &drawableHeight);
+                // SDL sometimes sends multiple resize events with the same size, ignore them
+                // to prevent resize event got invoke multiple times
+                if (drawableWidth == currentWidth && drawableHeight == currentHeight)
+                    break;
+                Logger.Verbose($"Window resized to {drawableWidth}x{drawableHeight}");
+                currentWidth = drawableWidth;
+                currentHeight = drawableHeight;
+                Resized.Invoke(drawableWidth, drawableHeight);
                 break;
         }
     }

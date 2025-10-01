@@ -11,14 +11,33 @@ namespace Sakura.Framework.Maths;
 /// A 4D vector struct with implicit conversions to and from <see cref="System.Numerics.Vector4"/>.
 /// </summary>
 [MathStruct]
-public readonly partial struct Vector4
+public partial struct Vector4
 {
-    public readonly SystemVector4 Value;
+    public SystemVector4 Value;
 
-    public float X => Value.X;
-    public float Y => Value.Y;
-    public float Z => Value.Z;
-    public float W => Value.W;
+    public float X
+    {
+        get => Value.X;
+        set => Value.X = value;
+    }
+
+    public float Y
+    {
+        get => Value.Y;
+        set => Value.Y = value;
+    }
+
+    public float Z
+    {
+        get => Value.Z;
+        set => Value.Z = value;
+    }
+
+    public float W
+    {
+        get => Value.W;
+        set => Value.W = value;
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static implicit operator Vector4(SystemVector4 v) => new Vector4(v.X, v.Y, v.Z, v.W);

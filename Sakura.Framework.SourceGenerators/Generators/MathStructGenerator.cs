@@ -114,7 +114,7 @@ public class MathStructGenerator : IIncrementalGenerator
 
         // Add IEquatable<T> to the struct definition if the underlying type supports it.
         string interfaceDeclaration = iEquatableInterface != null ? $" : System.IEquatable<{wrapperName}>" : "";
-        code.AppendLine($"public readonly partial struct {wrapperName}{interfaceDeclaration}");
+        code.AppendLine($"public partial struct {wrapperName}{interfaceDeclaration}");
         code.AppendLine("{");
 
         var members = underlyingType.GetMembers();
@@ -164,19 +164,27 @@ public class MathStructGenerator : IIncrementalGenerator
             string returnTypeName = getMappedTypeName(member.ReturnType, typeMap);
             string parameters = string.Join(", ", member.Parameters.Select(p => $"{getMappedTypeName(p.Type, typeMap)} {p.Name}"));
 
-            // Correctly construct the implementation body (e.g., "left + right" or "-value")
+            // Unwraps the wrapper types to access their '.Value' field, forwarding the call to the
+            // underlying System.Numerics operator.
             string implementation;
             if (member.Parameters.Length == 1)
             {
-                implementation = $"{operatorSymbol}{member.Parameters[0].Name}";
+                var p0 = member.Parameters[0];
+                // If the parameter is a wrapper type, use its .Value property. Otherwise, use it directly.
+                string operand0 = typeMap.ContainsKey(p0.Type.ToDisplayString()) ? $"{p0.Name}.Value" : p0.Name;
+                implementation = $"{operatorSymbol}{operand0}";
             }
             else if (member.Parameters.Length == 2)
             {
-                implementation = $"{member.Parameters[0].Name} {operatorSymbol} {member.Parameters[1].Name}";
+                var p0 = member.Parameters[0];
+                var p1 = member.Parameters[1];
+                // Do the same for both parameters in a binary operator.
+                string operand0 = typeMap.ContainsKey(p0.Type.ToDisplayString()) ? $"{p0.Name}.Value" : p0.Name;
+                string operand1 = typeMap.ContainsKey(p1.Type.ToDisplayString()) ? $"{p1.Name}.Value" : p1.Name;
+                implementation = $"{operand0} {operatorSymbol} {operand1}";
             }
             else
             {
-                // Not a unary or binary operator we can handle, so skip.
                 continue;
             }
 

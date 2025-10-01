@@ -11,13 +11,27 @@ namespace Sakura.Framework.Maths;
 /// A 3D vector struct with implicit conversions to and from <see cref="System.Numerics.Vector3"/>.
 /// </summary>
 [MathStruct]
-public readonly partial struct Vector3
+public partial struct Vector3
 {
-    public readonly SystemVector3 Value;
+    public SystemVector3 Value;
 
-    public float X => Value.X;
-    public float Y => Value.Y;
-    public float Z => Value.Z;
+    public float X
+    {
+        get => Value.X;
+        set => Value.X = value;
+    }
+
+    public float Y
+    {
+        get => Value.Y;
+        set => Value.Y = value;
+    }
+
+    public float Z
+    {
+        get => Value.Z;
+        set => Value.Z = value;
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static implicit operator Vector3(SystemVector3 v) => new Vector3(v.X, v.Y, v.Z);

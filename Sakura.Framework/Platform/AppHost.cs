@@ -7,14 +7,18 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetBrains.Annotations;
 using Sakura.Framework.Extensions.ExceptionExtensions;
 using Sakura.Framework.Extensions.IEnumerableExtensions;
+using Sakura.Framework.Graphics.Drawables;
+using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
+using Sakura.Framework.Maths;
 using Sakura.Framework.Reactive;
 using Sakura.Framework.Timing;
 
@@ -24,6 +28,9 @@ public abstract class AppHost : IDisposable
 {
     public IWindow Window { get; private set; }
     public IRenderer Renderer { get; private set; }
+
+    private App _app;
+    private Container _root;
 
     public Reactive<FrameSync> FrameLimiter { get; protected set; }
     protected IClock AppClock { get; private set; }
@@ -150,6 +157,8 @@ public abstract class AppHost : IDisposable
 
     public void Run(App app)
     {
+        _app = app;
+
         if (RuntimeInfo.IsDesktop)
         {
             GCSettings.LatencyMode = GCLatencyMode.SustainedLowLatency;
@@ -167,6 +176,7 @@ public abstract class AppHost : IDisposable
             TaskScheduler.UnobservedTaskException += unobservedTaskExceptionHandler;
 
             Storage = app.CreateStorage(this, GetDefaultAppStorage());
+            app.SetHost(this);
 
             Logger.AppIdentifier = Name;
             Logger.VersionIdentifier = RuntimeInfo.EntryAssembly.GetName().Version?.ToString() ?? Logger.VersionIdentifier;
@@ -198,6 +208,7 @@ public abstract class AppHost : IDisposable
 
                 Window.OnKeyDown += OnKeyDown;
                 Window.OnKeyUp += OnKeyUp;
+                Window.Resized += onResize;
 
                 Window.Initialize();
                 Window.Create();
@@ -206,6 +217,20 @@ public abstract class AppHost : IDisposable
 
                 SetupRenderer();
             }
+
+            _root = new Container
+            {
+                RelativeSizeAxes = Axes.None,
+                Size = new Vector2(1,1)
+            };
+            Renderer?.SetRoot(_root);
+            app.SetRoot(_root);
+
+            // Set initial size to current window size.
+            Window.GetDrawableSize(out int initialWidth, out int initialHeight);
+            onResize(initialWidth, initialHeight);
+
+            _app.Load();
 
             AppClock = new Clock(true);
             lastUpdateTime = AppClock.CurrentTime;
@@ -290,11 +315,25 @@ public abstract class AppHost : IDisposable
             int nextValue = (currentValue + 1) % Enum.GetValues(typeof(FrameSync)).Length;
             FrameLimiter.Value = (FrameSync)nextValue;
         }
+        if (!e.IsRepeat && e.Key == Key.F1)
+        {
+            var builder = new StringBuilder();
+            builder.AppendLine("--- HIERARCHY DUMP ---");
+            PrintHierarchy(_root, builder);
+            Logger.Log(builder.ToString());
+            Logger.Log("Hierarchy dumped to console. Press F1 to dump again.");
+        }
     }
 
     protected virtual void OnKeyUp(KeyEvent e)
     {
         // TODO: OnKeyUp drawable handle here
+    }
+
+    private void onResize(int width, int height)
+    {
+        Renderer?.Resize(width, height);
+        if (_root != null) _root.Size = new Vector2(width, height);
     }
 
     protected virtual void SetupRenderer()
@@ -307,6 +346,24 @@ public abstract class AppHost : IDisposable
     {
         // VSync need to be set on window, other frame limiters are handled in the clock.
         Window?.SetVSync(e.NewValue == FrameSync.VSync);
+    }
+
+    public void PrintHierarchy(Drawable drawable, StringBuilder builder, string indent = "")
+    {
+        builder.AppendLine($"{indent}- {drawable.GetType().Name}");
+        builder.AppendLine($"{indent}  Size: {drawable.Size}");
+        builder.AppendLine($"{indent}  Position (Relative): {drawable.Position}");
+        builder.AppendLine($"{indent}  DrawRectangle (Absolute): {drawable.DrawRectangle}");
+        builder.AppendLine($"{indent}  ModelMatrix: {drawable.ModelMatrix}");
+
+        if (drawable is Container container)
+        {
+            builder.AppendLine($"{indent}  Children ({container.Children.Count}):");
+            foreach (var child in container.Children)
+            {
+                PrintHierarchy(child, builder, indent + "  ");
+            }
+        }
     }
 
     /// <summary>
@@ -333,7 +390,7 @@ public abstract class AppHost : IDisposable
         if (targetHz == 0) // Unlimited mode
         {
             // In unlimited mode, we just update once per loop iteration.
-            // TODO: might want to pass AppClock.ElapsedFrameTime to your update logic here.
+            _root?.Update();
             lastUpdateTime = AppClock.CurrentTime;
             return;
         }
@@ -345,7 +402,7 @@ public abstract class AppHost : IDisposable
         {
             // TODO: This is main loop here, might want to pass timeStep to
             // The update that happened in the drawable need to be aware of the timeStep.
-
+            _root?.Update();
             lastUpdateTime += timeStep;
         }
     }
