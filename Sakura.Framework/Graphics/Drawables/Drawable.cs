@@ -6,6 +6,7 @@ using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Textures;
+using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.Drawables;
@@ -17,6 +18,10 @@ public class Drawable
 {
     public Container Parent { get; internal set; }
 
+    public bool IsHovered { get; private set; }
+    public bool IsDragged { get; private set; }
+    internal bool IsLoaded { get; private set; }
+
     private Anchor anchor = Anchor.Centre;
     private Anchor origin = Anchor.TopLeft;
     private Vector2 position = Vector2.Zero;
@@ -24,8 +29,8 @@ public class Drawable
     private Axes relativeSizeAxes = Axes.None;
     private Color color = Color.White;
     private float alpha = 1f;
-    private MarginPadding margin = new MarginPadding();
-    private MarginPadding padding = new MarginPadding();
+    private MarginPadding margin;
+    private MarginPadding padding;
     private float depth;
 
     /// <summary>
@@ -219,6 +224,8 @@ public class Drawable
         DrawRectangle = new RectangleF(finalDrawPosition, drawSize);
     }
 
+    public bool Contains(Vector2 screenSpacePos) => DrawRectangle.Contains(screenSpacePos);
+
     public static Vector2 GetAnchorOriginVector(Anchor anchor)
     {
         switch (anchor)
@@ -234,6 +241,24 @@ public class Drawable
             case Anchor.BottomRight: return new Vector2(1.0f, 1.0f);
             default: return Vector2.Zero;
         }
+    }
+
+    /// <summary>
+    /// Called to perform loading tasks to load required resources and dependencies.
+    /// Called once before the first update.
+    /// This method is recursively called down the drawable hierarchy.
+    /// </summary>
+    public virtual void Load()
+    {
+        IsLoaded = true;
+    }
+
+    /// <summary>
+    /// Called after the drawable and all its children have been loaded.
+    /// This method is recursively called down the drawable hierarchy.
+    /// </summary>
+    public virtual void LoadComplete()
+    {
     }
 
     public virtual void Draw(IRenderer renderer)
@@ -255,6 +280,44 @@ public class Drawable
         if ((flags & InvalidationFlags.DrawInfo) != 0)
             Parent?.Invalidate(InvalidationFlags.DrawInfo);
     }
+
+    #region Event Handlers
+
+    public virtual bool OnMouseDown(MouseButtonEvent e) => false;
+    public virtual bool OnMouseUp(MouseButtonEvent e) => false;
+    public virtual bool OnClick(MouseButtonEvent e) => false;
+    public virtual bool OnDoubleClick(MouseButtonEvent e) => false;
+
+    public virtual bool OnMouseMove(MouseEvent e)
+    {
+        if (!IsHovered && Contains(e.ScreenSpaceMousePosition))
+        {
+            IsHovered = true;
+            return OnHover(e);
+        }
+
+        if(IsHovered && !Contains(e.ScreenSpaceMousePosition))
+        {
+            IsHovered = false;
+            return OnHoverLost(e);
+        }
+
+        return false;
+    }
+
+    public virtual bool OnHover(MouseEvent e) => false;
+    public virtual bool OnHoverLost(MouseEvent e) => false;
+
+    public virtual bool OnDragStart(MouseButtonEvent e) => false;
+    public virtual bool OnDrag(MouseEvent e) => false;
+    public virtual bool OnDragEnd(MouseButtonEvent e) => false;
+
+    public virtual bool OnScroll(ScrollEvent e) => false;
+
+    public virtual bool OnKeyDown(KeyEvent e) => false;
+    public virtual bool OnKeyUp(KeyEvent e) => false;
+
+    #endregion
 }
 
 /// <summary>

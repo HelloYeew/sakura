@@ -14,7 +14,6 @@ using JetBrains.Annotations;
 using Sakura.Framework.Extensions.ExceptionExtensions;
 using Sakura.Framework.Extensions.IEnumerableExtensions;
 using Sakura.Framework.Graphics.Drawables;
-using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
@@ -29,8 +28,7 @@ public abstract class AppHost : IDisposable
     public IWindow Window { get; private set; }
     public IRenderer Renderer { get; private set; }
 
-    private App _app;
-    private Container _root;
+    private App app;
 
     public Reactive<FrameSync> FrameLimiter { get; protected set; }
     protected IClock AppClock { get; private set; }
@@ -157,7 +155,7 @@ public abstract class AppHost : IDisposable
 
     public void Run(App app)
     {
-        _app = app;
+        this.app = app;
 
         if (RuntimeInfo.IsDesktop)
         {
@@ -208,6 +206,10 @@ public abstract class AppHost : IDisposable
 
                 Window.OnKeyDown += OnKeyDown;
                 Window.OnKeyUp += OnKeyUp;
+                Window.OnMouseDown += OnMouseDown;
+                Window.OnMouseUp += OnMouseUp;
+                Window.OnMouseMove += OnMouseMove;
+                Window.OnScroll += OnScroll;
                 Window.Resized += onResize;
 
                 Window.Initialize();
@@ -218,19 +220,13 @@ public abstract class AppHost : IDisposable
                 SetupRenderer();
             }
 
-            _root = new Container
-            {
-                RelativeSizeAxes = Axes.None,
-                Size = new Vector2(1,1)
-            };
-            Renderer?.SetRoot(_root);
-            app.SetRoot(_root);
+            Renderer?.SetRoot(this.app);
 
             // Set initial size to current window size.
             Window.GetDrawableSize(out int initialWidth, out int initialHeight);
             onResize(initialWidth, initialHeight);
 
-            _app.Load();
+            this.app.Load();
 
             AppClock = new Clock(true);
             lastUpdateTime = AppClock.CurrentTime;
@@ -305,7 +301,7 @@ public abstract class AppHost : IDisposable
 
     protected virtual void OnKeyDown(KeyEvent e)
     {
-        // TODO: OnKeyDown drawable handle here
+        app?.OnKeyDown(e);
 
         // Global hotkey
         // TODO: Global hotkey should be in list (don't have to be able to change since it's framework level)
@@ -319,7 +315,7 @@ public abstract class AppHost : IDisposable
         {
             var builder = new StringBuilder();
             builder.AppendLine("--- HIERARCHY DUMP ---");
-            PrintHierarchy(_root, builder);
+            PrintHierarchy(app, builder);
             Logger.Log(builder.ToString());
             Logger.Log("Hierarchy dumped to console. Press F1 to dump again.");
         }
@@ -327,14 +323,19 @@ public abstract class AppHost : IDisposable
 
     protected virtual void OnKeyUp(KeyEvent e)
     {
-        // TODO: OnKeyUp drawable handle here
+        app?.OnKeyUp(e);
     }
 
     private void onResize(int width, int height)
     {
         Renderer?.Resize(width, height);
-        if (_root != null) _root.Size = new Vector2(width, height);
+        if (app != null) app.Size = new Vector2(width, height);
     }
+
+    private void OnMouseDown(MouseButtonEvent e) => app?.OnMouseDown(e);
+    private void OnMouseUp(MouseButtonEvent e) => app?.OnMouseUp(e);
+    private void OnMouseMove(MouseEvent e) => app?.OnMouseMove(e);
+    private void OnScroll(ScrollEvent e) => app?.OnScroll(e);
 
     protected virtual void SetupRenderer()
     {
@@ -390,7 +391,7 @@ public abstract class AppHost : IDisposable
         if (targetHz == 0) // Unlimited mode
         {
             // In unlimited mode, we just update once per loop iteration.
-            _root?.Update();
+            app?.Update();
             lastUpdateTime = AppClock.CurrentTime;
             return;
         }
@@ -402,7 +403,7 @@ public abstract class AppHost : IDisposable
         {
             // TODO: This is main loop here, might want to pass timeStep to
             // The update that happened in the drawable need to be aware of the timeStep.
-            _root?.Update();
+            app?.Update();
             lastUpdateTime += timeStep;
         }
     }

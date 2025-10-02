@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
+using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.Drawables;
@@ -62,6 +63,13 @@ public class Container : Drawable
         children.Add(drawable);
 
         Invalidate(InvalidationFlags.DrawInfo);
+
+        if (IsLoaded)
+        {
+            drawable.Load();
+            drawable.LoadComplete();
+            drawable.Invalidate(InvalidationFlags.DrawInfo);
+        }
     }
 
     public void Remove(Drawable drawable)
@@ -102,4 +110,56 @@ public class Container : Drawable
             child.Draw(renderer);
         }
     }
+
+    public override void Load()
+    {
+        base.Load();
+        foreach (var child in children)
+        {
+            child.Load();
+        }
+    }
+
+    public override void LoadComplete()
+    {
+        base.LoadComplete();
+        foreach (var child in children)
+        {
+            child.LoadComplete();
+        }
+    }
+
+    #region Event Propagation
+
+    public override bool OnMouseDown(MouseButtonEvent e)
+    {
+        return children.Any(c => c.Contains(e.ScreenSpaceMousePosition) && c.OnMouseDown(e));
+    }
+
+    public override bool OnMouseUp(MouseButtonEvent e)
+    {
+        return children.Any(c => c.OnMouseUp(e));
+    }
+
+    public override bool OnMouseMove(MouseEvent e)
+    {
+        return children.Any(c => c.OnMouseMove(e));
+    }
+
+    public override bool OnScroll(ScrollEvent e)
+    {
+        return children.Any(c => c.Contains(e.ScreenSpaceMousePosition) && c.OnScroll(e));
+    }
+
+    public override bool OnKeyDown(KeyEvent e)
+    {
+        return children.Any(c => c.OnKeyDown(e));
+    }
+
+    public override bool OnKeyUp(KeyEvent e)
+    {
+        return children.Any(c => c.OnKeyUp(e));
+    }
+
+    #endregion
 }

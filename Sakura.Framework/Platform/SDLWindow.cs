@@ -8,7 +8,10 @@ using System.Diagnostics.CodeAnalysis;
 using Sakura.Framework.Input;
 using Silk.NET.SDL;
 using Sakura.Framework.Logging;
+using Sakura.Framework.Maths;
 using Silk.NET.OpenGL;
+using SilkMouseButtonEvent = Silk.NET.SDL.MouseButtonEvent;
+using SakuraMouseButtonEvent = Sakura.Framework.Input.MouseButtonEvent;
 using Version = Silk.NET.SDL.Version;
 
 namespace Sakura.Framework.Platform;
@@ -21,6 +24,7 @@ public class SDLWindow : IWindow
     private static unsafe Window* window;
 
     private IGraphicsSurface graphicsSurface = new SDLGraphicsSurface();
+    private readonly MouseState mouseState = new MouseState();
 
     private bool initialized;
 
@@ -63,6 +67,12 @@ public class SDLWindow : IWindow
     public event Action<KeyEvent> OnKeyUp = delegate { };
     public event Action<int> DisplayChanged = delegate { };
     public event Action<int, int> Resized = delegate { };
+
+    public event Action<SakuraMouseButtonEvent> OnMouseDown = delegate { };
+    public event Action<SakuraMouseButtonEvent> OnMouseUp = delegate { };
+    public event Action<MouseEvent> OnMouseMove = delegate { };
+    public event Action<ScrollEvent> OnScroll = delegate { };
+
 
     public unsafe void Initialize()
     {
@@ -194,6 +204,22 @@ public class SDLWindow : IWindow
                 case EventType.Keyup:
                     handleKeyEvent(sdlEvent.Key, OnKeyUp);
                     break;
+
+                case EventType.Mousebuttondown:
+                    handleMouseButtonEvent(sdlEvent.Button, OnMouseDown);
+                    break;
+
+                case EventType.Mousebuttonup:
+                    handleMouseButtonEvent(sdlEvent.Button, OnMouseUp);
+                    break;
+
+                case EventType.Mousemotion:
+                    handleMouseMotionEvent(sdlEvent.Motion);
+                    break;
+
+                case EventType.Mousewheel:
+                    handleMouseWheelEvent(sdlEvent.Wheel);
+                    break;
             }
         }
     }
@@ -241,7 +267,7 @@ public class SDLWindow : IWindow
 
     private void handleKeyEvent(KeyboardEvent keyboardEvent, Action<KeyEvent> action)
     {
-        var key = SDLKeyMapping.ToSakuraKey(keyboardEvent.Keysym.Scancode);
+        var key = SDLEnumMapping.ToSakuraKey(keyboardEvent.Keysym.Scancode);
         if (key == Key.Unknown)
             return;
 
@@ -255,6 +281,26 @@ public class SDLWindow : IWindow
         bool isRepeat = keyboardEvent.Repeat != 0;
 
         action.Invoke(new KeyEvent(key, modifiers, isRepeat));
+    }
+
+    private void handleMouseButtonEvent(SilkMouseButtonEvent buttonEvent, Action<SakuraMouseButtonEvent> action)
+    {
+        var button = SDLEnumMapping.ToSakuraMouseButton(buttonEvent.Button);
+        if (button == MouseButton.Unknown) return;
+
+        mouseState.SetPressed(button, buttonEvent.State == 1);
+        action.Invoke(new Input.MouseButtonEvent(mouseState, button));
+    }
+
+    private void handleMouseMotionEvent(MouseMotionEvent motionEvent)
+    {
+        mouseState.Position = new Vector2(motionEvent.X, motionEvent.Y);
+        OnMouseMove.Invoke(new MouseEvent(mouseState));
+    }
+
+    private void handleMouseWheelEvent(MouseWheelEvent wheelEvent)
+    {
+        OnScroll.Invoke(new ScrollEvent(mouseState, new Vector2(wheelEvent.X, wheelEvent.Y)));
     }
 
     private unsafe int getDisplayRefreshRate()
