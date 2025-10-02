@@ -61,7 +61,7 @@ public class Container : Drawable
         drawable.Parent = this;
         children.Add(drawable);
 
-        Invalidate(Invalidation.DrawInfo);
+        Invalidate(InvalidationFlags.DrawInfo);
     }
 
     public void Remove(Drawable drawable)
@@ -69,13 +69,26 @@ public class Container : Drawable
         if (children.Remove(drawable))
         {
             drawable.Parent = null;
-            Invalidate(Invalidation.DrawInfo);
+            Invalidate(InvalidationFlags.DrawInfo);
         }
     }
 
     public override void Update()
     {
+        // Check whether our layout was dirty before base.Update() is called, as it will clear our invalidation flags.
+        bool layoutWasInvalidated = (Invalidation & InvalidationFlags.DrawInfo) != 0;
+
+        // Base update to call UpdateTransforms() on this container if it was invalid.
         base.Update();
+
+        if (layoutWasInvalidated)
+        {
+            foreach (var child in children)
+            {
+                child.Invalidate(InvalidationFlags.DrawInfo);
+            }
+        }
+
         foreach (var child in children)
         {
             child.Update();

@@ -31,7 +31,7 @@ public class Drawable
     /// <summary>
     /// An invalidation flag representing which aspects of the drawable need to be recomputed.
     /// </summary>
-    private Invalidation invalidation = Invalidation.All;
+    protected InvalidationFlags Invalidation = InvalidationFlags.All;
 
     public Anchor Anchor
     {
@@ -40,7 +40,7 @@ public class Drawable
         {
             if (anchor == value) return;
             anchor = value;
-            Invalidate(Invalidation.DrawInfo);
+            Invalidate(InvalidationFlags.DrawInfo);
         }
     }
 
@@ -51,7 +51,7 @@ public class Drawable
         {
             if (origin == value) return;
             origin = value;
-            Invalidate(Invalidation.DrawInfo);
+            Invalidate(InvalidationFlags.DrawInfo);
         }
     }
 
@@ -62,7 +62,7 @@ public class Drawable
         {
             if (position == value) return;
             position = value;
-            Invalidate(Invalidation.DrawInfo);
+            Invalidate(InvalidationFlags.DrawInfo);
         }
     }
 
@@ -73,7 +73,7 @@ public class Drawable
         {
             if (size == value) return;
             size = value;
-            Invalidate(Invalidation.DrawInfo);
+            Invalidate(InvalidationFlags.DrawInfo);
         }
     }
 
@@ -84,7 +84,7 @@ public class Drawable
         {
             if (relativeSizeAxes == value) return;
             relativeSizeAxes = value;
-            Invalidate(Invalidation.DrawInfo);
+            Invalidate(InvalidationFlags.DrawInfo);
         }
     }
 
@@ -95,7 +95,7 @@ public class Drawable
         {
             if (color == value) return;
             color = value;
-            Invalidate(Invalidation.Colour);
+            Invalidate(InvalidationFlags.Colour);
         }
     }
 
@@ -106,7 +106,7 @@ public class Drawable
         {
             if (Math.Abs(alpha - value) < 0.0001f) return;
             alpha = Math.Clamp(value, 0f, 1f);
-            Invalidate(Invalidation.Colour);
+            Invalidate(InvalidationFlags.Colour);
         }
     }
 
@@ -118,7 +118,7 @@ public class Drawable
             if (Math.Abs(depth - value) < 0.0001f) return;
             depth = value;
             // Re-sort children in parent required
-            Parent?.Invalidate(Invalidation.DrawInfo);
+            Parent?.Invalidate(InvalidationFlags.DrawInfo);
         }
     }
 
@@ -129,7 +129,7 @@ public class Drawable
         {
             if (margin.Equals(value)) return;
             margin = value;
-            Invalidate(Invalidation.DrawInfo);
+            Invalidate(InvalidationFlags.DrawInfo);
         }
     }
 
@@ -140,7 +140,7 @@ public class Drawable
         {
             if (padding.Equals(value)) return;
             padding = value;
-            Invalidate(Invalidation.DrawInfo);
+            Invalidate(InvalidationFlags.DrawInfo);
         }
     }
 
@@ -157,15 +157,15 @@ public class Drawable
 
     public virtual void Update()
     {
-        if (invalidation == Invalidation.None)
+        if (Invalidation == InvalidationFlags.None)
             return;
 
-        if ((invalidation & Invalidation.DrawInfo) != 0)
+        if ((Invalidation & InvalidationFlags.DrawInfo) != 0)
         {
             UpdateTransforms();
         }
 
-        invalidation = Invalidation.None;
+        Invalidation = InvalidationFlags.None;
     }
 
     protected virtual void UpdateTransforms()
@@ -244,16 +244,16 @@ public class Drawable
     /// <summary>
     /// Marks all or part of this drawable as requiring re-computation.
     /// </summary>
-    /// <param name="flags">An <see cref="Invalidation"/> flag representing which aspects of the drawable need to be recomputed.</param>
-    public virtual void Invalidate(Invalidation flags = Invalidation.All)
+    /// <param name="flags">An <see cref="InvalidationFlags"/> flag representing which aspects of the drawable need to be recomputed.</param>
+    public virtual void Invalidate(InvalidationFlags flags = InvalidationFlags.All)
     {
-        if ((invalidation & flags) == flags)
+        if ((Invalidation & flags) == flags)
             return; // Already invalidated for these flags.
 
-        invalidation |= flags;
+        Invalidation |= flags;
 
-        if ((flags & Invalidation.DrawInfo) != 0)
-            Parent?.Invalidate(Invalidation.DrawInfo);
+        if ((flags & InvalidationFlags.DrawInfo) != 0)
+            Parent?.Invalidate(InvalidationFlags.DrawInfo);
     }
 }
 
@@ -261,7 +261,7 @@ public class Drawable
 /// Represents the state of a drawable that requires re-computation.
 /// </summary>
 [Flags]
-public enum Invalidation
+public enum InvalidationFlags
 {
     /// <summary>
     /// The drawable is in a clean state and requires no updates.
