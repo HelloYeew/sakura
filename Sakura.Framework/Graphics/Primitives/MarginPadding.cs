@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.Primitives;
@@ -38,4 +39,17 @@ public struct MarginPadding
         Bottom = bottom;
         Left = left;
     }
+
+    public override string ToString() => $"(T:{Top}, R:{Right}, B:{Bottom}, L:{Left})";
+
+    public override bool Equals(object? obj)
+    {
+        if (obj is not MarginPadding other) return false;
+        return Math.Abs(Top - other.Top) < float.Epsilon &&
+               Math.Abs(Right - other.Right) < float.Epsilon &&
+               Math.Abs(Bottom - other.Bottom) < float.Epsilon &&
+               Math.Abs(Left - other.Left) < float.Epsilon;
+    }
+
+    public override int GetHashCode() => HashCode.Combine(Top, Right, Bottom, Left);
 }

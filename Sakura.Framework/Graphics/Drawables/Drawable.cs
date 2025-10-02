@@ -17,27 +17,134 @@ public class Drawable
 {
     public Container Parent { get; internal set; }
 
-    public Anchor Anchor { get; set; } = Anchor.Centre;
-    public Anchor Origin { get; set; } = Anchor.TopLeft;
-
-    public Vector2 Position { get; set; } = Vector2.Zero;
-    public Vector2 Size { get; set; } = Vector2.Zero;
-
-    public Axes RelativeSizeAxes { get; set; } = Axes.None;
-
-    public Color Color { get; set; } = Color.White;
-    public float Alpha { get; set; } = 1f;
-
-    public Texture Texture { get; set; }
-
-    public MarginPadding Margin { get; set; }
-    public MarginPadding Padding { get; set; }
+    private Anchor anchor = Anchor.Centre;
+    private Anchor origin = Anchor.TopLeft;
+    private Vector2 position = Vector2.Zero;
+    private Vector2 size = Vector2.Zero;
+    private Axes relativeSizeAxes = Axes.None;
+    private Color color = Color.White;
+    private float alpha = 1f;
+    private MarginPadding margin = new MarginPadding();
+    private MarginPadding padding = new MarginPadding();
+    private float depth;
 
     /// <summary>
-    /// The depth at which this drawable should be drawn.
-    /// A higher value means the drawable will be drawn in front of others.
+    /// An invalidation flag representing which aspects of the drawable need to be recomputed.
     /// </summary>
-    public float Depth { get; set; }
+    protected InvalidationFlags Invalidation = InvalidationFlags.All;
+
+    public Anchor Anchor
+    {
+        get => anchor;
+        set
+        {
+            if (anchor == value) return;
+            anchor = value;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+    }
+
+    public Anchor Origin
+    {
+        get => origin;
+        set
+        {
+            if (origin == value) return;
+            origin = value;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+    }
+
+    public Vector2 Position
+    {
+        get => position;
+        set
+        {
+            if (position == value) return;
+            position = value;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+    }
+
+    public Vector2 Size
+    {
+        get => size;
+        set
+        {
+            if (size == value) return;
+            size = value;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+    }
+
+    public Axes RelativeSizeAxes
+    {
+        get => relativeSizeAxes;
+        set
+        {
+            if (relativeSizeAxes == value) return;
+            relativeSizeAxes = value;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+    }
+
+    public Color Color
+    {
+        get => color;
+        set
+        {
+            if (color == value) return;
+            color = value;
+            Invalidate(InvalidationFlags.Colour);
+        }
+    }
+
+    public float Alpha
+    {
+        get => alpha;
+        set
+        {
+            if (Math.Abs(alpha - value) < 0.0001f) return;
+            alpha = Math.Clamp(value, 0f, 1f);
+            Invalidate(InvalidationFlags.Colour);
+        }
+    }
+
+    public float Depth
+    {
+        get => depth;
+        set
+        {
+            if (Math.Abs(depth - value) < 0.0001f) return;
+            depth = value;
+            // Re-sort children in parent required
+            Parent?.Invalidate(InvalidationFlags.DrawInfo);
+        }
+    }
+
+    public MarginPadding Margin
+    {
+        get => margin;
+        set
+        {
+            if (margin.Equals(value)) return;
+            margin = value;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+    }
+
+    public MarginPadding Padding
+    {
+        get => padding;
+        set
+        {
+            if (padding.Equals(value)) return;
+            padding = value;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+    }
+
+    public Texture Texture { get; set; }
 
     // Caches for computed values
     public RectangleF DrawRectangle { get; private set; }
@@ -50,7 +157,15 @@ public class Drawable
 
     public virtual void Update()
     {
-        UpdateTransforms();
+        if (Invalidation == InvalidationFlags.None)
+            return;
+
+        if ((Invalidation & InvalidationFlags.DrawInfo) != 0)
+        {
+            UpdateTransforms();
+        }
+
+        Invalidation = InvalidationFlags.None;
     }
 
     protected virtual void UpdateTransforms()
@@ -125,14 +240,47 @@ public class Drawable
     {
         renderer.DrawDrawable(this);
     }
+
+    /// <summary>
+    /// Marks all or part of this drawable as requiring re-computation.
+    /// </summary>
+    /// <param name="flags">An <see cref="InvalidationFlags"/> flag representing which aspects of the drawable need to be recomputed.</param>
+    public virtual void Invalidate(InvalidationFlags flags = InvalidationFlags.All)
+    {
+        if ((Invalidation & flags) == flags)
+            return; // Already invalidated for these flags.
+
+        Invalidation |= flags;
+
+        if ((flags & InvalidationFlags.DrawInfo) != 0)
+            Parent?.Invalidate(InvalidationFlags.DrawInfo);
+    }
 }
 
+/// <summary>
+/// Represents the state of a drawable that requires re-computation.
+/// </summary>
 [Flags]
-public enum Invalidation
+public enum InvalidationFlags
 {
+    /// <summary>
+    /// The drawable is in a clean state and requires no updates.
+    /// </summary>
     None = 0,
+
+    /// <summary>
+    /// The drawable's position, size, or other spatial properties have changed.
+    /// This requires recalculating the model matrix and draw rectangle.
+    /// </summary>
     DrawInfo = 1 << 0,
+
+    /// <summary>
+    /// The color of the drawable has changed.
+    /// </summary>
     Colour = 1 << 1,
 
-    all = ~None
+    /// <summary>
+    /// A catch-all for all invalidation types.
+    /// </summary>
+    All = ~None
 }
