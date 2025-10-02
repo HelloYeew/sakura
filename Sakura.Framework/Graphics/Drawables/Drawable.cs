@@ -26,7 +26,9 @@ public class Drawable
     private Anchor origin = Anchor.TopLeft;
     private Vector2 position = Vector2.Zero;
     private Vector2 size = Vector2.Zero;
+    private Vector2 scale = Vector2.One;
     private Axes relativeSizeAxes = Axes.None;
+    private Axes relativePositionAxes = Axes.None;
     private Color color = Color.White;
     private float alpha = 1f;
     private MarginPadding margin;
@@ -82,6 +84,17 @@ public class Drawable
         }
     }
 
+    public Vector2 Scale
+    {
+        get => scale;
+        set
+        {
+            if (scale == value) return;
+            scale = value;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+    }
+
     public Axes RelativeSizeAxes
     {
         get => relativeSizeAxes;
@@ -89,6 +102,17 @@ public class Drawable
         {
             if (relativeSizeAxes == value) return;
             relativeSizeAxes = value;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+    }
+
+    public Axes RelativePositionAxes
+    {
+        get => relativePositionAxes;
+        set
+        {
+            if (relativePositionAxes == value) return;
+            relativePositionAxes = value;
             Invalidate(InvalidationFlags.DrawInfo);
         }
     }
@@ -187,17 +211,20 @@ public class Drawable
 
         // Calculate margin, padding and position based on relative axes settings.
         Vector2 relativePosition = Position;
-        MarginPadding relativeMargin = Margin;
+        if ((RelativePositionAxes & Axes.X) != 0)
+            relativePosition.X *= parentSize.X;
+        if ((RelativePositionAxes & Axes.Y) != 0)
+            relativePosition.Y *= parentSize.Y;
 
+        MarginPadding relativeMargin = Margin;
+        // Margin relativity is tied to size relativity.
         if ((RelativeSizeAxes & Axes.X) != 0)
         {
-            relativePosition.X *= parentSize.X;
             relativeMargin.Left *= parentSize.X;
             relativeMargin.Right *= parentSize.X;
         }
         if ((RelativeSizeAxes & Axes.Y) != 0)
         {
-            relativePosition.Y *= parentSize.Y;
             relativeMargin.Top *= parentSize.Y;
             relativeMargin.Bottom *= parentSize.Y;
         }
@@ -213,7 +240,7 @@ public class Drawable
 
         // Create the local transformation matrix.
         // For row-major matrices (like System.Numerics), the correct order is Scale then Translate.
-        var scaleMatrix = Matrix4x4.CreateScale(new Vector3(drawSize.X, drawSize.Y, 1));
+        var scaleMatrix = Matrix4x4.CreateScale(new Vector3(drawSize.X * Scale.X, drawSize.Y * Scale.Y, 1));
         var translationMatrix = Matrix4x4.CreateTranslation(new Vector3(localPosition.X, localPosition.Y, Depth));
         var localMatrix = scaleMatrix * translationMatrix;
 
