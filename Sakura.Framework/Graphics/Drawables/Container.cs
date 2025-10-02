@@ -60,6 +60,8 @@ public class Container : Drawable
 
         drawable.Parent = this;
         children.Add(drawable);
+
+        Invalidate(Invalidation.DrawInfo);
     }
 
     public void Remove(Drawable drawable)
@@ -67,6 +69,7 @@ public class Container : Drawable
         if (children.Remove(drawable))
         {
             drawable.Parent = null;
+            Invalidate(Invalidation.DrawInfo);
         }
     }
 
