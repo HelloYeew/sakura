@@ -181,6 +181,25 @@ public class SDLWindow : IWindow
         height = drawableHeight;
     }
 
+    private unsafe (float scaleX, float scaleY) getDisplayScale()
+    {
+        // On high DPI display, the drawable size's width and height
+        // and window size's width and height are different.
+        // This function returns the scale factor between them.
+        // to make the mouse position correct.
+        if (window == null) return (1.0f, 1.0f);
+
+        int windowWidth, windowHeight;
+        sdl.GetWindowSize(window, &windowWidth, &windowHeight);
+
+        if (windowWidth == 0 || windowHeight == 0) return (1.0f, 1.0f);
+
+        int drawableWidth, drawableHeight;
+        sdl.GLGetDrawableSize(window, &drawableWidth, &drawableHeight);
+
+        return ((float)drawableWidth / windowWidth, (float)drawableHeight / windowHeight);
+    }
+
     private unsafe void handleSdlEvents()
     {
         Event sdlEvent;
@@ -288,18 +307,26 @@ public class SDLWindow : IWindow
         var button = SDLEnumMapping.ToSakuraMouseButton(buttonEvent.Button);
         if (button == MouseButton.Unknown) return;
 
+        var (scaleX, scaleY) = getDisplayScale();
+        mouseState.Position = new Vector2(buttonEvent.X * scaleX, buttonEvent.Y * scaleY);
         mouseState.SetPressed(button, buttonEvent.State == 1);
         action.Invoke(new Input.MouseButtonEvent(mouseState, button));
     }
 
     private void handleMouseMotionEvent(MouseMotionEvent motionEvent)
     {
-        mouseState.Position = new Vector2(motionEvent.X, motionEvent.Y);
+        var (scaleX, scaleY) = getDisplayScale();
+        mouseState.Position = new Vector2(motionEvent.X * scaleX, motionEvent.Y * scaleY);
         OnMouseMove.Invoke(new MouseEvent(mouseState));
     }
 
-    private void handleMouseWheelEvent(MouseWheelEvent wheelEvent)
+    private unsafe void handleMouseWheelEvent(MouseWheelEvent wheelEvent)
     {
+        int x = 0;
+        int y = 0;
+        var (scaleX, scaleY) = getDisplayScale();
+        sdl.GetMouseState(&x, &y);
+        mouseState.Position = new Vector2(x * scaleX, y * scaleY);
         OnScroll.Invoke(new ScrollEvent(mouseState, new Vector2(wheelEvent.X, wheelEvent.Y)));
     }
 

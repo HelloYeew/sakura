@@ -209,19 +209,35 @@ public class Drawable
 
         // Apply the now-relative margin to get the margin offset.
         var marginOffset = new Vector2(relativeMargin.Left - relativeMargin.Right, relativeMargin.Top - relativeMargin.Bottom);
+        Vector2 localPosition = anchorPosition + relativePosition + marginOffset - originOffset;
 
-        // Calculate the final position using the now-relative position and margin.
-        Vector2 finalDrawPosition = anchorPosition + relativePosition + marginOffset - originOffset;
-
-        // Create the transformation matrices.
+        // Create the local transformation matrix.
+        // For row-major matrices (like System.Numerics), the correct order is Scale then Translate.
         var scaleMatrix = Matrix4x4.CreateScale(new Vector3(drawSize.X, drawSize.Y, 1));
-        // Use the Depth property for the Z-coordinate of the translation.
-        var translationMatrix = Matrix4x4.CreateTranslation(new Vector3(finalDrawPosition.X, finalDrawPosition.Y, Depth));
+        var translationMatrix = Matrix4x4.CreateTranslation(new Vector3(localPosition.X, localPosition.Y, Depth));
+        var localMatrix = scaleMatrix * translationMatrix;
+
+        // Combine with parent's matrix to get the world matrix.
+        // For row-major matrices, the world matrix is local * parent.
+        ModelMatrix = localMatrix;
+        if (Parent != null)
+            ModelMatrix = localMatrix * Parent.ModelMatrix;
 
         ModelMatrix = scaleMatrix * translationMatrix;
 
-        // Update the final absolute draw rectangle.
-        DrawRectangle = new RectangleF(finalDrawPosition, drawSize);
+        // Calculate the screen-space bounding box (DrawRectangle) by transforming the corners
+        // of a unit quad (which the renderer uses) by the final ModelMatrix to determine the final screen coordinates and size
+        var topLeft = Vector4.Transform(new Vector4(0, 0, 0, 1), ModelMatrix);
+        var topRight = Vector4.Transform(new Vector4(1, 0, 0, 1), ModelMatrix);
+        var bottomLeft = Vector4.Transform(new Vector4(0, 1, 0, 1), ModelMatrix);
+        var bottomRight = Vector4.Transform(new Vector4(1, 1, 0, 1), ModelMatrix);
+
+        float minX = Math.Min(topLeft.X, Math.Min(topRight.X, Math.Min(bottomLeft.X, bottomRight.X)));
+        float minY = Math.Min(topLeft.Y, Math.Min(topRight.Y, Math.Min(bottomLeft.Y, bottomRight.Y)));
+        float maxX = Math.Max(topLeft.X, Math.Max(topRight.X, Math.Max(bottomLeft.X, bottomRight.X)));
+        float maxY = Math.Max(topLeft.Y, Math.Max(topRight.Y, Math.Max(bottomLeft.Y, bottomRight.Y)));
+
+        DrawRectangle = new RectangleF(minX, minY, maxX - minX, maxY - minY);
     }
 
     public bool Contains(Vector2 screenSpacePos) => DrawRectangle.Contains(screenSpacePos);
