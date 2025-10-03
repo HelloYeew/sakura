@@ -30,6 +30,12 @@ public struct RectangleF
         }
     }
 
+    public bool Contains(Vector2 point)
+    {
+        return point.X >= X && point.X <= X + Width &&
+               point.Y >= Y && point.Y <= Y + Height;
+    }
+
     public RectangleF(float x, float y, float width, float height)
     {
         X = x;
