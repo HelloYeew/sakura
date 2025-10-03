@@ -19,6 +19,6 @@ public readonly struct MouseEvent : IMouseEvent
 
     public override string ToString()
     {
-        return $"MouseEvent: Position={MouseState.Position}, MouseState=[{MouseState}]";
+        return $"MouseEvent: Position={MouseState.Position}, MouseState=[{MouseState}, Delta={Delta}]";
     }
 }

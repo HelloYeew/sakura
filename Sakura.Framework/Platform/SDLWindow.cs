@@ -310,7 +310,6 @@ public class SDLWindow : IWindow
         var (scaleX, scaleY) = getDisplayScale();
         mouseState.Position = new Vector2(buttonEvent.X * scaleX, buttonEvent.Y * scaleY);
         mouseState.SetPressed(button, buttonEvent.State == 1);
-        Logger.LogPrint("Clicked button: " + buttonEvent.Clicks);
         action.Invoke(new Input.MouseButtonEvent(mouseState, button, buttonEvent.Clicks));
     }
 

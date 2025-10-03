@@ -333,14 +333,13 @@ public class Drawable
         if (e.Clicks == 2)
             return OnDoubleClick(e);
         if (e.Clicks == 1)
-            return OnClick(e);
+            OnClick(e);
 
         // Potential start of a drag operation.
         if (e.Button == MouseButton.Left)
         {
             IsDragged = true;
-            OnDragStart(e); // Fire the OnDragStart event for consumers.
-            return true;  // Return true to signify this drawable is handling the mouse input.
+            OnDragStart(e);
         }
 
         return false;

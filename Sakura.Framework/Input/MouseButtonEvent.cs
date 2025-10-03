@@ -18,4 +18,9 @@ public readonly struct MouseButtonEvent : IMouseEvent
         Button = button;
         Clicks = clicks;
     }
+
+    public override string ToString()
+    {
+        return $"MouseButtonEvent: Button={Button}, Clicks={Clicks}, Position={MouseState.Position}, MouseState=[{MouseState}]";
+    }
 }
