@@ -326,13 +326,46 @@ public class Drawable
 
     #region Event Handlers
 
-    public virtual bool OnMouseDown(MouseButtonEvent e) => false;
-    public virtual bool OnMouseUp(MouseButtonEvent e) => false;
+    public virtual bool OnMouseDown(MouseButtonEvent e)
+    {
+        if (e.Clicks >= 3)
+            return OnTripleClick(e);
+        if (e.Clicks == 2)
+            return OnDoubleClick(e);
+        if (e.Clicks == 1)
+            return OnClick(e);
+
+        // Potential start of a drag operation.
+        if (e.Button == MouseButton.Left)
+        {
+            IsDragged = true;
+            OnDragStart(e); // Fire the OnDragStart event for consumers.
+            return true;  // Return true to signify this drawable is handling the mouse input.
+        }
+
+        return false;
+    }
+
+    public virtual bool OnMouseUp(MouseButtonEvent e)
+    {
+        if (IsDragged)
+        {
+            IsDragged = false;
+            return OnDragEnd(e);
+        }
+
+        return false;
+    }
+
     public virtual bool OnClick(MouseButtonEvent e) => false;
     public virtual bool OnDoubleClick(MouseButtonEvent e) => false;
+    public virtual bool OnTripleClick(MouseButtonEvent e) => false;
 
     public virtual bool OnMouseMove(MouseEvent e)
     {
+        if (IsDragged)
+            return OnDrag(e);
+
         if (!IsHovered && Contains(e.ScreenSpaceMousePosition))
         {
             IsHovered = true;

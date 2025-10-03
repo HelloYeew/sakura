@@ -310,14 +310,16 @@ public class SDLWindow : IWindow
         var (scaleX, scaleY) = getDisplayScale();
         mouseState.Position = new Vector2(buttonEvent.X * scaleX, buttonEvent.Y * scaleY);
         mouseState.SetPressed(button, buttonEvent.State == 1);
-        action.Invoke(new Input.MouseButtonEvent(mouseState, button));
+        Logger.LogPrint("Clicked button: " + buttonEvent.Clicks);
+        action.Invoke(new Input.MouseButtonEvent(mouseState, button, buttonEvent.Clicks));
     }
 
     private void handleMouseMotionEvent(MouseMotionEvent motionEvent)
     {
         var (scaleX, scaleY) = getDisplayScale();
         mouseState.Position = new Vector2(motionEvent.X * scaleX, motionEvent.Y * scaleY);
-        OnMouseMove.Invoke(new MouseEvent(mouseState));
+        var delta = new Vector2(motionEvent.Xrel * scaleX, motionEvent.Yrel * scaleY);
+        OnMouseMove.Invoke(new MouseEvent(mouseState, delta));
     }
 
     private unsafe void handleMouseWheelEvent(MouseWheelEvent wheelEvent)

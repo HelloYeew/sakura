@@ -21,4 +21,9 @@ public class MouseState
         else
             pressedButtons.Remove(button);
     }
+
+    public override string ToString()
+    {
+        return $"MouseState: Position={Position}, PressedButtons=[{string.Join(", ", pressedButtons)}]";
+    }
 }
