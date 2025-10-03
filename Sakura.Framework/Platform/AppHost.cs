@@ -191,7 +191,7 @@ public abstract class AppHost : IDisposable
                 exitEvent.Set();
             };
 
-            FrameLimiter = new Reactive<FrameSync>(FrameSync.Unlimited);
+            FrameLimiter = new Reactive<FrameSync>(FrameSync.Limit2x);
             FrameLimiter.ValueChanged += onFrameLimiterChanged;
             FrameLimiter.ValueChanged += e => Logger.Verbose($"Frame limiter changed from {e.OldValue} to {e.NewValue}");
 
