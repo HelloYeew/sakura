@@ -94,7 +94,7 @@ public class Container : Drawable
         {
             foreach (var child in children)
             {
-                child.Invalidate(InvalidationFlags.DrawInfo);
+                child.Invalidate(InvalidationFlags.DrawInfo, false);
             }
         }
 

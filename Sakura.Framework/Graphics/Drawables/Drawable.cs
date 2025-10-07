@@ -313,14 +313,15 @@ public class Drawable
     /// Marks all or part of this drawable as requiring re-computation.
     /// </summary>
     /// <param name="flags">An <see cref="InvalidationFlags"/> flag representing which aspects of the drawable need to be recomputed.</param>
-    public virtual void Invalidate(InvalidationFlags flags = InvalidationFlags.All)
+    /// <param name="propagateToParent">Whether this invalidation should also invalidate this drawable's parent.</param>
+    public virtual void Invalidate(InvalidationFlags flags = InvalidationFlags.All, bool propagateToParent = true)
     {
         if ((Invalidation & flags) == flags)
             return; // Already invalidated for these flags.
 
         Invalidation |= flags;
 
-        if ((flags & InvalidationFlags.DrawInfo) != 0)
+        if (propagateToParent && (flags & InvalidationFlags.DrawInfo) != 0)
             Parent?.Invalidate(InvalidationFlags.DrawInfo);
     }
 
