@@ -7,10 +7,10 @@ using Silk.NET.SDL;
 namespace Sakura.Framework.Input;
 
 /// <summary>
-/// A set of mapping from SDL key codes to framework's key enum.
+/// A set of mapping from SDL enum codes to framework's key enum.
 /// </summary>
 [SuppressMessage("ReSharper", "InconsistentNaming")]
-internal static class SDLKeyMapping
+internal static class SDLEnumMapping
 {
     /// <summary>
     /// Convert an SDL scancode to a framework <see cref="Key"/>
@@ -126,5 +126,24 @@ internal static class SDLKeyMapping
             case Scancode.ScancodeRgui: return Key.WinRight;
             default: return Key.Unknown;
         }
+    }
+
+    /// <summary>
+    /// Convert SDL MouseButtonFlags to framework <see cref="MouseButton"/>
+    /// Reference : https://wiki.libsdl.org/SDL3/SDL_MouseButtonFlags
+    /// </summary>
+    /// <param name="sdlButton">The SDL mouse button to convert.</param>
+    /// <returns>The corresponding framework <see cref="MouseButton"/>.</returns>
+    public static MouseButton ToSakuraMouseButton(byte sdlButton)
+    {
+        return sdlButton switch
+        {
+            1 => MouseButton.Left,
+            2 => MouseButton.Middle,
+            3 => MouseButton.Right,
+            4 => MouseButton.Button4,
+            5 => MouseButton.Button5,
+            _ => MouseButton.Unknown
+        };
     }
 }

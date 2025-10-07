@@ -98,6 +98,11 @@ public interface IWindow : IDisposable
     event Action<int> DisplayChanged;
     event Action<int, int> Resized;
 
+    event Action<MouseButtonEvent> OnMouseDown;
+    event Action<MouseButtonEvent> OnMouseUp;
+    event Action<MouseEvent> OnMouseMove;
+    event Action<ScrollEvent> OnScroll;
+
     /// <summary>
     /// Close the window peacefully.
     /// </summary>
