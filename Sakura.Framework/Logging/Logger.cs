@@ -22,8 +22,8 @@ public class Logger
     private static readonly Lock console_lock = new Lock();  // Lock for console output to not mutate concurrently
     private static readonly ManualResetEventSlim processing_gate = new ManualResetEventSlim(true);
 
-    private static Task? processingTask;
-    private static CancellationTokenSource? cancellationTokenSource;
+    private static Task processingTask;
+    private static CancellationTokenSource cancellationTokenSource;
     private static long startupTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
     private static Storage storage;
 
@@ -58,13 +58,13 @@ public class Logger
     /// Gets or sets the application name. Must be set before Initialize().
     /// If not set, it will be inferred from the entry assembly.
     /// </summary>
-    public static string? AppIdentifier { get; set; }
+    public static string AppIdentifier { get; set; }
 
     /// <summary>
     /// Gets or sets the application version. Must be set before Initialize().
     /// If not set, it will be inferred from the entry assembly.
     /// </summary>
-    public static string? VersionIdentifier { get; set; }
+    public static string VersionIdentifier { get; set; }
 
     #endregion
 
