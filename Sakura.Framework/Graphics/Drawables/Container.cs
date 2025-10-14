@@ -7,7 +7,6 @@ using System.Linq;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Input;
-using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.Drawables;
