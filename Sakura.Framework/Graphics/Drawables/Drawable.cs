@@ -208,53 +208,45 @@ public class Drawable
     protected virtual void UpdateTransforms()
     {
         // Determine the size of our parent's drawable area.
-        Vector2 parentSize = Parent?.ChildSize ?? Vector2.Zero;
+        Vector2 parentPixelSize = Parent?.ChildSize ?? Size;
 
-        // Calculate our final draw size based on our local Size and relative axes.
-        Vector2 drawSize = Size;
-        if ((RelativeSizeAxes & Axes.X) != 0)
-            drawSize.X *= parentSize.X;
-        if ((RelativeSizeAxes & Axes.Y) != 0)
-            drawSize.Y *= parentSize.Y;
+        // To prevent division by zero for drawables with no area.
+        if (parentPixelSize.X == 0) parentPixelSize.X = 1;
+        if (parentPixelSize.Y == 0) parentPixelSize.Y = 1;
 
-        DrawSize = drawSize;
+        // Calculate scale relative to parent if needed.
+        Vector2 localScale = Size;
+        if ((RelativeSizeAxes & Axes.X) == 0) // If X is NOT relative (i.e., it's in pixels)
+            localScale.X /= parentPixelSize.X; // Convert absolute pixel size to a fraction of the parent's size.
+        if ((RelativeSizeAxes & Axes.Y) == 0) // If Y is NOT relative
+            localScale.Y /= parentPixelSize.Y;
 
-        // Calculate margin, padding and position based on relative axes settings.
-        Vector2 relativePosition = Position;
-        if ((RelativePositionAxes & Axes.X) != 0)
-            relativePosition.X *= parentSize.X;
-        if ((RelativePositionAxes & Axes.Y) != 0)
-            relativePosition.Y *= parentSize.Y;
+        // Calculate position relative to parent if needed.
+        Vector2 localPosition = Position;
+        if ((RelativePositionAxes & Axes.X) == 0) // If X is NOT relative
+            localPosition.X /= parentPixelSize.X;
+        if ((RelativePositionAxes & Axes.Y) == 0) // If Y is NOT relative
+            localPosition.Y /= parentPixelSize.Y;
 
-        MarginPadding relativeMargin = Margin;
-        // Margin relativity is tied to size relativity.
-        if ((RelativeSizeAxes & Axes.X) != 0)
-        {
-            relativeMargin.Left *= parentSize.X;
-            relativeMargin.Right *= parentSize.X;
-        }
-        if ((RelativeSizeAxes & Axes.Y) != 0)
-        {
-            relativeMargin.Top *= parentSize.Y;
-            relativeMargin.Bottom *= parentSize.Y;
-        }
+        MarginPadding localMargin = Margin;
+        localMargin.Left /= parentPixelSize.X;
+        localMargin.Right /= parentPixelSize.X;
+        localMargin.Top /= parentPixelSize.Y;
+        localMargin.Bottom /= parentPixelSize.Y;
 
-        // Determine the space we are being positioned within.
-        Vector2 positioningSpace = Parent?.ChildSize ?? drawSize;
-        Vector2 anchorPosition = GetAnchorOriginVector(Anchor) * positioningSpace;
-        Vector2 originOffset = GetAnchorOriginVector(Origin) * drawSize;
+        // Anchor and Origin are naturally relative, so they work correctly in this 0-1 space.
+        Vector2 anchorPosition = GetAnchorOriginVector(Anchor);
+        Vector2 originOffset = GetAnchorOriginVector(Origin) * localScale * Scale; // Use relative scale for the origin offset.
+        var marginOffset = new Vector2(localMargin.Left - localMargin.Right, localMargin.Top - localMargin.Bottom);
 
-        // Apply the now-relative margin to get the margin offset.
-        var marginOffset = new Vector2(relativeMargin.Left - relativeMargin.Right, relativeMargin.Top - relativeMargin.Bottom);
-        Vector2 localPosition = anchorPosition + relativePosition + marginOffset - originOffset;
+        Vector2 finalLocalPosition = anchorPosition + localPosition + marginOffset - originOffset;
 
-        // The local matrix should transform from a unit quad (0,0 to 1,1) to the final
-        // size and position *within the parent's coordinate space*.
+        // Create the local matrix
 
-        // Create the local transformation matrix.
-        // For row-major matrices (like System.Numerics), the correct order is Scale then Translate.
-        var scaleMatrix = Matrix4x4.CreateScale(new Vector3(drawSize.X * Scale.X, drawSize.Y * Scale.Y, 1));
-        var translationMatrix = Matrix4x4.CreateTranslation(new Vector3(localPosition.X, localPosition.Y, Depth));
+        // This matrix transforms a unit (1x1) quad into our desired size and position
+        // within the parent's 1x1 local space.
+        var scaleMatrix = Matrix4x4.CreateScale(new Vector3(localScale.X * Scale.X, localScale.Y * Scale.Y, 1));
+        var translationMatrix = Matrix4x4.CreateTranslation(new Vector3(finalLocalPosition.X, finalLocalPosition.Y, Depth));
         var localMatrix = scaleMatrix * translationMatrix;
 
         // Combine with parent's matrix to get the world matrix.
@@ -263,22 +255,20 @@ public class Drawable
         if (Parent != null)
             ModelMatrix = localMatrix * Parent.ModelMatrix;
 
-        // ModelMatrix = scaleMatrix * translationMatrix;
-
-        // Define a unit quad with a top-left origin.
-        var vTopLeft = new Vector4(0, 0, 0, 1);
-        var vTopRight = new Vector4(1, 0, 0, 1);
-        var vBottomLeft = new Vector4(0, 1, 0, 1);
-        var vBottomRight = new Vector4(1, 1, 0, 1);
+        // Cache final pixel size for use in children.
+        Vector2 finalDrawSize = Size;
+        if ((RelativeSizeAxes & Axes.X) != 0) finalDrawSize.X *= parentPixelSize.X;
+        if ((RelativeSizeAxes & Axes.Y) != 0) finalDrawSize.Y *= parentPixelSize.Y;
+        DrawSize = finalDrawSize;
 
         // Transform the unit quad's vertices by the final model matrix.
-        vTopLeft = Vector4.Transform(vTopLeft, ModelMatrix);
-        vTopRight = Vector4.Transform(vTopRight, ModelMatrix);
-        vBottomLeft = Vector4.Transform(vBottomLeft, ModelMatrix);
-        vBottomRight = Vector4.Transform(vBottomRight, ModelMatrix);
+        var vTopLeft = Vector4.Transform(new Vector4(0, 0, 0, 1), ModelMatrix);
+        var vTopRight = Vector4.Transform(new Vector4(1, 0, 0, 1), ModelMatrix);
+        var vBottomLeft = Vector4.Transform(new Vector4(0, 1, 0, 1), ModelMatrix);
+        var vBottomRight = Vector4.Transform(new Vector4(1, 1, 0, 1), ModelMatrix);
 
         // Populate the VertexQuad with updated positions and texture coordinates.
-        // Colour will be applied by updateVertexColors().
+        // Color will be applied by updateVertexColors().
         VertexQuad = new VertexQuad
         {
             TopLeft = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = new Vector2(0, 0) },
