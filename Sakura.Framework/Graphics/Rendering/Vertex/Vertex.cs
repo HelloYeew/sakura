@@ -29,10 +29,10 @@ public struct Vertex
     /// The texture coordinates of the vertex.
     /// </summary>
     [VertexMember(2, VertexAttribPointerType.Float)]
-    public Vector2 TexCoord;
+    public Vector2 TexCoords;
 
     /// <summary>
-    /// The size of the vertex in bytes.
+    /// The size of the Vertex struct in bytes.
     /// </summary>
-    public static readonly int STRIDE = Marshal.SizeOf<Vertex>();
+    public static readonly int Size = Marshal.SizeOf<Vertex>();
 }

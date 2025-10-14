@@ -5,6 +5,7 @@ using System;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
+using Sakura.Framework.Graphics.Rendering.Vertex;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
@@ -177,7 +178,9 @@ public class Drawable
 
     // Caches for computed values
     public RectangleF DrawRectangle { get; private set; }
+    public Vector2 DrawSize { get; private set; }
     public Matrix4x4 ModelMatrix = Matrix4x4.Identity;
+    public VertexQuad VertexQuad { get; protected set; }
 
     public Drawable()
     {
@@ -194,6 +197,11 @@ public class Drawable
             UpdateTransforms();
         }
 
+        if ((Invalidation & InvalidationFlags.Colour) != 0)
+        {
+            updateVertexColors();
+        }
+
         Invalidation = InvalidationFlags.None;
     }
 
@@ -208,6 +216,8 @@ public class Drawable
             drawSize.X *= parentSize.X;
         if ((RelativeSizeAxes & Axes.Y) != 0)
             drawSize.Y *= parentSize.Y;
+
+        DrawSize = drawSize;
 
         // Calculate margin, padding and position based on relative axes settings.
         Vector2 relativePosition = Position;
@@ -238,6 +248,9 @@ public class Drawable
         var marginOffset = new Vector2(relativeMargin.Left - relativeMargin.Right, relativeMargin.Top - relativeMargin.Bottom);
         Vector2 localPosition = anchorPosition + relativePosition + marginOffset - originOffset;
 
+        // The local matrix should transform from a unit quad (0,0 to 1,1) to the final
+        // size and position *within the parent's coordinate space*.
+
         // Create the local transformation matrix.
         // For row-major matrices (like System.Numerics), the correct order is Scale then Translate.
         var scaleMatrix = Matrix4x4.CreateScale(new Vector3(drawSize.X * Scale.X, drawSize.Y * Scale.Y, 1));
@@ -250,21 +263,53 @@ public class Drawable
         if (Parent != null)
             ModelMatrix = localMatrix * Parent.ModelMatrix;
 
-        ModelMatrix = scaleMatrix * translationMatrix;
+        // ModelMatrix = scaleMatrix * translationMatrix;
 
-        // Calculate the screen-space bounding box (DrawRectangle) by transforming the corners
-        // of a unit quad (which the renderer uses) by the final ModelMatrix to determine the final screen coordinates and size
-        var topLeft = Vector4.Transform(new Vector4(0, 0, 0, 1), ModelMatrix);
-        var topRight = Vector4.Transform(new Vector4(1, 0, 0, 1), ModelMatrix);
-        var bottomLeft = Vector4.Transform(new Vector4(0, 1, 0, 1), ModelMatrix);
-        var bottomRight = Vector4.Transform(new Vector4(1, 1, 0, 1), ModelMatrix);
+        // Define a unit quad with a top-left origin.
+        var vTopLeft = new Vector4(0, 0, 0, 1);
+        var vTopRight = new Vector4(1, 0, 0, 1);
+        var vBottomLeft = new Vector4(0, 1, 0, 1);
+        var vBottomRight = new Vector4(1, 1, 0, 1);
 
-        float minX = Math.Min(topLeft.X, Math.Min(topRight.X, Math.Min(bottomLeft.X, bottomRight.X)));
-        float minY = Math.Min(topLeft.Y, Math.Min(topRight.Y, Math.Min(bottomLeft.Y, bottomRight.Y)));
-        float maxX = Math.Max(topLeft.X, Math.Max(topRight.X, Math.Max(bottomLeft.X, bottomRight.X)));
-        float maxY = Math.Max(topLeft.Y, Math.Max(topRight.Y, Math.Max(bottomLeft.Y, bottomRight.Y)));
+        // Transform the unit quad's vertices by the final model matrix.
+        vTopLeft = Vector4.Transform(vTopLeft, ModelMatrix);
+        vTopRight = Vector4.Transform(vTopRight, ModelMatrix);
+        vBottomLeft = Vector4.Transform(vBottomLeft, ModelMatrix);
+        vBottomRight = Vector4.Transform(vBottomRight, ModelMatrix);
+
+        // Populate the VertexQuad with updated positions and texture coordinates.
+        // Colour will be applied by updateVertexColors().
+        VertexQuad = new VertexQuad
+        {
+            TopLeft = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = new Vector2(0, 0) },
+            TopRight = new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(1, 0) },
+            BottomRight = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = new Vector2(1, 1) },
+            BottomLeft = new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(0, 1) }
+        };
+
+        // The screen-space bounding box (DrawRectangle) can now be calculated from the transformed vertices.
+        float minX = Math.Min(vTopLeft.X, Math.Min(vTopRight.X, Math.Min(vBottomLeft.X, vBottomRight.X)));
+        float minY = Math.Min(vTopLeft.Y, Math.Min(vTopRight.Y, Math.Min(vBottomLeft.Y, vBottomRight.Y)));
+        float maxX = Math.Max(vTopLeft.X, Math.Max(vTopRight.X, Math.Max(vBottomLeft.X, vBottomRight.X)));
+        float maxY = Math.Max(vTopLeft.Y, Math.Max(vTopRight.Y, Math.Max(vBottomLeft.Y, vBottomRight.Y)));
 
         DrawRectangle = new RectangleF(minX, minY, maxX - minX, maxY - minY);
+
+        // Ensure color is up to date after transform change.
+        updateVertexColors();
+    }
+
+    private void updateVertexColors()
+    {
+        var calculateColor = new Vector4(Color.R / 255f, Color.G / 255f, Color.B / 255f, Alpha);
+
+        // Because VertexQuad is a struct, we work on a copy and then assign it back.
+        var quad = VertexQuad;
+        quad.TopLeft.Color = calculateColor;
+        quad.TopRight.Color = calculateColor;
+        quad.BottomRight.Color = calculateColor;
+        quad.BottomLeft.Color = calculateColor;
+        VertexQuad = quad;
     }
 
     public bool Contains(Vector2 screenSpacePos) => DrawRectangle.Contains(screenSpacePos);

@@ -7,6 +7,7 @@ using System.Linq;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Input;
+using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.Drawables;
@@ -21,8 +22,9 @@ public class Container : Drawable
     {
         get
         {
-            // Start with the container's full drawable size.
-            var containerSize = DrawRectangle.Size;
+            // Start with the container's logical size, not final screen rectangle.
+            var containerSize = DrawSize;
+            Logger.LogPrint($"Container DrawSize: {containerSize} (This: {this})");
 
             // Calculate padding, scaling it relative to our own size if needed.
             MarginPadding relativePadding = Padding;
@@ -106,6 +108,8 @@ public class Container : Drawable
 
     public override void Draw(IRenderer renderer)
     {
+        base.Draw(renderer);
+
         foreach (var child in children.OrderBy(c => c.Depth))
         {
             child.Draw(renderer);

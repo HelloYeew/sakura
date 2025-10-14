@@ -1,8 +1,6 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
-using System;
-using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Rendering.Vertex;
 using Silk.NET.OpenGL;
 
@@ -12,7 +10,7 @@ namespace Sakura.Framework.Graphics.Rendering.Batches;
 /// A batch of quads to be drawn together.
 /// </summary>
 /// <typeparam name="T">The type of vertex quad.</typeparam>
-public class QuadBatch<T> : IVertexBatch where T : unmanaged, IVertexQuad
+public class QuadBatch<T> : IVertexBatch<T> where T : unmanaged, IVertexQuad
 {
     private readonly GL gl;
     private readonly uint vao;
@@ -33,21 +31,12 @@ public class QuadBatch<T> : IVertexBatch where T : unmanaged, IVertexQuad
         quads = new T[max_quads];
     }
 
-    public void Add(Drawable drawable)
+    public void Add(T data)
     {
         if (quadCount >= max_quads)
             return;
 
-        // Convert the drawable to draw data
-        if (drawable is T quad)
-        {
-            quads[quadCount++] = quad;
-        }
-        else
-        {
-            // Can happen but should be rare, maybe different batches for different vertex types?
-            throw new InvalidCastException($"Drawable of type '{drawable.GetType().Name}' cannot be directly added to a batch of '{typeof(T).Name}'.");
-        }
+        quads[quadCount++] = data;
     }
 
     public unsafe int Draw()
