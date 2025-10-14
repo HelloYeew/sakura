@@ -207,58 +207,81 @@ public class Drawable
 
     protected virtual void UpdateTransforms()
     {
-        // Determine the size of our parent's drawable area.
-        Vector2 parentPixelSize = Parent?.ChildSize ?? Size;
+        Matrix4x4 localMatrix;
+        Vector2 finalDrawSize;
 
-        // To prevent division by zero for drawables with no area.
-        if (parentPixelSize.X == 0) parentPixelSize.X = 1;
-        if (parentPixelSize.Y == 0) parentPixelSize.Y = 1;
+        if (Parent == null)
+        {
+            // This is the root drawable.
 
-        // Calculate scale relative to parent if needed.
-        Vector2 localScale = Size;
-        if ((RelativeSizeAxes & Axes.X) == 0) // If X is NOT relative (i.e., it's in pixels)
-            localScale.X /= parentPixelSize.X; // Convert absolute pixel size to a fraction of the parent's size.
-        if ((RelativeSizeAxes & Axes.Y) == 0) // If Y is NOT relative
-            localScale.Y /= parentPixelSize.Y;
+            // The root's transform is absolute, not relative. It establishes the world space.
+            // It scales a 1x1 quad up to its own pixel size.
+            finalDrawSize = this.Size;
+            Vector2 originOffset = GetAnchorOriginVector(Origin) * finalDrawSize * Scale;
 
-        // Calculate position relative to parent if needed.
-        Vector2 localPosition = Position;
-        if ((RelativePositionAxes & Axes.X) == 0) // If X is NOT relative
-            localPosition.X /= parentPixelSize.X;
-        if ((RelativePositionAxes & Axes.Y) == 0) // If Y is NOT relative
-            localPosition.Y /= parentPixelSize.Y;
+            // The root's position is typically (0,0), but we'll respect the Position property.
+            // No anchor is applied as there's no parent to be anchored to.
+            Vector2 finalPosition = Position - originOffset;
 
-        MarginPadding localMargin = Margin;
-        localMargin.Left /= parentPixelSize.X;
-        localMargin.Right /= parentPixelSize.X;
-        localMargin.Top /= parentPixelSize.Y;
-        localMargin.Bottom /= parentPixelSize.Y;
+            var scaleMatrix = Matrix4x4.CreateScale(new Vector3(finalDrawSize.X * Scale.X, finalDrawSize.Y * Scale.Y, 1));
+            var translationMatrix = Matrix4x4.CreateTranslation(new Vector3(finalPosition.X, finalPosition.Y, Depth));
 
-        // Anchor and Origin are naturally relative, so they work correctly in this 0-1 space.
-        Vector2 anchorPosition = GetAnchorOriginVector(Anchor);
-        Vector2 originOffset = GetAnchorOriginVector(Origin) * localScale * Scale; // Use relative scale for the origin offset.
-        var marginOffset = new Vector2(localMargin.Left - localMargin.Right, localMargin.Top - localMargin.Bottom);
+            localMatrix = scaleMatrix * translationMatrix;
+            ModelMatrix = localMatrix; // No parent matrix to multiply with.
+        }
+        else
+        {
+            // This is a child drawable
 
-        Vector2 finalLocalPosition = anchorPosition + localPosition + marginOffset - originOffset;
+            // Final pixel size of the parent's content area.
+            Vector2 parentPixelSize = Parent.ChildSize;
 
-        // Create the local matrix
+            // prevent division by zero for drawables with no area.
+            if (parentPixelSize.X == 0) parentPixelSize.X = 1;
+            if (parentPixelSize.Y == 0) parentPixelSize.Y = 1;
 
-        // This matrix transforms a unit (1x1) quad into our desired size and position
-        // within the parent's 1x1 local space.
-        var scaleMatrix = Matrix4x4.CreateScale(new Vector3(localScale.X * Scale.X, localScale.Y * Scale.Y, 1));
-        var translationMatrix = Matrix4x4.CreateTranslation(new Vector3(finalLocalPosition.X, finalLocalPosition.Y, Depth));
-        var localMatrix = scaleMatrix * translationMatrix;
+            // Calculate scale relative to parent
+            Vector2 localScale = Size;
+            if ((RelativeSizeAxes & Axes.X) == 0)
+                localScale.X /= parentPixelSize.X;
+            if ((RelativeSizeAxes & Axes.Y) == 0)
+                localScale.Y /= parentPixelSize.Y;
 
-        // Combine with parent's matrix to get the world matrix.
-        // For row-major matrices, the world matrix is local * parent.
-        ModelMatrix = localMatrix;
-        if (Parent != null)
+            // Calculate position relative to parent
+            Vector2 localPosition = Position;
+            if ((RelativePositionAxes & Axes.X) == 0)
+                localPosition.X /= parentPixelSize.X;
+            if ((RelativePositionAxes & Axes.Y) == 0)
+                localPosition.Y /= parentPixelSize.Y;
+
+            MarginPadding localMargin = Margin;
+            localMargin.Left /= parentPixelSize.X;
+            localMargin.Right /= parentPixelSize.X;
+            localMargin.Top /= parentPixelSize.Y;
+            localMargin.Bottom /= parentPixelSize.Y;
+
+            // Anchor and Origin are naturally relative, so they work correctly in this 0-1 space.
+            Vector2 anchorPosition = GetAnchorOriginVector(Anchor);
+            Vector2 originOffset = GetAnchorOriginVector(Origin) * localScale * Scale;
+            var marginOffset = new Vector2(localMargin.Left - localMargin.Right, localMargin.Top - localMargin.Bottom);
+
+            Vector2 finalLocalPosition = anchorPosition + localPosition + marginOffset - originOffset;
+
+            // Create local matrix
+            // This matrix transforms a unit (1x1) quad into our desired size and position
+            // within the parent's 1x1 local space.
+            var scaleMatrix = Matrix4x4.CreateScale(new Vector3(localScale.X * Scale.X, localScale.Y * Scale.Y, 1));
+            var translationMatrix = Matrix4x4.CreateTranslation(new Vector3(finalLocalPosition.X, finalLocalPosition.Y, Depth));
+            localMatrix = scaleMatrix * translationMatrix;
+
             ModelMatrix = localMatrix * Parent.ModelMatrix;
 
-        // Cache final pixel size for use in children.
-        Vector2 finalDrawSize = Size;
-        if ((RelativeSizeAxes & Axes.X) != 0) finalDrawSize.X *= parentPixelSize.X;
-        if ((RelativeSizeAxes & Axes.Y) != 0) finalDrawSize.Y *= parentPixelSize.Y;
+            // Cache final pixel size
+            finalDrawSize = Size;
+            if ((RelativeSizeAxes & Axes.X) != 0) finalDrawSize.X *= parentPixelSize.X;
+            if ((RelativeSizeAxes & Axes.Y) != 0) finalDrawSize.Y *= parentPixelSize.Y;
+        }
+
         DrawSize = finalDrawSize;
 
         // Transform the unit quad's vertices by the final model matrix.

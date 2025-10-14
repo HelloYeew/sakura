@@ -24,7 +24,6 @@ public class Container : Drawable
         {
             // Start with the container's logical size, not final screen rectangle.
             var containerSize = DrawSize;
-            Logger.LogPrint($"Container DrawSize: {containerSize} (This: {this})");
 
             // Calculate padding, scaling it relative to our own size if needed.
             MarginPadding relativePadding = Padding;
