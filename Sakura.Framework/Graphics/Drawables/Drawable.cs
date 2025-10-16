@@ -176,7 +176,7 @@ public class Drawable
         }
     }
 
-    public Texture Texture { get; set; }
+    public Texture? Texture { get; set; }
 
     // Caches for computed values
     public RectangleF DrawRectangle { get; private set; }
