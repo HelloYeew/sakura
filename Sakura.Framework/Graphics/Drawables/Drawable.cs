@@ -176,6 +176,10 @@ public class Drawable
         }
     }
 
+    public void Hide() => Alpha = 0f;
+    public void Show() => Alpha = 1f;
+    public bool IsHidden => Alpha <= 0f;
+
     public Texture? Texture { get; set; }
 
     // Caches for computed values
@@ -190,6 +194,7 @@ public class Drawable
 
     public virtual void Update()
     {
+        if (!IsLoaded) return;
         if (Invalidation == InvalidationFlags.None)
             return;
 
