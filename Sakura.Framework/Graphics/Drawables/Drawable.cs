@@ -2,8 +2,6 @@
 // See the LICENSE file for full license text.
 
 using System;
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
@@ -43,7 +41,7 @@ public class Drawable
     /// </summary>
     protected InvalidationFlags Invalidation = InvalidationFlags.All;
 
-    protected readonly List<Vertex> Vertices = new List<Vertex>();
+    protected readonly Vertex[] Vertices = new Vertex[6];
 
     public Anchor Anchor
     {
@@ -287,8 +285,6 @@ public class Drawable
 
     protected virtual void GenerateVertices()
     {
-        Vertices.Clear();
-
         var calculatedColor = new System.Numerics.Vector4(Color.R / 255f, Color.G / 255f, Color.B / 255f, Alpha);
 
         var vTopLeft = Vector4.Transform(new Vector4(0, 0, 0, 1), ModelMatrix);
@@ -302,14 +298,14 @@ public class Drawable
         var bottomRight = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = new Vector2(1, 1), Color = calculatedColor };
 
         // Triangle 1
-        Vertices.Add(topLeft);
-        Vertices.Add(topRight);
-        Vertices.Add(bottomRight);
+        Vertices[0] = topLeft;
+        Vertices[1] = topRight;
+        Vertices[2] = bottomRight;
 
         // Triangle 2
-        Vertices.Add(bottomRight);
-        Vertices.Add(bottomLeft);
-        Vertices.Add(topLeft);
+        Vertices[3] = bottomRight;
+        Vertices[4] = bottomLeft;
+        Vertices[5] = topLeft;
 
         // Calculate DrawRectangle in screen space
         float minX = Math.Min(vTopLeft.X, Math.Min(vTopRight.X, Math.Min(vBottomLeft.X, vBottomRight.X)));
@@ -359,7 +355,7 @@ public class Drawable
 
     public virtual void Draw(IRenderer renderer)
     {
-        renderer.DrawVertices(CollectionsMarshal.AsSpan(Vertices), Texture ?? Texture.WhitePixel);
+        renderer.DrawVertices(Vertices, Texture ?? Texture.WhitePixel);
     }
 
     /// <summary>
