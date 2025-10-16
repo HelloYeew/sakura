@@ -5,6 +5,7 @@ using System;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
+using Sakura.Framework.Graphics.Rendering.Vertex;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
@@ -177,7 +178,9 @@ public class Drawable
 
     // Caches for computed values
     public RectangleF DrawRectangle { get; private set; }
+    public Vector2 DrawSize { get; private set; }
     public Matrix4x4 ModelMatrix = Matrix4x4.Identity;
+    public VertexQuad VertexQuad { get; protected set; }
 
     public Drawable()
     {
@@ -194,77 +197,132 @@ public class Drawable
             UpdateTransforms();
         }
 
+        if ((Invalidation & InvalidationFlags.Colour) != 0)
+        {
+            updateVertexColors();
+        }
+
         Invalidation = InvalidationFlags.None;
     }
 
     protected virtual void UpdateTransforms()
     {
-        // Determine the size of our parent's drawable area.
-        Vector2 parentSize = Parent?.ChildSize ?? Vector2.Zero;
+        Matrix4x4 localMatrix;
+        Vector2 finalDrawSize;
 
-        // Calculate our final draw size based on our local Size and relative axes.
-        Vector2 drawSize = Size;
-        if ((RelativeSizeAxes & Axes.X) != 0)
-            drawSize.X *= parentSize.X;
-        if ((RelativeSizeAxes & Axes.Y) != 0)
-            drawSize.Y *= parentSize.Y;
-
-        // Calculate margin, padding and position based on relative axes settings.
-        Vector2 relativePosition = Position;
-        if ((RelativePositionAxes & Axes.X) != 0)
-            relativePosition.X *= parentSize.X;
-        if ((RelativePositionAxes & Axes.Y) != 0)
-            relativePosition.Y *= parentSize.Y;
-
-        MarginPadding relativeMargin = Margin;
-        // Margin relativity is tied to size relativity.
-        if ((RelativeSizeAxes & Axes.X) != 0)
+        if (Parent == null)
         {
-            relativeMargin.Left *= parentSize.X;
-            relativeMargin.Right *= parentSize.X;
+            // This is the root drawable.
+
+            // The root's transform is absolute, not relative. It establishes the world space.
+            // It scales a 1x1 quad up to its own pixel size.
+            finalDrawSize = this.Size;
+            Vector2 originOffset = GetAnchorOriginVector(Origin) * finalDrawSize * Scale;
+
+            // The root's position is typically (0,0), but we'll respect the Position property.
+            // No anchor is applied as there's no parent to be anchored to.
+            Vector2 finalPosition = Position - originOffset;
+
+            var scaleMatrix = Matrix4x4.CreateScale(new Vector3(finalDrawSize.X * Scale.X, finalDrawSize.Y * Scale.Y, 1));
+            var translationMatrix = Matrix4x4.CreateTranslation(new Vector3(finalPosition.X, finalPosition.Y, Depth));
+
+            localMatrix = scaleMatrix * translationMatrix;
+            ModelMatrix = localMatrix; // No parent matrix to multiply with.
         }
-        if ((RelativeSizeAxes & Axes.Y) != 0)
+        else
         {
-            relativeMargin.Top *= parentSize.Y;
-            relativeMargin.Bottom *= parentSize.Y;
-        }
+            // This is a child drawable
 
-        // Determine the space we are being positioned within.
-        Vector2 positioningSpace = Parent?.ChildSize ?? drawSize;
-        Vector2 anchorPosition = GetAnchorOriginVector(Anchor) * positioningSpace;
-        Vector2 originOffset = GetAnchorOriginVector(Origin) * drawSize;
+            // Final pixel size of the parent's content area.
+            Vector2 parentPixelSize = Parent.ChildSize;
 
-        // Apply the now-relative margin to get the margin offset.
-        var marginOffset = new Vector2(relativeMargin.Left - relativeMargin.Right, relativeMargin.Top - relativeMargin.Bottom);
-        Vector2 localPosition = anchorPosition + relativePosition + marginOffset - originOffset;
+            // prevent division by zero for drawables with no area.
+            if (parentPixelSize.X == 0) parentPixelSize.X = 1;
+            if (parentPixelSize.Y == 0) parentPixelSize.Y = 1;
 
-        // Create the local transformation matrix.
-        // For row-major matrices (like System.Numerics), the correct order is Scale then Translate.
-        var scaleMatrix = Matrix4x4.CreateScale(new Vector3(drawSize.X * Scale.X, drawSize.Y * Scale.Y, 1));
-        var translationMatrix = Matrix4x4.CreateTranslation(new Vector3(localPosition.X, localPosition.Y, Depth));
-        var localMatrix = scaleMatrix * translationMatrix;
+            // Calculate scale relative to parent
+            Vector2 localScale = Size;
+            if ((RelativeSizeAxes & Axes.X) == 0)
+                localScale.X /= parentPixelSize.X;
+            if ((RelativeSizeAxes & Axes.Y) == 0)
+                localScale.Y /= parentPixelSize.Y;
 
-        // Combine with parent's matrix to get the world matrix.
-        // For row-major matrices, the world matrix is local * parent.
-        ModelMatrix = localMatrix;
-        if (Parent != null)
+            // Calculate position relative to parent
+            Vector2 localPosition = Position;
+            if ((RelativePositionAxes & Axes.X) == 0)
+                localPosition.X /= parentPixelSize.X;
+            if ((RelativePositionAxes & Axes.Y) == 0)
+                localPosition.Y /= parentPixelSize.Y;
+
+            MarginPadding localMargin = Margin;
+            localMargin.Left /= parentPixelSize.X;
+            localMargin.Right /= parentPixelSize.X;
+            localMargin.Top /= parentPixelSize.Y;
+            localMargin.Bottom /= parentPixelSize.Y;
+
+            // Anchor and Origin are naturally relative, so they work correctly in this 0-1 space.
+            Vector2 anchorPosition = GetAnchorOriginVector(Anchor);
+            Vector2 originOffset = GetAnchorOriginVector(Origin) * localScale * Scale;
+            var marginOffset = new Vector2(localMargin.Left - localMargin.Right, localMargin.Top - localMargin.Bottom);
+
+            Vector2 finalLocalPosition = anchorPosition + localPosition + marginOffset - originOffset;
+
+            // Create local matrix
+            // This matrix transforms a unit (1x1) quad into our desired size and position
+            // within the parent's 1x1 local space.
+            var scaleMatrix = Matrix4x4.CreateScale(new Vector3(localScale.X * Scale.X, localScale.Y * Scale.Y, 1));
+            var translationMatrix = Matrix4x4.CreateTranslation(new Vector3(finalLocalPosition.X, finalLocalPosition.Y, Depth));
+            localMatrix = scaleMatrix * translationMatrix;
+
             ModelMatrix = localMatrix * Parent.ModelMatrix;
 
-        ModelMatrix = scaleMatrix * translationMatrix;
+            // Cache final pixel size
+            finalDrawSize = Size;
+            if ((RelativeSizeAxes & Axes.X) != 0) finalDrawSize.X *= parentPixelSize.X;
+            if ((RelativeSizeAxes & Axes.Y) != 0) finalDrawSize.Y *= parentPixelSize.Y;
+        }
 
-        // Calculate the screen-space bounding box (DrawRectangle) by transforming the corners
-        // of a unit quad (which the renderer uses) by the final ModelMatrix to determine the final screen coordinates and size
-        var topLeft = Vector4.Transform(new Vector4(0, 0, 0, 1), ModelMatrix);
-        var topRight = Vector4.Transform(new Vector4(1, 0, 0, 1), ModelMatrix);
-        var bottomLeft = Vector4.Transform(new Vector4(0, 1, 0, 1), ModelMatrix);
-        var bottomRight = Vector4.Transform(new Vector4(1, 1, 0, 1), ModelMatrix);
+        DrawSize = finalDrawSize;
 
-        float minX = Math.Min(topLeft.X, Math.Min(topRight.X, Math.Min(bottomLeft.X, bottomRight.X)));
-        float minY = Math.Min(topLeft.Y, Math.Min(topRight.Y, Math.Min(bottomLeft.Y, bottomRight.Y)));
-        float maxX = Math.Max(topLeft.X, Math.Max(topRight.X, Math.Max(bottomLeft.X, bottomRight.X)));
-        float maxY = Math.Max(topLeft.Y, Math.Max(topRight.Y, Math.Max(bottomLeft.Y, bottomRight.Y)));
+        // Transform the unit quad's vertices by the final model matrix.
+        var vTopLeft = Vector4.Transform(new Vector4(0, 0, 0, 1), ModelMatrix);
+        var vTopRight = Vector4.Transform(new Vector4(1, 0, 0, 1), ModelMatrix);
+        var vBottomLeft = Vector4.Transform(new Vector4(0, 1, 0, 1), ModelMatrix);
+        var vBottomRight = Vector4.Transform(new Vector4(1, 1, 0, 1), ModelMatrix);
+
+        // Populate the VertexQuad with updated positions and texture coordinates.
+        // Color will be applied by updateVertexColors().
+        VertexQuad = new VertexQuad
+        {
+            TopLeft = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = new Vector2(0, 0) },
+            TopRight = new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(1, 0) },
+            BottomRight = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = new Vector2(1, 1) },
+            BottomLeft = new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(0, 1) }
+        };
+
+        // The screen-space bounding box (DrawRectangle) can now be calculated from the transformed vertices.
+        float minX = Math.Min(vTopLeft.X, Math.Min(vTopRight.X, Math.Min(vBottomLeft.X, vBottomRight.X)));
+        float minY = Math.Min(vTopLeft.Y, Math.Min(vTopRight.Y, Math.Min(vBottomLeft.Y, vBottomRight.Y)));
+        float maxX = Math.Max(vTopLeft.X, Math.Max(vTopRight.X, Math.Max(vBottomLeft.X, vBottomRight.X)));
+        float maxY = Math.Max(vTopLeft.Y, Math.Max(vTopRight.Y, Math.Max(vBottomLeft.Y, vBottomRight.Y)));
 
         DrawRectangle = new RectangleF(minX, minY, maxX - minX, maxY - minY);
+
+        // Ensure color is up to date after transform change.
+        updateVertexColors();
+    }
+
+    private void updateVertexColors()
+    {
+        var calculateColor = new Vector4(Color.R / 255f, Color.G / 255f, Color.B / 255f, Alpha);
+
+        // Because VertexQuad is a struct, we work on a copy and then assign it back.
+        var quad = VertexQuad;
+        quad.TopLeft.Color = calculateColor;
+        quad.TopRight.Color = calculateColor;
+        quad.BottomRight.Color = calculateColor;
+        quad.BottomLeft.Color = calculateColor;
+        VertexQuad = quad;
     }
 
     public bool Contains(Vector2 screenSpacePos) => DrawRectangle.Contains(screenSpacePos);

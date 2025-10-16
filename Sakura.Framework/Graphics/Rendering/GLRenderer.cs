@@ -5,14 +5,18 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.InteropServices;
 using System.Text;
 using Sakura.Framework.Graphics.Drawables;
+using Sakura.Framework.Graphics.Rendering.Batches;
+using Sakura.Framework.Graphics.Rendering.Vertex;
 using Silk.NET.OpenGL;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Timing;
 using Color = Sakura.Framework.Graphics.Colors.Color;
+using SakuraVertex = Sakura.Framework.Graphics.Rendering.Vertex.Vertex;
 
 namespace Sakura.Framework.Graphics.Rendering;
 
@@ -27,20 +31,7 @@ public class GLRenderer : IRenderer
 
     private Matrix4x4 projectionMatrix;
 
-    private readonly float[] _vertices =
-    {
-        // Positions      // Tex Coords
-        0.0f, 1.0f, 0.0f, 0.0f, 1.0f, // Top-left
-        1.0f, 1.0f, 0.0f, 1.0f, 1.0f, // Top-right
-        1.0f, 0.0f, 0.0f, 1.0f, 0.0f, // Bottom-right
-        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, // Bottom-left
-    };
-
-    private readonly uint[] _indices =
-    {
-        0, 1, 2,
-        2, 3, 0
-    };
+    private IVertexBatch<VertexQuad> quadBatch;
 
     private Drawable root;
 
@@ -80,23 +71,44 @@ public class GLRenderer : IRenderer
 
         vbo = gl.GenBuffer();
         gl.BindBuffer(BufferTargetARB.ArrayBuffer, vbo);
-        fixed(float* v = &_vertices[0])
-            gl.BufferData(BufferTargetARB.ArrayBuffer, (nuint)(_vertices.Length * sizeof(float)), v, BufferUsageARB.StaticDraw);
+        // Use BufferSubData to update this buffer, so we can initialize it with a size.
+        gl.BufferData(BufferTargetARB.ArrayBuffer, (nuint)(1000 * VertexQuad.Size), null, BufferUsageARB.DynamicDraw);
 
         ebo = gl.GenBuffer();
         gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, ebo);
-        fixed(uint* i = &_indices[0])
-            gl.BufferData(BufferTargetARB.ElementArrayBuffer, (nuint)(_indices.Length * sizeof(uint)), i, BufferUsageARB.StaticDraw);
 
+        uint[] indices = new uint[1000 * 6];
+        for (uint i = 0; i < 1000; i++)
+        {
+            indices[i * 6 + 0] = i * 4 + 0;
+            indices[i * 6 + 1] = i * 4 + 1;
+            indices[i * 6 + 2] = i * 4 + 2;
+            indices[i * 6 + 3] = i * 4 + 2;
+            indices[i * 6 + 4] = i * 4 + 3;
+            indices[i * 6 + 5] = i * 4 + 0;
+        }
+
+        fixed (uint* ptr = indices)
+        {
+            gl.BufferData(BufferTargetARB.ElementArrayBuffer, (nuint)(indices.Length * sizeof(uint)), ptr, BufferUsageARB.StaticDraw);
+        }
+
+        // Define vertex attributes
         // Position attribute
-        gl.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 5 * sizeof(float), (void*)0);
         gl.EnableVertexAttribArray(0);
+        gl.VertexAttribPointer(0, 2, VertexAttribPointerType.Float, false, (uint)SakuraVertex.Size, (void*)Marshal.OffsetOf<SakuraVertex>(nameof(SakuraVertex.Position)));
 
         // Texture coord attribute
-        gl.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, 5 * sizeof(float), (void*)(3 * sizeof(float)));
         gl.EnableVertexAttribArray(1);
+        gl.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, (uint)SakuraVertex.Size, (void*)Marshal.OffsetOf<SakuraVertex>(nameof(SakuraVertex.TexCoords)));
+
+        // Color attribute
+        gl.EnableVertexAttribArray(2);
+        gl.VertexAttribPointer(2, 4, VertexAttribPointerType.Float, false, (uint)SakuraVertex.Size, (void*)Marshal.OffsetOf<SakuraVertex>(nameof(SakuraVertex.Color)));
 
         gl.BindVertexArray(0);
+
+        quadBatch = new QuadBatch<VertexQuad>(gl, vao, vbo, ebo);
     }
 
     public void SetRoot(Drawable root)
@@ -130,6 +142,7 @@ public class GLRenderer : IRenderer
 
         gl.BindVertexArray(vao);
         root.Draw(this);
+        quadBatch.Draw(); // Ensure the last batch is drawn.
         gl.BindVertexArray(0);
     }
 
@@ -140,16 +153,8 @@ public class GLRenderer : IRenderer
 
         drawable.Texture.Bind();
 
-        var color = drawable.Color;
-        var finalColor = new Vector4(color.R / 255f, color.G / 255f, color.B / 255f, color.A / 255f * drawable.Alpha);
-
-        // This is a placeholder for a proper colour system.
-        // It would normally be passed as a vertex attribute for batching.
-        gl.ProgramUniform4(shader.Handle, gl.GetUniformLocation(shader.Handle, "u_Color"), finalColor);
-
-        shader.SetUniform("u_Model", drawable.ModelMatrix);
-
-        gl.DrawElements(PrimitiveType.Triangles, (uint)_indices.Length, DrawElementsType.UnsignedInt, null);
+        // The drawable has already computed its vertex data. Add it to the batch.
+        quadBatch.Add(drawable.VertexQuad);
     }
 
     /// <summary>

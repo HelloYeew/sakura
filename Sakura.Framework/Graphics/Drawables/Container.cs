@@ -21,8 +21,8 @@ public class Container : Drawable
     {
         get
         {
-            // Start with the container's full drawable size.
-            var containerSize = DrawRectangle.Size;
+            // Start with the container's logical size, not final screen rectangle.
+            var containerSize = DrawSize;
 
             // Calculate padding, scaling it relative to our own size if needed.
             MarginPadding relativePadding = Padding;
@@ -106,6 +106,8 @@ public class Container : Drawable
 
     public override void Draw(IRenderer renderer)
     {
+        base.Draw(renderer);
+
         foreach (var child in children.OrderBy(c => c.Depth))
         {
             child.Draw(renderer);
