@@ -35,6 +35,9 @@ public class Drawable
     private MarginPadding margin;
     private MarginPadding padding;
     private float depth;
+    private bool alwaysPresent;
+
+    public float DrawAlpha { get; private set; } = 1f;
 
     /// <summary>
     /// An invalidation flag representing which aspects of the drawable need to be recomputed.
@@ -176,6 +179,20 @@ public class Drawable
         }
     }
 
+    /// <summary>
+    /// Whether this drawable should be update even when not present on the screen.
+    /// </summary>
+    public bool AlwaysPresent
+    {
+        get => alwaysPresent;
+        set
+        {
+            if (alwaysPresent == value) return;
+            alwaysPresent = value;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+    }
+
     public void Hide() => Alpha = 0f;
     public void Show() => Alpha = 1f;
     public bool IsHidden => Alpha <= 0f;
@@ -208,6 +225,8 @@ public class Drawable
 
     protected virtual void UpdateTransforms()
     {
+        DrawAlpha = (Parent?.DrawAlpha ?? 1f) * Alpha;
+
         Matrix4x4 localMatrix;
         Vector2 finalDrawSize;
 
@@ -290,7 +309,7 @@ public class Drawable
 
     protected virtual void GenerateVertices()
     {
-        var calculatedColor = new System.Numerics.Vector4(Color.R / 255f, Color.G / 255f, Color.B / 255f, Alpha);
+        var calculatedColor = new System.Numerics.Vector4(Color.R / 255f, Color.G / 255f, Color.B / 255f, DrawAlpha);
 
         var vTopLeft = Vector4.Transform(new Vector4(0, 0, 0, 1), ModelMatrix);
         var vTopRight = Vector4.Transform(new Vector4(1, 0, 0, 1), ModelMatrix);
@@ -360,6 +379,9 @@ public class Drawable
 
     public virtual void Draw(IRenderer renderer)
     {
+        if (DrawAlpha <= 0)
+            return;
+
         renderer.DrawVertices(Vertices, Texture ?? Texture.WhitePixel);
     }
 
