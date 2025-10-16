@@ -2,6 +2,8 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
@@ -40,6 +42,8 @@ public class Drawable
     /// An invalidation flag representing which aspects of the drawable need to be recomputed.
     /// </summary>
     protected InvalidationFlags Invalidation = InvalidationFlags.All;
+
+    protected readonly List<Vertex> Vertices = new List<Vertex>();
 
     public Anchor Anchor
     {
@@ -180,7 +184,6 @@ public class Drawable
     public RectangleF DrawRectangle { get; private set; }
     public Vector2 DrawSize { get; private set; }
     public Matrix4x4 ModelMatrix = Matrix4x4.Identity;
-    public VertexQuad VertexQuad { get; protected set; }
 
     public Drawable()
     {
@@ -192,14 +195,9 @@ public class Drawable
         if (Invalidation == InvalidationFlags.None)
             return;
 
-        if ((Invalidation & InvalidationFlags.DrawInfo) != 0)
+        if ((Invalidation & (InvalidationFlags.DrawInfo | InvalidationFlags.Colour)) != 0)
         {
             UpdateTransforms();
-        }
-
-        if ((Invalidation & InvalidationFlags.Colour) != 0)
-        {
-            updateVertexColors();
         }
 
         Invalidation = InvalidationFlags.None;
@@ -284,45 +282,42 @@ public class Drawable
 
         DrawSize = finalDrawSize;
 
-        // Transform the unit quad's vertices by the final model matrix.
+        GenerateVertices();
+    }
+
+    protected virtual void GenerateVertices()
+    {
+        Vertices.Clear();
+
+        var calculatedColor = new System.Numerics.Vector4(Color.R / 255f, Color.G / 255f, Color.B / 255f, Alpha);
+
         var vTopLeft = Vector4.Transform(new Vector4(0, 0, 0, 1), ModelMatrix);
         var vTopRight = Vector4.Transform(new Vector4(1, 0, 0, 1), ModelMatrix);
         var vBottomLeft = Vector4.Transform(new Vector4(0, 1, 0, 1), ModelMatrix);
         var vBottomRight = Vector4.Transform(new Vector4(1, 1, 0, 1), ModelMatrix);
 
-        // Populate the VertexQuad with updated positions and texture coordinates.
-        // Color will be applied by updateVertexColors().
-        VertexQuad = new VertexQuad
-        {
-            TopLeft = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = new Vector2(0, 0) },
-            TopRight = new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(1, 0) },
-            BottomRight = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = new Vector2(1, 1) },
-            BottomLeft = new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(0, 1) }
-        };
+        var topLeft = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = new Vector2(0, 0), Color = calculatedColor };
+        var topRight = new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(1, 0), Color = calculatedColor };
+        var bottomLeft = new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(0, 1), Color = calculatedColor };
+        var bottomRight = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = new Vector2(1, 1), Color = calculatedColor };
 
-        // The screen-space bounding box (DrawRectangle) can now be calculated from the transformed vertices.
+        // Triangle 1
+        Vertices.Add(topLeft);
+        Vertices.Add(topRight);
+        Vertices.Add(bottomRight);
+
+        // Triangle 2
+        Vertices.Add(bottomRight);
+        Vertices.Add(bottomLeft);
+        Vertices.Add(topLeft);
+
+        // Calculate DrawRectangle in screen space
         float minX = Math.Min(vTopLeft.X, Math.Min(vTopRight.X, Math.Min(vBottomLeft.X, vBottomRight.X)));
         float minY = Math.Min(vTopLeft.Y, Math.Min(vTopRight.Y, Math.Min(vBottomLeft.Y, vBottomRight.Y)));
         float maxX = Math.Max(vTopLeft.X, Math.Max(vTopRight.X, Math.Max(vBottomLeft.X, vBottomRight.X)));
         float maxY = Math.Max(vTopLeft.Y, Math.Max(vTopRight.Y, Math.Max(vBottomLeft.Y, vBottomRight.Y)));
 
         DrawRectangle = new RectangleF(minX, minY, maxX - minX, maxY - minY);
-
-        // Ensure color is up to date after transform change.
-        updateVertexColors();
-    }
-
-    private void updateVertexColors()
-    {
-        var calculateColor = new Vector4(Color.R / 255f, Color.G / 255f, Color.B / 255f, Alpha);
-
-        // Because VertexQuad is a struct, we work on a copy and then assign it back.
-        var quad = VertexQuad;
-        quad.TopLeft.Color = calculateColor;
-        quad.TopRight.Color = calculateColor;
-        quad.BottomRight.Color = calculateColor;
-        quad.BottomLeft.Color = calculateColor;
-        VertexQuad = quad;
     }
 
     public bool Contains(Vector2 screenSpacePos) => DrawRectangle.Contains(screenSpacePos);
@@ -364,7 +359,7 @@ public class Drawable
 
     public virtual void Draw(IRenderer renderer)
     {
-        renderer.DrawDrawable(this);
+        renderer.DrawVertices(CollectionsMarshal.AsSpan(Vertices), Texture ?? Texture.WhitePixel);
     }
 
     /// <summary>

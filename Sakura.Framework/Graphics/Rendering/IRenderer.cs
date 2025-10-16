@@ -1,7 +1,9 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using Sakura.Framework.Graphics.Drawables;
+using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Timing;
 
@@ -24,5 +26,5 @@ public interface IRenderer
 
     void Draw(IClock clock);
 
-    void DrawDrawable(Drawable drawable);
+    void DrawVertices(ReadOnlySpan<Vertex.Vertex> vertices, Texture texture);
 }
