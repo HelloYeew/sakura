@@ -4,6 +4,7 @@
 #nullable disable
 
 using System;
+using Sakura.Framework.Allocation;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Platform;
@@ -29,6 +30,11 @@ public class App : Container, IDisposable
             Depth = float.MaxValue
         });
         FpsGraph.Hide();
+
+        Cache(Host);
+        Cache(this);
+        if (Host.Window != null) Cache(Host.Window);
+        if (Host.Storage != null) Cache(Host.Storage);
     }
 
     /// <summary>

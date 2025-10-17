@@ -2,6 +2,9 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Linq;
+using System.Reflection;
+using Sakura.Framework.Allocation;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
@@ -204,6 +207,90 @@ public class Drawable
     public Vector2 DrawSize { get; private set; }
     public Matrix4x4 ModelMatrix = Matrix4x4.Identity;
 
+    #region Dependency Injection
+
+    private IReadOnlyDependencyContainer dependencies = null!;
+    private DependencyContainer? ownDependencies;
+
+    /// <summary>
+    /// Provides access to this drawable's dependency container.
+    /// Dependencies are resolved by walking up the drawable hierarchy.
+    /// </summary>
+    protected IReadOnlyDependencyContainer Dependencies => dependencies;
+
+    /// <summary>
+    /// Caches a dependency instance of the specified type in this drawable's own dependency container.
+    /// Making it available to this drawable and its children.
+    /// This should be called within a method marked with <see cref="BackgroundDependencyLoaderAttribute"/>
+    /// </summary>
+    /// <param name="instance">The instance to cache</param>
+    /// <typeparam name="T">The type of the dependency to cache</typeparam>
+    protected void Cache<T>(T instance) where T : class
+    {
+        if (ownDependencies == null)
+            throw new InvalidOperationException($"Cannot cache dependencies before {nameof(Load)} has been called.");
+
+        ownDependencies.Cache(instance);
+    }
+
+    private void loadDependencies()
+    {
+        IReadOnlyDependencyContainer? parentContainer = getParentDependencyContainer();
+        dependencies = ownDependencies = new DependencyContainer(parentContainer);
+
+        // inject dependencies into [Resolved] fields/properties
+        dependencies.Inject(this);
+
+        var loadMethod = GetType().GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .FirstOrDefault(m => m.GetCustomAttribute<BackgroundDependencyLoaderAttribute>() != null);
+
+        if (loadMethod != null)
+        {
+            // Check if the method has parameters we need to inject
+            var methodParams = loadMethod.GetParameters();
+
+            if (methodParams.Length > 0)
+            {
+                // resolve from main container
+                object?[] resolvedParams = new object?[methodParams.Length];
+
+                // get the generic Get<T> method from the dependency container
+                var getMethod = dependencies.GetType().GetMethod(nameof(IReadOnlyDependencyContainer.Get), BindingFlags.Public | BindingFlags.Instance);
+                if (getMethod == null) throw new InvalidOperationException("Could not find Get method on dependency container.");
+
+                for (int i = 0; i < methodParams.Length; i++)
+                {
+                    // foreach parameter, resolve the dependency using reflection
+                    var paramType = methodParams[i].ParameterType;
+                    var concreteGetMethod = getMethod.MakeGenericMethod(paramType);
+                    resolvedParams[i] = concreteGetMethod.Invoke(dependencies, null);
+                }
+
+                // invoke the method with the resolved dependencies
+                loadMethod.Invoke(this, resolvedParams);
+            }
+            else
+            {
+                // no parameters in load method, invoke as before
+                loadMethod.Invoke(this, null);
+            }
+        }
+    }
+
+    private IReadOnlyDependencyContainer? getParentDependencyContainer()
+    {
+        Drawable? p = Parent;
+        while (p != null)
+        {
+            if (p.ownDependencies != null)
+                return p.ownDependencies;
+            p = p.Parent;
+        }
+        return null;
+    }
+
+    #endregion
+
     public Drawable()
     {
         Texture = Texture.WhitePixel;
@@ -366,6 +453,10 @@ public class Drawable
     /// </summary>
     public virtual void Load()
     {
+        if (IsLoaded) return;
+
+        loadDependencies();
+
         IsLoaded = true;
     }
 
