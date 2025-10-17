@@ -17,7 +17,7 @@ namespace Sakura.Framework.Graphics.Drawables;
 /// </summary>
 public class Drawable
 {
-    public Container Parent { get; internal set; }
+    public Container? Parent { get; internal set; }
 
     public bool IsHovered { get; private set; }
     public bool IsDragged { get; private set; }
@@ -236,7 +236,7 @@ public class Drawable
 
             // The root's transform is absolute, not relative. It establishes the world space.
             // It scales a 1x1 quad up to its own pixel size.
-            finalDrawSize = this.Size;
+            finalDrawSize = Size;
             Vector2 originOffset = GetAnchorOriginVector(Origin) * finalDrawSize * Scale;
 
             // The root's position is typically (0,0), but we'll respect the Position property.
