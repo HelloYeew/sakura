@@ -5,6 +5,7 @@
 
 using System;
 using Sakura.Framework.Graphics.Drawables;
+using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Platform;
 
 namespace Sakura.Framework;
@@ -15,11 +16,19 @@ public class App : Container, IDisposable
 
     protected AppHost Host { get; private set; }
 
+    internal FpsGraph FpsGraph { get; private set; }
+
     internal void SetHost(AppHost host) => Host = host;
 
-    public virtual void Load()
+    public override void Load()
     {
         base.Load();
+
+        Add(FpsGraph = new FpsGraph(Host.AppClock)
+        {
+            Depth = float.MaxValue
+        });
+        FpsGraph.Hide();
     }
 
     /// <summary>

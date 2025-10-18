@@ -31,7 +31,7 @@ public abstract class AppHost : IDisposable
     private App app;
 
     public Reactive<FrameSync> FrameLimiter { get; protected set; }
-    protected IClock AppClock { get; private set; }
+    protected internal IClock AppClock { get; private set; }
     private readonly ThrottledFrameClock inputClock = new ThrottledFrameClock(1000);
     private readonly ThrottledFrameClock soundClock = new ThrottledFrameClock(1000);
     private double lastUpdateTime;
@@ -226,9 +226,11 @@ public abstract class AppHost : IDisposable
             Window.GetDrawableSize(out int initialWidth, out int initialHeight);
             onResize(initialWidth, initialHeight);
 
-            this.app.Load();
-
             AppClock = new Clock(true);
+
+            this.app.Load();
+            this.app.LoadComplete();
+
             lastUpdateTime = AppClock.CurrentTime;
             gameLoopStopwatch.Start();
 
@@ -305,7 +307,7 @@ public abstract class AppHost : IDisposable
 
         // Global hotkey
         // TODO: Global hotkey should be in list (don't have to be able to change since it's framework level)
-        if (!e.IsRepeat && e.Key == Key.F11 && (e.Modifiers & KeyModifiers.Control) > 0)
+        if (!e.IsRepeat && e.Key == Key.F10 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
             int currentValue = (int)FrameLimiter.Value;
             int nextValue = (currentValue + 1) % Enum.GetValues(typeof(FrameSync)).Length;
@@ -318,6 +320,11 @@ public abstract class AppHost : IDisposable
             PrintHierarchy(app, builder);
             Logger.Log(builder.ToString());
             Logger.Log("Hierarchy dumped to console. Press F1 to dump again.");
+        }
+        if (!e.IsRepeat && e.Key == Key.F11 && (e.Modifiers & KeyModifiers.Control) > 0)
+        {
+            if (app?.FpsGraph != null)
+                app.FpsGraph.Alpha = app.FpsGraph.Alpha > 0 ? 0 : 1;
         }
     }
 

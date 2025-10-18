@@ -86,15 +86,27 @@ public class Container : Drawable
     {
         // Check whether our layout was dirty before base.Update() is called, as it will clear our invalidation flags.
         bool layoutWasInvalidated = (Invalidation & InvalidationFlags.DrawInfo) != 0;
+        bool colourWasInvalidated = (Invalidation & InvalidationFlags.Colour) != 0;
 
         // Base update to call UpdateTransforms() on this container if it was invalid.
         base.Update();
+
+        if (DrawAlpha <= 0)
+            return;
 
         if (layoutWasInvalidated)
         {
             foreach (var child in children)
             {
                 child.Invalidate(InvalidationFlags.DrawInfo, false);
+            }
+        }
+
+        if (colourWasInvalidated)
+        {
+            foreach (var child in children)
+            {
+                child.Invalidate(InvalidationFlags.Colour, false);
             }
         }
 
@@ -107,6 +119,9 @@ public class Container : Drawable
     public override void Draw(IRenderer renderer)
     {
         base.Draw(renderer);
+
+        if (DrawAlpha <= 0)
+            return;
 
         foreach (var child in children.OrderBy(c => c.Depth))
         {
