@@ -6,5 +6,6 @@ namespace Sakura.Framework.Configurations;
 [SettingSource("framework.ini")]
 public enum FrameworkSetting
 {
-    FrameLimiter
+    FrameLimiter,
+    ShowFpsGraph
 }

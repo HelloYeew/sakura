@@ -15,5 +15,6 @@ public class FrameworkConfigManager : ConfigManager<FrameworkSetting>
     private void initializeDefaults()
     {
         Get(FrameworkSetting.FrameLimiter, FrameSync.Limit2x);
+        Get(FrameworkSetting.ShowFpsGraph, false);
     }
 }
