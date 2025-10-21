@@ -34,6 +34,7 @@ public class Drawable
     private Vector2 position = Vector2.Zero;
     private Vector2 size = Vector2.Zero;
     private Vector2 scale = Vector2.One;
+    private float rotation;
     private Axes relativeSizeAxes = Axes.None;
     private Axes relativePositionAxes = Axes.None;
     private Color color = Color.White;
@@ -121,6 +122,17 @@ public class Drawable
         {
             if (scale == value) return;
             scale = value;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+    }
+
+    public float Rotation
+    {
+        get => rotation;
+        set
+        {
+            if (Math.Abs(rotation - value) < 0.0001f) return;
+            rotation = value;
             Invalidate(InvalidationFlags.DrawInfo);
         }
     }
@@ -236,25 +248,25 @@ public class Drawable
 
         Matrix4x4 localMatrix;
         Vector2 finalDrawSize;
+        Vector2 originVector = GetAnchorOriginVector(Origin);
 
         if (Parent == null)
         {
             // This is the root drawable.
-
-            // The root's transform is absolute, not relative. It establishes the world space.
-            // It scales a 1x1 quad up to its own pixel size.
             finalDrawSize = Size;
-            Vector2 originOffset = GetAnchorOriginVector(Origin) * finalDrawSize * Scale;
 
-            // The root's position is typically (0,0), but we'll respect the Position property.
-            // No anchor is applied as there's no parent to be anchored to.
-            Vector2 finalPosition = Position - originOffset;
+            var finalScale = new Vector3(finalDrawSize.X * Scale.X, finalDrawSize.Y * Scale.Y, 1);
+            var finalPosition = new Vector3(Position.X, Position.Y, 0);
 
-            var scaleMatrix = Matrix4x4.CreateScale(new Vector3(finalDrawSize.X * Scale.X, finalDrawSize.Y * Scale.Y, 1));
-            var translationMatrix = Matrix4x4.CreateTranslation(new Vector3(finalPosition.X, finalPosition.Y, Depth));
+            // Transform order: Origin Translation -> Scale -> Rotation -> Position Translation
+            var m = Matrix4x4.CreateTranslation(-originVector.X, -originVector.Y, 0); // Translate so origin is at (0,0)
+            m *= Matrix4x4.CreateScale(finalScale); // Scale around (0,0)
+            m *= Matrix4x4.CreateRotationZ((float)(Rotation * Math.PI / 180.0f)); // Rotate around (0,0)
+            m *= Matrix4x4.CreateTranslation(finalPosition); // Translate to final position
 
-            localMatrix = scaleMatrix * translationMatrix;
-            ModelMatrix = localMatrix; // No parent matrix to multiply with.
+            ModelMatrix = m;
+
+            DrawSize = finalDrawSize;
         }
         else
         {
@@ -289,21 +301,19 @@ public class Drawable
 
             // Anchor and Origin are naturally relative, so they work correctly in this 0-1 space.
             Vector2 anchorPosition = GetAnchorOriginVector(Anchor);
-            Vector2 originOffset = GetAnchorOriginVector(Origin) * localScale * Scale;
-            var marginOffset = new Vector2(localMargin.Left - localMargin.Right, localMargin.Top - localMargin.Bottom);
+            Vector2 finalOriginPosition = anchorPosition + localPosition + new Vector2(localMargin.Left - localMargin.Right, localMargin.Top - localMargin.Bottom);
 
-            Vector2 finalLocalPosition = anchorPosition + localPosition + marginOffset - originOffset;
+            var finalScale = new Vector3(localScale.X * Scale.X, localScale.Y * Scale.Y, 1);
+            var finalPosition = new Vector3(finalOriginPosition.X, finalOriginPosition.Y, 0);
 
-            // Create local matrix
-            // This matrix transforms a unit (1x1) quad into our desired size and position
-            // within the parent's 1x1 local space.
-            var scaleMatrix = Matrix4x4.CreateScale(new Vector3(localScale.X * Scale.X, localScale.Y * Scale.Y, 1));
-            var translationMatrix = Matrix4x4.CreateTranslation(new Vector3(finalLocalPosition.X, finalLocalPosition.Y, Depth));
-            localMatrix = scaleMatrix * translationMatrix;
+            var m = Matrix4x4.CreateTranslation(-originVector.X, -originVector.Y, 0);
+            m *= Matrix4x4.CreateScale(finalScale);
+            m *= Matrix4x4.CreateRotationZ((float)(Rotation * Math.PI / 180.0f));
+            m *= Matrix4x4.CreateTranslation(finalPosition);
 
+            localMatrix = m;
             ModelMatrix = localMatrix * Parent.ModelMatrix;
 
-            // Cache final pixel size
             finalDrawSize = Size;
             if ((RelativeSizeAxes & Axes.X) != 0) finalDrawSize.X *= parentPixelSize.X;
             if ((RelativeSizeAxes & Axes.Y) != 0) finalDrawSize.Y *= parentPixelSize.Y;
@@ -575,6 +585,20 @@ public class Drawable
         {
             foreach (var child in c.Children)
                 child.ClearTransforms(true);
+        }
+    }
+
+    internal void LoopLatestTransforms()
+    {
+        if (!transforms.Any())
+            return;
+
+        double latestEndTime = GetLatestTransformEndTime();
+
+        foreach (var t in transforms)
+        {
+            if (t.EndTime == latestEndTime)
+                t.IsLooping = true;
         }
     }
 
