@@ -86,11 +86,11 @@ public class Container : Drawable
 
     public override void Update()
     {
-        base.Update();
-
         // Check whether our layout was dirty before base.Update() is called, as it will clear our invalidation flags.
         bool layoutWasInvalidated = (Invalidation & InvalidationFlags.DrawInfo) != 0;
         bool colourWasInvalidated = (Invalidation & InvalidationFlags.Colour) != 0;
+
+        base.Update();
 
         if (DrawAlpha <= 0)
             return;
