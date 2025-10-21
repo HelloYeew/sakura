@@ -8,6 +8,7 @@ using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
+using Sakura.Framework.Timing;
 
 namespace Sakura.Framework.Graphics.Drawables;
 
@@ -62,6 +63,7 @@ public class Container : Drawable
 
         drawable.Parent = this;
         children.Add(drawable);
+        drawable.Clock = new FramedClock(Clock);
 
         Invalidate(InvalidationFlags.DrawInfo);
 
@@ -84,12 +86,11 @@ public class Container : Drawable
 
     public override void Update()
     {
+        base.Update();
+
         // Check whether our layout was dirty before base.Update() is called, as it will clear our invalidation flags.
         bool layoutWasInvalidated = (Invalidation & InvalidationFlags.DrawInfo) != 0;
         bool colourWasInvalidated = (Invalidation & InvalidationFlags.Colour) != 0;
-
-        // Base update to call UpdateTransforms() on this container if it was invalid.
-        base.Update();
 
         if (DrawAlpha <= 0)
             return;

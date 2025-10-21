@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Maths;
@@ -9,7 +10,7 @@ using Sakura.Framework.Maths;
 namespace Sakura.Framework.Extensions.DrawableExtensions;
 
 /// <summary>
-/// Provides extension methods for <see cref="Drawable"/> objects.
+/// Provides transformation-related extension methods for <see cref="Drawable"/> objects.
 /// </summary>
 public static class TransformExtensions
 {
@@ -77,6 +78,30 @@ public static class TransformExtensions
     public static Drawable FadeIn(this Drawable drawable, double duration = 0, EasingType easing = EasingType.None) => drawable.FadeTo(1, duration, easing);
     public static Drawable FadeOut(this Drawable drawable, double duration = 0, EasingType easing = EasingType.None) => drawable.FadeTo(0, duration, easing);
 
+    public static Drawable FadeFromZero(this Drawable drawable, double duration = 0, EasingType easing = EasingType.None)
+    {
+        drawable.Alpha = 0;
+        return drawable.FadeTo(1, duration, easing);
+    }
+
+    public static Drawable FadeToZero(this Drawable drawable, double duration = 0, EasingType easing = EasingType.None)
+    {
+        return drawable.FadeTo(0, duration, easing);
+    }
+
+    /// <summary>
+    /// Instantly flashes the drawable to a specific colour, then fades back to its original colour over a duration.
+    /// </summary>
+    public static Drawable FlashColour(this Drawable drawable, Color flashColour, double duration, EasingType easing = EasingType.None)
+    {
+        drawable.addTransform(new FlashColorTransform
+        {
+            FlashColour = flashColour,
+            Easing = easing
+        }, duration);
+        return drawable;
+    }
+
     /// <summary>
     /// Schedules the next transformation to start after a specified delay from the end of the last transformation.
     /// </summary>
@@ -108,7 +133,7 @@ public static class TransformExtensions
     /// </summary>
     public static Drawable AddDelayed(this Drawable drawable, Action action, double delay)
     {
-        drawable.Scheduler.Add(action, delay);
+        drawable.Scheduler.AddDelayed(action, delay);
         return drawable;
     }
 }

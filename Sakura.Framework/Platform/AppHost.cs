@@ -257,6 +257,8 @@ public abstract class AppHost : IDisposable
 
             AppClock = new Clock(true);
 
+            this.app.Clock = AppClock;
+
             this.app.Load();
             LoadFrameworkDrawable();
             this.app.LoadComplete();

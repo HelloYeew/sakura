@@ -3,6 +3,8 @@
 
 using System;
 using System.Numerics;
+using Sakura.Framework.Extensions.ColorExtensions;
+using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
 
 namespace Sakura.Framework.Graphics.Transforms;
@@ -62,5 +64,29 @@ public class AlphaTransform : Transform
     public override void Apply(Drawable d, double time)
     {
         d.Alpha = (float)(StartValue + (EndValue - StartValue) * GetEasedProgress(time));
+    }
+}
+
+public class FlashColorTransform : Transform
+{
+    public Color FlashColour;
+    private Color originalColour;
+    private bool colourCaptured;
+
+    public override void Apply(Drawable d, double time)
+    {
+        // On the first application, capture the drawable's current colour.
+        // This will be our target to fade back to.
+        if (!colourCaptured)
+        {
+            originalColour = d.Color;
+            colourCaptured = true;
+        }
+
+        // Eased progress goes from 0 to 1 over the duration.
+        double easedProgress = GetEasedProgress(time);
+
+        // lerp from the flash colour (at progress 0) to the original colour (at progress 1).
+        d.Color = ColorExtensions.Lerp(FlashColour, originalColour, (float)easedProgress);
     }
 }

@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Sakura.Framework.Allocation;
@@ -10,8 +11,10 @@ using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Rendering.Vertex;
 using Sakura.Framework.Graphics.Textures;
+using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
+using Sakura.Framework.Timing;
 
 namespace Sakura.Framework.Graphics.Drawables;
 
@@ -39,6 +42,24 @@ public class Drawable
     private MarginPadding padding;
     private float depth;
     private bool alwaysPresent;
+
+    /// <summary>
+    /// A clock for this drawable, time is relative to the parent's clock
+    /// </summary>
+    public IClock Clock { get; internal set; }
+
+    /// <summary>
+    /// The scheduler for this drawable, used for delaying and scheduling tasks.
+    /// </summary>
+    public Scheduler Scheduler { get; }
+
+    private readonly List<ITransform> transforms = new();
+
+    /// <summary>
+    /// An internal property used by the transform extension methods to sequence animations.
+    /// It represents the delay before the next transformation can begin.
+    /// </summary>
+    internal double TimeUntilTransformsCanStart { get; set; }
 
     public float DrawAlpha { get; private set; } = 1f;
 
@@ -207,108 +228,7 @@ public class Drawable
     public Vector2 DrawSize { get; private set; }
     public Matrix4x4 ModelMatrix = Matrix4x4.Identity;
 
-    #region Dependency Injection
-
-    private IReadOnlyDependencyContainer dependencies = null!;
-    private DependencyContainer? ownDependencies;
-
-    /// <summary>
-    /// Provides access to this drawable's dependency container.
-    /// Dependencies are resolved by walking up the drawable hierarchy.
-    /// </summary>
-    protected IReadOnlyDependencyContainer Dependencies => dependencies;
-
-    /// <summary>
-    /// Caches a dependency instance of the specified type in this drawable's own dependency container.
-    /// Making it available to this drawable and its children.
-    /// This should be called within a method marked with <see cref="BackgroundDependencyLoaderAttribute"/>
-    /// </summary>
-    /// <param name="instance">The instance to cache</param>
-    /// <typeparam name="T">The type of the dependency to cache</typeparam>
-    protected void Cache<T>(T instance) where T : class
-    {
-        if (ownDependencies == null)
-            throw new InvalidOperationException($"Cannot cache dependencies before {nameof(Load)} has been called.");
-
-        ownDependencies.Cache(instance);
-    }
-
-    private void loadDependencies()
-    {
-        IReadOnlyDependencyContainer? parentContainer = getParentDependencyContainer();
-        dependencies = ownDependencies = new DependencyContainer(parentContainer);
-
-        // inject dependencies into [Resolved] fields/properties
-        dependencies.Inject(this);
-
-        var loadMethod = GetType().GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-            .FirstOrDefault(m => m.GetCustomAttribute<BackgroundDependencyLoaderAttribute>() != null);
-
-        if (loadMethod != null)
-        {
-            // Check if the method has parameters we need to inject
-            var methodParams = loadMethod.GetParameters();
-
-            if (methodParams.Length > 0)
-            {
-                // resolve from main container
-                object?[] resolvedParams = new object?[methodParams.Length];
-
-                // get the generic Get<T> method from the dependency container
-                var getMethod = dependencies.GetType().GetMethod(nameof(IReadOnlyDependencyContainer.Get), BindingFlags.Public | BindingFlags.Instance);
-                if (getMethod == null) throw new InvalidOperationException("Could not find Get method on dependency container.");
-
-                for (int i = 0; i < methodParams.Length; i++)
-                {
-                    // foreach parameter, resolve the dependency using reflection
-                    var paramType = methodParams[i].ParameterType;
-                    var concreteGetMethod = getMethod.MakeGenericMethod(paramType);
-                    resolvedParams[i] = concreteGetMethod.Invoke(dependencies, null);
-                }
-
-                // invoke the method with the resolved dependencies
-                loadMethod.Invoke(this, resolvedParams);
-            }
-            else
-            {
-                // no parameters in load method, invoke as before
-                loadMethod.Invoke(this, null);
-            }
-        }
-    }
-
-    private IReadOnlyDependencyContainer? getParentDependencyContainer()
-    {
-        Drawable? p = Parent;
-        while (p != null)
-        {
-            if (p.ownDependencies != null)
-                return p.ownDependencies;
-            p = p.Parent;
-        }
-        return null;
-    }
-
-    #endregion
-
-    public Drawable()
-    {
-        Texture = Texture.WhitePixel;
-    }
-
-    public virtual void Update()
-    {
-        if (!IsLoaded) return;
-        if (Invalidation == InvalidationFlags.None)
-            return;
-
-        if ((Invalidation & (InvalidationFlags.DrawInfo | InvalidationFlags.Colour)) != 0)
-        {
-            UpdateTransforms();
-        }
-
-        Invalidation = InvalidationFlags.None;
-    }
+    #region Calculation of Draw Info
 
     protected virtual void UpdateTransforms()
     {
@@ -446,6 +366,8 @@ public class Drawable
         }
     }
 
+    #endregion
+
     /// <summary>
     /// Called to perform loading tasks to load required resources and dependencies.
     /// Called once before the first update.
@@ -491,6 +413,184 @@ public class Drawable
         if (propagateToParent && (flags & InvalidationFlags.DrawInfo) != 0)
             Parent?.Invalidate(InvalidationFlags.DrawInfo);
     }
+
+    #region Dependency Injection
+
+    private IReadOnlyDependencyContainer dependencies = null!;
+    private DependencyContainer? ownDependencies;
+
+    /// <summary>
+    /// Provides access to this drawable's dependency container.
+    /// Dependencies are resolved by walking up the drawable hierarchy.
+    /// </summary>
+    protected IReadOnlyDependencyContainer Dependencies => dependencies;
+
+    /// <summary>
+    /// Caches a dependency instance of the specified type in this drawable's own dependency container.
+    /// Making it available to this drawable and its children.
+    /// This should be called within a method marked with <see cref="BackgroundDependencyLoaderAttribute"/>
+    /// </summary>
+    /// <param name="instance">The instance to cache</param>
+    /// <typeparam name="T">The type of the dependency to cache</typeparam>
+    protected void Cache<T>(T instance) where T : class
+    {
+        if (ownDependencies == null)
+            throw new InvalidOperationException($"Cannot cache dependencies before {nameof(Load)} has been called.");
+
+        ownDependencies.Cache(instance);
+    }
+
+    private void loadDependencies()
+    {
+        IReadOnlyDependencyContainer? parentContainer = getParentDependencyContainer();
+        dependencies = ownDependencies = new DependencyContainer(parentContainer);
+
+        // inject dependencies into [Resolved] fields/properties
+        dependencies.Inject(this);
+
+        var loadMethod = GetType().GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .FirstOrDefault(m => m.GetCustomAttribute<BackgroundDependencyLoaderAttribute>() != null);
+
+        if (loadMethod != null)
+        {
+            // Check if the method has parameters we need to inject
+            var methodParams = loadMethod.GetParameters();
+
+            if (methodParams.Length > 0)
+            {
+                // resolve from main container
+                object?[] resolvedParams = new object?[methodParams.Length];
+
+                // get the generic Get<T> method from the dependency container
+                var getMethod = dependencies.GetType().GetMethod(nameof(IReadOnlyDependencyContainer.Get), BindingFlags.Public | BindingFlags.Instance);
+                if (getMethod == null) throw new InvalidOperationException("Could not find Get method on dependency container.");
+
+                for (int i = 0; i < methodParams.Length; i++)
+                {
+                    // foreach parameter, resolve the dependency using reflection
+                    var paramType = methodParams[i].ParameterType;
+                    var concreteGetMethod = getMethod.MakeGenericMethod(paramType);
+                    resolvedParams[i] = concreteGetMethod.Invoke(dependencies, null);
+                }
+
+                // invoke the method with the resolved dependencies
+                loadMethod.Invoke(this, resolvedParams);
+            }
+            else
+            {
+                // no parameters in load method, invoke as before
+                loadMethod.Invoke(this, null);
+            }
+        }
+    }
+
+    private IReadOnlyDependencyContainer? getParentDependencyContainer()
+    {
+        Drawable? p = Parent;
+        while (p != null)
+        {
+            if (p.ownDependencies != null)
+                return p.ownDependencies;
+            p = p.Parent;
+        }
+        return null;
+    }
+
+    #endregion
+
+    public Drawable()
+    {
+        Texture = Texture.WhitePixel;
+        Clock = new Clock(true);
+        Scheduler = new Scheduler(Clock);
+    }
+
+    public virtual void Update()
+    {
+        if (!IsLoaded) return;
+
+        (Clock as FramedClock)?.Update();
+        Scheduler.Update();
+        applyTransforms();
+
+        if (Invalidation == InvalidationFlags.None)
+            return;
+
+        if ((Invalidation & (InvalidationFlags.DrawInfo | InvalidationFlags.Colour)) != 0)
+        {
+            UpdateTransforms();
+        }
+
+        Invalidation = InvalidationFlags.None;
+    }
+
+    #region Transformation Management
+
+    private void applyTransforms()
+    {
+        if (transforms.Count == 0)
+            return;
+
+        for (int i = transforms.Count - 1; i >= 0; i--)
+        {
+            var t = transforms[i];
+
+            // Apply the transform if its start time has been reached.
+            if (Clock.CurrentTime >= t.StartTime)
+            {
+                t.Apply(this, Clock.CurrentTime);
+            }
+
+            // Remove the transform if it has completed.
+            if (Clock.CurrentTime >= t.EndTime)
+            {
+                // Ensure the final value is applied exactly.
+                t.Apply(this, t.EndTime);
+                transforms.RemoveAt(i);
+            }
+        }
+    }
+
+    internal void AddTransform(Transform transform)
+    {
+        transforms.Add(transform);
+        // We don't sort here for performance; looping backwards in ApplyTransforms handles completed transforms.
+    }
+
+    /// <summary>
+    /// Gets the end time of the latest-finishing transformation on this drawable.
+    /// </summary>
+    public double GetLatestTransformEndTime() => transforms.Count > 0 ? transforms.Max(t => t.EndTime) : Clock.CurrentTime;
+
+    /// <summary>
+    /// Removes all transformations from this drawable.
+    /// </summary>
+    /// <param name="propagateToChildren">Whether to also clear transformations on all children.</param>
+    public void ClearTransforms(bool propagateToChildren = false)
+    {
+        transforms.Clear();
+        TimeUntilTransformsCanStart = 0;
+
+        if (propagateToChildren && this is Container c)
+        {
+            foreach (var child in c.Children)
+                child.ClearTransforms(true);
+        }
+    }
+
+    /// <summary>
+    /// Instantly finishes all transformations, applying their final values.
+    /// </summary>
+    /// <param name="propagateToChildren">Whether to also finish transformations on all children.</param>
+    public void FinishTransforms(bool propagateToChildren = false)
+    {
+        foreach (var t in transforms)
+            t.Apply(this, t.EndTime);
+
+        ClearTransforms(propagateToChildren);
+    }
+
+    #endregion
 
     #region Event Handlers
 
