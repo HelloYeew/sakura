@@ -24,11 +24,11 @@ public class App : Container, IDisposable
     {
         base.Load();
 
-        Add(FpsGraph = new FpsGraph(Host.AppClock)
-        {
-            Depth = float.MaxValue
-        });
-        FpsGraph.Hide();
+        Cache(Host);
+        Cache(this);
+        if (Host.Window != null) Cache(Host.Window);
+        if (Host.Storage != null) Cache(Host.Storage);
+        Cache(Host.FrameworkConfigManager);
     }
 
     /// <summary>
