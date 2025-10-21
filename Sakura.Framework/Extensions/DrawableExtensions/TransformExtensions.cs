@@ -34,7 +34,7 @@ public static class TransformExtensions
     /// <summary>
     /// Moves the drawable to a specific position over a duration.
     /// </summary>
-    public static Drawable MoveTo(this Drawable drawable, Vector2 newPosition, double duration = 0, EasingType easing = EasingType.None)
+    public static Drawable MoveTo(this Drawable drawable, Vector2 newPosition, double duration = 0, Easing easing = Easing.None)
     {
         drawable.addTransform(new MoveTransform
         {
@@ -47,7 +47,7 @@ public static class TransformExtensions
     /// <summary>
     /// Resizes the drawable to a specific size over a duration.
     /// </summary>
-    public static Drawable ResizeTo(this Drawable drawable, Vector2 newSize, double duration = 0, EasingType easing = EasingType.None)
+    public static Drawable ResizeTo(this Drawable drawable, Vector2 newSize, double duration = 0, Easing easing = Easing.None)
     {
         drawable.addTransform(new ResizeTransform
         {
@@ -60,7 +60,7 @@ public static class TransformExtensions
     /// <summary>
     /// Adjusts the drawable's scale to a specific value over a duration.
     /// </summary>
-    public static Drawable ScaleTo(this Drawable drawable, Vector2 newScale, double duration = 0, EasingType easing = EasingType.None)
+    public static Drawable ScaleTo(this Drawable drawable, Vector2 newScale, double duration = 0, Easing easing = Easing.None)
     {
         drawable.addTransform(new ScaleTransform
         {
@@ -73,13 +73,13 @@ public static class TransformExtensions
     /// <summary>
     /// Adjusts the drawable's scale uniformly to a specific value over a duration.
     /// </summary>
-    public static Drawable ScaleTo(this Drawable drawable, float newScale, double duration = 0, EasingType easing = EasingType.None)
+    public static Drawable ScaleTo(this Drawable drawable, float newScale, double duration = 0, Easing easing = Easing.None)
         => drawable.ScaleTo(new Vector2(newScale), duration, easing);
 
     /// <summary>
     /// Rotates the drawable to a specific angle over a duration.
     /// </summary>
-    public static Drawable RotateTo(this Drawable drawable, float newRotation, double duration = 0, EasingType easing = EasingType.None)
+    public static Drawable RotateTo(this Drawable drawable, float newRotation, double duration = 0, Easing easing = Easing.None)
     {
         drawable.addTransform(new RotateTransform
         {
@@ -92,7 +92,7 @@ public static class TransformExtensions
     /// <summary>
     /// Fades the drawable to a specific alpha over a duration.
     /// </summary>
-    public static Drawable FadeTo(this Drawable drawable, float newAlpha, double duration = 0, EasingType easing = EasingType.None)
+    public static Drawable FadeTo(this Drawable drawable, float newAlpha, double duration = 0, Easing easing = Easing.None)
     {
         drawable.addTransform(new AlphaTransform
         {
@@ -105,17 +105,17 @@ public static class TransformExtensions
     /// <summary>
     /// Fades the drawable to full alpha over a duration.
     /// </summary>
-    public static Drawable FadeIn(this Drawable drawable, double duration = 0, EasingType easing = EasingType.None) => drawable.FadeTo(1, duration, easing);
+    public static Drawable FadeIn(this Drawable drawable, double duration = 0, Easing easing = Easing.None) => drawable.FadeTo(1, duration, easing);
 
     /// <summary>
     /// Fades the drawable to zero alpha over a duration.
     /// </summary>
-    public static Drawable FadeOut(this Drawable drawable, double duration = 0, EasingType easing = EasingType.None) => drawable.FadeTo(0, duration, easing);
+    public static Drawable FadeOut(this Drawable drawable, double duration = 0, Easing easing = Easing.None) => drawable.FadeTo(0, duration, easing);
 
     /// <summary>
     /// Fades the drawable from zero alpha to full alpha over a duration.
     /// </summary>
-    public static Drawable FadeFromZero(this Drawable drawable, double duration = 0, EasingType easing = EasingType.None)
+    public static Drawable FadeFromZero(this Drawable drawable, double duration = 0, Easing easing = Easing.None)
     {
         drawable.Alpha = 0;
         return drawable.FadeTo(1, duration, easing);
@@ -124,7 +124,7 @@ public static class TransformExtensions
     /// <summary>
     /// Fades the drawable to zero alpha over a duration.
     /// </summary>
-    public static Drawable FadeToZero(this Drawable drawable, double duration = 0, EasingType easing = EasingType.None)
+    public static Drawable FadeToZero(this Drawable drawable, double duration = 0, Easing easing = Easing.None)
     {
         return drawable.FadeTo(0, duration, easing);
     }
@@ -132,7 +132,7 @@ public static class TransformExtensions
     /// <summary>
     /// Instantly flashes the drawable to a specific colour, then fades back to its original colour over a duration.
     /// </summary>
-    public static Drawable FlashColour(this Drawable drawable, Color flashColour, double duration, EasingType easing = EasingType.None)
+    public static Drawable FlashColour(this Drawable drawable, Color flashColour, double duration, Easing easing = Easing.None)
     {
         drawable.addTransform(new FlashColorTransform
         {

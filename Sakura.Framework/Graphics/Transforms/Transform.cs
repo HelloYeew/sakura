@@ -13,7 +13,7 @@ public abstract class Transform : ITransform
 {
     public double StartTime { get; set; }
     public double EndTime { get; set; }
-    public EasingType Easing { get; set; }
+    public Easing Easing { get; set; }
     public bool IsLooping { get; set; }
 
     public abstract void Apply(Drawable drawable, double time);

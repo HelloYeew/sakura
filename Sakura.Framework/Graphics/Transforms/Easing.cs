@@ -7,7 +7,7 @@ namespace Sakura.Framework.Graphics.Transforms;
 /// Standard easing types.
 /// Based on https://easings.net/
 /// </summary>
-public enum EasingType
+public enum Easing
 {
     None,
     InSine, OutSine, InOutSine,
