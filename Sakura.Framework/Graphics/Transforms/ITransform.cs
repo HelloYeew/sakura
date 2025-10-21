@@ -1,0 +1,13 @@
+// This code is part of the Sakura framework project. Licensed under the MIT License.
+// See the LICENSE file for full license text.
+
+using Sakura.Framework.Graphics.Drawables;
+
+namespace Sakura.Framework.Graphics.Transforms;
+
+public interface ITransform
+{
+    double StartTime { get; }
+    double EndTime { get;  }
+    void Apply(Drawable drawable, double time);
+}
