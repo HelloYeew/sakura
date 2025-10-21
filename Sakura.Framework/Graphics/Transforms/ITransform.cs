@@ -9,5 +9,6 @@ public interface ITransform
 {
     double StartTime { get; }
     double EndTime { get;  }
+    bool IsLooping { get; set; }
     void Apply(Drawable drawable, double time);
 }

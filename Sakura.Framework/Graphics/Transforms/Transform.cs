@@ -11,59 +11,99 @@ namespace Sakura.Framework.Graphics.Transforms;
 
 public abstract class Transform : ITransform
 {
-    public double StartTime { get; set;  }
-    public double EndTime { get; set;  }
-    public EasingType Easing { get; set;  }
+    public double StartTime { get; set; }
+    public double EndTime { get; set; }
+    public EasingType Easing { get; set; }
+    public bool IsLooping { get; set; }
 
     public abstract void Apply(Drawable drawable, double time);
 
     protected double GetEasedProgress(double time)
     {
         if (time < StartTime) return 0;
-        time = Math.Min(time, EndTime);
+
         double duration = EndTime - StartTime;
-        double progress = duration > 0 ? (time - StartTime) / duration : 1;
+        if (duration <= 0) return 1; // Instant transform, always at end
+
+        double progress;
+        if (IsLooping)
+        {
+            // Calculate progress within the current loop
+            double timeInLoop = (time - StartTime) % duration;
+            progress = timeInLoop / duration;
+        }
+        else
+        {
+            // Not looping, cap at end time
+            time = Math.Min(time, EndTime);
+            progress = (time - StartTime) / duration;
+        }
+
         return EasingFunctions.Apply(Easing, progress);
     }
 }
 
 public class MoveTransform : Transform
 {
+    private bool valueCaptured;
     public Vector2 StartValue;
     public Vector2 EndValue;
-    public override void Apply(Drawable d, double time)
+    public override void Apply(Drawable drawable, double time)
     {
-        d.Position = Vector2.Lerp(StartValue, EndValue, (float)GetEasedProgress(time));
+        if (!valueCaptured)
+        {
+            StartValue = drawable.Position;
+            valueCaptured = true;
+        }
+        drawable.Position = Vector2.Lerp(StartValue, EndValue, (float)GetEasedProgress(time));
     }
 }
 
 public class ResizeTransform : Transform
 {
+    private bool valueCaptured;
     public Vector2 StartValue;
     public Vector2 EndValue;
-    public override void Apply(Drawable d, double time)
+    public override void Apply(Drawable drawable, double time)
     {
-        d.Size = Vector2.Lerp(StartValue, EndValue, (float)GetEasedProgress(time));
+        if (!valueCaptured)
+        {
+            StartValue = drawable.Scale;
+            valueCaptured = true;
+        }
+        drawable.Size = Vector2.Lerp(StartValue, EndValue, (float)GetEasedProgress(time));
     }
 }
 
 public class ScaleTransform : Transform
 {
+    private bool valueCaptured;
     public Vector2 StartValue;
     public Vector2 EndValue;
-    public override void Apply(Drawable d, double time)
+    public override void Apply(Drawable drawable, double time)
     {
-        d.Scale = Vector2.Lerp(StartValue, EndValue, (float)GetEasedProgress(time));
+        if (!valueCaptured)
+        {
+            StartValue = drawable.Scale;
+            valueCaptured = true;
+        }
+        drawable.Scale = Vector2.Lerp(StartValue, EndValue, (float)GetEasedProgress(time));
     }
 }
 
 public class AlphaTransform : Transform
 {
+    private bool valueCaptured;
     public float StartValue;
     public float EndValue;
-    public override void Apply(Drawable d, double time)
+    public override void Apply(Drawable drawable, double time)
     {
-        d.Alpha = (float)(StartValue + (EndValue - StartValue) * GetEasedProgress(time));
+        if (!valueCaptured)
+        {
+            StartValue = drawable.Alpha;
+            valueCaptured = true;
+        }
+        drawable.Alpha = (float)(StartValue + (EndValue - StartValue) * GetEasedProgress(time));
     }
 }
 
@@ -73,20 +113,33 @@ public class FlashColorTransform : Transform
     private Color originalColour;
     private bool colourCaptured;
 
-    public override void Apply(Drawable d, double time)
+    public override void Apply(Drawable drawable, double time)
     {
-        // On the first application, capture the drawable's current colour.
-        // This will be our target to fade back to.
         if (!colourCaptured)
         {
-            originalColour = d.Color;
+            originalColour = drawable.Color;
             colourCaptured = true;
         }
 
-        // Eased progress goes from 0 to 1 over the duration.
         double easedProgress = GetEasedProgress(time);
 
         // lerp from the flash colour (at progress 0) to the original colour (at progress 1).
-        d.Color = ColorExtensions.Lerp(FlashColour, originalColour, (float)easedProgress);
+        drawable.Color = ColorExtensions.Lerp(FlashColour, originalColour, (float)easedProgress);
+    }
+}
+
+public class RotateTransform : Transform
+{
+    private bool valueCaptured;
+    public float StartValue;
+    public float EndValue;
+    public override void Apply(Drawable drawable, double time)
+    {
+        if (!valueCaptured)
+        {
+            StartValue = drawable.Rotation;
+            valueCaptured = true;
+        }
+        drawable.Rotation = (float)(StartValue + (EndValue - StartValue) * GetEasedProgress(time));
     }
 }

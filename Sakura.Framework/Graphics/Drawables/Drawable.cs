@@ -541,6 +541,8 @@ public class Drawable
         if (transforms.Count == 0)
             return;
 
+        double currentTime = Clock.CurrentTime;
+
         for (int i = transforms.Count - 1; i >= 0; i--)
         {
             var t = transforms[i];
@@ -552,7 +554,7 @@ public class Drawable
             }
 
             // Remove the transform if it has completed.
-            if (Clock.CurrentTime >= t.EndTime)
+            if (currentTime >= t.EndTime && !t.IsLooping)
             {
                 // Ensure the final value is applied exactly.
                 t.Apply(this, t.EndTime);
