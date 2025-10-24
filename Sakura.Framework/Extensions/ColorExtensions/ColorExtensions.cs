@@ -350,4 +350,21 @@ public static class ColorExtensions
         ToHSL(color, out h, out s, out _);
         return FromHSL(h, s, lightness, color.A);
     }
+
+    /// <summary>
+    /// Linearly interpolates between two colors by the specified factor t (0 to 1).
+    /// </summary>
+    /// <param name="a">Color a.</param>
+    /// <param name="b">Color b.</param>
+    /// <param name="t">Interpolation factor (0 to 1).</param>
+    /// <returns>The interpolated color.</returns>
+    public static Color Lerp(Color a, Color b, float t)
+    {
+        t = Math.Clamp(t, 0, 1);
+        return Color.FromArgb(
+            (byte)(a.A + (b.A - a.A) * t),
+            (byte)(a.R + (b.R - a.R) * t),
+            (byte)(a.G + (b.G - a.G) * t),
+            (byte)(a.B + (b.B - a.B) * t));
+    }
 }
