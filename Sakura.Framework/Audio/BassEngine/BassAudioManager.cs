@@ -24,8 +24,7 @@ public class BassAudioManager : IAudioManager, IDisposable
 
     public BassAudioManager()
     {
-        // Initialize BASS. -1 is default device. 48000Hz, NoSound flag to let us manage updates.
-        if (!Bass.Init(-1, 48000, DeviceInitFlags.Default))
+        if (!Bass.Init(-1, 44100, DeviceInitFlags.Default))
         {
             Logger.Error("BASS initialization failed!", new BassException(Bass.LastError));
         }
