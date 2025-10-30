@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System.IO;
+using Sakura.Framework.Reactive;
 
 namespace Sakura.Framework.Audio;
 
@@ -10,6 +11,21 @@ namespace Sakura.Framework.Audio;
 /// </summary>
 public interface IAudioManager
 {
+    /// <summary>
+    /// Master volume for all audio playbacks, affect both tracks and samples.
+    /// </summary>
+    Reactive<double> MasterVolume { get; }
+
+    /// <summary>
+    /// Master volume for track playbacks that separately from samples but still affect by <see cref="MasterVolume"/>
+    /// </summary>
+    Reactive<double> TrackVolume { get; }
+
+    /// <summary>
+    /// Master volume for sample playbacks that separately from tracks but still affect by <see cref="MasterVolume"/>
+    /// </summary>
+    Reactive<double> SampleVolume { get; }
+
     /// <summary>
     /// Loads a track from a <see cref="Stream"/>
     /// </summary>

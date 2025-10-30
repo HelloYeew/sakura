@@ -7,6 +7,7 @@ using System;
 using System.Reflection;
 using Sakura.Framework.Audio;
 using Sakura.Framework.Audio.BassEngine;
+using Sakura.Framework.Configurations;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Logging;
@@ -51,6 +52,13 @@ public class App : Container, IDisposable
         Cache(Host.FrameworkConfigManager);
 
         AudioManager = new BassAudioManager();
+        var masterVolume = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.MasterVolume);
+        var trackVolume = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.TrackVolume);
+        var sampleVolume = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.SampleVolume);
+        AudioManager.MasterVolume.BindTo(masterVolume);
+        AudioManager.TrackVolume.BindTo(trackVolume);
+        AudioManager.SampleVolume.BindTo(sampleVolume);
+
         Cache(AudioManager);
 
         TrackStore = new TrackStore(Host.Storage.GetStorageForDirectory("Tracks"), AudioManager);

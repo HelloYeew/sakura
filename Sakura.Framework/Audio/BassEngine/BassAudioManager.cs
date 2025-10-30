@@ -9,6 +9,7 @@ using ManagedBass;
 using ManagedBass.Fx;
 using ManagedBass.Mix;
 using Sakura.Framework.Logging;
+using Sakura.Framework.Reactive;
 
 namespace Sakura.Framework.Audio.BassEngine;
 
@@ -22,6 +23,10 @@ public class BassAudioManager : IAudioManager, IDisposable
     private readonly ConcurrentQueue<Action> mainThreadActions = new ConcurrentQueue<Action>();
     private readonly ConcurrentDictionary<int, float> originalFrequencies = new ConcurrentDictionary<int, float>();
 
+    public Reactive<double> MasterVolume { get; } = new Reactive<double>(1.0);
+    public Reactive<double> TrackVolume { get; } = new Reactive<double>(1.0);
+    public Reactive<double> SampleVolume { get; } = new Reactive<double>(1.0);
+
     public BassAudioManager()
     {
         if (!Bass.Init(-1, 44100, DeviceInitFlags.Default))
@@ -33,6 +38,14 @@ public class BassAudioManager : IAudioManager, IDisposable
             Bass.Configure(Configuration.UpdatePeriod, 5);
             Bass.Configure(Configuration.DeviceBufferLength, -1);
             Bass.Configure(Configuration.PlaybackBufferLength, 100);
+
+            TrackVolume.ValueChanged += e => Bass.GlobalStreamVolume = (int)e.NewValue * 10000; // From 0 to 10,000
+            SampleVolume.ValueChanged += e => Bass.GlobalSampleVolume = (int)e.NewValue * 10000; // From 0 to 10,000
+            MasterVolume.ValueChanged += e =>
+            {
+                Bass.GlobalStreamVolume = (int)(TrackVolume.Value * e.NewValue * 10000);
+                Bass.GlobalSampleVolume = (int)(SampleVolume.Value * e.NewValue * 10000);
+            };
 
             Logger.Verbose("🔈 BASS initialised");
 
@@ -148,11 +161,8 @@ public class BassAudioManager : IAudioManager, IDisposable
                 }
             }
 
-            // You might add more logic here to remove channels that are fully stopped and disposed
-            // For now, we'll keep them until they are manually disposed.
+            // TODO: Remve disposed channels or sample can be removed if needed
         }
-
-        // BASS update call (for 3D audio, etc. - not strictly needed for NoSound init, but good practice)
         Bass.Update((int)Math.Max(1, frameTime));
     }
 
@@ -168,6 +178,5 @@ public class BassAudioManager : IAudioManager, IDisposable
 
         // Free BASS
         Bass.Free();
-        Logger.LogPrint("BASS resources freed.");
     }
 }
