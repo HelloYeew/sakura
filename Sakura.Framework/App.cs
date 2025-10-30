@@ -10,7 +10,6 @@ using Sakura.Framework.Audio.BassEngine;
 using Sakura.Framework.Configurations;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Performance;
-using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
 
 namespace Sakura.Framework;
@@ -61,8 +60,10 @@ public class App : Container, IDisposable
 
         Cache(AudioManager);
 
-        TrackStore = new TrackStore(Host.Storage.GetStorageForDirectory("Tracks"), AudioManager);
-        SampleStore = new SampleStore(Host.Storage.GetStorageForDirectory("Samples"), AudioManager);
+        var embeddedResourceStorage = new EmbeddedResourceStorage(ResourceAssembly, ResourceRootNamespace);
+
+        TrackStore = new TrackStore(embeddedResourceStorage.GetStorageForDirectory("Tracks"), AudioManager);
+        SampleStore = new SampleStore(embeddedResourceStorage.GetStorageForDirectory("Samples"), AudioManager);
 
         Cache<IAudioStore<ITrack>>(TrackStore);
         Cache<IAudioStore<ISample>>(SampleStore);
@@ -74,25 +75,7 @@ public class App : Container, IDisposable
     /// <param name="host"></param>
     /// <param name="defaultStorage"></param>
     /// <returns></returns>
-    protected internal virtual Storage CreateStorage(AppHost host, Storage defaultStorage)
-    {
-        var resourceAssembly = ResourceAssembly;
-        string resourceNamespace = ResourceRootNamespace;
-
-        Logger.Debug($"Using embedded resource assembly: {resourceAssembly.FullName}");
-        Logger.Debug($"Using embedded resource root namespace: {resourceNamespace}");
-
-        var resourceStorage = new EmbeddedResourceStorage(resourceAssembly, resourceNamespace);
-
-        var compositeStorage = new CompositeStorage(defaultStorage, resourceStorage);
-
-        foreach (string resource in resourceAssembly.GetManifestResourceNames())
-        {
-            Logger.Debug($"Embedded resource available: {resource}");
-        }
-
-        return compositeStorage;
-    }
+    protected internal virtual Storage CreateStorage(AppHost host, Storage defaultStorage) => defaultStorage;
 
     public void Dispose()
     {
