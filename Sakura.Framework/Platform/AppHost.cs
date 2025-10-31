@@ -8,11 +8,13 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetBrains.Annotations;
 using Sakura.Framework.Configurations;
+using Sakura.Framework.Development;
 using Sakura.Framework.Extensions.ExceptionExtensions;
 using Sakura.Framework.Extensions.IEnumerableExtensions;
 using Sakura.Framework.Graphics.Drawables;
@@ -90,6 +92,11 @@ public abstract class AppHost : IDisposable
     /// The main storage for the application.
     /// </summary>
     public Storage Storage { get; protected set; }
+
+    /// <summary>
+    /// An unhandled exception has occurred. Return true to ignore and continue running.
+    /// </summary>
+    public event Func<Exception, bool> ExceptionThrown;
 
     /// <summary>
     /// Find the default <see cref="Storage"/> for the application to be used.
@@ -499,14 +506,35 @@ public abstract class AppHost : IDisposable
     {
         var exception = (Exception)args.ExceptionObject;
         Logger.Error("An unhandled exception occurred in the application.", exception);
-        // TODO: abort execution from exception
+        abortExecutionFromException(exception, args.IsTerminating);
     }
 
     private void unobservedTaskExceptionHandler(object sender, UnobservedTaskExceptionEventArgs args)
     {
         var exception = args.Exception.AsSingular();
         Logger.Error("An unobserved task exception occurred in the application.", exception);
-        // TODO: abort execution from exception
+        if (DebugUtils.IsNUnitRunning)
+            abortExecutionFromException(exception, false);
+    }
+
+    private void abortExecutionFromException(Exception exception, bool isTerminating)
+    {
+        // ignore if consumer wishes to handle the exception themselves
+        if (ExceptionThrown?.Invoke(exception) == true) return;
+
+        if (isTerminating)
+        {
+            return;
+        }
+
+        AppDomain.CurrentDomain.UnhandledException -= unhandledExceptionHandler;
+        TaskScheduler.UnobservedTaskException -= unobservedTaskExceptionHandler;
+
+        Logger.Shutdown();
+
+        var captured = ExceptionDispatchInfo.Capture(exception);
+
+        captured.Throw();
     }
 
     private bool isDisposed;
