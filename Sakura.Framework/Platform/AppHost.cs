@@ -6,12 +6,15 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Reflection;
 using System.Runtime;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetBrains.Annotations;
 using Sakura.Framework.Configurations;
+using Sakura.Framework.Development;
 using Sakura.Framework.Extensions.ExceptionExtensions;
 using Sakura.Framework.Extensions.IEnumerableExtensions;
 using Sakura.Framework.Graphics.Drawables;
@@ -56,6 +59,12 @@ public abstract class AppHost : IDisposable
 
     public string Name { get; }
 
+    /// <summary>
+    /// The assembly containing the application's embedded resources.
+    /// Defaults to the entry assembly.
+    /// </summary>
+    public virtual Assembly ResourceAssembly => Assembly.GetEntryAssembly();
+
     private ExecutionState executionState = ExecutionState.Idle;
 
     private readonly ManualResetEventSlim exitEvent = new ManualResetEventSlim(false);
@@ -83,6 +92,11 @@ public abstract class AppHost : IDisposable
     /// The main storage for the application.
     /// </summary>
     public Storage Storage { get; protected set; }
+
+    /// <summary>
+    /// An unhandled exception has occurred. Return true to ignore and continue running.
+    /// </summary>
+    public event Func<Exception, bool> ExceptionThrown;
 
     /// <summary>
     /// Find the default <see cref="Storage"/> for the application to be used.
@@ -194,6 +208,11 @@ public abstract class AppHost : IDisposable
 
         try
         {
+            Logger.AppIdentifier = Name;
+            Logger.VersionIdentifier = RuntimeInfo.EntryAssembly.GetName().Version?.ToString() ?? Logger.VersionIdentifier;
+
+            Logger.Initialize();
+
             if (!host_running_mutex.Wait(10000))
             {
                 Logger.Error("Another instance of the application is already running.");
@@ -205,11 +224,6 @@ public abstract class AppHost : IDisposable
 
             Storage = app.CreateStorage(this, GetDefaultAppStorage());
             app.SetHost(this);
-
-            Logger.AppIdentifier = Name;
-            Logger.VersionIdentifier = RuntimeInfo.EntryAssembly.GetName().Version?.ToString() ?? Logger.VersionIdentifier;
-
-            Logger.Initialize();
 
             SetupForRun();
 
@@ -280,8 +294,8 @@ public abstract class AppHost : IDisposable
                     if (inputClock.Process(AppClock.CurrentTime))
                         PerformInput();
 
-                    if (soundClock.Process(AppClock.CurrentTime))
-                        PerformSoundUpdate();
+                    // 20251029: PerformSoundUpdate is removed since the AudioManager is updated in App.Update().
+                    // Will introduce it again when want multi-threaded audio update.
 
                     PerformUpdate();
 
@@ -492,14 +506,35 @@ public abstract class AppHost : IDisposable
     {
         var exception = (Exception)args.ExceptionObject;
         Logger.Error("An unhandled exception occurred in the application.", exception);
-        // TODO: abort execution from exception
+        abortExecutionFromException(exception, args.IsTerminating);
     }
 
     private void unobservedTaskExceptionHandler(object sender, UnobservedTaskExceptionEventArgs args)
     {
         var exception = args.Exception.AsSingular();
         Logger.Error("An unobserved task exception occurred in the application.", exception);
-        // TODO: abort execution from exception
+        if (DebugUtils.IsNUnitRunning)
+            abortExecutionFromException(exception, false);
+    }
+
+    private void abortExecutionFromException(Exception exception, bool isTerminating)
+    {
+        // ignore if consumer wishes to handle the exception themselves
+        if (ExceptionThrown?.Invoke(exception) == true) return;
+
+        if (isTerminating)
+        {
+            return;
+        }
+
+        AppDomain.CurrentDomain.UnhandledException -= unhandledExceptionHandler;
+        TaskScheduler.UnobservedTaskException -= unobservedTaskExceptionHandler;
+
+        Logger.Shutdown();
+
+        var captured = ExceptionDispatchInfo.Capture(exception);
+
+        captured.Throw();
     }
 
     private bool isDisposed;

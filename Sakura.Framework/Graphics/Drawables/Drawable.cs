@@ -27,7 +27,11 @@ public class Drawable
 
     public bool IsHovered { get; private set; }
     public bool IsDragged { get; private set; }
-    internal bool IsLoaded { get; private set; }
+
+    /// <summary>
+    /// Whether this drawable has been loaded.
+    /// </summary>
+    public bool IsLoaded { get; private set; }
 
     private Anchor anchor = Anchor.Centre;
     private Anchor origin = Anchor.TopLeft;

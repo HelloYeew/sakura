@@ -7,5 +7,8 @@ namespace Sakura.Framework.Configurations;
 public enum FrameworkSetting
 {
     FrameLimiter,
-    ShowFpsGraph
+    ShowFpsGraph,
+    MasterVolume,
+    TrackVolume,
+    SampleVolume
 }

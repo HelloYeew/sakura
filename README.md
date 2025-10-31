@@ -1,4 +1,4 @@
-# 🌸 Sakura Framework
+# 🌸🗡️ Sakura Framework
 
 A graphic framework and set of toolkits for making basic UI application and 2D game (right now) target to support as many platforms as possible. Backed by .NET.
 
