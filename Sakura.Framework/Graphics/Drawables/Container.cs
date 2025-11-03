@@ -15,8 +15,35 @@ namespace Sakura.Framework.Graphics.Drawables;
 public class Container : Drawable
 {
     private readonly List<Drawable> children = new();
-    public IReadOnlyList<Drawable> Children => children;
     private Drawable? draggedChild;
+
+    /// <summary>
+    /// If true, children will be clipped to the bounds of this container.
+    /// </summary>
+    public bool Masking { get; set; }
+
+    /// <summary>
+    /// The radius of the corners when masking.
+    /// </summary>
+    public float CornerRadius { get; set; }
+
+    public IReadOnlyList<Drawable> Children
+    {
+        get => children;
+        set
+        {
+            children.Clear();
+            foreach (var child in value)
+            {
+                Add(child);
+            }
+        }
+    }
+
+    public Drawable Child
+    {
+        set => Children = new[] { value };
+    }
 
     public Vector2 ChildSize
     {
@@ -41,6 +68,11 @@ public class Container : Drawable
             // Subtract the total scaled padding to get the area for children.
             return new Vector2(containerSize.X - relativePadding.Total.X, containerSize.Y - relativePadding.Total.Y);
         }
+    }
+
+    public Container()
+    {
+        Texture = null;
     }
 
     public void Add(Drawable drawable)
@@ -119,15 +151,19 @@ public class Container : Drawable
 
     public override void Draw(IRenderer renderer)
     {
-        base.Draw(renderer);
-
         if (DrawAlpha <= 0)
             return;
+
+        if (Masking)
+            renderer.PushMask(this, CornerRadius);
 
         foreach (var child in children.OrderBy(c => c.Depth))
         {
             child.Draw(renderer);
         }
+
+        if (Masking)
+            renderer.PopMask(this, CornerRadius);
     }
 
     public override void Load()

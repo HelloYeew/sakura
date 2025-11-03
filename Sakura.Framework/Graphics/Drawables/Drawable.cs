@@ -73,7 +73,7 @@ public class Drawable
     /// </summary>
     protected InvalidationFlags Invalidation = InvalidationFlags.All;
 
-    protected readonly Vertex[] Vertices = new Vertex[6];
+    protected internal readonly Vertex[] Vertices = new Vertex[6];
 
     public Anchor Anchor
     {

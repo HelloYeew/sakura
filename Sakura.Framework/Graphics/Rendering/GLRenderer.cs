@@ -31,6 +31,8 @@ public class GLRenderer : IRenderer
 
     private Drawable root;
 
+    private int stencilLevel = 0;
+
     public unsafe void Initialize(IGraphicsSurface graphicsSurface)
     {
         gl = GL.GetApi(graphicsSurface.GetFunctionAddress);
@@ -58,7 +60,13 @@ public class GLRenderer : IRenderer
         gl.Enable(EnableCap.Blend);
         gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
 
-        Textures.Texture.CreateWhitePixel(gl);
+        gl.Enable(EnableCap.StencilTest);
+        gl.StencilMask(0xFF);
+        gl.ClearStencil(0);
+        gl.Clear(ClearBufferMask.StencilBufferBit);
+        gl.StencilMask(0x00);
+
+        Texture.CreateWhitePixel(gl);
 
         shader = new Shader(gl, "Resources/Shaders/shader.vert", "Resources/Shaders/shader.frag");
 
@@ -78,7 +86,9 @@ public class GLRenderer : IRenderer
 
     public void Clear()
     {
+        gl.StencilMask(0xFF);
         gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
+        gl.StencilMask(0x00);
     }
 
     public void StartFrame()
@@ -94,6 +104,12 @@ public class GLRenderer : IRenderer
         shader.SetUniform("u_Projection", projectionMatrix);
         shader.SetUniform("u_Texture", 0);
 
+        stencilLevel = 0;
+        gl.StencilMask(0x00);
+        gl.StencilFunc(StencilFunction.Always, 0, 0xFF);
+        gl.StencilOp(StencilOp.Keep, StencilOp.Keep, StencilOp.Keep);
+        shader.SetUniform("u_IsMasking", false);
+
         root.Draw(this);
         triangleBatch.Draw();
     }
@@ -102,6 +118,79 @@ public class GLRenderer : IRenderer
     {
         texture.Bind();
         triangleBatch.AddRange(vertices);
+    }
+
+    private void drawMaskShape(Drawable maskDrawable, float cornerRadius)
+    {
+        // Bind a texture. WhitePixel is fine since we're only writing to stencil
+        Texture.WhitePixel.Bind();
+
+        // Add the mask's vertices to the batch and draw *only* them.
+        triangleBatch.AddRange(maskDrawable.Vertices);
+        triangleBatch.Draw(); // Flush *just* the mask
+    }
+
+    public void PushMask(Drawable maskDrawable, float cornerRadius)
+    {
+        triangleBatch.Draw(); // Flush all drawing before this
+
+        gl.StencilMask(0xFF); // Enable stencil writing
+        gl.ColorMask(false, false, false, false); // Disable color writing
+        gl.StencilFunc(StencilFunction.Always, stencilLevel + 1, 0xFF); // Always pass test, ref is new level
+        gl.StencilOp(StencilOp.Keep, StencilOp.Keep, StencilOp.Replace); // Replace stencil value on pass
+
+        // Draw the mask shape into the stencil buffer
+        drawMaskShape(maskDrawable, cornerRadius);
+
+        gl.StencilMask(0x00); // Disable stencil writing
+        gl.ColorMask(true, true, true, true); // Re-enable color writing
+        gl.StencilFunc(StencilFunction.Equal, stencilLevel + 1, 0xFF); // Only draw where stencil == new level
+        gl.StencilOp(StencilOp.Keep, StencilOp.Keep, StencilOp.Keep); // Don't change stencil buffer
+
+        stencilLevel++;
+
+        // Enable rounded corner clipping for all subsequent draws
+        if (cornerRadius > 0.0f)
+        {
+            shader.SetUniform("u_IsMasking", true);
+            var rect = maskDrawable.DrawRectangle;
+            shader.SetUniform("u_MaskRect", new Vector4(rect.X, rect.Y, rect.Width, rect.Height));
+            shader.SetUniform("u_CornerRadius", cornerRadius);
+        }
+    }
+
+    public void PopMask(Drawable maskDrawable, float cornerRadius)
+    {
+        triangleBatch.Draw(); // Flush all drawing within the mask
+
+        // Disable masking shader effects
+        shader.SetUniform("u_IsMasking", false);
+
+        gl.StencilMask(0xFF); // Enable stencil writing
+        gl.ColorMask(false, false, false, false); // Disable color writing
+        gl.StencilFunc(StencilFunction.Always, stencilLevel - 1, 0xFF); // Always pass, ref is parent level
+        gl.StencilOp(StencilOp.Keep, StencilOp.Keep, StencilOp.Replace); // Replace stencil value to "pop"
+
+        // Re-draw the same shape to restore the parent's stencil level
+        drawMaskShape(maskDrawable, cornerRadius);
+
+        stencilLevel--;
+
+        gl.StencilMask(0x00); // Disable stencil writing
+        gl.ColorMask(true, true, true, true); // Re-enable color writing
+
+        if (stencilLevel > 0)
+        {
+            // Still inside a parent mask
+            gl.StencilFunc(StencilFunction.Equal, stencilLevel, 0xFF);
+        }
+        else
+        {
+            // No more masks, draw everywhere
+            gl.StencilFunc(StencilFunction.Always, 0, 0xFF);
+        }
+
+        gl.StencilOp(StencilOp.Keep, StencilOp.Keep, StencilOp.Keep);
     }
 
     /// <summary>

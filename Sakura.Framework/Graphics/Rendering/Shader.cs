@@ -65,6 +65,28 @@ public class Shader : IDisposable
     }
 
     /// <summary>
+    /// Sets a float uniform variable in the shader program.
+    /// </summary>
+    /// <param name="name">Name of the uniform variable.</param>
+    /// <param name="value">Float value to set.</param>
+    public void SetUniform(string name, float value)
+    {
+        int location = _gl.GetUniformLocation(_handle, name);
+        if (location != -1) _gl.Uniform1(location, value);
+    }
+
+    /// <summary>
+    /// Sets a boolean uniform variable in the shader program.
+    /// </summary>
+    /// <param name="name">Name of the uniform variable.</param>
+    /// <param name="value">Boolean value to set.</param>
+    public void SetUniform(string name, bool value)
+    {
+        int location = _gl.GetUniformLocation(_handle, name);
+        if (location != -1) _gl.Uniform1(location, value ? 1 : 0);
+    }
+
+    /// <summary>
     /// Sets a <see cref="Matrix4x4"/> uniform variable in the shader program.
     /// </summary>
     /// <param name="name">Name of the uniform variable.</param>
@@ -78,6 +100,20 @@ public class Shader : IDisposable
             {
                 _gl.UniformMatrix4(location, 1, false, (float*)&value);
             }
+        }
+    }
+
+    /// <summary>
+    /// Sets a <see cref="Vector4"/> uniform variable in the shader program.
+    /// </summary>
+    /// <param name="name">Name of the uniform variable.</param>
+    /// <param name="value">Vector4 value to set.</param>
+    public void SetUniform(string name, Vector4 value)
+    {
+        int location = _gl.GetUniformLocation(_handle, name);
+        if (location != -1)
+        {
+            _gl.Uniform4(location, value.X, value.Y, value.Z, value.W);
         }
     }
 
