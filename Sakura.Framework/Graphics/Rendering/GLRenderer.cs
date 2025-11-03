@@ -123,13 +123,15 @@ public class GLRenderer : IRenderer
 
     public void DrawCircle(Drawable circleDrawable)
     {
+        triangleBatch.Draw();
+
         shader.SetUniform("u_IsCircle", true);
         var rect = circleDrawable.DrawRectangle;
         shader.SetUniform("u_CircleRect", new Vector4(rect.X, rect.Y, rect.Width, rect.Height));
 
         Texture.WhitePixel.Bind();
         triangleBatch.AddRange(circleDrawable.Vertices);
-        triangleBatch.Draw(); // Flush immediately
+        triangleBatch.Draw();
 
         shader.SetUniform("u_IsCircle", false);
     }
