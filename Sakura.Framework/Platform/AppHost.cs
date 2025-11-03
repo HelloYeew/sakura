@@ -18,7 +18,6 @@ using Sakura.Framework.Development;
 using Sakura.Framework.Extensions.ExceptionExtensions;
 using Sakura.Framework.Extensions.IEnumerableExtensions;
 using Sakura.Framework.Graphics.Drawables;
-using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
@@ -43,10 +42,6 @@ public abstract class AppHost : IDisposable
     private readonly Stopwatch gameLoopStopwatch = new Stopwatch();
 
     public FrameworkConfigManager FrameworkConfigManager { get; private set; }
-
-    private FpsGraph FpsGraph;
-
-    private Reactive<bool> showFpsGraph = new ReactiveBool();
 
     /// <summary>
     /// Determines whether the host should run without a window or renderer.
@@ -178,25 +173,6 @@ public abstract class AppHost : IDisposable
         FrameworkConfigManager.Load();
     }
 
-    protected virtual void LoadFrameworkDrawable()
-    {
-        showFpsGraph = FrameworkConfigManager.Get(FrameworkSetting.ShowFpsGraph, false);
-        app.Add(FpsGraph = new FpsGraph(AppClock)
-        {
-            Depth = float.MaxValue
-        });
-        if (!showFpsGraph)
-            FpsGraph.Hide();
-        showFpsGraph.ValueChanged += value =>
-        {
-            Logger.LogPrint($"ShowFpsGraph changed to {value.NewValue}");
-            if (value.NewValue)
-                FpsGraph.Show();
-            else
-                FpsGraph.Hide();
-        };
-    }
-
     public void Run(App app)
     {
         this.app = app;
@@ -274,7 +250,6 @@ public abstract class AppHost : IDisposable
             this.app.Clock = AppClock;
 
             this.app.Load();
-            LoadFrameworkDrawable();
             this.app.LoadComplete();
 
             lastUpdateTime = AppClock.CurrentTime;
@@ -366,10 +341,6 @@ public abstract class AppHost : IDisposable
             PrintHierarchy(app, builder);
             Logger.Log(builder.ToString());
             Logger.Log("Hierarchy dumped to console. Press F1 to dump again.");
-        }
-        if (!e.IsRepeat && e.Key == Key.F11 && (e.Modifiers & KeyModifiers.Control) > 0)
-        {
-            showFpsGraph.Value = !showFpsGraph.Value;
         }
         if (!e.IsRepeat && e.Key == Key.F12 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
