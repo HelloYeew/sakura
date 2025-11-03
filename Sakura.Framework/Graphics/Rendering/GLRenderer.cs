@@ -109,6 +109,7 @@ public class GLRenderer : IRenderer
         gl.StencilFunc(StencilFunction.Always, 0, 0xFF);
         gl.StencilOp(StencilOp.Keep, StencilOp.Keep, StencilOp.Keep);
         shader.SetUniform("u_IsMasking", false);
+        shader.SetUniform("u_IsCircle", false);
 
         root.Draw(this);
         triangleBatch.Draw();
@@ -118,6 +119,19 @@ public class GLRenderer : IRenderer
     {
         texture.Bind();
         triangleBatch.AddRange(vertices);
+    }
+
+    public void DrawCircle(Drawable circleDrawable)
+    {
+        shader.SetUniform("u_IsCircle", true);
+        var rect = circleDrawable.DrawRectangle;
+        shader.SetUniform("u_CircleRect", new Vector4(rect.X, rect.Y, rect.Width, rect.Height));
+
+        Texture.WhitePixel.Bind();
+        triangleBatch.AddRange(circleDrawable.Vertices);
+        triangleBatch.Draw(); // Flush immediately
+
+        shader.SetUniform("u_IsCircle", false);
     }
 
     private void drawMaskShape(Drawable maskDrawable, float cornerRadius)
