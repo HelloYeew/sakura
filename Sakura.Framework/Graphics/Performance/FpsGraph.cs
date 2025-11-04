@@ -68,6 +68,9 @@ public class FpsGraph : Container
     {
         base.Update();
 
+        if (Alpha <= 0)
+            return;
+
         // Add the latest frame time to our history
         if(clock != null)
             frameHistory.Enqueue(clock.ElapsedFrameTime);

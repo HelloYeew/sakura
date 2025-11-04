@@ -66,7 +66,7 @@ public class Drawable
     /// </summary>
     internal double TimeUntilTransformsCanStart { get; set; }
 
-    public float DrawAlpha { get; private set; } = 1f;
+    public float DrawAlpha { get; private set; }
 
     /// <summary>
     /// An invalidation flag representing which aspects of the drawable need to be recomputed.
@@ -528,6 +528,9 @@ public class Drawable
         applyTransforms();
 
         if (Invalidation == InvalidationFlags.None)
+            return;
+
+        if (!AlwaysPresent && Alpha <= 0)
             return;
 
         if ((Invalidation & (InvalidationFlags.DrawInfo | InvalidationFlags.Colour)) != 0)

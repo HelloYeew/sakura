@@ -124,7 +124,7 @@ public class Container : Drawable
 
         base.Update();
 
-        if (DrawAlpha <= 0)
+        if (!AlwaysPresent && Alpha <= 0)
             return;
 
         if (layoutWasInvalidated)
