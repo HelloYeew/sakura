@@ -27,4 +27,10 @@ public interface IRenderer
     void Draw(IClock clock);
 
     void DrawVertices(ReadOnlySpan<Vertex.Vertex> vertices, Texture texture);
+
+    void DrawCircle(Drawable circleDrawable);
+
+    void PushMask(Drawable maskDrawable, float cornerRadius);
+
+    void PopMask(Drawable maskDrawable, float cornerRadius);
 }

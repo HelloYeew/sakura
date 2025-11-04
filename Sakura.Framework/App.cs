@@ -8,9 +8,13 @@ using System.Reflection;
 using Sakura.Framework.Audio;
 using Sakura.Framework.Audio.BassEngine;
 using Sakura.Framework.Configurations;
+using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Performance;
+using Sakura.Framework.Graphics.Transforms;
+using Sakura.Framework.Input;
 using Sakura.Framework.Platform;
+using Sakura.Framework.Reactive;
 
 namespace Sakura.Framework;
 
@@ -25,6 +29,8 @@ public class App : Container, IDisposable
     protected IAudioManager AudioManager { get; private set; }
     protected TrackStore TrackStore { get; private set; }
     protected SampleStore SampleStore { get; private set; }
+
+    private Reactive<bool> showFpsGraph;
 
     /// <summary>
     /// The Assembly where embedded resources are stored.
@@ -49,6 +55,21 @@ public class App : Container, IDisposable
         if (Host.Window != null) Cache(Host.Window);
         if (Host.Storage != null) Cache(Host.Storage);
         Cache(Host.FrameworkConfigManager);
+
+        showFpsGraph = Host.FrameworkConfigManager.Get(FrameworkSetting.ShowFpsGraph, false);
+        Add(FpsGraph = new FpsGraph(Host.AppClock)
+        {
+            Depth = float.MaxValue
+        });
+        if (!showFpsGraph)
+            FpsGraph.Hide();
+        showFpsGraph.ValueChanged += value =>
+        {
+            if (value.NewValue)
+                FpsGraph.FadeIn(200, Easing.OutQuint);
+            else
+                FpsGraph.FadeOut(200, Easing.OutQuint);
+        };
 
         AudioManager = new BassAudioManager();
         var masterVolume = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.MasterVolume);
@@ -86,5 +107,14 @@ public class App : Container, IDisposable
     {
         base.Update();
         AudioManager?.Update(Clock.ElapsedFrameTime);
+    }
+
+    public override bool OnKeyDown(KeyEvent e)
+    {
+        if (!e.IsRepeat && e.Key == Key.F11 && (e.Modifiers & KeyModifiers.Control) > 0)
+        {
+            showFpsGraph.Value = !showFpsGraph.Value;
+        }
+        return base.OnKeyDown(e);
     }
 }
