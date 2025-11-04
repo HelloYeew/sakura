@@ -85,6 +85,14 @@ public static class Precision
     public static bool AlmostEquals(double value1, double value2, double acceptableDifference = DOUBLE_EPSILON) => Math.Abs(value1 - value2) <= acceptableDifference;
 
     /// <summary>
+    /// Computes whether a value is equal to zero within an acceptable difference.
+    /// </summary>
+    /// <param name="value">The value to compare.</param>
+    /// <param name="acceptableDifference">The acceptable difference. Defaults to <see cref="FLOAT_EPSILON"/>.</param>
+    /// <returns>Whether <paramref name="value"/> is almost equal to zero.</returns>
+    public static bool AlmostEqualZero(float value, float acceptableDifference = FLOAT_EPSILON) => Math.Abs(value) <= acceptableDifference;
+
+    /// <summary>
     /// Computes whether two <see cref="RectangleF"/>s intersect within an acceptable difference.
     /// </summary>
     /// <param name="rect1">The first <see cref="RectangleF"/>.</param>

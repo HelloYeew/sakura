@@ -15,6 +15,7 @@ using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Timing;
+using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Graphics.Drawables;
 
@@ -530,7 +531,7 @@ public class Drawable
         if (Invalidation == InvalidationFlags.None)
             return;
 
-        if (!AlwaysPresent && Alpha <= 0)
+        if (!AlwaysPresent && Precision.AlmostEqualZero(Alpha))
             return;
 
         if ((Invalidation & (InvalidationFlags.DrawInfo | InvalidationFlags.Colour)) != 0)
