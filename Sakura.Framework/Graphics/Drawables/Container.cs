@@ -189,6 +189,8 @@ public class Container : Drawable
 
     public override bool OnMouseDown(MouseButtonEvent e)
     {
+        base.OnMouseDown(e);
+
         // Propagate in reverse draw order to handle top-most drawables first.
         foreach (var c in children.OrderByDescending(d => d.Depth))
         {
@@ -205,6 +207,8 @@ public class Container : Drawable
 
     public override bool OnMouseUp(MouseButtonEvent e)
     {
+        base.OnMouseUp(e);
+
         // If a drag was in progress, only the dragged child should receive the OnMouseUp event.
         if (draggedChild != null)
         {
@@ -218,6 +222,8 @@ public class Container : Drawable
 
     public override bool OnMouseMove(MouseEvent e)
     {
+        base.OnMouseMove(e);
+
         // If a drag is in progress, route the event exclusively to the dragged child.
         if (draggedChild != null)
         {
