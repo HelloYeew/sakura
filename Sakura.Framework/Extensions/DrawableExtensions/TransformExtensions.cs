@@ -45,6 +45,32 @@ public static class TransformExtensions
     }
 
     /// <summary>
+    /// Moves the drawable to a specific X position over a duration.
+    /// </summary>
+    public static Drawable MoveToX(this Drawable drawable, float newX, double duration = 0, Easing easing = Easing.None)
+    {
+        drawable.addTransform(new MoveTransform
+        {
+            EndValue = new Vector2(newX, drawable.Position.Y),
+            Easing = easing
+        }, duration);
+        return drawable;
+    }
+
+    /// <summary>
+    /// Moves the drawable to a specific Y position over a duration.
+    /// </summary>
+    public static Drawable MoveToY(this Drawable drawable, float newY, double duration = 0, Easing easing = Easing.None)
+    {
+        drawable.addTransform(new MoveTransform
+        {
+            EndValue = new Vector2(drawable.Position.X, newY),
+            Easing = easing
+        }, duration);
+        return drawable;
+    }
+
+    /// <summary>
     /// Resizes the drawable to a specific size over a duration.
     /// </summary>
     public static Drawable ResizeTo(this Drawable drawable, Vector2 newSize, double duration = 0, Easing easing = Easing.None)
