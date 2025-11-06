@@ -393,6 +393,7 @@ public class Drawable
         if (IsLoaded) return;
 
         loadDependencies();
+        OnLoad(this);
 
         IsLoaded = true;
     }
@@ -403,6 +404,7 @@ public class Drawable
     /// </summary>
     public virtual void LoadComplete()
     {
+        OnLoadComplete(this);
     }
 
     public virtual void Draw(IRenderer renderer)
@@ -694,6 +696,13 @@ public class Drawable
 
     public virtual bool OnKeyDown(KeyEvent e) => false;
     public virtual bool OnKeyUp(KeyEvent e) => false;
+
+    #endregion
+
+    #region Event Hooks
+
+    public event Action<Drawable> OnLoad = delegate { };
+    public event Action<Drawable> OnLoadComplete = delegate { };
 
     #endregion
 }
