@@ -393,6 +393,7 @@ public class Drawable
         if (IsLoaded) return;
 
         loadDependencies();
+        OnLoad(this);
 
         IsLoaded = true;
     }
@@ -403,6 +404,7 @@ public class Drawable
     /// </summary>
     public virtual void LoadComplete()
     {
+        OnLoadComplete(this);
     }
 
     public virtual void Draw(IRenderer renderer)
@@ -630,21 +632,22 @@ public class Drawable
 
     public virtual bool OnMouseDown(MouseButtonEvent e)
     {
-        if (e.Clicks >= 3)
-            return OnTripleClick(e);
-        if (e.Clicks == 2)
-            return OnDoubleClick(e);
-        if (e.Clicks == 1)
-            OnClick(e);
+        bool handled = false;
 
-        // Potential start of a drag operation.
+        if (e.Clicks >= 3)
+            handled = OnTripleClick(e);
+        else if (e.Clicks == 2)
+            handled = OnDoubleClick(e);
+        else if (e.Clicks == 1)
+            handled = OnClick(e);
+
         if (e.Button == MouseButton.Left)
         {
             IsDragged = true;
-            OnDragStart(e);
+            handled |= OnDragStart(e);
         }
 
-        return false;
+        return handled;
     }
 
     public virtual bool OnMouseUp(MouseButtonEvent e)
@@ -693,6 +696,13 @@ public class Drawable
 
     public virtual bool OnKeyDown(KeyEvent e) => false;
     public virtual bool OnKeyUp(KeyEvent e) => false;
+
+    #endregion
+
+    #region Event Hooks
+
+    public event Action<Drawable> OnLoad = delegate { };
+    public event Action<Drawable> OnLoadComplete = delegate { };
 
     #endregion
 }
