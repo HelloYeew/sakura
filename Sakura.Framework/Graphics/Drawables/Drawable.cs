@@ -15,6 +15,7 @@ using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Timing;
+using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Graphics.Drawables;
 
@@ -66,7 +67,7 @@ public class Drawable
     /// </summary>
     internal double TimeUntilTransformsCanStart { get; set; }
 
-    public float DrawAlpha { get; private set; } = 1f;
+    public float DrawAlpha { get; private set; }
 
     /// <summary>
     /// An invalidation flag representing which aspects of the drawable need to be recomputed.
@@ -528,6 +529,9 @@ public class Drawable
         applyTransforms();
 
         if (Invalidation == InvalidationFlags.None)
+            return;
+
+        if (!AlwaysPresent && Precision.AlmostEqualZero(Alpha))
             return;
 
         if ((Invalidation & (InvalidationFlags.DrawInfo | InvalidationFlags.Colour)) != 0)

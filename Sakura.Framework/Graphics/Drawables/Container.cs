@@ -9,6 +9,7 @@ using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Timing;
+using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Graphics.Drawables;
 
@@ -124,7 +125,7 @@ public class Container : Drawable
 
         base.Update();
 
-        if (DrawAlpha <= 0)
+        if (!AlwaysPresent && Precision.AlmostEqualZero(Alpha))
             return;
 
         if (layoutWasInvalidated)

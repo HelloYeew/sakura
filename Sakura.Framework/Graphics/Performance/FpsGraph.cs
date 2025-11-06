@@ -7,6 +7,7 @@ using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Timing;
+using Sakura.Framework.Utilities;
 using Vector2 = Sakura.Framework.Maths.Vector2;
 
 namespace Sakura.Framework.Graphics.Performance;
@@ -67,6 +68,9 @@ public class FpsGraph : Container
     public override void Update()
     {
         base.Update();
+
+        if (Precision.AlmostEqualZero(Alpha))
+            return;
 
         // Add the latest frame time to our history
         if(clock != null)

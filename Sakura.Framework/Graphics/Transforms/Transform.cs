@@ -6,6 +6,7 @@ using System.Numerics;
 using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
+using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Graphics.Transforms;
 
@@ -103,7 +104,12 @@ public class AlphaTransform : Transform
             StartValue = drawable.Alpha;
             valueCaptured = true;
         }
-        drawable.Alpha = (float)(StartValue + (EndValue - StartValue) * GetEasedProgress(time));
+        float value = (float)(StartValue + (EndValue - StartValue) * GetEasedProgress(time));
+        if (Precision.AlmostEquals(value, 0f))
+            value = 0f;
+        else if (Precision.AlmostEquals(value, 1f))
+            value = 1f;
+        drawable.Alpha = value;
     }
 }
 
