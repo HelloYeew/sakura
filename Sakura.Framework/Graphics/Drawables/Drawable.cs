@@ -705,6 +705,21 @@ public class Drawable
     public event Action<Drawable> OnLoadComplete = delegate { };
 
     #endregion
+
+    #region Naming
+
+    private Guid internalId = Guid.NewGuid();
+
+    public string Name { get; set; } = string.Empty;
+
+    public override string ToString()
+    {
+        return !string.IsNullOrEmpty(Name) ?
+            $"{Name} ({GetType().Name}#{internalId.ToString().Substring(0, 4)})" :
+            $"{GetType().Name}#{internalId.ToString().Substring(0, 4)}";
+    }
+
+    #endregion
 }
 
 /// <summary>
