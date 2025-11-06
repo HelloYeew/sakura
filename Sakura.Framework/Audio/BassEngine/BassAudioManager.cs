@@ -50,40 +50,40 @@ public class BassAudioManager : IAudioManager, IDisposable
             Logger.Verbose("🔈 BASS initialised");
 
             var version = Bass.Version;
-            Logger.Verbose($"BASS version:           {version.Major}.{version.Minor}.{version.Build}.{version.Revision}");
+            Logger.Verbose($"BASS version: {version.Major}.{version.Minor}.{version.Build}.{version.Revision}");
 
             try
             {
                 var fxVersion = BassFx.Version;
-                Logger.Verbose($"BASS FX version:        {fxVersion.Major}.{fxVersion.Minor}.{fxVersion.Build}.{fxVersion.Revision}");
+                Logger.Verbose($"BASS FX version: {fxVersion.Major}.{fxVersion.Minor}.{fxVersion.Build}.{fxVersion.Revision}");
             }
             catch (DllNotFoundException)
             {
-                Logger.Verbose("BASS FX version:        Not loaded");
+                Logger.Verbose("BASS FX version: Not loaded");
             }
 
             try
             {
                 var mixVersion = BassMix.Version;
-                Logger.Verbose($"BASS MIX version:       {mixVersion.Major}.{mixVersion.Minor}.{mixVersion.Build}.{mixVersion.Revision}");
+                Logger.Verbose($"BASS MIX version: {mixVersion.Major}.{mixVersion.Minor}.{mixVersion.Build}.{mixVersion.Revision}");
             }
             catch (DllNotFoundException)
             {
-                Logger.Verbose("BASS MIX version:       Not loaded");
+                Logger.Verbose("BASS MIX version: Not loaded");
             }
 
             if (Bass.GetDeviceInfo(Bass.CurrentDevice, out var deviceInfo))
             {
-                Logger.Verbose($"Device:                 {deviceInfo.Name}");
-                Logger.Verbose($"Driver:                 {deviceInfo.Driver}");
+                Logger.Verbose($"Device: {deviceInfo.Name}");
+                Logger.Verbose($"Driver: {deviceInfo.Driver}");
             }
 
             int updatePeriod = Bass.GetConfig(Configuration.UpdatePeriod);
             int deviceBuffer = Bass.GetConfig(Configuration.DeviceBufferLength);
             int playbackBuffer = Bass.GetConfig(Configuration.PlaybackBufferLength);
 
-            Logger.Verbose($"Update period:          {updatePeriod} ms");
-            Logger.Verbose($"Device buffer length:   {deviceBuffer} ms");
+            Logger.Verbose($"Update period: {updatePeriod} ms");
+            Logger.Verbose($"Device buffer length: {deviceBuffer} ms");
             Logger.Verbose($"Playback buffer length: {playbackBuffer} ms");
         }
     }
