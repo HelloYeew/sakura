@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Rendering.Vertex;
 using Sakura.Framework.Maths;
@@ -16,7 +17,11 @@ public class Triangle : Drawable
 
     protected override void GenerateVertices()
     {
-        var calculatedColor = new Vector4(Color.R / 255f, Color.G / 255f, Color.B / 255f, Alpha);
+        float rLinear = ColorExtensions.SrgbToLinear(Color.R);
+        float gLinear = ColorExtensions.SrgbToLinear(Color.G);
+        float bLinear = ColorExtensions.SrgbToLinear(Color.B);
+
+        var calculatedColor = new System.Numerics.Vector4(rLinear, gLinear, bLinear, DrawAlpha);
 
         var localP1 = new Vector4(0.5f, 0, 0, 1);
         var localP2 = new Vector4(0, 1, 0, 1);

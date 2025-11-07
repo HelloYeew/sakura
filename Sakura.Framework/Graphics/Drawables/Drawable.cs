@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Sakura.Framework.Allocation;
+using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
@@ -331,7 +332,11 @@ public class Drawable
 
     protected virtual void GenerateVertices()
     {
-        var calculatedColor = new System.Numerics.Vector4(Color.R / 255f, Color.G / 255f, Color.B / 255f, DrawAlpha);
+        float rLinear = ColorExtensions.SrgbToLinear(Color.R);
+        float gLinear = ColorExtensions.SrgbToLinear(Color.G);
+        float bLinear = ColorExtensions.SrgbToLinear(Color.B);
+
+        var calculatedColor = new System.Numerics.Vector4(rLinear, gLinear, bLinear, DrawAlpha);
 
         var uvRect = Texture?.UvRect ?? new RectangleF(0, 0, 1, 1);
 
