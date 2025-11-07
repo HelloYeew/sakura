@@ -8,6 +8,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Rendering.Batches;
+using Sakura.Framework.Graphics.Textures;
 using Silk.NET.OpenGL;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
@@ -15,7 +16,6 @@ using Sakura.Framework.Platform;
 using Sakura.Framework.Timing;
 using Color = Sakura.Framework.Graphics.Colors.Color;
 using SakuraVertex = Sakura.Framework.Graphics.Rendering.Vertex.Vertex;
-using Texture = Sakura.Framework.Graphics.Textures.Texture;
 
 namespace Sakura.Framework.Graphics.Rendering;
 
@@ -66,7 +66,7 @@ public class GLRenderer : IRenderer
         gl.Clear(ClearBufferMask.StencilBufferBit);
         gl.StencilMask(0x00);
 
-        Texture.CreateWhitePixel(gl);
+        TextureGL.CreateWhitePixel(gl);
 
         shader = new Shader(gl, "Resources/Shaders/shader.vert", "Resources/Shaders/shader.frag");
 
@@ -115,9 +115,9 @@ public class GLRenderer : IRenderer
         triangleBatch.Draw();
     }
 
-    public void DrawVertices(ReadOnlySpan<SakuraVertex> vertices, Texture texture)
+    public void DrawVertices(ReadOnlySpan<SakuraVertex> vertices, TextureGL textureGl)
     {
-        texture.Bind();
+        textureGl.Bind();
         triangleBatch.AddRange(vertices);
     }
 
@@ -129,7 +129,7 @@ public class GLRenderer : IRenderer
         var rect = circleDrawable.DrawRectangle;
         shader.SetUniform("u_CircleRect", new Vector4(rect.X, rect.Y, rect.Width, rect.Height));
 
-        Texture.WhitePixel.Bind();
+        TextureGL.WhitePixel.Bind();
         triangleBatch.AddRange(circleDrawable.Vertices);
         triangleBatch.Draw();
 
@@ -139,7 +139,7 @@ public class GLRenderer : IRenderer
     private void drawMaskShape(Drawable maskDrawable, float cornerRadius)
     {
         // Bind a texture. WhitePixel is fine since we're only writing to stencil
-        Texture.WhitePixel.Bind();
+        TextureGL.WhitePixel.Bind();
 
         // Add the mask's vertices to the batch and draw *only* them.
         triangleBatch.AddRange(maskDrawable.Vertices);

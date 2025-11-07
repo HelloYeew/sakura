@@ -8,7 +8,7 @@ using Silk.NET.OpenGL;
 
 namespace Sakura.Framework.Graphics.Textures;
 
-public class Texture : IDisposable
+public class TextureGL : IDisposable
 {
     public uint Handle { get; }
     public int Width { get; }
@@ -17,9 +17,9 @@ public class Texture : IDisposable
     private readonly GL gl;
     private bool disposed;
 
-    public static Texture WhitePixel { get; private set; }
+    public static TextureGL WhitePixel { get; private set; }
 
-    public Texture(GL gl, int width, int height, ReadOnlySpan<byte> data)
+    public TextureGL(GL gl, int width, int height, ReadOnlySpan<byte> data)
     {
         this.gl = gl;
         Width = width;
@@ -40,7 +40,7 @@ public class Texture : IDisposable
         if (WhitePixel == null)
         {
             byte[] whitePixelData = { 255, 255, 255, 255 };
-            WhitePixel = new Texture(gl, 1, 1, whitePixelData);
+            WhitePixel = new TextureGL(gl, 1, 1, whitePixelData);
         }
     }
 

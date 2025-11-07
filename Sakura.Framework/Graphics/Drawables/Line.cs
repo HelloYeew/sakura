@@ -96,6 +96,6 @@ public class Line : Drawable
 
     public override void Draw(IRenderer renderer)
     {
-        renderer.DrawVertices(Vertices, Texture ?? Texture.WhitePixel);
+        renderer.DrawVertices(Vertices, Texture ?? TextureGL.WhitePixel);
     }
 }

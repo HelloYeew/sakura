@@ -238,7 +238,7 @@ public class Drawable
     public void Show() => Alpha = 1f;
     public bool IsHidden => Alpha <= 0f;
 
-    public Texture? Texture { get; set; }
+    public TextureGL? Texture { get; set; }
 
     // Caches for computed values
     public RectangleF DrawRectangle { get; private set; }
@@ -412,7 +412,7 @@ public class Drawable
         if (DrawAlpha <= 0)
             return;
 
-        renderer.DrawVertices(Vertices, Texture ?? Texture.WhitePixel);
+        renderer.DrawVertices(Vertices, Texture ?? TextureGL.WhitePixel);
     }
 
     /// <summary>
@@ -517,7 +517,7 @@ public class Drawable
 
     public Drawable()
     {
-        Texture = Texture.WhitePixel;
+        Texture = TextureGL.WhitePixel;
         Clock = new Clock(true);
         Scheduler = new Scheduler(Clock);
     }

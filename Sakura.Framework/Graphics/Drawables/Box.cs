@@ -9,6 +9,6 @@ public class Box : Drawable
 {
     public Box()
     {
-        Texture = Texture.WhitePixel;
+        Texture = TextureGL.WhitePixel;
     }
 }

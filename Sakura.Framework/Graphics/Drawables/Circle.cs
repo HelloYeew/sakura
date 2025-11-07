@@ -13,7 +13,7 @@ public class Circle : Drawable
 {
     public Circle()
     {
-        Texture = Texture.WhitePixel;
+        Texture = TextureGL.WhitePixel;
     }
 
     public override void Draw(IRenderer renderer)
