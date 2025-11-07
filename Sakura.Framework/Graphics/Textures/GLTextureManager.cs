@@ -18,7 +18,6 @@ namespace Sakura.Framework.Graphics.Textures;
 [SuppressMessage("ReSharper", "InconsistentNaming")]
 public class GLTextureManager : ITextureManager
 {
-    // TODO: Centralize texture management across different graphics backends. (ITextureManager?)
     private readonly GL gl;
     private readonly Storage storage;
     private readonly Dictionary<string, Texture> textureCache = new();
@@ -111,34 +110,13 @@ public class GLTextureManager : ITextureManager
         if (textureCache.TryGetValue("!!MISSING!!", out var missingTex))
             return missingTex;
 
-        const int size = 64;
-        byte[] data = new byte[size * size * 4];
-        for(int y = 0; y < size; y++)
-        for (int x = 0; x < size; x++)
-        {
-            bool xOdd = (x / (size / 2)) % 2 == 1;
-            bool yOdd = (y / (size / 2)) % 2 == 1;
-            bool isMagenta = xOdd ^ yOdd;
+        // Create a "null" texture (transparent texture)
+        const int width = 1;
+        const int height = 1;
+        byte[] data = new byte[width * height * 4];
 
-            int offset = (y * size + x) * 4;
-            if (isMagenta)
-            {
-                data[offset] = 255;     // R
-                data[offset + 1] = 0;   // G
-                data[offset + 2] = 255; // B
-                data[offset + 3] = 255; // A
-            }
-            else
-            {
-                data[offset] = 0;       // R
-                data[offset + 1] = 0;   // G
-                data[offset + 2] = 0;   // B
-                data[offset + 3] = 255; // A
-            }
-        }
-
-        var gl = new GLTexture(this.gl, size, size, data);
-        var tex = new Texture(gl);
+        var glTex = new GLTexture(gl, width, height, data);
+        var tex = new Texture(glTex);
 
         textureCache["!!MISSING!!"] = tex;
         textureCache[path] = tex; // Also cache it under the path that failed
