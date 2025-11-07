@@ -2,7 +2,6 @@
 // See the LICENSE file for full license text.
 
 using Sakura.Framework.Graphics.Rendering;
-using Sakura.Framework.Graphics.Textures;
 
 namespace Sakura.Framework.Graphics.Drawables;
 
@@ -11,11 +10,6 @@ namespace Sakura.Framework.Graphics.Drawables;
 /// </summary>
 public class Circle : Drawable
 {
-    public Circle()
-    {
-        Texture = TextureGL.WhitePixel;
-    }
-
     public override void Draw(IRenderer renderer)
     {
         if (DrawAlpha <= 0)

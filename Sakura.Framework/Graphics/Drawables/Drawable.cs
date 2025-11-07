@@ -49,6 +49,9 @@ public class Drawable
     private float depth;
     private bool alwaysPresent;
 
+    [Resolved]
+    protected ITextureManager TextureManager;
+
     /// <summary>
     /// A clock for this drawable, time is relative to the parent's clock
     /// </summary>
@@ -238,7 +241,7 @@ public class Drawable
     public void Show() => Alpha = 1f;
     public bool IsHidden => Alpha <= 0f;
 
-    public TextureGL? Texture { get; set; }
+    public Texture Texture { get; set; }
 
     // Caches for computed values
     public RectangleF DrawRectangle { get; private set; }
@@ -333,6 +336,8 @@ public class Drawable
     {
         var calculatedColor = new System.Numerics.Vector4(Color.R / 255f, Color.G / 255f, Color.B / 255f, DrawAlpha);
 
+        var uvRect = Texture.UvRect;
+
         var vTopLeft = Vector4.Transform(new Vector4(0, 0, 0, 1), ModelMatrix);
         var vTopRight = Vector4.Transform(new Vector4(1, 0, 0, 1), ModelMatrix);
         var vBottomLeft = Vector4.Transform(new Vector4(0, 1, 0, 1), ModelMatrix);
@@ -393,6 +398,10 @@ public class Drawable
         if (IsLoaded) return;
 
         loadDependencies();
+
+        if (Texture == null)
+            Texture = TextureManager.WhitePixel;
+
         OnLoad(this);
 
         IsLoaded = true;
@@ -412,7 +421,7 @@ public class Drawable
         if (DrawAlpha <= 0)
             return;
 
-        renderer.DrawVertices(Vertices, Texture ?? TextureGL.WhitePixel);
+        renderer.DrawVertices(Vertices, Texture);
     }
 
     /// <summary>
@@ -517,7 +526,6 @@ public class Drawable
 
     public Drawable()
     {
-        Texture = TextureGL.WhitePixel;
         Clock = new Clock(true);
         Scheduler = new Scheduler(Clock);
     }

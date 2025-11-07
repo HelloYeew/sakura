@@ -3,7 +3,6 @@
 
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Rendering.Vertex;
-using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.Drawables;
@@ -49,6 +48,6 @@ public class Triangle : Drawable
 
     public override void Draw(IRenderer renderer)
     {
-        renderer.DrawVertices(Vertices, Texture ?? TextureGL.WhitePixel);
+        renderer.DrawVertices(Vertices, Texture);
     }
 }

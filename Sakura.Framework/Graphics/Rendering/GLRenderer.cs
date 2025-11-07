@@ -16,6 +16,7 @@ using Sakura.Framework.Platform;
 using Sakura.Framework.Timing;
 using Color = Sakura.Framework.Graphics.Colors.Color;
 using SakuraVertex = Sakura.Framework.Graphics.Rendering.Vertex.Vertex;
+using Texture = Sakura.Framework.Graphics.Textures.Texture;
 
 namespace Sakura.Framework.Graphics.Rendering;
 
@@ -23,6 +24,9 @@ namespace Sakura.Framework.Graphics.Rendering;
 public class GLRenderer : IRenderer
 {
     private static GL gl;
+
+    internal static GL GL => gl;
+
     private Shader shader;
 
     private Matrix4x4 projectionMatrix;
@@ -115,9 +119,9 @@ public class GLRenderer : IRenderer
         triangleBatch.Draw();
     }
 
-    public void DrawVertices(ReadOnlySpan<SakuraVertex> vertices, TextureGL textureGl)
+    public void DrawVertices(ReadOnlySpan<SakuraVertex> vertices, Texture texture)
     {
-        textureGl.Bind();
+        texture.TextureGL.Bind();
         triangleBatch.AddRange(vertices);
     }
 

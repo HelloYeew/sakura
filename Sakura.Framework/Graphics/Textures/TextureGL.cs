@@ -4,10 +4,16 @@
 #nullable disable
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using Silk.NET.OpenGL;
 
 namespace Sakura.Framework.Graphics.Textures;
 
+/// <summary>
+/// The actual texture loaded in OpenGL.
+/// <remarks>The drawable should use the public-facing <see cref="Texture"/> which may point to a region of this TextureGL</remarks>
+/// </summary>
+[SuppressMessage("ReSharper", "InconsistentNaming")]
 public class TextureGL : IDisposable
 {
     public uint Handle { get; }

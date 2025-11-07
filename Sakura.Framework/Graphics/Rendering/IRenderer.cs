@@ -26,7 +26,7 @@ public interface IRenderer
 
     void Draw(IClock clock);
 
-    void DrawVertices(ReadOnlySpan<Vertex.Vertex> vertices, TextureGL textureGl);
+    void DrawVertices(ReadOnlySpan<Vertex.Vertex> vertices, Texture textureGl);
 
     void DrawCircle(Drawable circleDrawable);
 
