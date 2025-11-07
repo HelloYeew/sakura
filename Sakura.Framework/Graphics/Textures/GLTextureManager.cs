@@ -12,7 +12,6 @@ using Silk.NET.OpenGL;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Advanced;
 using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
 
 namespace Sakura.Framework.Graphics.Textures;
 
@@ -59,10 +58,6 @@ public class GLTextureManager : ITextureManager
                 // Load the image using ImageSharp
                 using (var image = Image.Load<Rgba32>(stream))
                 {
-                    // ImageSharp loads images "upside down" relative to OpenGL's expectations.
-                    // We need to flip it vertically before uploading.
-                    image.Mutate(x => x.Flip(FlipMode.Vertical));
-
                     // Get pixel data.
                     // We need a contiguous block of memory to upload to OpenGL.
                     // GetPixelMemoryGroup() returns one or more memory blocks.
