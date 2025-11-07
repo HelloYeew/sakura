@@ -20,6 +20,7 @@
     <PackageReference Include="NUnit" Version="4.4.0" />
     <PackageReference Include="Silk.NET.OpenGL" Version="2.22.0" />
     <PackageReference Include="Silk.NET.SDL" Version="2.22.0" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
     <!-- TODO: PackageReference to NativeLibs when published to NuGet-->
   </ItemGroup>
   <ItemGroup>
