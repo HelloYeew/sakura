@@ -72,8 +72,8 @@ public class GLRenderer : IRenderer
         gl.Clear(ClearBufferMask.StencilBufferBit);
         gl.StencilMask(0x00);
 
-        TextureGL.CreateWhitePixel(gl);
-        WhitePixel = new Texture(TextureGL.WhitePixel);
+        GLTexture.CreateWhitePixel(gl);
+        WhitePixel = new Texture(GLTexture.WhitePixel);
 
         shader = new Shader(gl, "Resources/Shaders/shader.vert", "Resources/Shaders/shader.frag");
 
@@ -124,7 +124,7 @@ public class GLRenderer : IRenderer
 
     public void DrawVertices(ReadOnlySpan<SakuraVertex> vertices, Texture texture)
     {
-        texture.TextureGL.Bind();
+        texture.GlTexture.Bind();
         triangleBatch.AddRange(vertices);
     }
 
@@ -136,7 +136,7 @@ public class GLRenderer : IRenderer
         var rect = circleDrawable.DrawRectangle;
         shader.SetUniform("u_CircleRect", new Vector4(rect.X, rect.Y, rect.Width, rect.Height));
 
-        TextureGL.WhitePixel.Bind();
+        GLTexture.WhitePixel.Bind();
         triangleBatch.AddRange(circleDrawable.Vertices);
         triangleBatch.Draw();
 
@@ -146,7 +146,7 @@ public class GLRenderer : IRenderer
     private void drawMaskShape(Drawable maskDrawable, float cornerRadius)
     {
         // Bind a texture. WhitePixel is fine since we're only writing to stencil
-        TextureGL.WhitePixel.Bind();
+        GLTexture.WhitePixel.Bind();
 
         // Add the mask's vertices to the batch and draw *only* them.
         triangleBatch.AddRange(maskDrawable.Vertices);

@@ -14,7 +14,7 @@ namespace Sakura.Framework.Graphics.Textures;
 /// <remarks>The drawable should use the public-facing <see cref="Texture"/> which may point to a region of this TextureGL</remarks>
 /// </summary>
 [SuppressMessage("ReSharper", "InconsistentNaming")]
-public class TextureGL : IDisposable
+public class GLTexture : IDisposable
 {
     public uint Handle { get; }
     public int Width { get; }
@@ -23,9 +23,9 @@ public class TextureGL : IDisposable
     private readonly GL gl;
     private bool disposed;
 
-    public static TextureGL WhitePixel { get; private set; }
+    public static GLTexture WhitePixel { get; private set; }
 
-    public TextureGL(GL gl, int width, int height, ReadOnlySpan<byte> data)
+    public GLTexture(GL gl, int width, int height, ReadOnlySpan<byte> data)
     {
         this.gl = gl;
         Width = width;
@@ -46,7 +46,7 @@ public class TextureGL : IDisposable
         if (WhitePixel == null)
         {
             byte[] whitePixelData = { 255, 255, 255, 255 };
-            WhitePixel = new TextureGL(gl, 1, 1, whitePixelData);
+            WhitePixel = new GLTexture(gl, 1, 1, whitePixelData);
         }
     }
 

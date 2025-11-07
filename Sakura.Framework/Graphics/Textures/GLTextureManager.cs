@@ -33,7 +33,7 @@ public class GLTextureManager : ITextureManager
     {
         this.gl = gl;
         this.storage = storage;
-        WhitePixel = new Texture(TextureGL.WhitePixel);
+        WhitePixel = new Texture(GLTexture.WhitePixel);
     }
 
     /// <summary>
@@ -68,13 +68,13 @@ public class GLTextureManager : ITextureManager
                     // GetPixelMemoryGroup() returns one or more memory blocks.
                     var memoryGroup = image.GetPixelMemoryGroup();
 
-                    TextureGL textureGl;
+                    GLTexture glTexture;
 
                     if (memoryGroup.Count == 1)
                     {
                         // The image is contiguous in memory. We can use its span directly.
                         var pixelDataSpan = MemoryMarshal.AsBytes(memoryGroup[0].Span);
-                        textureGl = new TextureGL(gl, image.Width, image.Height, pixelDataSpan);
+                        glTexture = new GLTexture(gl, image.Width, image.Height, pixelDataSpan);
                     }
                     else
                     {
@@ -89,11 +89,11 @@ public class GLTextureManager : ITextureManager
                             offset += chunkSpan.Length;
                         }
 
-                        textureGl = new TextureGL(gl, image.Width, image.Height, pixelDataArray);
+                        glTexture = new GLTexture(gl, image.Width, image.Height, pixelDataArray);
                     }
 
                     // Create a public-facing Texture that points to the *whole* TextureGL
-                    var texture = new Texture(textureGl);
+                    var texture = new Texture(glTexture);
 
                     textureCache[path] = texture;
                     return texture;
@@ -142,7 +142,7 @@ public class GLTextureManager : ITextureManager
             }
         }
 
-        var gl = new TextureGL(this.gl, size, size, data);
+        var gl = new GLTexture(this.gl, size, size, data);
         var tex = new Texture(gl);
 
         textureCache["!!MISSING!!"] = tex;
@@ -155,9 +155,9 @@ public class GLTextureManager : ITextureManager
         foreach (var tex in textureCache.Values)
         {
             // Only dispose textures that aren't the shared WhitePixel or Missing texture
-            if (tex != WhitePixel && tex.TextureGL.Handle != (textureCache.GetValueOrDefault("!!MISSING!!")?.TextureGL.Handle ?? 0))
+            if (tex != WhitePixel && tex.GlTexture.Handle != (textureCache.GetValueOrDefault("!!MISSING!!")?.GlTexture.Handle ?? 0))
             {
-                tex.TextureGL.Dispose();
+                tex.GlTexture.Dispose();
             }
         }
 

@@ -14,7 +14,7 @@ public class Texture
     /// <summary>
     /// The underlying GPU texture.
     /// </summary>
-    public TextureGL TextureGL { get; }
+    public GLTexture GlTexture { get; }
 
     /// <summary>
     /// The rectangle (in 0-1 UV coordinates) this texture occupies within its TextureGL.
@@ -34,24 +34,24 @@ public class Texture
     /// <summary>
     /// Creates a new texture that represents the *entire* area of a TextureGL.
     /// </summary>
-    public Texture(TextureGL textureGl)
+    public Texture(GLTexture glTexture)
     {
-        TextureGL = textureGl;
+        GlTexture = glTexture;
         UvRect = new RectangleF(0, 0, 1, 1);
-        Width = textureGl.Width;
-        Height = textureGl.Height;
+        Width = glTexture.Width;
+        Height = glTexture.Height;
     }
 
     /// <summary>
     /// Creates a new texture that represents a *sub-region* of a TextureGL.
     /// </summary>
-    public Texture(TextureGL textureGl, RectangleF uvRect)
+    public Texture(GLTexture glTexture, RectangleF uvRect)
     {
-        TextureGL = textureGl;
+        GlTexture = glTexture;
         UvRect = uvRect;
 
         // Calculate pixel size of this specific region
-        Width = (int)(textureGl.Width * uvRect.Width);
-        Height = (int)(textureGl.Height * uvRect.Height);
+        Width = (int)(glTexture.Width * uvRect.Width);
+        Height = (int)(glTexture.Height * uvRect.Height);
     }
 }
