@@ -68,6 +68,8 @@ public class GLRenderer : IRenderer
         gl.Enable(EnableCap.Blend);
         gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
 
+        gl.Enable(EnableCap.FramebufferSrgb);
+
         gl.Enable(EnableCap.StencilTest);
         gl.StencilMask(0xFF);
         gl.ClearStencil(0);
