@@ -49,9 +49,6 @@ public class Drawable
     private float depth;
     private bool alwaysPresent;
 
-    [Resolved]
-    protected ITextureManager TextureManager;
-
     /// <summary>
     /// A clock for this drawable, time is relative to the parent's clock
     /// </summary>
@@ -241,7 +238,7 @@ public class Drawable
     public void Show() => Alpha = 1f;
     public bool IsHidden => Alpha <= 0f;
 
-    public Texture Texture { get; set; }
+    public Texture? Texture { get; set; }
 
     // Caches for computed values
     public RectangleF DrawRectangle { get; private set; }
@@ -336,17 +333,22 @@ public class Drawable
     {
         var calculatedColor = new System.Numerics.Vector4(Color.R / 255f, Color.G / 255f, Color.B / 255f, DrawAlpha);
 
-        var uvRect = Texture.UvRect;
+        var uvRect = Texture?.UvRect ?? new RectangleF(0, 0, 1, 1);
 
         var vTopLeft = Vector4.Transform(new Vector4(0, 0, 0, 1), ModelMatrix);
         var vTopRight = Vector4.Transform(new Vector4(1, 0, 0, 1), ModelMatrix);
         var vBottomLeft = Vector4.Transform(new Vector4(0, 1, 0, 1), ModelMatrix);
         var vBottomRight = Vector4.Transform(new Vector4(1, 1, 0, 1), ModelMatrix);
 
-        var topLeft = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = new Vector2(0, 0), Color = calculatedColor };
-        var topRight = new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(1, 0), Color = calculatedColor };
-        var bottomLeft = new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(0, 1), Color = calculatedColor };
-        var bottomRight = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = new Vector2(1, 1), Color = calculatedColor };
+        float uvLeft = uvRect.X;
+        float uvTop = uvRect.Y;
+        float uvRight = uvRect.X + uvRect.Width;
+        float uvBottom = uvRect.Y + uvRect.Height;
+
+        var topLeft = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = new Vector2(uvLeft, uvTop), Color = calculatedColor };
+        var topRight = new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(uvRight, uvTop), Color = calculatedColor };
+        var bottomLeft = new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(uvLeft, uvBottom), Color = calculatedColor };
+        var bottomRight = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = new Vector2(uvRight, uvBottom), Color = calculatedColor };
 
         // Triangle 1
         Vertices[0] = topLeft;
@@ -399,9 +401,6 @@ public class Drawable
 
         loadDependencies();
 
-        if (Texture == null)
-            Texture = TextureManager.WhitePixel;
-
         OnLoad(this);
 
         IsLoaded = true;
@@ -421,7 +420,7 @@ public class Drawable
         if (DrawAlpha <= 0)
             return;
 
-        renderer.DrawVertices(Vertices, Texture);
+        renderer.DrawVertices(Vertices, Texture ?? renderer.WhitePixel);
     }
 
     /// <summary>

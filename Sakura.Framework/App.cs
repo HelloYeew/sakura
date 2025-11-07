@@ -53,6 +53,8 @@ public class App : Container, IDisposable
 
     public override void Load()
     {
+        base.Load();
+
         AudioManager = new BassAudioManager();
         var masterVolume = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.MasterVolume);
         var trackVolume = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.TrackVolume);
@@ -80,10 +82,6 @@ public class App : Container, IDisposable
 
         Cache<IAudioStore<ITrack>>(TrackStore);
         Cache<IAudioStore<ISample>>(SampleStore);
-
-        // Since App is a Container too, the base Load needs to call
-        // after all the necessary components are created and cached.
-        base.Load();
 
         Cache(Host);
         Cache(this);

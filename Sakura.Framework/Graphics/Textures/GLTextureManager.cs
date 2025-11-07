@@ -33,8 +33,6 @@ public class GLTextureManager : ITextureManager
     {
         this.gl = gl;
         this.storage = storage;
-
-        // Wrap the static TextureGL.WhitePixel in a public-facing Texture.
         WhitePixel = new Texture(TextureGL.WhitePixel);
     }
 

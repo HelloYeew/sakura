@@ -35,8 +35,11 @@ public class Texture
     /// Creates a new texture that represents the *entire* area of a TextureGL.
     /// </summary>
     public Texture(TextureGL textureGl)
-        : this(textureGl, new RectangleF(0, 0, 1, 1))
     {
+        TextureGL = textureGl;
+        UvRect = new RectangleF(0, 0, 1, 1);
+        Width = textureGl.Width;
+        Height = textureGl.Height;
     }
 
     /// <summary>

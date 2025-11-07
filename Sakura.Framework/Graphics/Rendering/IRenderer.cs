@@ -12,6 +12,11 @@ namespace Sakura.Framework.Graphics.Rendering;
 public interface IRenderer
 {
     /// <summary>
+    /// A 1x1 white pixel texture managed by the renderer.
+    /// </summary>
+    Texture WhitePixel { get; }
+
+    /// <summary>
     /// Initializes the renderer to be used with the specified window.
     /// </summary>
     protected internal void Initialize(IGraphicsSurface graphicsSurface);

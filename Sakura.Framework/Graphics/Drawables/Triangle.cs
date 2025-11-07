@@ -48,6 +48,6 @@ public class Triangle : Drawable
 
     public override void Draw(IRenderer renderer)
     {
-        renderer.DrawVertices(Vertices, Texture);
+        renderer.DrawVertices(Vertices, Texture ?? renderer.WhitePixel);
     }
 }

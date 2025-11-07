@@ -27,6 +27,8 @@ public class GLRenderer : IRenderer
 
     internal static GL GL => gl;
 
+    public Texture WhitePixel { get; private set; }
+
     private Shader shader;
 
     private Matrix4x4 projectionMatrix;
@@ -71,6 +73,7 @@ public class GLRenderer : IRenderer
         gl.StencilMask(0x00);
 
         TextureGL.CreateWhitePixel(gl);
+        WhitePixel = new Texture(TextureGL.WhitePixel);
 
         shader = new Shader(gl, "Resources/Shaders/shader.vert", "Resources/Shaders/shader.frag");
 
