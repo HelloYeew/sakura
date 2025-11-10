@@ -1,60 +1,57 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
-#nullable disable
-
-using System;
-using Silk.NET.OpenGL;
+using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.Textures;
 
-public class Texture : IDisposable
+/// <summary>
+/// A public-facing texture represents that drawable use.
+/// It points to a specifix region (UvRect) within a larger TextureGL (atlas or standalone textures).
+/// </summary>
+public class Texture
 {
-    public uint Handle { get; }
+    /// <summary>
+    /// The underlying GPU texture.
+    /// </summary>
+    public GLTexture GlTexture { get; }
+
+    /// <summary>
+    /// The rectangle (in 0-1 UV coordinates) this texture occupies within its TextureGL.
+    /// </summary>
+    public RectangleF UvRect { get; }
+
+    /// <summary>
+    /// The width of this texture region in pixels.
+    /// </summary>
     public int Width { get; }
+
+    /// <summary>
+    /// The height of this texture region in pixels.
+    /// </summary>
     public int Height { get; }
 
-    private readonly GL gl;
-    private bool disposed;
-
-    public static Texture WhitePixel { get; private set; }
-
-    public Texture(GL gl, int width, int height, ReadOnlySpan<byte> data)
+    /// <summary>
+    /// Creates a new texture that represents the *entire* area of a TextureGL.
+    /// </summary>
+    public Texture(GLTexture glTexture)
     {
-        this.gl = gl;
-        Width = width;
-        Height = height;
-
-        Handle = this.gl.GenTexture();
-        Bind();
-
-        this.gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgba, (uint)width, (uint)height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, data);
-        this.gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
-        this.gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
-        this.gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
-        this.gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+        GlTexture = glTexture;
+        UvRect = new RectangleF(0, 0, 1, 1);
+        Width = glTexture.Width;
+        Height = glTexture.Height;
     }
 
-    public static void CreateWhitePixel(GL gl)
+    /// <summary>
+    /// Creates a new texture that represents a *sub-region* of a TextureGL.
+    /// </summary>
+    public Texture(GLTexture glTexture, RectangleF uvRect)
     {
-        if (WhitePixel == null)
-        {
-            byte[] whitePixelData = { 255, 255, 255, 255 };
-            WhitePixel = new Texture(gl, 1, 1, whitePixelData);
-        }
-    }
+        GlTexture = glTexture;
+        UvRect = uvRect;
 
-    public void Bind(TextureUnit unit = TextureUnit.Texture0)
-    {
-        gl.ActiveTexture(unit);
-        gl.BindTexture(TextureTarget.Texture2D, Handle);
-    }
-
-    public void Dispose()
-    {
-        if (disposed) return;
-        gl.DeleteTexture(Handle);
-        disposed = true;
-        GC.SuppressFinalize(this);
+        // Calculate pixel size of this specific region
+        Width = (int)(glTexture.Width * uvRect.Width);
+        Height = (int)(glTexture.Height * uvRect.Height);
     }
 }

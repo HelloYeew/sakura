@@ -148,6 +148,7 @@ public class Shader : IDisposable
     /// <exception cref="FileNotFoundException">If the resource is not found.</exception>
     private string readEmbededResource(string resourcePath)
     {
+        // TODO: The EmbeddedResourceStorage class should be replace this method.
         Assembly assembly = typeof(Shader).Assembly;
         string resourceName = $"{assembly.GetName().Name}.{resourcePath.Replace('/', '.')}";
 

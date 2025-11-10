@@ -112,6 +112,8 @@ public class SDLWindow : IWindow
         sdl.GLSetAttribute(GLattr.ContextFlags, (int)ContextFlagMask.ForwardCompatibleBit);
         sdl.GLSetAttribute(GLattr.ContextProfileMask, (int)GLprofile.Core);
 
+        sdl.GLSetAttribute(GLattr.FramebufferSrgbCapable, 1);
+
         window = sdl.CreateWindow(
             title,
             Sdl.WindowposCentered, // X position

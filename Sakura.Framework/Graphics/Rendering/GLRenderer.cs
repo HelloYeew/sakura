@@ -8,6 +8,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Rendering.Batches;
+using Sakura.Framework.Graphics.Textures;
 using Silk.NET.OpenGL;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
@@ -23,6 +24,11 @@ namespace Sakura.Framework.Graphics.Rendering;
 public class GLRenderer : IRenderer
 {
     private static GL gl;
+
+    internal static GL GL => gl;
+
+    public Texture WhitePixel { get; private set; }
+
     private Shader shader;
 
     private Matrix4x4 projectionMatrix;
@@ -32,6 +38,8 @@ public class GLRenderer : IRenderer
     private Drawable root;
 
     private int stencilLevel = 0;
+
+    private uint lastBoundTextureHandle = uint.MaxValue;
 
     public unsafe void Initialize(IGraphicsSurface graphicsSurface)
     {
@@ -60,17 +68,22 @@ public class GLRenderer : IRenderer
         gl.Enable(EnableCap.Blend);
         gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
 
+        gl.Enable(EnableCap.FramebufferSrgb);
+
         gl.Enable(EnableCap.StencilTest);
         gl.StencilMask(0xFF);
         gl.ClearStencil(0);
         gl.Clear(ClearBufferMask.StencilBufferBit);
         gl.StencilMask(0x00);
 
-        Texture.CreateWhitePixel(gl);
+        GLTexture.CreateWhitePixel(gl);
+        WhitePixel = new Texture(GLTexture.WhitePixel);
 
         shader = new Shader(gl, "Resources/Shaders/shader.vert", "Resources/Shaders/shader.frag");
 
         triangleBatch = new TriangleBatch(gl, 1000 * 3);
+
+        lastBoundTextureHandle = uint.MaxValue;
     }
 
     public void SetRoot(Drawable root)
@@ -111,13 +124,23 @@ public class GLRenderer : IRenderer
         shader.SetUniform("u_IsMasking", false);
         shader.SetUniform("u_IsCircle", false);
 
+        lastBoundTextureHandle = uint.MaxValue;
+
         root.Draw(this);
         triangleBatch.Draw();
     }
 
     public void DrawVertices(ReadOnlySpan<SakuraVertex> vertices, Texture texture)
     {
-        texture.Bind();
+        uint newTextureHandle = texture.GlTexture.Handle;
+
+        if (newTextureHandle != lastBoundTextureHandle)
+        {
+            triangleBatch.Draw();
+            texture.GlTexture.Bind();
+            lastBoundTextureHandle = newTextureHandle;
+        }
+
         triangleBatch.AddRange(vertices);
     }
 
@@ -129,17 +152,31 @@ public class GLRenderer : IRenderer
         var rect = circleDrawable.DrawRectangle;
         shader.SetUniform("u_CircleRect", new Vector4(rect.X, rect.Y, rect.Width, rect.Height));
 
-        Texture.WhitePixel.Bind();
+        if (GLTexture.WhitePixel.Handle != lastBoundTextureHandle)
+        {
+            triangleBatch.Draw();
+            GLTexture.WhitePixel.Bind();
+            lastBoundTextureHandle = GLTexture.WhitePixel.Handle;
+        }
+
+        GLTexture.WhitePixel.Bind();
         triangleBatch.AddRange(circleDrawable.Vertices);
         triangleBatch.Draw();
 
         shader.SetUniform("u_IsCircle", false);
+
+        lastBoundTextureHandle = uint.MaxValue;
     }
 
     private void drawMaskShape(Drawable maskDrawable, float cornerRadius)
     {
         // Bind a texture. WhitePixel is fine since we're only writing to stencil
-        Texture.WhitePixel.Bind();
+        if (GLTexture.WhitePixel.Handle != lastBoundTextureHandle)
+        {
+            triangleBatch.Draw();
+            GLTexture.WhitePixel.Bind();
+            lastBoundTextureHandle = GLTexture.WhitePixel.Handle;
+        }
 
         // Add the mask's vertices to the batch and draw *only* them.
         triangleBatch.AddRange(maskDrawable.Vertices);
@@ -149,6 +186,8 @@ public class GLRenderer : IRenderer
     public void PushMask(Drawable maskDrawable, float cornerRadius)
     {
         triangleBatch.Draw(); // Flush all drawing before this
+
+        lastBoundTextureHandle = uint.MaxValue;
 
         gl.StencilMask(0xFF); // Enable stencil writing
         gl.ColorMask(false, false, false, false); // Disable color writing

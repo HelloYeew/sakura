@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Sakura.Framework.Allocation;
+using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
@@ -253,7 +254,7 @@ public class Drawable
 
         Matrix4x4 localMatrix;
         Vector2 finalDrawSize;
-        Vector2 originVector = GetAnchorOriginVector(Origin);
+        Vector2 originVector = getAnchorOriginVector(Origin);
 
         if (Parent == null)
         {
@@ -305,7 +306,7 @@ public class Drawable
             localMargin.Bottom /= parentPixelSize.Y;
 
             // Anchor and Origin are naturally relative, so they work correctly in this 0-1 space.
-            Vector2 anchorPosition = GetAnchorOriginVector(Anchor);
+            Vector2 anchorPosition = getAnchorOriginVector(Anchor);
             Vector2 finalOriginPosition = anchorPosition + localPosition + new Vector2(localMargin.Left - localMargin.Right, localMargin.Top - localMargin.Bottom);
 
             var finalScale = new Vector3(localScale.X * Scale.X, localScale.Y * Scale.Y, 1);
@@ -331,17 +332,28 @@ public class Drawable
 
     protected virtual void GenerateVertices()
     {
-        var calculatedColor = new System.Numerics.Vector4(Color.R / 255f, Color.G / 255f, Color.B / 255f, DrawAlpha);
+        float rLinear = ColorExtensions.SrgbToLinear(Color.R);
+        float gLinear = ColorExtensions.SrgbToLinear(Color.G);
+        float bLinear = ColorExtensions.SrgbToLinear(Color.B);
+
+        var calculatedColor = new System.Numerics.Vector4(rLinear, gLinear, bLinear, DrawAlpha);
+
+        var uvRect = Texture?.UvRect ?? new RectangleF(0, 0, 1, 1);
 
         var vTopLeft = Vector4.Transform(new Vector4(0, 0, 0, 1), ModelMatrix);
         var vTopRight = Vector4.Transform(new Vector4(1, 0, 0, 1), ModelMatrix);
         var vBottomLeft = Vector4.Transform(new Vector4(0, 1, 0, 1), ModelMatrix);
         var vBottomRight = Vector4.Transform(new Vector4(1, 1, 0, 1), ModelMatrix);
 
-        var topLeft = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = new Vector2(0, 0), Color = calculatedColor };
-        var topRight = new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(1, 0), Color = calculatedColor };
-        var bottomLeft = new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(0, 1), Color = calculatedColor };
-        var bottomRight = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = new Vector2(1, 1), Color = calculatedColor };
+        float uvLeft = uvRect.X;
+        float uvTop = uvRect.Y;
+        float uvRight = uvRect.X + uvRect.Width;
+        float uvBottom = uvRect.Y + uvRect.Height;
+
+        var topLeft = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = new Vector2(uvLeft, uvTop), Color = calculatedColor };
+        var topRight = new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(uvRight, uvTop), Color = calculatedColor };
+        var bottomLeft = new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(uvLeft, uvBottom), Color = calculatedColor };
+        var bottomRight = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = new Vector2(uvRight, uvBottom), Color = calculatedColor };
 
         // Triangle 1
         Vertices[0] = topLeft;
@@ -364,7 +376,7 @@ public class Drawable
 
     public bool Contains(Vector2 screenSpacePos) => DrawRectangle.Contains(screenSpacePos);
 
-    public static Vector2 GetAnchorOriginVector(Anchor anchor)
+    private static Vector2 getAnchorOriginVector(Anchor anchor)
     {
         switch (anchor)
         {
@@ -393,6 +405,7 @@ public class Drawable
         if (IsLoaded) return;
 
         loadDependencies();
+
         OnLoad(this);
 
         IsLoaded = true;
@@ -412,7 +425,7 @@ public class Drawable
         if (DrawAlpha <= 0)
             return;
 
-        renderer.DrawVertices(Vertices, Texture ?? Texture.WhitePixel);
+        renderer.DrawVertices(Vertices, Texture ?? renderer.WhitePixel);
     }
 
     /// <summary>
@@ -517,7 +530,6 @@ public class Drawable
 
     public Drawable()
     {
-        Texture = Texture.WhitePixel;
         Clock = new Clock(true);
         Scheduler = new Scheduler(Clock);
     }

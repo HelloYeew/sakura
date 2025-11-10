@@ -1,9 +1,9 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Rendering.Vertex;
-using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.Drawables;
@@ -54,7 +54,11 @@ public class Line : Drawable
 
     protected override void GenerateVertices()
     {
-        var calculatedColor = new Vector4(Color.R / 255f, Color.G / 255f, Color.B / 255f, Alpha);
+        float rLinear = ColorExtensions.SrgbToLinear(Color.R);
+        float gLinear = ColorExtensions.SrgbToLinear(Color.G);
+        float bLinear = ColorExtensions.SrgbToLinear(Color.B);
+
+        var calculatedColor = new System.Numerics.Vector4(rLinear, gLinear, bLinear, DrawAlpha);
 
         // Transform start and end points into the parent's coordinate space.
         // Do this by creating a matrix that scales by our size, then multiplying by the main model matrix.
@@ -96,6 +100,6 @@ public class Line : Drawable
 
     public override void Draw(IRenderer renderer)
     {
-        renderer.DrawVertices(Vertices, Texture ?? Texture.WhitePixel);
+        renderer.DrawVertices(Vertices, Texture ?? renderer.WhitePixel);
     }
 }

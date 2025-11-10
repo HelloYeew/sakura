@@ -367,4 +367,17 @@ public static class ColorExtensions
             (byte)(a.G + (b.G - a.G) * t),
             (byte)(a.B + (b.B - a.B) * t));
     }
+
+    /// <summary>
+    /// Converts an 8-bit sRGB color channel value (0-255) to a linear float value (0.0-1.0).
+    /// </summary>
+    public static float SrgbToLinear(byte srgbValue)
+    {
+        float srgb = srgbValue / 255.0f;
+
+        if (srgb <= 0.04045f)
+            return srgb / 12.92f;
+        else
+            return MathF.Pow((srgb + 0.055f) / 1.055f, 2.4f);
+    }
 }

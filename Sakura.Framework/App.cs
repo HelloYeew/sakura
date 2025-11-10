@@ -11,6 +11,8 @@ using Sakura.Framework.Configurations;
 using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Performance;
+using Sakura.Framework.Graphics.Rendering;
+using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Input;
 using Sakura.Framework.Platform;
@@ -29,6 +31,8 @@ public class App : Container, IDisposable
     protected IAudioManager AudioManager { get; private set; }
     protected TrackStore TrackStore { get; private set; }
     protected SampleStore SampleStore { get; private set; }
+
+    protected ITextureManager TextureManager { get; private set; }
 
     private Reactive<bool> showFpsGraph;
 
@@ -50,6 +54,35 @@ public class App : Container, IDisposable
     public override void Load()
     {
         base.Load();
+
+        AudioManager = new BassAudioManager();
+        var masterVolume = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.MasterVolume);
+        var trackVolume = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.TrackVolume);
+        var sampleVolume = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.SampleVolume);
+        AudioManager.MasterVolume.BindTo(masterVolume);
+        AudioManager.TrackVolume.BindTo(trackVolume);
+        AudioManager.SampleVolume.BindTo(sampleVolume);
+
+        Cache(AudioManager);
+
+        var embeddedResourceStorage = new EmbeddedResourceStorage(ResourceAssembly, ResourceRootNamespace);
+
+        TrackStore = new TrackStore(embeddedResourceStorage.GetStorageForDirectory("Tracks"), AudioManager);
+        SampleStore = new SampleStore(embeddedResourceStorage.GetStorageForDirectory("Samples"), AudioManager);
+
+        if (Host.Renderer is GLRenderer)
+        {
+            TextureManager = new GLTextureManager(GLRenderer.GL, embeddedResourceStorage.GetStorageForDirectory("Textures"));
+        }
+        else
+        {
+            throw new NotSupportedException("Only OpenGL renderer is supported currently.");
+        }
+        Cache(TextureManager);
+
+        Cache<IAudioStore<ITrack>>(TrackStore);
+        Cache<IAudioStore<ISample>>(SampleStore);
+
         Cache(Host);
         Cache(this);
         if (Host.Window != null) Cache(Host.Window);
@@ -70,24 +103,6 @@ public class App : Container, IDisposable
             else
                 FpsGraph.FadeOut(200, Easing.OutQuint);
         };
-
-        AudioManager = new BassAudioManager();
-        var masterVolume = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.MasterVolume);
-        var trackVolume = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.TrackVolume);
-        var sampleVolume = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.SampleVolume);
-        AudioManager.MasterVolume.BindTo(masterVolume);
-        AudioManager.TrackVolume.BindTo(trackVolume);
-        AudioManager.SampleVolume.BindTo(sampleVolume);
-
-        Cache(AudioManager);
-
-        var embeddedResourceStorage = new EmbeddedResourceStorage(ResourceAssembly, ResourceRootNamespace);
-
-        TrackStore = new TrackStore(embeddedResourceStorage.GetStorageForDirectory("Tracks"), AudioManager);
-        SampleStore = new SampleStore(embeddedResourceStorage.GetStorageForDirectory("Samples"), AudioManager);
-
-        Cache<IAudioStore<ITrack>>(TrackStore);
-        Cache<IAudioStore<ISample>>(SampleStore);
     }
 
     /// <summary>
