@@ -4,7 +4,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
@@ -50,24 +49,8 @@ public class Container : Drawable
     {
         get
         {
-            // Start with the container's logical size, not final screen rectangle.
             var containerSize = DrawSize;
-
-            // Calculate padding, scaling it relative to our own size if needed.
-            MarginPadding relativePadding = Padding;
-            if ((RelativeSizeAxes & Axes.X) != 0)
-            {
-                relativePadding.Left *= containerSize.X;
-                relativePadding.Right *= containerSize.X;
-            }
-            if ((RelativeSizeAxes & Axes.Y) != 0)
-            {
-                relativePadding.Top *= containerSize.Y;
-                relativePadding.Bottom *= containerSize.Y;
-            }
-
-            // Subtract the total scaled padding to get the area for children.
-            return new Vector2(containerSize.X - relativePadding.Total.X, containerSize.Y - relativePadding.Total.Y);
+            return new Vector2(containerSize.X - Padding.Total.X, containerSize.Y - Padding.Total.Y);
         }
     }
 
