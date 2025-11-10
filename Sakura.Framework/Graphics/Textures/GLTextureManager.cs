@@ -20,7 +20,9 @@ public class GLTextureManager : ITextureManager
 {
     private readonly GL gl;
     private readonly Storage storage;
-    private readonly Dictionary<string, Texture> textureCache = new();
+    private readonly Dictionary<string, Texture> textureCache = new Dictionary<string, Texture>();
+
+    private readonly Texture missingTexture;
 
     /// <summary>
     /// A 1x1 white pixel texture.
@@ -32,6 +34,7 @@ public class GLTextureManager : ITextureManager
         this.gl = gl;
         this.storage = storage;
         WhitePixel = new Texture(GLTexture.WhitePixel);
+        missingTexture = createNullTexture();
     }
 
     /// <summary>
@@ -48,13 +51,11 @@ public class GLTextureManager : ITextureManager
 
         try
         {
-            // Load the image using ImageSharp
             using (var stream = storage.GetStream(path))
             {
                 if (stream == null)
                     throw new FileNotFoundException($"Image file not found at storage path: {path}");
 
-                // Load the image using ImageSharp
                 using (var image = Image.Load<Rgba32>(stream))
                 {
                     // Get pixel data.
@@ -86,7 +87,6 @@ public class GLTextureManager : ITextureManager
                         glTexture = new GLTexture(gl, image.Width, image.Height, pixelDataArray);
                     }
 
-                    // Create a public-facing Texture that points to the *whole* TextureGL
                     var texture = new Texture(glTexture);
 
                     textureCache[path] = texture;
@@ -97,30 +97,23 @@ public class GLTextureManager : ITextureManager
         catch (Exception ex)
         {
             Logger.Error($"Failed to load texture '{path}': {ex.Message}");
-            // Return a fallback "missing" texture
-            return createMissingTexture(path);
+            textureCache[path] = missingTexture;
+            return missingTexture;
         }
     }
 
     /// <summary>
-    /// Creates a fallback magenta/black checkerboard texture to indicate a missing asset.
+    /// Create a simple
     /// </summary>
-    private Texture createMissingTexture(string path)
+    /// <returns></returns>
+    private Texture createNullTexture()
     {
-        if (textureCache.TryGetValue("!!MISSING!!", out var missingTex))
-            return missingTex;
-
-        // Create a "null" texture (transparent texture)
         const int width = 1;
         const int height = 1;
         byte[] data = new byte[width * height * 4];
 
         var glTex = new GLTexture(gl, width, height, data);
-        var tex = new Texture(glTex);
-
-        textureCache["!!MISSING!!"] = tex;
-        textureCache[path] = tex; // Also cache it under the path that failed
-        return tex;
+        return new Texture(glTex);
     }
 
     public void Dispose()
@@ -128,7 +121,7 @@ public class GLTextureManager : ITextureManager
         foreach (var tex in textureCache.Values)
         {
             // Only dispose textures that aren't the shared WhitePixel or Missing texture
-            if (tex != WhitePixel && tex.GlTexture.Handle != (textureCache.GetValueOrDefault("!!MISSING!!")?.GlTexture.Handle ?? 0))
+            if (tex != WhitePixel && tex.GlTexture.Handle != missingTexture.GlTexture.Handle)
             {
                 tex.GlTexture.Dispose();
             }
