@@ -18,6 +18,7 @@ using Sakura.Framework.Development;
 using Sakura.Framework.Extensions.ExceptionExtensions;
 using Sakura.Framework.Extensions.IEnumerableExtensions;
 using Sakura.Framework.Graphics.Drawables;
+using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
@@ -378,9 +379,12 @@ public abstract class AppHost : IDisposable
 
     public void PrintHierarchy(Drawable drawable, StringBuilder builder, string indent = "")
     {
+        if (drawable is FpsGraph)
+            return;
+
         builder.AppendLine($"{indent}- {drawable.GetType().Name}");
-        builder.AppendLine($"{indent}  Size: {drawable.Size}");
-        builder.AppendLine($"{indent}  Position (Relative): {drawable.Position}");
+        builder.AppendLine($"{indent}  Size: {drawable.Size} (DrawSize: {drawable.DrawSize}, RelativeSize: {drawable.RelativeSizeAxes})");
+        builder.AppendLine($"{indent}  Position (Relative): {drawable.Position} (RelativePosition: {drawable.RelativePositionAxes})");
         builder.AppendLine($"{indent}  DrawRectangle (Absolute): {drawable.DrawRectangle}");
         builder.AppendLine($"{indent}  ModelMatrix: {drawable.ModelMatrix}");
 
