@@ -254,7 +254,7 @@ public class Drawable
 
         Matrix4x4 localMatrix;
         Vector2 finalDrawSize;
-        Vector2 originVector = getAnchorOriginVector(Origin);
+        Vector2 originVector = GetAnchorOriginVector(Origin);
 
         if (Parent == null)
         {
@@ -306,7 +306,7 @@ public class Drawable
             localMargin.Bottom /= parentPixelSize.Y;
 
             // Anchor and Origin are naturally relative, so they work correctly in this 0-1 space.
-            Vector2 anchorPosition = getAnchorOriginVector(Anchor);
+            Vector2 anchorPosition = GetAnchorOriginVector(Anchor);
             Vector2 finalOriginPosition = anchorPosition + localPosition + new Vector2(localMargin.Left - localMargin.Right, localMargin.Top - localMargin.Bottom);
 
             var finalScale = new Vector3(localScale.X * Scale.X, localScale.Y * Scale.Y, 1);
@@ -376,7 +376,7 @@ public class Drawable
 
     public bool Contains(Vector2 screenSpacePos) => DrawRectangle.Contains(screenSpacePos);
 
-    private static Vector2 getAnchorOriginVector(Anchor anchor)
+    public static Vector2 GetAnchorOriginVector(Anchor anchor)
     {
         switch (anchor)
         {
