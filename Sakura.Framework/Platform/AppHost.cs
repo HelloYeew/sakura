@@ -457,8 +457,12 @@ public abstract class AppHost : IDisposable
     /// <returns>The target update rate in Hz, or 0 for unlimited.</returns>
     private double getTargetUpdateHz()
     {
+        // TODO: This method should calculate one when value changes, not every frame. With better logging
         // In headless mode, default to a sensible refresh rate for update calculations.
         double refreshRate = Window?.DisplayHz > 0 ? Window.DisplayHz : 60;
+
+        if (Window != null && !Window.IsActive)
+            return 60;
 
         switch (FrameLimiter.Value)
         {
