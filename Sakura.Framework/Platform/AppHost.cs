@@ -285,7 +285,6 @@ public abstract class AppHost : IDisposable
                         if (targetHz > 0)
                         {
                             double targetFrameTime = 1000.0 / targetHz;
-                            // Logger.LogPrint("targetFrameTime: " + targetFrameTime);
 
                             // A simple, busy-wait loop for precision.
                             // For better CPU usage, a hybrid Thread.Sleep/SpinWait would be better,
