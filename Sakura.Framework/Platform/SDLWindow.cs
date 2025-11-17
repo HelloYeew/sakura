@@ -253,25 +253,25 @@ public class SDLWindow : IWindow
         {
             case WindowEventID.FocusGained:
                 IsActive = true;
-                Logger.Verbose("Window focus gained");
+                Logger.Debug("Window focus gained");
                 FocusGained.Invoke();
                 break;
 
             case WindowEventID.FocusLost:
                 IsActive = false;
-                Logger.Verbose("Window focus lost");
+                Logger.Debug("Window focus lost");
                 FocusLost.Invoke();
                 break;
 
             case WindowEventID.Minimized:
                 IsActive = false;
-                Logger.Verbose("Window minimized");
+                Logger.Debug("Window minimized");
                 Minimized.Invoke();
                 break;
 
             case WindowEventID.Restored:
                 IsActive = true;
-                Logger.Verbose("Window restored from minimized state");
+                Logger.Debug("Window restored from minimized state");
                 Restored.Invoke();
                 break;
 
@@ -281,7 +281,7 @@ public class SDLWindow : IWindow
 
                 if (oldHz != DisplayHz)
                 {
-                    Logger.Verbose($"Display refresh rate changed from {oldHz} Hz to {DisplayHz} Hz");
+                    Logger.Debug($"Display refresh rate changed from {oldHz} Hz to {DisplayHz} Hz");
                     DisplayChanged.Invoke(DisplayHz);
                 }
                 break;
