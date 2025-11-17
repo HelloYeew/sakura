@@ -256,6 +256,8 @@ public abstract class AppHost : IDisposable
             lastUpdateTime = AppClock.CurrentTime;
             gameLoopStopwatch.Start();
 
+            var spinWait = new SpinWait();
+
             try
             {
                 while (executionState == ExecutionState.Running)
@@ -289,11 +291,10 @@ public abstract class AppHost : IDisposable
                             // A simple, busy-wait loop for precision.
                             // For better CPU usage, a hybrid Thread.Sleep/SpinWait would be better,
                             // but this is the most straightforward fix to ensure accuracy.
-                            var spin = new SpinWait();
                             // Logger.LogPrint($"Spinning... (elapsed: {gameLoopStopwatch.Elapsed.TotalMilliseconds - frameStartTime:F2}ms, target: {targetFrameTime:F2}ms)");
                             while (gameLoopStopwatch.Elapsed.TotalMilliseconds - frameStartTime < targetFrameTime)
                             {
-                                spin.SpinOnce();
+                                spinWait.SpinOnce();
                             }
                         }
                     }
