@@ -449,7 +449,6 @@ public abstract class AppHost : IDisposable
         // Run as many updates as needed to catch up with the current time.
         while (AppClock.CurrentTime - lastUpdateTime >= timeStep)
         {
-            // TODO: This is main loop here, might want to pass timeStep to
             // The update that happened in the drawable need to be aware of the timeStep.
             app?.Update();
             lastUpdateTime += timeStep;
@@ -474,7 +473,6 @@ public abstract class AppHost : IDisposable
     /// <returns>The target update rate in Hz, or 0 for unlimited.</returns>
     private double getTargetUpdateHz()
     {
-        // TODO: This method should calculate one when value changes, not every frame. With better logging
         // In headless mode, default to a sensible refresh rate for update calculations.
         double refreshRate = Window?.DisplayHz > 0 ? Window.DisplayHz : 60;
 
