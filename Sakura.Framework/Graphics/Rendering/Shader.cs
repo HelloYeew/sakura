@@ -105,6 +105,20 @@ public class Shader : IDisposable
     }
 
     /// <summary>
+    /// Sets a <see cref="Vector2"/> uniform variable in the shader program.
+    /// </summary>
+    /// <param name="name">Name of the uniform variable.</param>
+    /// <param name="value">Vector2 value to set.</param>
+    public void SetUniform(string name, Vector2 value)
+    {
+        int location = gl.GetUniformLocation(handle, name);
+        if (location != -1)
+        {
+            gl.Uniform2(location, value.X, value.Y);
+        }
+    }
+
+    /// <summary>
     /// Sets a <see cref="Vector4"/> uniform variable in the shader program.
     /// </summary>
     /// <param name="name">Name of the uniform variable.</param>
