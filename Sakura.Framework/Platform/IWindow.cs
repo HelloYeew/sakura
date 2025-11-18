@@ -80,8 +80,10 @@ public interface IWindow : IDisposable
     void GetDrawableSize(out int width, out int height);
 
     event Action Update;
-    event Action Suspended;
-    event Action Resumed;
+    event Action FocusLost;
+    event Action FocusGained;
+    event Action Minimized;
+    event Action Restored;
     event Action ExitRequested;
     event Action Exited;
 

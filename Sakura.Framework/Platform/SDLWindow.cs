@@ -58,8 +58,10 @@ public class SDLWindow : IWindow
 
     // TODO: This update action also no longer needed since it's handled in host's main loop
     public event Action Update = delegate { };
-    public event Action Suspended = delegate { };
-    public event Action Resumed = delegate { };
+    public event Action FocusLost = delegate { };
+    public event Action FocusGained = delegate { };
+    public event Action Minimized = delegate { };
+    public event Action Restored = delegate { };
     public event Action ExitRequested = delegate { };
     public event Action Exited = delegate { };
 
@@ -251,12 +253,26 @@ public class SDLWindow : IWindow
         {
             case WindowEventID.FocusGained:
                 IsActive = true;
-                Resumed.Invoke();
+                Logger.Debug("Window focus gained");
+                FocusGained.Invoke();
                 break;
 
             case WindowEventID.FocusLost:
                 IsActive = false;
-                Suspended.Invoke();
+                Logger.Debug("Window focus lost");
+                FocusLost.Invoke();
+                break;
+
+            case WindowEventID.Minimized:
+                IsActive = false;
+                Logger.Debug("Window minimized");
+                Minimized.Invoke();
+                break;
+
+            case WindowEventID.Restored:
+                IsActive = true;
+                Logger.Debug("Window restored from minimized state");
+                Restored.Invoke();
                 break;
 
             case WindowEventID.DisplayChanged:
@@ -265,8 +281,8 @@ public class SDLWindow : IWindow
 
                 if (oldHz != DisplayHz)
                 {
-                    Logger.Verbose($"Display refresh rate changed from {oldHz} Hz to {DisplayHz} Hz.");
-                    DisplayChanged.Invoke(DisplayHz); // Invoke the new event
+                    Logger.Debug($"Display refresh rate changed from {oldHz} Hz to {DisplayHz} Hz");
+                    DisplayChanged.Invoke(DisplayHz);
                 }
                 break;
 

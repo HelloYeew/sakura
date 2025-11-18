@@ -174,6 +174,17 @@ public abstract class AppHost : IDisposable
         FrameworkConfigManager.Load();
     }
 
+    /// <summary>
+    /// The target update rate in Hz, based on the current frame limiter setting.
+    /// </summary>
+    private double targetUpdateHz = 60;
+
+    private void updateTargetUpdateHz()
+    {
+        targetUpdateHz = getTargetUpdateHz();
+        Logger.Debug($"Target update rate is now {targetUpdateHz} Hz");
+    }
+
     public void Run(App app)
     {
         this.app = app;
@@ -213,7 +224,12 @@ public abstract class AppHost : IDisposable
             };
 
             FrameLimiter = FrameworkConfigManager.Get<FrameSync>(FrameworkSetting.FrameLimiter);
-            FrameLimiter.ValueChanged += e => Logger.Verbose($"Frame limiter changed from {e.OldValue} to {e.NewValue}");
+            updateTargetUpdateHz();
+            FrameLimiter.ValueChanged += e =>
+            {
+                updateTargetUpdateHz();
+                Logger.Verbose($"Frame limiter changed from {e.OldValue} to {e.NewValue}");
+            };
 
             executionState = ExecutionState.Running;
 
@@ -231,6 +247,11 @@ public abstract class AppHost : IDisposable
                 Window.OnMouseMove += OnMouseMove;
                 Window.OnScroll += OnScroll;
                 Window.Resized += onResize;
+                Window.FocusLost += updateTargetUpdateHz;
+                Window.FocusGained += updateTargetUpdateHz;
+                Window.Minimized += updateTargetUpdateHz;
+                Window.Restored += updateTargetUpdateHz;
+                Window.DisplayChanged += _ => updateTargetUpdateHz();
 
                 Window.Initialize();
                 Window.Create();
@@ -255,6 +276,8 @@ public abstract class AppHost : IDisposable
 
             lastUpdateTime = AppClock.CurrentTime;
             gameLoopStopwatch.Start();
+
+            var spinWait = new SpinWait();
 
             try
             {
@@ -281,20 +304,17 @@ public abstract class AppHost : IDisposable
                     if (FrameLimiter.Value != FrameSync.VSync && FrameLimiter.Value != FrameSync.Unlimited)
                     {
                         // In non-VSync or unlimited modes, we need to limit the loop ourselves to the target frame rate.
-                        double targetHz = getTargetUpdateHz();
-                        if (targetHz > 0)
+                        if (targetUpdateHz > 0)
                         {
-                            double targetFrameTime = 1000.0 / targetHz;
-                            // Logger.LogPrint("targetFrameTime: " + targetFrameTime);
+                            double targetFrameTime = 1000.0 / targetUpdateHz;
 
                             // A simple, busy-wait loop for precision.
                             // For better CPU usage, a hybrid Thread.Sleep/SpinWait would be better,
                             // but this is the most straightforward fix to ensure accuracy.
-                            var spin = new SpinWait();
                             // Logger.LogPrint($"Spinning... (elapsed: {gameLoopStopwatch.Elapsed.TotalMilliseconds - frameStartTime:F2}ms, target: {targetFrameTime:F2}ms)");
                             while (gameLoopStopwatch.Elapsed.TotalMilliseconds - frameStartTime < targetFrameTime)
                             {
-                                spin.SpinOnce();
+                                spinWait.SpinOnce();
                             }
                         }
                     }
@@ -417,9 +437,7 @@ public abstract class AppHost : IDisposable
     /// </summary>
     protected virtual void PerformUpdate()
     {
-        double targetHz = getTargetUpdateHz();
-
-        if (targetHz == 0) // Unlimited mode
+        if (targetUpdateHz == 0) // Unlimited mode
         {
             // In unlimited mode, we just update once per loop iteration.
             app?.Update();
@@ -427,12 +445,11 @@ public abstract class AppHost : IDisposable
             return;
         }
 
-        double timeStep = 1000.0 / targetHz;
+        double timeStep = 1000.0 / targetUpdateHz;
 
         // Run as many updates as needed to catch up with the current time.
         while (AppClock.CurrentTime - lastUpdateTime >= timeStep)
         {
-            // TODO: This is main loop here, might want to pass timeStep to
             // The update that happened in the drawable need to be aware of the timeStep.
             app?.Update();
             lastUpdateTime += timeStep;
@@ -459,6 +476,9 @@ public abstract class AppHost : IDisposable
     {
         // In headless mode, default to a sensible refresh rate for update calculations.
         double refreshRate = Window?.DisplayHz > 0 ? Window.DisplayHz : 60;
+
+        if (Window != null && !Window.IsActive)
+            return 60;
 
         switch (FrameLimiter.Value)
         {
