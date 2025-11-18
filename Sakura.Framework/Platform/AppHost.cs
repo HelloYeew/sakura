@@ -251,6 +251,7 @@ public abstract class AppHost : IDisposable
                 Window.FocusGained += updateTargetUpdateHz;
                 Window.Minimized += updateTargetUpdateHz;
                 Window.Restored += updateTargetUpdateHz;
+                Window.DisplayChanged += _ => updateTargetUpdateHz();
 
                 Window.Initialize();
                 Window.Create();
