@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
@@ -26,6 +27,16 @@ public class Container : Drawable
     /// The radius of the corners when masking.
     /// </summary>
     public float CornerRadius { get; set; }
+
+    /// <summary>
+    /// The thickness of the border when masking.
+    /// </summary>
+    public float BorderThickness { get; set; }
+
+    /// <summary>
+    /// The color of the border when masking.
+    /// </summary>
+    public Color BorderColor { get; set; } = Color.White;
 
     public IReadOnlyList<Drawable> Children
     {
@@ -147,7 +158,7 @@ public class Container : Drawable
         }
 
         if (Masking)
-            renderer.PopMask(this, CornerRadius);
+            renderer.PopMask(this, CornerRadius, BorderThickness, BorderColor);
     }
 
     public override void Load()

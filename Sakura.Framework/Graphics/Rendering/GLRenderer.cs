@@ -123,6 +123,7 @@ public class GLRenderer : IRenderer
         gl.StencilOp(StencilOp.Keep, StencilOp.Keep, StencilOp.Keep);
         shader.SetUniform("u_IsMasking", false);
         shader.SetUniform("u_IsCircle", false);
+        shader.SetUniform("u_IsBorder", false);
 
         lastBoundTextureHandle = uint.MaxValue;
 
@@ -214,7 +215,7 @@ public class GLRenderer : IRenderer
         }
     }
 
-    public void PopMask(Drawable maskDrawable, float cornerRadius)
+    public void PopMask(Drawable maskDrawable, float cornerRadius, float borderThickness, Color borderColor)
     {
         triangleBatch.Draw(); // Flush all drawing within the mask
 
@@ -246,6 +247,34 @@ public class GLRenderer : IRenderer
         }
 
         gl.StencilOp(StencilOp.Keep, StencilOp.Keep, StencilOp.Keep);
+
+        // Render the border if requested.
+        // This happens after we've restored the stencil state, so the border itself
+        // is properly clipped by any *parent* masks, but not by the mask we just popped.
+        if (borderThickness > 0)
+        {
+            triangleBatch.Draw();
+
+            shader.SetUniform("u_IsBorder", true);
+            var rect = maskDrawable.DrawRectangle;
+            shader.SetUniform("u_MaskRect", new Vector4(rect.X, rect.Y, rect.Width, rect.Height));
+            shader.SetUniform("u_CornerRadius", cornerRadius);
+            shader.SetUniform("u_BorderThickness", borderThickness);
+            shader.SetUniform("u_BorderColor", borderColor);
+
+            if (GLTexture.WhitePixel.Handle != lastBoundTextureHandle)
+            {
+                triangleBatch.Draw();
+                GLTexture.WhitePixel.Bind();
+                lastBoundTextureHandle = GLTexture.WhitePixel.Handle;
+            }
+
+            triangleBatch.AddRange(maskDrawable.Vertices);
+            triangleBatch.Draw();
+
+            shader.SetUniform("u_IsBorder", false);
+            lastBoundTextureHandle = uint.MaxValue;
+        }
     }
 
     /// <summary>

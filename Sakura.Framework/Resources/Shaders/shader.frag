@@ -13,6 +13,11 @@ uniform bool u_IsMasking;
 uniform vec4 u_MaskRect; // x, y, width, height in screen space
 uniform float u_CornerRadius;
 
+// Border uniforms
+uniform bool u_IsBorder;
+uniform float u_BorderThickness;
+uniform vec4 u_BorderColor;
+
 // Circle rendering uniforms
 uniform bool u_IsCircle;
 uniform vec4 u_CircleRect; // x, y, width, height in screen space
@@ -31,6 +36,32 @@ float sdCircle(in vec2 p, in float r) {
 
 void main()
 {
+    if (u_IsBorder)
+    {
+        vec2 halfSize = u_MaskRect.zw / 2.0;
+        vec2 center = u_MaskRect.xy + u_MaskRect.zw / 2.0;
+        vec2 posInRect = v_FragPos - center;
+
+        float dist = sdRoundBox(posInRect, halfSize, u_CornerRadius);
+
+        // Outer edge anti-aliasing (outside the shape, dist > 0)
+        // smoothstep returns 0 at -0.5, 1 at 0.5. We want alpha 1 inside (negative dist), 0 outside.
+        float outerAlpha = 1.0 - smoothstep(-0.5, 0.5, dist);
+
+        // Inner edge anti-aliasing (inside the border, dist > -thickness)
+        // The border is between -thickness and 0.
+        // We want alpha 0 when dist < -thickness (inside the hollow center).
+        float innerAlpha = smoothstep(-u_BorderThickness - 0.5, -u_BorderThickness + 0.5, dist);
+
+        vec4 finalColor = u_BorderColor;
+        finalColor.a *= outerAlpha * innerAlpha;
+
+        if (finalColor.a <= 0.0) discard;
+
+        FragColor = finalColor;
+        return;
+    }
+    
     vec4 texColor = texture(u_Texture, v_TexCoords) * v_Color;
 
     if (u_IsCircle)
