@@ -20,7 +20,7 @@ public class ImageSharpImageLoader : IImageLoader
             image.Mutate(x => x.AutoOrient());
 
             byte[] pixels = new byte[image.Width * image.Height * 4];
-            image.CopyPixelDataTo(pixels); // Efficient copy
+            image.CopyPixelDataTo(pixels);
 
             return new ImageRawData(image.Width, image.Height, pixels);
         }
