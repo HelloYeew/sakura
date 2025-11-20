@@ -49,11 +49,6 @@ public class App : Container, IDisposable
     /// </summary>
     protected virtual string ResourceRootNamespace => $"{GetType().Namespace}.Resources";
 
-    /// <summary>
-    /// Create the image loader used for loading textures, defaults to <see cref="ImageSharpImageLoader"/>.
-    /// </summary>
-    protected virtual IImageLoader CreateImageLoader() => new ImageSharpImageLoader();
-
     internal void SetHost(AppHost host) => Host = host;
 
     public override void Load()
@@ -117,6 +112,11 @@ public class App : Container, IDisposable
     /// <param name="defaultStorage"></param>
     /// <returns></returns>
     protected internal virtual Storage CreateStorage(AppHost host, Storage defaultStorage) => defaultStorage;
+
+    /// <summary>
+    /// Create the image loader used for loading textures, defaults to <see cref="ImageSharpImageLoader"/>.
+    /// </summary>
+    protected virtual IImageLoader CreateImageLoader() => new ImageSharpImageLoader();
 
     public void Dispose()
     {
