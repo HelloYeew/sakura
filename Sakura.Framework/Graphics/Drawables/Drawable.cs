@@ -40,6 +40,7 @@ public class Drawable
     private Vector2 position = Vector2.Zero;
     private Vector2 size = Vector2.Zero;
     private Vector2 scale = Vector2.One;
+    private Vector2 shear = Vector2.Zero;
     private float rotation;
     private Axes relativeSizeAxes = Axes.None;
     private Axes relativePositionAxes = Axes.None;
@@ -128,6 +129,22 @@ public class Drawable
         {
             if (scale == value) return;
             scale = value;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+    }
+
+    /// <summary>
+    /// The shear of this drawable.
+    /// X represents the shear factor along the X-axis (relative to Y).
+    /// Y represents the shear factor along the Y-axis (relative to X).
+    /// </summary>
+    public Vector2 Shear
+    {
+        get => shear;
+        set
+        {
+            if (shear == value) return;
+            shear = value;
             Invalidate(InvalidationFlags.DrawInfo);
         }
     }
@@ -264,9 +281,18 @@ public class Drawable
             var finalScale = new Vector3(finalDrawSize.X * Scale.X, finalDrawSize.Y * Scale.Y, 1);
             var finalPosition = new Vector3(Position.X, Position.Y, 0);
 
-            // Transform order: Origin Translation -> Scale -> Rotation -> Position Translation
+            // Transform order: Origin Translation -> Scale -> Shear -> Rotation -> Position Translation
             var m = Matrix4x4.CreateTranslation(-originVector.X, -originVector.Y, 0); // Translate so origin is at (0,0)
             m *= Matrix4x4.CreateScale(finalScale); // Scale around (0,0)
+
+            if (Shear != Vector2.Zero)
+            {
+                var shearMatrix = Matrix4x4.Identity;
+                shearMatrix.M21 = Shear.X; // X shear factor (x' = x + m21*y)
+                shearMatrix.M12 = Shear.Y; // Y shear factor (y' = y + m12*x)
+                m *= shearMatrix;
+            }
+
             m *= Matrix4x4.CreateRotationZ((float)(Rotation * Math.PI / 180.0f)); // Rotate around (0,0)
             m *= Matrix4x4.CreateTranslation(finalPosition); // Translate to final position
 
@@ -314,6 +340,15 @@ public class Drawable
 
             var m = Matrix4x4.CreateTranslation(-originVector.X, -originVector.Y, 0);
             m *= Matrix4x4.CreateScale(finalScale);
+
+            if (Shear != Vector2.Zero)
+            {
+                var shearMatrix = Matrix4x4.Identity;
+                shearMatrix.M21 = Shear.X; // X shear factor
+                shearMatrix.M12 = Shear.Y; // Y shear factor
+                m *= shearMatrix;
+            }
+
             m *= Matrix4x4.CreateRotationZ((float)(Rotation * Math.PI / 180.0f));
             m *= Matrix4x4.CreateTranslation(finalPosition);
 

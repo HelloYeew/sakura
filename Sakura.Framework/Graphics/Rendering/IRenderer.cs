@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Platform;
@@ -37,5 +38,5 @@ public interface IRenderer
 
     void PushMask(Drawable maskDrawable, float cornerRadius);
 
-    void PopMask(Drawable maskDrawable, float cornerRadius);
+    void PopMask(Drawable maskDrawable, float cornerRadius, float borderThickness, Color borderColor);
 }

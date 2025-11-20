@@ -5,6 +5,7 @@ using System;
 using System.IO;
 using System.Reflection;
 using System.Text;
+using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using Silk.NET.OpenGL;
@@ -104,6 +105,20 @@ public class Shader : IDisposable
     }
 
     /// <summary>
+    /// Sets a <see cref="Vector2"/> uniform variable in the shader program.
+    /// </summary>
+    /// <param name="name">Name of the uniform variable.</param>
+    /// <param name="value">Vector2 value to set.</param>
+    public void SetUniform(string name, Vector2 value)
+    {
+        int location = gl.GetUniformLocation(handle, name);
+        if (location != -1)
+        {
+            gl.Uniform2(location, value.X, value.Y);
+        }
+    }
+
+    /// <summary>
     /// Sets a <see cref="Vector4"/> uniform variable in the shader program.
     /// </summary>
     /// <param name="name">Name of the uniform variable.</param>
@@ -114,6 +129,20 @@ public class Shader : IDisposable
         if (location != -1)
         {
             gl.Uniform4(location, value.X, value.Y, value.Z, value.W);
+        }
+    }
+
+    /// <summary>
+    /// Sets a <see cref="Color"/> uniform variable in the shader program.
+    /// </summary>
+    /// <param name="name">Name of the uniform variable.</param>
+    /// <param name="value">Color value to set.</param>
+    public void SetUniform(string name, Color value)
+    {
+        int location = gl.GetUniformLocation(handle, name);
+        if (location != -1)
+        {
+            gl.Uniform4(location, value.R / 255.0f, value.G / 255.0f, value.B / 255.0f, value.A / 255.0f);
         }
     }
 
