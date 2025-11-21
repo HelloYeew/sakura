@@ -49,20 +49,15 @@ public class GLTextureManager : ITextureManager
 
         try
         {
-            using (var stream = storage.GetStream(path))
-            {
-                if (stream == null) throw new FileNotFoundException($"Texture not found: {path}");
+            using var stream = storage.GetStream(path);
+            if (stream == null) throw new FileNotFoundException($"Texture not found: {path}");
 
-                using (var rawImage = imageLoader.Load(stream))
-                {
-                    // Upload to OpenGL
-                    var glTexture = new GLTexture(gl, rawImage.Width, rawImage.Height, rawImage.Data);
-                    var texture = new Texture(glTexture);
+            using var rawImage = imageLoader.Load(stream);
+            var glTexture = new GLTexture(gl, rawImage.Width, rawImage.Height, rawImage.Data);
+            var texture = new Texture(glTexture);
 
-                    textureCache[path] = texture;
-                    return texture;
-                }
-            }
+            textureCache[path] = texture;
+            return texture;
         }
         catch (Exception ex)
         {
@@ -89,7 +84,6 @@ public class GLTextureManager : ITextureManager
     {
         foreach (var tex in textureCache.Values)
         {
-            // Only dispose textures that aren't the shared WhitePixel or Missing texture
             if (tex != WhitePixel && tex.GlTexture.Handle != missingTexture.GlTexture.Handle)
             {
                 tex.GlTexture.Dispose();
