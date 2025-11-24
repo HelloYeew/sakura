@@ -5,13 +5,9 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
-using System.Runtime.InteropServices;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
 using Silk.NET.OpenGL;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Advanced;
-using SixLabors.ImageSharp.PixelFormats;
 
 namespace Sakura.Framework.Graphics.Textures;
 
@@ -20,6 +16,7 @@ public class GLTextureManager : ITextureManager
 {
     private readonly GL gl;
     private readonly Storage storage;
+    private readonly IImageLoader imageLoader;
     private readonly Dictionary<string, Texture> textureCache = new Dictionary<string, Texture>();
 
     private readonly Texture missingTexture;
@@ -29,10 +26,11 @@ public class GLTextureManager : ITextureManager
     /// </summary>
     public Texture WhitePixel { get; }
 
-    public GLTextureManager(GL gl, Storage storage)
+    public GLTextureManager(GL gl, Storage storage, IImageLoader imageLoader)
     {
         this.gl = gl;
         this.storage = storage;
+        this.imageLoader = imageLoader;
         WhitePixel = new Texture(GLTexture.WhitePixel);
         missingTexture = createNullTexture();
     }
@@ -51,53 +49,19 @@ public class GLTextureManager : ITextureManager
 
         try
         {
-            using (var stream = storage.GetStream(path))
-            {
-                if (stream == null)
-                    throw new FileNotFoundException($"Image file not found at storage path: {path}");
+            using var stream = storage.GetStream(path);
+            if (stream == null) throw new FileNotFoundException($"Texture not found: {path}");
 
-                using (var image = Image.Load<Rgba32>(stream))
-                {
-                    // Get pixel data.
-                    // We need a contiguous block of memory to upload to OpenGL.
-                    // GetPixelMemoryGroup() returns one or more memory blocks.
-                    var memoryGroup = image.GetPixelMemoryGroup();
+            using var rawImage = imageLoader.Load(stream);
+            var glTexture = new GLTexture(gl, rawImage.Width, rawImage.Height, rawImage.Data);
+            var texture = new Texture(glTexture);
 
-                    GLTexture glTexture;
-
-                    if (memoryGroup.Count == 1)
-                    {
-                        // The image is contiguous in memory. We can use its span directly.
-                        var pixelDataSpan = MemoryMarshal.AsBytes(memoryGroup[0].Span);
-                        glTexture = new GLTexture(gl, image.Width, image.Height, pixelDataSpan);
-                    }
-                    else
-                    {
-                        // The image is not contiguous. We must copy it to a new contiguous array.
-                        // This is less efficient but necessary for large images.
-                        byte[] pixelDataArray = new byte[image.Width * image.Height * 4];
-                        int offset = 0;
-                        foreach (var memory in memoryGroup)
-                        {
-                            var chunkSpan = MemoryMarshal.AsBytes(memory.Span);
-                            chunkSpan.CopyTo(pixelDataArray.AsSpan(offset));
-                            offset += chunkSpan.Length;
-                        }
-
-                        glTexture = new GLTexture(gl, image.Width, image.Height, pixelDataArray);
-                    }
-
-                    var texture = new Texture(glTexture);
-
-                    textureCache[path] = texture;
-                    return texture;
-                }
-            }
+            textureCache[path] = texture;
+            return texture;
         }
         catch (Exception ex)
         {
             Logger.Error($"Failed to load texture '{path}': {ex.Message}");
-            textureCache[path] = missingTexture;
             return missingTexture;
         }
     }
@@ -120,7 +84,6 @@ public class GLTextureManager : ITextureManager
     {
         foreach (var tex in textureCache.Values)
         {
-            // Only dispose textures that aren't the shared WhitePixel or Missing texture
             if (tex != WhitePixel && tex.GlTexture.Handle != missingTexture.GlTexture.Handle)
             {
                 tex.GlTexture.Dispose();

@@ -72,7 +72,7 @@ public class App : Container, IDisposable
 
         if (Host.Renderer is GLRenderer)
         {
-            TextureManager = new GLTextureManager(GLRenderer.GL, embeddedResourceStorage.GetStorageForDirectory("Textures"));
+            TextureManager = new GLTextureManager(GLRenderer.GL, embeddedResourceStorage.GetStorageForDirectory("Textures"), CreateImageLoader());
         }
         else
         {
@@ -112,6 +112,11 @@ public class App : Container, IDisposable
     /// <param name="defaultStorage"></param>
     /// <returns></returns>
     protected internal virtual Storage CreateStorage(AppHost host, Storage defaultStorage) => defaultStorage;
+
+    /// <summary>
+    /// Create the image loader used for loading textures, defaults to <see cref="ImageSharpImageLoader"/>.
+    /// </summary>
+    protected virtual IImageLoader CreateImageLoader() => new ImageSharpImageLoader();
 
     public void Dispose()
     {
