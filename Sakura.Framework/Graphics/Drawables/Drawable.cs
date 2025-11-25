@@ -17,6 +17,8 @@ using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Timing;
 using Sakura.Framework.Utilities;
+using Silk.NET.OpenGL;
+using Texture = Sakura.Framework.Graphics.Textures.Texture;
 
 namespace Sakura.Framework.Graphics.Drawables;
 
@@ -50,6 +52,8 @@ public class Drawable
     private MarginPadding padding;
     private float depth;
     private bool alwaysPresent;
+    private Texture? texture;
+    private TextureFillMode fillMode = TextureFillMode.Stretch;
 
     /// <summary>
     /// A clock for this drawable, time is relative to the parent's clock
@@ -252,11 +256,37 @@ public class Drawable
         }
     }
 
+    /// <summary>
+    /// The texture applied to this drawable. (e.g. image)
+    /// </summary>
+    public Texture? Texture
+    {
+        get => texture;
+        set
+        {
+            if (texture == value) return;
+            texture = value;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+    }
+
+    /// <summary>
+    /// The fill mode for the texture applied to this drawable.
+    /// </summary>
+    public TextureFillMode FillMode
+    {
+        get => fillMode;
+        set
+        {
+            if (fillMode == value) return;
+            fillMode = value;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+    }
+
     public void Hide() => Alpha = 0f;
     public void Show() => Alpha = 1f;
     public bool IsHidden => Alpha <= 0f;
-
-    public Texture? Texture { get; set; }
 
     // Caches for computed values
     public RectangleF DrawRectangle { get; private set; }
@@ -373,22 +403,92 @@ public class Drawable
 
         var calculatedColor = new System.Numerics.Vector4(rLinear, gLinear, bLinear, DrawAlpha);
 
+        // Default UVs (0 to 1)
         var uvRect = Texture?.UvRect ?? new RectangleF(0, 0, 1, 1);
+        Vector2 uvTopLeft = new Vector2(uvRect.X, uvRect.Y);
+        Vector2 uvBottomRight = new Vector2(uvRect.X + uvRect.Width, uvRect.Y + uvRect.Height);
 
-        var vTopLeft = Vector4.Transform(new Vector4(0, 0, 0, 1), ModelMatrix);
-        var vTopRight = Vector4.Transform(new Vector4(1, 0, 0, 1), ModelMatrix);
-        var vBottomLeft = Vector4.Transform(new Vector4(0, 1, 0, 1), ModelMatrix);
-        var vBottomRight = Vector4.Transform(new Vector4(1, 1, 0, 1), ModelMatrix);
+        // Default draw area (0 to 1 in local space)
+        Vector2 drawTopLeft = Vector2.Zero;
+        Vector2 drawBottomRight = Vector2.One;
 
-        float uvLeft = uvRect.X;
-        float uvTop = uvRect.Y;
-        float uvRight = uvRect.X + uvRect.Width;
-        float uvBottom = uvRect.Y + uvRect.Height;
+        // Apply fill mode logic if we have a texture
+        if (Texture != null && DrawSize.X > 0 && DrawSize.Y > 0)
+        {
+            float textureAspect = (float)Texture.Width / Texture.Height;
+            float drawAspect = DrawSize.X / DrawSize.Y;
 
-        var topLeft = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = new Vector2(uvLeft, uvTop), Color = calculatedColor };
-        var topRight = new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(uvRight, uvTop), Color = calculatedColor };
-        var bottomLeft = new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(uvLeft, uvBottom), Color = calculatedColor };
-        var bottomRight = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = new Vector2(uvRight, uvBottom), Color = calculatedColor };
+            switch (FillMode)
+            {
+                case TextureFillMode.Fit:
+                    // Shrink the draw area to fit the aspect ratio (Letterboxing)
+                    if (textureAspect > drawAspect)
+                    {
+                        // Texture is wider: Fit width, center height
+                        float scale = drawAspect / textureAspect;
+                        float offset = (1.0f - scale) / 2.0f;
+                        drawTopLeft.Y = offset;
+                        drawBottomRight.Y = 1.0f - offset;
+                    }
+                    else
+                    {
+                        // Texture is taller: Fit height, center width
+                        float scale = textureAspect / drawAspect;
+                        float offset = (1.0f - scale) / 2.0f;
+                        drawTopLeft.X = offset;
+                        drawBottomRight.X = 1.0f - offset;
+                    }
+                    break;
+
+                case TextureFillMode.Fill:
+                    // Shrink the UVs to crop the image (Zoom)
+                    if (textureAspect > drawAspect)
+                    {
+                        // Texture is wider: Crop X
+                        float visibleWidthRatio = drawAspect / textureAspect;
+                        float uvOffset = (1.0f - visibleWidthRatio) / 2.0f;
+                        float uvWidth = uvBottomRight.X - uvTopLeft.X;
+                        uvTopLeft.X += uvWidth * uvOffset;
+                        uvBottomRight.X -= uvWidth * uvOffset;
+                    }
+                    else
+                    {
+                        // Texture is taller: Crop Y
+                        float visibleHeightRatio = textureAspect / drawAspect;
+                        float uvOffset = (1.0f - visibleHeightRatio) / 2.0f;
+                        float uvHeight = uvBottomRight.Y - uvTopLeft.Y;
+                        uvTopLeft.Y += uvHeight * uvOffset;
+                        uvBottomRight.Y -= uvHeight * uvOffset;
+                    }
+                    break;
+
+                case TextureFillMode.Tile:
+                    // Expand UVs > 1.0 to repeat
+
+                    // Note: This changes the GL state for this texture handle globally.
+                    // If this texture is used elsewhere with Clamp, it will affect it.
+                    Texture.GlTexture.SetWrapMode(TextureWrapMode.Repeat);
+
+                    float repeatX = DrawSize.X / Texture.Width;
+                    float repeatY = DrawSize.Y / Texture.Height;
+
+                    uvBottomRight.X = uvTopLeft.X + (uvRect.Width * repeatX);
+                    uvBottomRight.Y = uvTopLeft.Y + (uvRect.Height * repeatY);
+                    break;
+            }
+        }
+
+        // Apply model matrix to the calculated local draw area
+        var vTopLeft = Vector4.Transform(new Vector4(drawTopLeft.X, drawTopLeft.Y, 0, 1), ModelMatrix);
+        var vTopRight = Vector4.Transform(new Vector4(drawBottomRight.X, drawTopLeft.Y, 0, 1), ModelMatrix);
+        var vBottomLeft = Vector4.Transform(new Vector4(drawTopLeft.X, drawBottomRight.Y, 0, 1), ModelMatrix);
+        var vBottomRight = Vector4.Transform(new Vector4(drawBottomRight.X, drawBottomRight.Y, 0, 1), ModelMatrix);
+
+        // Assign to vertices
+        var topLeft = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = calculatedColor };
+        var topRight = new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(uvBottomRight.X, uvTopLeft.Y), Color = calculatedColor };
+        var bottomLeft = new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(uvTopLeft.X, uvBottomRight.Y), Color = calculatedColor };
+        var bottomRight = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight, Color = calculatedColor };
 
         // Triangle 1
         Vertices[0] = topLeft;

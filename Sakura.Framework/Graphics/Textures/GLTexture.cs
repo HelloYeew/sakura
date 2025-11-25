@@ -41,6 +41,17 @@ public class GLTexture : IDisposable
         this.gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
     }
 
+    /// <summary>
+    /// Change the texture wrap mode (for tiling/repeating).
+    /// </summary>
+    /// <param name="mode">The wrap mode to set.</param>
+    public void SetWrapMode(TextureWrapMode mode)
+    {
+        Bind();
+        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)mode);
+        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)mode);
+    }
+
     public static void CreateWhitePixel(GL gl)
     {
         if (WhitePixel == null)
