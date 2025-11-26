@@ -252,6 +252,17 @@ public abstract class AppHost : IDisposable
                 Window.Minimized += updateTargetUpdateHz;
                 Window.Restored += updateTargetUpdateHz;
                 Window.DisplayChanged += _ => updateTargetUpdateHz();
+                Window.RenderRequested += () =>
+                {
+                    if (executionState == ExecutionState.Running)
+                    {
+                        // Force an update and draw when requested
+                        // during the resize operation since the loop is blocked.
+                        app?.Update();
+                        if (!IsHeadless)
+                            PerformDraw();
+                    }
+                };
 
                 Window.Initialize();
                 Window.Create();
