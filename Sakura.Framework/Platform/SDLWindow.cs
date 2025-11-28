@@ -22,6 +22,7 @@ public class SDLWindow : IWindow
     private static Sdl sdl;
     private static unsafe void* glContext;
     private static unsafe Window* window;
+    private PfnEventFilter resizeEventFilter;
 
     private IGraphicsSurface graphicsSurface = new SDLGraphicsSurface();
     private readonly MouseState mouseState = new MouseState();
@@ -75,6 +76,7 @@ public class SDLWindow : IWindow
     public event Action<MouseEvent> OnMouseMove = delegate { };
     public event Action<ScrollEvent> OnScroll = delegate { };
 
+    public event Action RenderRequested = delegate { };
 
     public unsafe void Initialize()
     {
@@ -141,6 +143,9 @@ public class SDLWindow : IWindow
 
         sdl.GLMakeCurrent(window, glContext);
 
+        resizeEventFilter = new PfnEventFilter(resizeCallback);
+        sdl.AddEventWatch(resizeEventFilter, null);
+
         DisplayHz = getDisplayRefreshRate();
         Logger.Verbose($"Display refresh rate: {DisplayHz} Hz");
 
@@ -202,6 +207,22 @@ public class SDLWindow : IWindow
         sdl.GLGetDrawableSize(window, &drawableWidth, &drawableHeight);
 
         return ((float)drawableWidth / windowWidth, (float)drawableHeight / windowHeight);
+    }
+
+    private unsafe int resizeCallback(void* userData, Event* @event)
+    {
+        if (@event->Type == (uint)EventType.Windowevent)
+        {
+            if (@event->Window.Event == (byte)WindowEventID.Resized ||
+                @event->Window.Event == (byte)WindowEventID.SizeChanged ||
+                @event->Window.Event == (byte)WindowEventID.Exposed)
+            {
+                handleWindowEvent(@event->Window);
+                RenderRequested.Invoke();
+            }
+        }
+
+        return 1;
     }
 
     private unsafe void handleSdlEvents()

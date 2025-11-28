@@ -106,6 +106,13 @@ public interface IWindow : IDisposable
     event Action<ScrollEvent> OnScroll;
 
     /// <summary>
+    /// Invoked when a render is requested.
+    /// This will use when there is a need to render a new frame outside the normal update loop.
+    /// Like SDL resize event that block the update loop until the resize is finished.
+    /// </summary>
+    event Action RenderRequested;
+
+    /// <summary>
     /// Close the window peacefully.
     /// </summary>
     void Close();
