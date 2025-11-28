@@ -19,5 +19,6 @@ public enum Easing
     InCirc, OutCirc, InOutCirc,
     InBack, OutBack, InOutBack,
     InElastic, OutElastic, InOutElastic,
+    OutElasticHalf, OutElasticQuarter,
     InBounce, OutBounce, InOutBounce
 }
