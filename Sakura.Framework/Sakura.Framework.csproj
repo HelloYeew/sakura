@@ -13,6 +13,8 @@
     <PackageTags>sakura framework</PackageTags>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="FreeTypeSharp" Version="3.0.1" />
+    <PackageReference Include="HarfBuzzSharp" Version="8.3.1.2" />
     <PackageReference Include="JetBrains.Annotations" Version="2025.2.2" />
     <PackageReference Include="ManagedBass" Version="4.0.2" />
     <PackageReference Include="ManagedBass.Fx" Version="4.0.2" />

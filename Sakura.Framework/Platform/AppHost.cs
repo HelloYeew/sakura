@@ -42,6 +42,8 @@ public abstract class AppHost : IDisposable
     private double lastUpdateTime;
     private readonly Stopwatch gameLoopStopwatch = new Stopwatch();
 
+    public Storage FrameworkStorage { get; private set; } = new EmbeddedResourceStorage(typeof(AppHost).Assembly, "Sakura.Framework.Resources");
+
     public FrameworkConfigManager FrameworkConfigManager { get; private set; }
 
     /// <summary>
