@@ -16,16 +16,23 @@ public class SpriteText : Drawable
 {
     private string text = string.Empty;
     private FontUsage fontUsage = FontUsage.Default;
+
+    // Tracks if the text content/font has changed, requiring re-measurement.
     private bool layoutInvalidated = true;
 
     private readonly List<Vertex> textVertices = new();
     private ShapedText? shapedText;
 
-    // Resolved font instance from store
     private Font? resolvedFont;
 
     [Resolved]
     private IFontStore fontStore { get; set; } = null!;
+
+    /// <summary>
+    /// The actual measured size of the text content in pixels.
+    /// Use this if want to set the Drawable.Size to fit the text.
+    /// </summary>
+    public Vector2 ContentSize { get; private set; }
 
     public string Text
     {
@@ -50,7 +57,6 @@ public class SpriteText : Drawable
             {
                 fontUsage = value;
                 layoutInvalidated = true;
-                // Force re-resolution of font object
                 resolvedFont = null;
                 Invalidate(InvalidationFlags.DrawInfo);
             }
@@ -59,42 +65,41 @@ public class SpriteText : Drawable
 
     protected override void UpdateTransforms()
     {
-        base.UpdateTransforms();
-
         if (layoutInvalidated)
         {
             computeLayout();
         }
+        base.UpdateTransforms();
     }
 
     private void computeLayout()
     {
-        // Resolve dependency if not already (in case it wasn't injected yet)
         if (fontStore == null && Dependencies != null)
              Dependencies.Inject(this);
 
         if (fontStore == null) return;
 
-        // Resolve the actual font object based on usage
         if (resolvedFont == null)
             resolvedFont = fontStore.Get(fontUsage);
 
         if (resolvedFont == null) return;
 
-        // Process text using the font and the requested size
         shapedText = resolvedFont.ProcessText(Text, fontUsage.Size);
-
-        // Update size of the drawable
-        Size = new Vector2(shapedText.BoundingBox.X, shapedText.BoundingBox.Y);
+        ContentSize = new Vector2(shapedText.BoundingBox.X, shapedText.BoundingBox.Y);
 
         layoutInvalidated = false;
-        generateTextVertices();
     }
 
-    private void generateTextVertices()
+    protected override void GenerateVertices()
     {
         textVertices.Clear();
         if (shapedText == null) return;
+
+        // If the user hasn't given us any size to draw into, we can't project the vertices.
+        // Alternatively, you could default to ContentSize if Size is Zero,
+        // but typically Size.Zero means "don't draw".
+        if (Size.X <= 0 || Size.Y <= 0)
+            return;
 
         var drawColor = new Vector4(
             ColorExtensions.SrgbToLinear(Color.R),
@@ -103,23 +108,32 @@ public class SpriteText : Drawable
             DrawAlpha
         );
 
+        // We need to normalize pixel coordinates to 0..1 space because Drawable's ModelMatrix
+        // scales (0..1) up to (Size.X..Size.Y).
+        Vector2 normalizationScale = new Vector2(1.0f / Size.X, 1.0f / Size.Y);
+
         foreach (var glyph in shapedText.Glyphs)
         {
             var texture = glyph.Texture;
             var pos = glyph.Position;
             var size = glyph.Size;
 
-            // Apply ModelMatrix
-            var vTopLeft = Vector4.Transform(new Vector4(pos.X, pos.Y, 0, 1), ModelMatrix);
-            var vTopRight = Vector4.Transform(new Vector4(pos.X + size.X, pos.Y, 0, 1), ModelMatrix);
-            var vBottomLeft = Vector4.Transform(new Vector4(pos.X, pos.Y + size.Y, 0, 1), ModelMatrix);
-            var vBottomRight = Vector4.Transform(new Vector4(pos.X + size.X, pos.Y + size.Y, 0, 1), ModelMatrix);
+            // Normalize coordinates to 0..1 relative to the Drawable.Size
+            float x = pos.X * normalizationScale.X;
+            float y = pos.Y * normalizationScale.Y;
+            float w = size.X * normalizationScale.X;
+            float h = size.Y * normalizationScale.Y;
+
+            // Transform 0..1 local coords to World coords using the matrix
+            var vTopLeft = Vector4.Transform(new Vector4(x, y, 0, 1), ModelMatrix);
+            var vTopRight = Vector4.Transform(new Vector4(x + w, y, 0, 1), ModelMatrix);
+            var vBottomLeft = Vector4.Transform(new Vector4(x, y + h, 0, 1), ModelMatrix);
+            var vBottomRight = Vector4.Transform(new Vector4(x + w, y + h, 0, 1), ModelMatrix);
 
             var uv = texture.UvRect;
             var uvTopLeft = new Vector2(uv.X, uv.Y);
             var uvBottomRight = new Vector2(uv.X + uv.Width, uv.Y + uv.Height);
 
-            // Add Quad (Triangle list)
             textVertices.Add(new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = drawColor });
             textVertices.Add(new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(uvBottomRight.X, uvTopLeft.Y), Color = drawColor });
             textVertices.Add(new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight, Color = drawColor });
@@ -135,6 +149,7 @@ public class SpriteText : Drawable
         if (DrawAlpha <= 0 || textVertices.Count == 0 || shapedText == null || shapedText.Glyphs.Count == 0)
             return;
 
+        // Assuming all glyphs share the same texture page (atlas)
         var texture = shapedText.Glyphs[0].Texture;
         renderer.DrawVertices(CollectionsMarshal.AsSpan(textVertices), texture);
     }
