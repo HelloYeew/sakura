@@ -25,7 +25,7 @@ namespace Sakura.Framework.Graphics.Drawables;
 /// <summary>
 /// A lowest level of the component hierarchy. All drawable components should be inherited from this class.
 /// </summary>
-public class Drawable
+public abstract class Drawable
 {
     public Container? Parent { get; internal set; }
 
