@@ -4,6 +4,7 @@
 #nullable disable
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using Sakura.Framework.Graphics.Drawables;
@@ -41,6 +42,9 @@ public class GLRenderer : IRenderer
 
     private uint lastBoundTextureHandle = uint.MaxValue;
 
+    private int viewportHeight;
+    private readonly Stack<Vector4> scissorStack = new Stack<Vector4>();
+
     public unsafe void Initialize(IGraphicsSurface graphicsSurface)
     {
         gl = GL.GetApi(graphicsSurface.GetFunctionAddress);
@@ -76,6 +80,8 @@ public class GLRenderer : IRenderer
         gl.Clear(ClearBufferMask.StencilBufferBit);
         gl.StencilMask(0x00);
 
+        gl.Disable(EnableCap.ScissorTest);
+
         GLTexture.CreateWhitePixel(gl);
         WhitePixel = new Texture(GLTexture.WhitePixel);
 
@@ -86,19 +92,21 @@ public class GLRenderer : IRenderer
         lastBoundTextureHandle = uint.MaxValue;
     }
 
-    public void SetRoot(Drawable root)
+    public void SetRoot(Drawable drawableRoot)
     {
-        this.root = root;
+        root = drawableRoot;
     }
 
     public void Resize(int width, int height)
     {
         gl.Viewport(0, 0, (uint)width, (uint)height);
+        viewportHeight = height;
         projectionMatrix = Matrix4x4.CreateOrthographicOffCenter(0, width, height, 0, -1, 1);
     }
 
     public void Clear()
     {
+        gl.Disable(EnableCap.ScissorTest);
         gl.StencilMask(0xFF);
         gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
         gl.StencilMask(0x00);
@@ -118,6 +126,8 @@ public class GLRenderer : IRenderer
         shader.SetUniform("u_Texture", 0);
 
         stencilLevel = 0;
+        scissorStack.Clear();
+        gl.Disable(EnableCap.ScissorTest);
         gl.StencilMask(0x00);
         gl.StencilFunc(StencilFunction.Always, 0, 0xFF);
         gl.StencilOp(StencilOp.Keep, StencilOp.Keep, StencilOp.Keep);
@@ -184,10 +194,79 @@ public class GLRenderer : IRenderer
         triangleBatch.Draw(); // Flush *just* the mask
     }
 
+    private void drawBorder(Drawable maskDrawable, float cornerRadius, float borderThickness, Color borderColor)
+    {
+        if (borderThickness <= 0) return;
+
+        triangleBatch.Draw();
+
+        shader.SetUniform("u_IsBorder", true);
+        var rect = maskDrawable.DrawRectangle;
+        shader.SetUniform("u_MaskRect", new Vector4(rect.X, rect.Y, rect.Width, rect.Height));
+        shader.SetUniform("u_CornerRadius", cornerRadius);
+        shader.SetUniform("u_BorderThickness", borderThickness);
+        shader.SetUniform("u_BorderColor", borderColor);
+
+        // Bind white pixel for drawing the shape
+        if (GLTexture.WhitePixel.Handle != lastBoundTextureHandle)
+        {
+            triangleBatch.Draw();
+            GLTexture.WhitePixel.Bind();
+            lastBoundTextureHandle = GLTexture.WhitePixel.Handle;
+        }
+
+        triangleBatch.AddRange(maskDrawable.Vertices);
+        triangleBatch.Draw();
+
+        shader.SetUniform("u_IsBorder", false);
+        lastBoundTextureHandle = uint.MaxValue;
+    }
+
     public void PushMask(Drawable maskDrawable, float cornerRadius)
     {
         triangleBatch.Draw(); // Flush all drawing before this
 
+        // Case 1 : Scissor optimization (Rectangular)
+        // For enable masking but no effect required
+        if (cornerRadius <= 0.0f)
+        {
+            var rect = maskDrawable.DrawRectangle;
+
+            // Calculate OpenGL Scissor Rect (Bottom-Left origin) from UI Rect (Top-Left origin)
+            int scissorX = (int)Math.Max(0, rect.X);
+            int scissorY = (int)Math.Max(0, viewportHeight - (rect.Y + rect.Height));
+            int scissorW = (int)Math.Max(0, rect.Width);
+            int scissorH = (int)Math.Max(0, rect.Height);
+
+            // Handle Nesting: Intersect with current scissor rect if one exists
+            if (scissorStack.Count > 0)
+            {
+                var parentScissor = scissorStack.Peek();
+
+                // Simple AABB intersection logic
+                int newX = Math.Max(scissorX, (int)parentScissor.X);
+                int newY = Math.Max(scissorY, (int)parentScissor.Y);
+                int newRight = Math.Min(scissorX + scissorW, (int)(parentScissor.X + parentScissor.Z));
+                int newTop = Math.Min(scissorY + scissorH, (int)(parentScissor.Y + parentScissor.W));
+
+                scissorX = newX;
+                scissorY = newY;
+                scissorW = Math.Max(0, newRight - newX);
+                scissorH = Math.Max(0, newTop - newY);
+            }
+
+            Vector4 finalScissor = new Vector4(scissorX, scissorY, scissorW, scissorH);
+            scissorStack.Push(finalScissor);
+
+            gl.Enable(EnableCap.ScissorTest);
+            gl.Scissor(scissorX, scissorY, (uint)scissorW, (uint)scissorH);
+
+            // increment stencilLevel to maintain logic parity, though we aren't using stencils here.
+            stencilLevel++;
+            return;
+        }
+
+        // Case 2 : Stencil Masking (Rounded corners or complex shapes)
         lastBoundTextureHandle = uint.MaxValue;
 
         gl.StencilMask(0xFF); // Enable stencil writing
@@ -205,7 +284,6 @@ public class GLRenderer : IRenderer
 
         stencilLevel++;
 
-        // Enable rounded corner clipping for all subsequent draws
         if (cornerRadius > 0.0f)
         {
             shader.SetUniform("u_IsMasking", true);
@@ -219,6 +297,31 @@ public class GLRenderer : IRenderer
     {
         triangleBatch.Draw(); // Flush all drawing within the mask
 
+        // Case 1 : Scissor optimization (Rectangular), just restore previous scissor
+        if (cornerRadius <= 0.0f)
+        {
+            if (scissorStack.Count > 0)
+                scissorStack.Pop();
+
+            if (scissorStack.Count > 0)
+            {
+                // Restore parent mask
+                var parentScissor = scissorStack.Peek();
+                gl.Scissor((int)parentScissor.X, (int)parentScissor.Y, (uint)parentScissor.Z, (uint)parentScissor.W);
+            }
+            else
+            {
+                // No more masks
+                gl.Disable(EnableCap.ScissorTest);
+            }
+
+            drawBorder(maskDrawable, cornerRadius, borderThickness, borderColor);
+
+            stencilLevel--;
+            return;
+        }
+
+        // Case 2 : Stencil Masking (Rounded corners or complex shapes)
         // Disable masking shader effects
         shader.SetUniform("u_IsMasking", false);
 
@@ -248,33 +351,7 @@ public class GLRenderer : IRenderer
 
         gl.StencilOp(StencilOp.Keep, StencilOp.Keep, StencilOp.Keep);
 
-        // Render the border if requested.
-        // This happens after we've restored the stencil state, so the border itself
-        // is properly clipped by any *parent* masks, but not by the mask we just popped.
-        if (borderThickness > 0)
-        {
-            triangleBatch.Draw();
-
-            shader.SetUniform("u_IsBorder", true);
-            var rect = maskDrawable.DrawRectangle;
-            shader.SetUniform("u_MaskRect", new Vector4(rect.X, rect.Y, rect.Width, rect.Height));
-            shader.SetUniform("u_CornerRadius", cornerRadius);
-            shader.SetUniform("u_BorderThickness", borderThickness);
-            shader.SetUniform("u_BorderColor", borderColor);
-
-            if (GLTexture.WhitePixel.Handle != lastBoundTextureHandle)
-            {
-                triangleBatch.Draw();
-                GLTexture.WhitePixel.Bind();
-                lastBoundTextureHandle = GLTexture.WhitePixel.Handle;
-            }
-
-            triangleBatch.AddRange(maskDrawable.Vertices);
-            triangleBatch.Draw();
-
-            shader.SetUniform("u_IsBorder", false);
-            lastBoundTextureHandle = uint.MaxValue;
-        }
+        drawBorder(maskDrawable, cornerRadius, borderThickness, borderColor);
     }
 
     /// <summary>
