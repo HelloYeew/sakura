@@ -51,7 +51,7 @@ public class FpsGraph : Container
 
         for (int i = 0; i < max_history; i++)
         {
-            var bar = new Drawable
+            var bar = new Box
             {
                 RelativeSizeAxes = Axes.Y,
                 Size = new Vector2(bar_width, 1),
