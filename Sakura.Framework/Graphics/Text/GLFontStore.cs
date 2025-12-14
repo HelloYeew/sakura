@@ -15,7 +15,7 @@ namespace Sakura.Framework.Graphics.Text;
 public class GLFontStore : IFontStore
 {
     private readonly TextureAtlas atlas;
-    private readonly Dictionary<string, Font> fontCache = new();
+    private readonly Dictionary<string, Font> fontCache = new Dictionary<string, Font>();
 
     private Font defaultFont;
 
@@ -94,7 +94,8 @@ public class GLFontStore : IFontStore
             return defaultFont;
 
         // 3. Absolute fallback
-        foreach (var f in fontCache.Values) return f;
+        foreach (var f in fontCache.Values)
+            return f;
 
         // If we reach here, we are likely crashing soon if used, but let's return null to handle gracefully upstream
         return null;

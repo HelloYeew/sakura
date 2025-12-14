@@ -11,6 +11,9 @@ using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.Text;
 
+/// <summary>
+/// Represents a font loaded from a font file, capable of shaping and rasterizing text.
+/// </summary>
 public class Font : IDisposable
 {
     private readonly TextureAtlas atlas;
@@ -28,7 +31,9 @@ public class Font : IDisposable
     public string Name { get; }
     public float Size { get; private set; } = 24;
 
-    // Helper struct to cache texture + placement info
+    /// <summary>
+    /// Helper struct to cache texture and placement info
+    /// </summary>
     private struct GlyphData
     {
         public Texture Texture;
@@ -147,24 +152,24 @@ public class Font : IDisposable
             glyphs.Add(new TextGlyph
             {
                 Texture = data.Texture,
-                Position = new System.Numerics.Vector2(finalX, finalY),
-                Size = new System.Numerics.Vector2(data.Texture.Width, data.Texture.Height)
+                Position = new Vector2(finalX, finalY),
+                Size = new Vector2(data.Texture.Width, data.Texture.Height)
             });
 
             cursorX += xAdvance;
         }
 
         // Return the full bounding box size (Width = cursorX, Height = LineHeight)
-        return new ShapedText(glyphs, new System.Numerics.Vector2(cursorX, lineHeightPx));
+        return new ShapedText(glyphs, new Vector2(cursorX, lineHeightPx));
     }
 
     private unsafe GlyphData? rasterizeGlyph(uint glyphIndex)
     {
         var facePtr = (FT_FaceRec_*)faceHandle;
-        const int FT_LOAD_DEFAULT = 0;
+        const int ft_load_default = 0;
 
         // Load glyph
-        var err = FT.FT_Load_Glyph(facePtr, glyphIndex, FT_LOAD_DEFAULT);
+        var err = FT.FT_Load_Glyph(facePtr, glyphIndex, ft_load_default);
         if (err != FT_Error.FT_Err_Ok) return null;
 
         var glyphSlotPtr = facePtr->glyph;
@@ -189,7 +194,7 @@ public class Font : IDisposable
         int width = (int)bitmap.width;
         int height = (int)bitmap.rows;
         byte[] rgba = new byte[width * height * 4];
-        byte* buffer = (byte*)bitmap.buffer;
+        byte* buffer = bitmap.buffer;
 
         for (int i = 0; i < width * height; i++)
         {

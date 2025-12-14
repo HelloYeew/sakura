@@ -19,6 +19,7 @@ public class TextureAtlas : IDisposable
     private readonly GLTexture glTexture;
 
     // TODO: Just basic implementation, maybe change to bin-packing later
+    // TODO: Add support for multiple atlas pages
     private int currentX = 0;
     private int currentY = 0;
     private int currentRowHeight = 0;

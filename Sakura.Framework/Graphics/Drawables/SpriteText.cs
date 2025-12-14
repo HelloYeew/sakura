@@ -12,6 +12,9 @@ using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.Drawables;
 
+/// <summary>
+/// A drawable that renders text using a specified font.
+/// </summary>
 public class SpriteText : Drawable
 {
     private string text = string.Empty;

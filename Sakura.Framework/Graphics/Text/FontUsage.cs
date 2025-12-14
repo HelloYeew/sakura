@@ -28,7 +28,7 @@ public readonly struct FontUsage : IEquatable<FontUsage>
         Italics = italics;
     }
 
-    public FontUsage With(string family = null, float? size = null, string weight = null, bool? italics = null)
+    public FontUsage With(string? family = null, float? size = null, string? weight = null, bool? italics = null)
     {
         return new FontUsage(
             family ?? Family,
