@@ -12,6 +12,7 @@ using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Graphics.Rendering;
+using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Input;
@@ -33,6 +34,7 @@ public class App : Container, IDisposable
     protected SampleStore SampleStore { get; private set; }
 
     protected ITextureManager TextureManager { get; private set; }
+    protected IFontStore FontStore { get; private set; }
 
     private Reactive<bool> showFpsGraph;
 
@@ -73,12 +75,19 @@ public class App : Container, IDisposable
         if (Host.Renderer is GLRenderer)
         {
             TextureManager = new GLTextureManager(GLRenderer.GL, embeddedResourceStorage.GetStorageForDirectory("Textures"), CreateImageLoader());
+            FontStore = new GLFontStore(GLRenderer.GL);
+            // TODO: This will exposed all framework file resource out, maybe find better way?
+            var frameworkFontStorage = Host.FrameworkStorage.GetStorageForDirectory("Fonts");
+            var fontStorage = embeddedResourceStorage.GetStorageForDirectory("Fonts");
+            fontStorage = new CompositeStorage(frameworkFontStorage, fontStorage);
+            FontStore.LoadDefaultFont(fontStorage);
         }
         else
         {
             throw new NotSupportedException("Only OpenGL renderer is supported currently.");
         }
         Cache(TextureManager);
+        Cache(FontStore);
 
         Cache<IAudioStore<ITrack>>(TrackStore);
         Cache<IAudioStore<ISample>>(SampleStore);
