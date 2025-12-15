@@ -8,10 +8,10 @@ using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
+using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Timing;
 using Sakura.Framework.Utilities;
-using Vector2 = Sakura.Framework.Maths.Vector2;
 
 namespace Sakura.Framework.Graphics.Performance;
 
