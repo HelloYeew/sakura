@@ -8,6 +8,7 @@ using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
+using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Timing;
@@ -29,6 +30,8 @@ public class FpsGraph : Container
     private readonly IClock clock;
     private SpriteText fpsText;
     private SpriteText limiterText;
+
+    private FontUsage graphFontUsage = FontUsage.Default.With(size: 20);
 
     [Resolved]
     private AppHost host { get; set; }
@@ -89,7 +92,7 @@ public class FpsGraph : Container
                     Size = new Vector2(1, 1),
                     RelativeSizeAxes = Axes.Both,
                     Color = Color.Black,
-                    Alpha = 0.75f
+                    Alpha = 0.9f
                 },
                 new FlowContainer()
                 {
@@ -101,19 +104,29 @@ public class FpsGraph : Container
                     RelativeSizeAxes = Axes.Both,
                     Children = new Drawable[]
                     {
-                        fpsText = new SpriteText()
+                        new Container()
                         {
                             Anchor = Anchor.TopLeft,
                             Origin = Anchor.TopLeft,
-                            Size = new Vector2(80, 20),
-                            Color = Color.White,
+                            Size = new Vector2(1, 20),
+                            RelativeSizeAxes = Axes.X,
+                            Child = fpsText = new SpriteText()
+                            {
+                                Anchor = Anchor.CentreLeft,
+                                Origin = Anchor.CentreLeft,
+                                Size = new Vector2(200, 20),
+                                Text = "FPS:",
+                                Color = Color.White,
+                                Font = graphFontUsage
+                            }
                         },
                         limiterText = new SpriteText()
                         {
                             Anchor = Anchor.TopLeft,
                             Origin = Anchor.TopLeft,
                             Size = new Vector2(200, 20),
-                            Color = Color.White
+                            Color = Color.White,
+                            Font = graphFontUsage
                         }
                     }
                 }
