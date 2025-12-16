@@ -98,12 +98,6 @@ public class SpriteText : Drawable
         textVertices.Clear();
         if (shapedText == null) return;
 
-        // If the user hasn't given us any size to draw into, we can't project the vertices.
-        // Alternatively, you could default to ContentSize if Size is Zero,
-        // but typically Size.Zero means "don't draw".
-        if (Size.X <= 0 || Size.Y <= 0)
-            return;
-
         var drawColor = new Vector4(
             ColorExtensions.SrgbToLinear(Color.R),
             ColorExtensions.SrgbToLinear(Color.G),
@@ -113,7 +107,23 @@ public class SpriteText : Drawable
 
         // We need to normalize pixel coordinates to 0..1 space because Drawable's ModelMatrix
         // scales (0..1) up to (Size.X..Size.Y).
-        Vector2 normalizationScale = new Vector2(1.0f / Size.X, 1.0f / Size.Y);
+
+        // Get the relative origin
+        Vector2 originRelative = GetAnchorOriginVector(Origin);
+
+        Vector2 availableSpace = Size - ContentSize;
+
+        // The starting position (top-left) of the text block relative to the Drawable's top-left.
+        Vector2 textOffset = new Vector2(
+            availableSpace.X * originRelative.X,
+            availableSpace.Y * originRelative.Y
+        );
+
+        Vector2 safeSize = new Vector2(
+            Size.X > 0 ? Size.X : 1,
+            Size.Y > 0 ? Size.Y : 1
+        );
+        Vector2 normalizationScale = new Vector2(1.0f / safeSize.X, 1.0f / safeSize.Y);
 
         foreach (var glyph in shapedText.Glyphs)
         {
@@ -121,9 +131,12 @@ public class SpriteText : Drawable
             var pos = glyph.Position;
             var size = glyph.Size;
 
+            float pixelX = pos.X + textOffset.X;
+            float pixelY = pos.Y + textOffset.Y;
+
             // Normalize coordinates to 0..1 relative to the Drawable.Size
-            float x = pos.X * normalizationScale.X;
-            float y = pos.Y * normalizationScale.Y;
+            float x = pixelX * normalizationScale.X;
+            float y = pixelY * normalizationScale.Y;
             float w = size.X * normalizationScale.X;
             float h = size.Y * normalizationScale.Y;
 
