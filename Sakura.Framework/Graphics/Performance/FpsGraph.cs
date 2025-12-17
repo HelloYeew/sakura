@@ -99,26 +99,18 @@ public class FpsGraph : Container
                     Anchor = Anchor.TopLeft,
                     Origin = Anchor.TopLeft,
                     Direction = FlowDirection.Vertical,
-                    Spacing = new Vector2(0, 30),
+                    Spacing = new Vector2(0, 15),
                     Size = new Vector2(1, 1),
                     RelativeSizeAxes = Axes.Both,
                     Children = new Drawable[]
                     {
-                        new Container()
+                        fpsText = new SpriteText()
                         {
                             Anchor = Anchor.TopLeft,
                             Origin = Anchor.TopLeft,
-                            Size = new Vector2(1, 20),
-                            RelativeSizeAxes = Axes.X,
-                            Child = fpsText = new SpriteText()
-                            {
-                                Anchor = Anchor.CentreLeft,
-                                Origin = Anchor.CentreLeft,
-                                Size = new Vector2(200, 20),
-                                Text = "FPS:",
-                                Color = Color.White,
-                                Font = graphFontUsage
-                            }
+                            Size = new Vector2(200, 20),
+                            Color = Color.White,
+                            Font = graphFontUsage
                         },
                         limiterText = new SpriteText()
                         {
