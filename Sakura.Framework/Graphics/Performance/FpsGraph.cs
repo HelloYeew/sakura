@@ -8,6 +8,7 @@ using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
+using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Timing;
@@ -29,6 +30,8 @@ public class FpsGraph : Container
     private readonly IClock clock;
     private SpriteText fpsText;
     private SpriteText limiterText;
+
+    private FontUsage graphFontUsage = FontUsage.Default.With(size: 20);
 
     [Resolved]
     private AppHost host { get; set; }
@@ -89,14 +92,14 @@ public class FpsGraph : Container
                     Size = new Vector2(1, 1),
                     RelativeSizeAxes = Axes.Both,
                     Color = Color.Black,
-                    Alpha = 0.75f
+                    Alpha = 0.9f
                 },
                 new FlowContainer()
                 {
                     Anchor = Anchor.TopLeft,
                     Origin = Anchor.TopLeft,
                     Direction = FlowDirection.Vertical,
-                    Spacing = new Vector2(0, 30),
+                    Spacing = new Vector2(0, 15),
                     Size = new Vector2(1, 1),
                     RelativeSizeAxes = Axes.Both,
                     Children = new Drawable[]
@@ -105,15 +108,17 @@ public class FpsGraph : Container
                         {
                             Anchor = Anchor.TopLeft,
                             Origin = Anchor.TopLeft,
-                            Size = new Vector2(80, 20),
+                            Size = new Vector2(200, 20),
                             Color = Color.White,
+                            Font = graphFontUsage
                         },
                         limiterText = new SpriteText()
                         {
                             Anchor = Anchor.TopLeft,
                             Origin = Anchor.TopLeft,
                             Size = new Vector2(200, 20),
-                            Color = Color.White
+                            Color = Color.White,
+                            Font = graphFontUsage
                         }
                     }
                 }

@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Threading;
 using FreeTypeSharp;
 using HarfBuzzSharp;
 using Sakura.Framework.Graphics.Textures;
@@ -26,7 +27,10 @@ public class Font : IDisposable
     private readonly HarfBuzzSharp.Font hbFont;
 
     // Cache stores GlyphData instead of just Texture, because we need bearing info per glyph
-    private readonly Dictionary<uint, GlyphData> glyphCache = new();
+    // Key by (CodePoint, Size) so multiple sizes can be cached in the same Font instance.
+    private readonly Dictionary<(uint CodePoint, float Size), GlyphData> glyphCache = new();
+
+    private readonly Lock stateLock = new Lock();
 
     public string Name { get; }
     public float Size { get; private set; } = 24;
@@ -71,96 +75,89 @@ public class Font : IDisposable
         if (string.IsNullOrEmpty(text))
             return ShapedText.Empty;
 
-        // 1. Update Font Size
-        if (Math.Abs(Size - fontSize) > 0.01f)
+        lock (stateLock)
         {
-            Size = fontSize;
+            // 1. Update Font Size if needed
+            if (Math.Abs(Size - fontSize) > 0.01f)
+            {
+                Size = fontSize;
+                unsafe
+                {
+                    FT.FT_Set_Pixel_Sizes((FT_FaceRec_*)faceHandle, 0, (uint)Size);
+                }
+                hbFont.SetScale((int)(Size * 64), (int)(Size * 64));
+            }
+
+            // 2. Get Vertical Metrics
+            float ascenderPx = 0;
+            float lineHeightPx = Size;
+
             unsafe
             {
-                FT.FT_Set_Pixel_Sizes((FT_FaceRec_*)faceHandle, 0, (uint)Size);
-            }
-            hbFont.SetScale((int)(Size * 64), (int)(Size * 64));
-
-            // Clear cache when size changes, as glyph bitmaps/metrics change
-            glyphCache.Clear();
-        }
-
-        // 2. Get Vertical Metrics (Ascender/Descender) to position the baseline
-        float ascenderPx = 0;
-        float lineHeightPx = Size; // Fallback
-
-        unsafe
-        {
-            var face = (FT_FaceRec_*)faceHandle;
-            // metrics.ascender is in 26.6 fixed point coordinates (1/64th pixel)
-            ascenderPx = face->size->metrics.ascender / 64f;
-            lineHeightPx = face->size->metrics.height / 64f;
-        }
-
-        // 3. Shape Text
-        using var buffer = new HarfBuzzSharp.Buffer();
-        buffer.AddUtf16(text);
-        buffer.GuessSegmentProperties();
-        hbFont.Shape(buffer);
-
-        int length = buffer.Length;
-        var info = buffer.GlyphInfos;
-        var pos = buffer.GlyphPositions;
-
-        var glyphs = new List<TextGlyph>(length);
-
-        float cursorX = 0;
-        // The baseline is located at Y = Ascender relative to the Top (0).
-        float baselineY = ascenderPx;
-
-        for (int i = 0; i < length; i++)
-        {
-            uint codepoint = info[i].Codepoint;
-
-            // HarfBuzz offsets and advances are 26.6 fixed point
-            float xAdvance = pos[i].XAdvance / 64.0f;
-            float yAdvance = pos[i].YAdvance / 64.0f; // Usually 0 for horizontal text
-
-            if (!glyphCache.TryGetValue(codepoint, out GlyphData data))
-            {
-                var loaded = rasterizeGlyph(codepoint);
-                if (loaded.HasValue)
-                {
-                    data = loaded.Value;
-                    glyphCache[codepoint] = data;
-                }
-                else
-                {
-                    // Invisible glyph (e.g. space), just advance cursor and skip rendering
-                    cursorX += xAdvance;
-                    continue;
-                }
+                var face = (FT_FaceRec_*)faceHandle;
+                ascenderPx = face->size->metrics.ascender / 64f;
+                lineHeightPx = face->size->metrics.height / 64f;
             }
 
-            // 4. Calculate Position
-            float hbXOffset = pos[i].XOffset / 64.0f;
-            float hbYOffset = pos[i].YOffset / 64.0f;
+            // 3. Shape Text
+            using var buffer = new HarfBuzzSharp.Buffer();
+            buffer.AddUtf16(text);
+            buffer.GuessSegmentProperties();
+            hbFont.Shape(buffer);
 
-            // Final Pixel Position:
-            // X = PenX + HarfBuzzAdjustment + FreeTypeBitmapLeft
-            float finalX = cursorX + hbXOffset + data.BitmapLeft;
+            int length = buffer.Length;
+            var info = buffer.GlyphInfos;
+            var pos = buffer.GlyphPositions;
 
-            // Y = BaselineY - HarfBuzzAdjustment - FreeTypeBitmapTop
-            // (Subtract BitmapTop because Y grows downwards, and Top is "up" from baseline)
-            float finalY = baselineY - hbYOffset - data.BitmapTop;
+            var glyphs = new List<TextGlyph>(length);
 
-            glyphs.Add(new TextGlyph
+            float cursorX = 0;
+            float baselineY = ascenderPx;
+
+            for (int i = 0; i < length; i++)
             {
-                Texture = data.Texture,
-                Position = new Vector2(finalX, finalY),
-                Size = new Vector2(data.Texture.Width, data.Texture.Height)
-            });
+                uint codepoint = info[i].Codepoint;
 
-            cursorX += xAdvance;
+                float xAdvance = pos[i].XAdvance / 64.0f;
+                float yAdvance = pos[i].YAdvance / 64.0f;
+
+                // --- FIX: Lookup using Composite Key (Codepoint + Size) ---
+                var cacheKey = (codepoint, fontSize);
+
+                if (!glyphCache.TryGetValue(cacheKey, out GlyphData data))
+                {
+                    // Rasterize will use the current 'Size' set above
+                    var loaded = rasterizeGlyph(codepoint);
+                    if (loaded.HasValue)
+                    {
+                        data = loaded.Value;
+                        glyphCache[cacheKey] = data;
+                    }
+                    else
+                    {
+                        cursorX += xAdvance;
+                        continue;
+                    }
+                }
+
+                float hbXOffset = pos[i].XOffset / 64.0f;
+                float hbYOffset = pos[i].YOffset / 64.0f;
+
+                float finalX = cursorX + hbXOffset + data.BitmapLeft;
+                float finalY = baselineY - hbYOffset - data.BitmapTop;
+
+                glyphs.Add(new TextGlyph
+                {
+                    Texture = data.Texture,
+                    Position = new Vector2(finalX, finalY),
+                    Size = new Vector2(data.Texture.Width, data.Texture.Height)
+                });
+
+                cursorX += xAdvance;
+            }
+
+            return new ShapedText(glyphs, new Vector2(cursorX, lineHeightPx));
         }
-
-        // Return the full bounding box size (Width = cursorX, Height = LineHeight)
-        return new ShapedText(glyphs, new Vector2(cursorX, lineHeightPx));
     }
 
     private unsafe GlyphData? rasterizeGlyph(uint glyphIndex)
