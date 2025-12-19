@@ -66,6 +66,11 @@ public class GLTextureManager : ITextureManager
         }
     }
 
+    public Texture FromPixelData(int width, int height, ReadOnlySpan<byte> pixelData)
+    {
+        return new Texture(new GLTexture(gl, width, height, pixelData));
+    }
+
     /// <summary>
     /// Create a simple
     /// </summary>
