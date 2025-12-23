@@ -284,6 +284,24 @@ public abstract class Drawable
         }
     }
 
+    /// <summary>
+    /// The width of this drawable.
+    /// </summary>
+    public float Width
+    {
+        get => Size.X;
+        set => Size = new Vector2(value, Size.Y);
+    }
+
+    /// <summary>
+    /// The height of this drawable.
+    /// </summary>
+    public float Height
+    {
+        get => Size.Y;
+        set => Size = new Vector2(Size.X, value);
+    }
+
     public void Hide() => Alpha = 0f;
     public void Show() => Alpha = 1f;
     public bool IsHidden => Alpha <= 0f;
