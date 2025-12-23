@@ -877,12 +877,18 @@ public abstract class Drawable
 
     public string Name { get; set; } = string.Empty;
 
-    public override string ToString()
+    /// <summary>
+    /// Get a display name for this drawable, including its type and a short unique identifier.
+    /// </summary>
+    /// <returns>A display name string.</returns>
+    public string GetDisplayName()
     {
         return !string.IsNullOrEmpty(Name) ?
             $"{Name} ({GetType().Name}#{internalId.ToString().Substring(0, 4)})" :
             $"{GetType().Name}#{internalId.ToString().Substring(0, 4)}";
     }
+
+    public override string ToString() => GetDisplayName();
 
     #endregion
 }
