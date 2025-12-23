@@ -420,6 +420,7 @@ public abstract class AppHost : IDisposable
         builder.AppendLine($"{indent}  Size: {drawable.Size} (DrawSize: {drawable.DrawSize}, RelativeSize: {drawable.RelativeSizeAxes})");
         builder.AppendLine($"{indent}  Position (Relative): {drawable.Position} (RelativePosition: {drawable.RelativePositionAxes})");
         builder.AppendLine($"{indent}  DrawRectangle (Absolute): {drawable.DrawRectangle}");
+        builder.AppendLine($"{indent}  Alpha: {drawable.Alpha} (DrawAlpha: {drawable.DrawAlpha})");
         builder.AppendLine($"{indent}  ModelMatrix: {drawable.ModelMatrix}");
 
         if (drawable is Container container)
