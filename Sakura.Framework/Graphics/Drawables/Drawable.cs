@@ -284,6 +284,24 @@ public abstract class Drawable
         }
     }
 
+    /// <summary>
+    /// The width of this drawable.
+    /// </summary>
+    public float Width
+    {
+        get => Size.X;
+        set => Size = new Vector2(value, Size.Y);
+    }
+
+    /// <summary>
+    /// The height of this drawable.
+    /// </summary>
+    public float Height
+    {
+        get => Size.Y;
+        set => Size = new Vector2(Size.X, value);
+    }
+
     public void Hide() => Alpha = 0f;
     public void Show() => Alpha = 1f;
     public bool IsHidden => Alpha <= 0f;
@@ -859,12 +877,18 @@ public abstract class Drawable
 
     public string Name { get; set; } = string.Empty;
 
-    public override string ToString()
+    /// <summary>
+    /// Get a display name for this drawable, including its type and a short unique identifier.
+    /// </summary>
+    /// <returns>A display name string.</returns>
+    public string GetDisplayName()
     {
         return !string.IsNullOrEmpty(Name) ?
             $"{Name} ({GetType().Name}#{internalId.ToString().Substring(0, 4)})" :
             $"{GetType().Name}#{internalId.ToString().Substring(0, 4)}";
     }
+
+    public override string ToString() => GetDisplayName();
 
     #endregion
 }

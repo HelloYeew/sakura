@@ -100,6 +100,9 @@ public class FlowContainer : Container
         // use ChildSize, which is correct and respects Padding.
         var maxBounds = ChildSize;
 
+        float maxRight = 0;
+        float maxBottom = 0;
+
         var currentPosPixels = Vector2.Zero;
         float lineMaxSizePixels = 0;
 
@@ -132,16 +135,17 @@ public class FlowContainer : Container
                 // calculate final pixel position for the child (including its margin)
                 var childPosPixels = new Vector2(currentPosPixels.X + child.Margin.Left, currentPosPixels.Y + child.Margin.Top);
 
-                // offset the child's position by the container's Padding
-                // so it starts inside the padded region.
-                childPosPixels.X += Padding.Left;
-                childPosPixels.Y += Padding.Top;
+                // Apply position (offset by Padding)
+                child.Position = new Vector2(childPosPixels.X + Padding.Left, childPosPixels.Y + Padding.Top);
 
-                // set the position in :pixels". Drawable.UpdateTransforms will
-                // handle the division.
-                child.Position = childPosPixels;
+                // Track content size
+                float childRight = childPosPixels.X + childDrawSizePixels.X + child.Margin.Right;
+                float childBottom = childPosPixels.Y + childDrawSizePixels.Y + child.Margin.Bottom;
 
-                // advance flow position in pixels
+                if (childRight > maxRight) maxRight = childRight;
+                if (childBottom > maxBottom) maxBottom = childBottom;
+
+                // Advance flow
                 currentPosPixels.X += childTotalSizePixels.X + Spacing.X;
                 lineMaxSizePixels = Math.Max(lineMaxSizePixels, childTotalSizePixels.Y);
             }
@@ -163,19 +167,26 @@ public class FlowContainer : Container
                 // calculate final pixel position for the child (including its margin)
                 var childPosPixels = new Vector2(currentPosPixels.X + child.Margin.Left, currentPosPixels.Y + child.Margin.Top);
 
-                // offset the child's position by the container's Padding
-                // so it starts inside the padded region.
-                childPosPixels.X += Padding.Left;
-                childPosPixels.Y += Padding.Top;
+                // Apply position
+                child.Position = new Vector2(childPosPixels.X + Padding.Left, childPosPixels.Y + Padding.Top);
 
-                // set the position in PIXELS. Drawable.UpdateTransforms will
-                // handle the division.
-                child.Position = childPosPixels;
+                // Track content size
+                float childRight = childPosPixels.X + childDrawSizePixels.X + child.Margin.Right;
+                float childBottom = childPosPixels.Y + childDrawSizePixels.Y + child.Margin.Bottom;
 
-                // advance flow position in pixels
+                if (childRight > maxRight) maxRight = childRight;
+                if (childBottom > maxBottom) maxBottom = childBottom;
+
+                // Advance flow
                 currentPosPixels.Y += childTotalSizePixels.Y + Spacing.Y;
                 lineMaxSizePixels = Math.Max(lineMaxSizePixels, childTotalSizePixels.X);
             }
+
+            if ((AutoSizeAxes & Axes.X) != 0)
+                Width = maxRight + Padding.Right;
+
+            if ((AutoSizeAxes & Axes.Y) != 0)
+                Height = maxBottom + Padding.Bottom;
         }
     }
 
