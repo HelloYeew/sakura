@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Sakura.Framework.Graphics.Colors;
+using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
@@ -38,6 +39,11 @@ public class Container : Drawable
     /// </summary>
     public Color BorderColor { get; set; } = Color.White;
 
+    /// <summary>
+    /// Control which axes that this container automatically sized based on its children's sizes.
+    /// </summary>
+    public Axes AutoSizeAxes { get; set; } = Axes.None;
+
     public IReadOnlyList<Drawable> Children
     {
         get => children;
@@ -70,7 +76,7 @@ public class Container : Drawable
         Texture = null;
     }
 
-    public void Add(Drawable drawable)
+    public virtual void Add(Drawable drawable)
     {
         // A drawable cannot be its own parent.
         if (drawable == this)
@@ -102,7 +108,7 @@ public class Container : Drawable
         }
     }
 
-    public void Remove(Drawable drawable)
+    public virtual void Remove(Drawable drawable)
     {
         if (children.Remove(drawable))
         {
@@ -113,6 +119,9 @@ public class Container : Drawable
 
     public override void Update()
     {
+        if (AutoSizeAxes != Axes.None)
+            UpdateAutoSize();
+
         // Check whether our layout was dirty before base.Update() is called, as it will clear our invalidation flags.
         bool layoutWasInvalidated = (Invalidation & InvalidationFlags.DrawInfo) != 0;
         bool colourWasInvalidated = (Invalidation & InvalidationFlags.Colour) != 0;
@@ -141,6 +150,74 @@ public class Container : Drawable
         foreach (var child in children)
         {
             child.Update();
+        }
+    }
+
+    protected virtual void UpdateAutoSize()
+    {
+        Vector2 maxBound = Vector2.Zero;
+
+        foreach (var child in children)
+        {
+            if (!child.AlwaysPresent && child.Alpha <= 0)
+                continue;
+
+            // Calculate the child's size in pixels
+            // We cannot rely on child.DrawSize here because that might be from the previous frame.
+            // We must calculate it based on the current state.
+            Vector2 childSize = child.Size;
+
+            // Note : If a child is RelativeSize on the same axis we are AutoSizing,
+            // we must ignore it to prevent circular dependency (or endless expansion).
+            // e.g., Parent (AutoSize X) -> Child (Relative X) -> Paradox.
+
+            if ((AutoSizeAxes & Axes.X) != 0 && (child.RelativeSizeAxes & Axes.X) != 0)
+                childSize.X = 0; // Ignore relative width for auto-width calculation
+
+            if ((AutoSizeAxes & Axes.Y) != 0 && (child.RelativeSizeAxes & Axes.Y) != 0)
+                childSize.Y = 0; // Ignore relative height for auto-height calculation
+
+            // Apply Scale
+            Vector2 scaledSize = childSize * child.Scale;
+
+            // Determine position.
+            // Note: For advanced auto-sizing (handling rotations/shears), we would need full matrix bounding boxes.
+            // For this implementation, we assume standard AABB flow (Position + Size + Margin).
+            Vector2 childPos = child.Position;
+
+            // If child is relatively positioned, it technically positions based on us.
+            // But since we are determining our size, we treat relative positioning as 0 or ignore it
+            // to avoid stability issues, unless we implement a multi-pass layout solver.
+            // For simplicity: We use the raw local position.
+            float right = childPos.X + scaledSize.X + child.Margin.Right;
+            float bottom = childPos.Y + scaledSize.Y + child.Margin.Bottom;
+
+            // Also account for origin offsets if necessary, but standard implementation
+            // usually assumes TopLeft origin for simple flow calculations.
+            // If you use Center anchors, you might need to subtract the anchor offset.
+            // For now, simple bounding box extension:
+            if (right > maxBound.X) maxBound.X = right;
+            if (bottom > maxBound.Y) maxBound.Y = bottom;
+        }
+
+        // Apply Padding of the container itself
+        maxBound += Padding.Total;
+
+        // Apply to Size
+        Vector2 currentSize = Size;
+
+        if ((AutoSizeAxes & Axes.X) != 0)
+            currentSize.X = maxBound.X;
+
+        if ((AutoSizeAxes & Axes.Y) != 0)
+            currentSize.Y = maxBound.Y;
+
+        // Only assign if changed to prevent constant invalidation
+        if (Size != currentSize)
+        {
+            Size = currentSize;
+            // We changed size, so we must invalidate ourselves so `base.Update()` recalculates matrices
+            Invalidate(InvalidationFlags.DrawInfo);
         }
     }
 

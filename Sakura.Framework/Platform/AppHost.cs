@@ -156,9 +156,9 @@ public abstract class AppHost : IDisposable
     public abstract void OpenUrlExternally(string url);
 
     /// <summary>
-    /// Create the game window for the host.
+    /// Create the application window for the host.
     /// </summary>
-    /// <returns>An instance of <see cref="IWindow"/> that represents the game window.</returns>
+    /// <returns>An instance of <see cref="IWindow"/> that represents the application window.</returns>
     protected abstract IWindow CreateWindow();
 
     /// <summary>
@@ -416,10 +416,13 @@ public abstract class AppHost : IDisposable
         if (drawable is FpsGraph)
             return;
 
-        builder.AppendLine($"{indent}- {drawable.GetType().Name}");
+        builder.AppendLine($"{indent}- {drawable.GetDisplayName()}");
+        if (drawable is Container)
+            builder.AppendLine($"{indent}  AutoSizeAxes: {((Container)drawable).AutoSizeAxes}");
         builder.AppendLine($"{indent}  Size: {drawable.Size} (DrawSize: {drawable.DrawSize}, RelativeSize: {drawable.RelativeSizeAxes})");
-        builder.AppendLine($"{indent}  Position (Relative): {drawable.Position} (RelativePosition: {drawable.RelativePositionAxes})");
+        builder.AppendLine($"{indent}  Position (Relative): {drawable.Position} (Anchor: {drawable.Anchor}, Origin: {drawable.Origin}, RelativePosition: {drawable.RelativePositionAxes})");
         builder.AppendLine($"{indent}  DrawRectangle (Absolute): {drawable.DrawRectangle}");
+        builder.AppendLine($"{indent}  Alpha: {drawable.Alpha} (DrawAlpha: {drawable.DrawAlpha})");
         builder.AppendLine($"{indent}  ModelMatrix: {drawable.ModelMatrix}");
 
         if (drawable is Container container)
