@@ -156,9 +156,9 @@ public abstract class AppHost : IDisposable
     public abstract void OpenUrlExternally(string url);
 
     /// <summary>
-    /// Create the game window for the host.
+    /// Create the application window for the host.
     /// </summary>
-    /// <returns>An instance of <see cref="IWindow"/> that represents the game window.</returns>
+    /// <returns>An instance of <see cref="IWindow"/> that represents the application window.</returns>
     protected abstract IWindow CreateWindow();
 
     /// <summary>

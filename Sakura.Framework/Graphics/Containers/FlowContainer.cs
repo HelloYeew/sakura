@@ -10,7 +10,7 @@ using Sakura.Framework.Utilities;
 namespace Sakura.Framework.Graphics.Containers;
 
 /// <summary>
-/// A container that arranges its chldren in a defined direction
+/// A container that arranges its children in a defined direction
 /// with wrapping them to a new line when reach the boundary.
 /// </summary>
 public class FlowContainer : Container

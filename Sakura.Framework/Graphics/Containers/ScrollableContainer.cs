@@ -53,7 +53,7 @@ public class ScrollableContainer : Container
 
         ScrollContent = new Container()
         {
-            Name = $"ScrollContent",
+            Name = "ScrollContent",
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
             RelativeSizeAxes = Axes.X,
@@ -63,7 +63,7 @@ public class ScrollableContainer : Container
 
         verticalScrollbar = new Container()
         {
-            Name = $"VerticalScrollbar",
+            Name = "VerticalScrollbar",
             Width = 20,
             Anchor = Anchor.TopRight,
             Origin = Anchor.TopRight,
@@ -76,9 +76,8 @@ public class ScrollableContainer : Container
 
         horizontalScrollbar = new Container()
         {
-            Name = $"HorizontalScrollbar",
+            Name = "HorizontalScrollbar",
             Height = 20,
-            // RelativeSizeAxes = Axes.X,
             Anchor = Anchor.BottomLeft,
             Origin = Anchor.BottomLeft,
             Margin = new MarginPadding()

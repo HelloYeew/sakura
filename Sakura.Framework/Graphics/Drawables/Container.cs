@@ -120,9 +120,7 @@ public class Container : Drawable
     public override void Update()
     {
         if (AutoSizeAxes != Axes.None)
-        {
             UpdateAutoSize();
-        }
 
         // Check whether our layout was dirty before base.Update() is called, as it will clear our invalidation flags.
         bool layoutWasInvalidated = (Invalidation & InvalidationFlags.DrawInfo) != 0;
@@ -161,7 +159,6 @@ public class Container : Drawable
 
         foreach (var child in children)
         {
-            // Skip children that shouldn't affect layout
             if (!child.AlwaysPresent && child.Alpha <= 0)
                 continue;
 
@@ -170,15 +167,15 @@ public class Container : Drawable
             // We must calculate it based on the current state.
             Vector2 childSize = child.Size;
 
-            // IMPORTANT: If a child is RelativeSize on the same axis we are AutoSizing,
+            // Note : If a child is RelativeSize on the same axis we are AutoSizing,
             // we must ignore it to prevent circular dependency (or endless expansion).
             // e.g., Parent (AutoSize X) -> Child (Relative X) -> Paradox.
 
             if ((AutoSizeAxes & Axes.X) != 0 && (child.RelativeSizeAxes & Axes.X) != 0)
-                childSize.X = 0; // Ignore relative width for auto-width calc
+                childSize.X = 0; // Ignore relative width for auto-width calculation
 
             if ((AutoSizeAxes & Axes.Y) != 0 && (child.RelativeSizeAxes & Axes.Y) != 0)
-                childSize.Y = 0; // Ignore relative height for auto-height calc
+                childSize.Y = 0; // Ignore relative height for auto-height calculation
 
             // Apply Scale
             Vector2 scaledSize = childSize * child.Scale;
@@ -186,14 +183,12 @@ public class Container : Drawable
             // Determine position.
             // Note: For advanced auto-sizing (handling rotations/shears), we would need full matrix bounding boxes.
             // For this implementation, we assume standard AABB flow (Position + Size + Margin).
-
             Vector2 childPos = child.Position;
 
-            // If child is relatively positioned, it technically positions based on US.
+            // If child is relatively positioned, it technically positions based on us.
             // But since we are determining our size, we treat relative positioning as 0 or ignore it
             // to avoid stability issues, unless we implement a multi-pass layout solver.
             // For simplicity: We use the raw local position.
-
             float right = childPos.X + scaledSize.X + child.Margin.Right;
             float bottom = childPos.Y + scaledSize.Y + child.Margin.Bottom;
 
@@ -201,7 +196,6 @@ public class Container : Drawable
             // usually assumes TopLeft origin for simple flow calculations.
             // If you use Center anchors, you might need to subtract the anchor offset.
             // For now, simple bounding box extension:
-
             if (right > maxBound.X) maxBound.X = right;
             if (bottom > maxBound.Y) maxBound.Y = bottom;
         }
