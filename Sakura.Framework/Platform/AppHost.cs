@@ -242,6 +242,7 @@ public abstract class AppHost : IDisposable
 
                 Window = CreateWindow();
                 Window.Title = Options.FriendlyAppName;
+                Window.ApplicationName = Name;
 
                 Window.OnKeyDown += OnKeyDown;
                 Window.OnKeyUp += OnKeyUp;
