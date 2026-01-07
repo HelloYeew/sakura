@@ -14,6 +14,12 @@ public interface IWindow : IDisposable
     string Title { get; set; }
 
     /// <summary>
+    /// The name of the application that owns this window.
+    /// This is used for some platform-specific features such as MacOS menu bar etc.
+    /// </summary>
+    string ApplicationName { get; set; }
+
+    /// <summary>
     /// Whether the window can be resizable by the user.
     /// </summary>
     bool Resizable { get; set; }

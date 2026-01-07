@@ -30,6 +30,7 @@ public class SDLWindow : IWindow
     private bool initialized;
 
     private string title = "Window";
+    private string applicationName = "Sakura Framework App";
     private bool resizable = true;
     private int currentWidth;
     private int currentHeight;
@@ -40,6 +41,12 @@ public class SDLWindow : IWindow
     {
         get => title;
         set => setTitle(value);
+    }
+
+    public string ApplicationName
+    {
+        get => applicationName;
+        set => setApplicationName(value);
     }
 
     public bool Resizable
@@ -81,6 +88,8 @@ public class SDLWindow : IWindow
     public unsafe void Initialize()
     {
         sdl = Sdl.GetApi();
+
+        setApplicationName(applicationName);
 
         // Make sure SDL video backend is fully initialized
         // To make it support for OpenGL context and process advance hint like profile version
@@ -420,6 +429,15 @@ public class SDLWindow : IWindow
 
         if (window != null)
             sdl.SetWindowTitle(window, newTitle);
+    }
+
+    private void setApplicationName(string newAppName)
+    {
+        applicationName = newAppName;
+
+        var result = sdl?.SetHintWithPriority("SDL_APP_NAME", newAppName, HintPriority.Override);
+        if (result == SdlBool.False)
+            Logger.Warning("Failed to set SDL application name hint to " + newAppName);
     }
 
     private unsafe void setResizable(bool isResizable)
