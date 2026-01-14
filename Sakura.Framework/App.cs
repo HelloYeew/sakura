@@ -57,7 +57,7 @@ public class App : Container, IDisposable
     {
         base.Load();
 
-        AudioManager = new BassAudioManager();
+        AudioManager = CreateAudioManager();
         var masterVolume = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.MasterVolume);
         var trackVolume = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.TrackVolume);
         var sampleVolume = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.SampleVolume);
@@ -117,15 +117,17 @@ public class App : Container, IDisposable
     /// <summary>
     /// Create a default <see cref="Storage"/>
     /// </summary>
-    /// <param name="host"></param>
-    /// <param name="defaultStorage"></param>
-    /// <returns></returns>
     protected internal virtual Storage CreateStorage(AppHost host, Storage defaultStorage) => defaultStorage;
 
     /// <summary>
     /// Create the image loader used for loading textures, defaults to <see cref="ImageSharpImageLoader"/>.
     /// </summary>
     protected virtual IImageLoader CreateImageLoader() => new ImageSharpImageLoader();
+
+    /// <summary>
+    /// Create the audio manager used for this app, defaults to <see cref="BassAudioManager"/>.
+    /// </summary>
+    protected virtual IAudioManager CreateAudioManager() => new BassAudioManager();
 
     public void Dispose()
     {
