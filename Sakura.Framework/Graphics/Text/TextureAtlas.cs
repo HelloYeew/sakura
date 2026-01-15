@@ -46,7 +46,7 @@ public class TextureAtlas : IDisposable
         if (!canFitInPage(page, regionWidth, regionHeight))
         {
             // 2. If it doesn't fit, create a new page
-            page = new AtlasPage(gl, this.width, this.height);
+            page = new AtlasPage(gl, width, height);
             pages.Add(page);
         }
 
@@ -55,7 +55,7 @@ public class TextureAtlas : IDisposable
             return null;
 
         // Move cursor for new row if needed
-        if (page.CurrentX + regionWidth + padding > this.width)
+        if (page.CurrentX + regionWidth + padding > width)
         {
             page.CurrentX = 0;
             page.CurrentY += page.RowHeight + padding;
@@ -67,10 +67,10 @@ public class TextureAtlas : IDisposable
         gl.TexSubImage2D(TextureTarget.Texture2D, 0, page.CurrentX, page.CurrentY, (uint)regionWidth, (uint)regionHeight, PixelFormat.Rgba, PixelType.UnsignedByte, rgbaData);
 
         // Calculate UVs
-        float u = (float)page.CurrentX / this.width;
-        float v = (float)page.CurrentY / this.height;
-        float uw = (float)regionWidth / this.width;
-        float vh = (float)regionHeight / this.height;
+        float u = (float)page.CurrentX / width;
+        float v = (float)page.CurrentY / height;
+        float uw = (float)regionWidth / width;
+        float vh = (float)regionHeight / height;
 
         // Create the texture wrapper pointing to THIS specific page's GL ID
         var region = new Texture(page.GlTexture, new Maths.RectangleF(u, v, uw, vh));
