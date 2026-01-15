@@ -24,7 +24,7 @@ public class SpriteText : Drawable
     // Tracks if the text content/font has changed, requiring re-measurement.
     private bool layoutInvalidated = true;
 
-    private readonly List<Vertex> textVertices = new();
+    private readonly List<Vertex> textVertices = new List<Vertex>();
     private ShapedText? shapedText;
 
     private Font? resolvedFont;

@@ -54,7 +54,7 @@ public class TextureAtlas : IDisposable
         if (!canFitInPage(page, regionWidth, regionHeight))
             return null;
 
-        // 3. Move cursor for new row if needed
+        // Move cursor for new row if needed
         if (page.CurrentX + regionWidth + padding > this.width)
         {
             page.CurrentX = 0;
