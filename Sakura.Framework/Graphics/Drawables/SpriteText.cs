@@ -8,6 +8,7 @@ using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Rendering.Vertex;
 using Sakura.Framework.Graphics.Text;
+using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.Drawables;
@@ -23,7 +24,7 @@ public class SpriteText : Drawable
     // Tracks if the text content/font has changed, requiring re-measurement.
     private bool layoutInvalidated = true;
 
-    private readonly List<Vertex> textVertices = new();
+    private readonly List<Vertex> textVertices = new List<Vertex>();
     private ShapedText? shapedText;
 
     private Font? resolvedFont;
@@ -165,8 +166,42 @@ public class SpriteText : Drawable
         if (DrawAlpha <= 0 || textVertices.Count == 0 || shapedText == null || shapedText.Glyphs.Count == 0)
             return;
 
-        // Assuming all glyphs share the same texture page (atlas)
-        var texture = shapedText.Glyphs[0].Texture;
-        renderer.DrawVertices(CollectionsMarshal.AsSpan(textVertices), texture);
+        Texture? currentTexture = null;
+        int batchStart = 0;
+        int batchCount = 0;
+
+        // Glyphs aligns 1:1 with the Quads in textVertices
+        // (Each glyph = 6 vertices)
+        for (int i = 0; i < shapedText.Glyphs.Count; i++)
+        {
+            var glyph = shapedText.Glyphs[i];
+
+            // If texture changes (and it's not the start), flush the draw
+            if (currentTexture != null && glyph.Texture != currentTexture)
+            {
+                flushBatch(renderer, currentTexture, batchStart, batchCount);
+                batchStart += batchCount;
+                batchCount = 0;
+            }
+
+            currentTexture = glyph.Texture;
+            batchCount++;
+        }
+
+        // Flush final batch
+        if (currentTexture != null && batchCount > 0)
+        {
+            flushBatch(renderer, currentTexture, batchStart, batchCount);
+        }
+    }
+
+    private void flushBatch(IRenderer renderer, Texture texture, int glyphStart, int glyphCount)
+    {
+        // 6 vertices per glyph (2 triangles)
+        int vertexStart = glyphStart * 6;
+        int vertexCount = glyphCount * 6;
+
+        var slice = CollectionsMarshal.AsSpan(textVertices).Slice(vertexStart, vertexCount);
+        renderer.DrawVertices(slice, texture);
     }
 }
