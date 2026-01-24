@@ -6,6 +6,10 @@ A graphic framework and set of toolkits for making basic UI application and 2D g
 
 See [sample app repository](https://github.com/HelloYeew/sakura-sample-app) for example.
 
+## Documentation
+
+We don't have an official tutorial/documentation yet. But for the API reference you can check [the API reference site](https://helloyeew.github.io/sakura-api-docs).
+
 ## Start development on this framework
 
 If you are reading this part, you probably want to "contribute" to this framework, not "use" it. Please read the following instructions.
