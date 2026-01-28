@@ -793,6 +793,39 @@ public abstract class Drawable
 
     #endregion
 
+    #region Lifetime Management
+
+    /// <summary>
+    /// The time at which this drawable becomes alive.
+    /// </summary>
+    public double LifetimeStart { get; private set; } = double.MinValue;
+
+    /// <summary>
+    /// The time at which this drawable ceases to be alive (dead).
+    /// </summary>
+    public double LifetimeEnd { get; private set; } = double.MaxValue;
+
+    /// <summary>
+    /// Whether this drawable should be removed from its parent when <see cref="IsAlive"/> is false.
+    /// </summary>
+    public bool RemoveWhenNotAlive { get; set; } = true;
+
+    /// <summary>
+    /// Whether the drawable is currently alive based on its lifetime and current <see cref="Clock"/> time.
+    /// </summary>
+    public bool IsAlive => Clock.CurrentTime >= LifetimeStart && Clock.CurrentTime < LifetimeEnd;
+
+    /// <summary>
+    /// Sets the lifetime end to the current time, or the end of the latest transform. (Whichever is later)
+    /// This effectively marks the drawable for removal once all transforms have completed.
+    /// </summary>
+    public void Expire()
+    {
+        LifetimeEnd = Math.Max(Clock.CurrentTime, GetLatestTransformEndTime());
+    }
+
+    #endregion
+
     #region Event Handlers
 
     public virtual bool OnMouseDown(MouseButtonEvent e)

@@ -143,6 +143,11 @@ public class Container : Drawable
         {
             foreach (var child in children)
             {
+                if (!child.IsAlive && child.RemoveWhenNotAlive)
+                {
+                    Remove(child);
+                    continue;
+                }
                 child.Invalidate(InvalidationFlags.Colour, false);
             }
         }
