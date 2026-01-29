@@ -251,6 +251,7 @@ public abstract class AppHost : IDisposable
                 Window.OnMouseMove += OnMouseMove;
                 Window.OnScroll += OnScroll;
                 Window.OnDragDropFile += onDragDropFile;
+                Window.OnDragDropText += onDragDropText;
                 Window.Resized += onResize;
                 Window.FocusLost += updateTargetUpdateHz;
                 Window.FocusGained += updateTargetUpdateHz;
@@ -401,6 +402,7 @@ public abstract class AppHost : IDisposable
     private void OnMouseMove(MouseEvent e) => app?.OnMouseMove(e);
     private void OnScroll(ScrollEvent e) => app?.OnScroll(e);
     private void onDragDropFile(DragDropFileEvent e) => app?.OnDragDropFile(e);
+    private void onDragDropText(DragDropTextEvent e) => app?.OnDragDropText(e);
 
     protected virtual void SetupRenderer()
     {

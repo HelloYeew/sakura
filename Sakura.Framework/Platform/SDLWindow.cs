@@ -84,6 +84,7 @@ public class SDLWindow : IWindow
     public event Action<MouseEvent> OnMouseMove = delegate { };
     public event Action<ScrollEvent> OnScroll = delegate { };
     public event Action<DragDropFileEvent> OnDragDropFile = delegate { };
+    public event Action<DragDropTextEvent> OnDragDropText = delegate { };
 
     public event Action RenderRequested = delegate { };
 
@@ -279,6 +280,10 @@ public class SDLWindow : IWindow
                 case EventType.Dropfile:
                     handleDropFileEvent(sdlEvent.Drop);
                     break;
+
+                case EventType.Droptext:
+                    handleDropTextEvent(sdlEvent.Drop);
+                    break;
             }
         }
     }
@@ -396,6 +401,19 @@ public class SDLWindow : IWindow
         (float scaleX, float scaleY) = getDisplayScale();
         Vector2 position = new Vector2(x * scaleX, y * scaleY);
         OnDragDropFile.Invoke(new DragDropFileEvent(filePath, position));
+    }
+
+    private unsafe void handleDropTextEvent(DropEvent dropEvent)
+    {
+        string text = Marshal.PtrToStringUTF8((nint)dropEvent.File);
+        sdl.Free(dropEvent.File);
+        if (string.IsNullOrEmpty(text))
+            return;
+        int x, y;
+        sdl.GetMouseState(&x, &y);
+        (float scaleX, float scaleY) = getDisplayScale();
+        Vector2 position = new Vector2(x * scaleX, y * scaleY);
+        OnDragDropText.Invoke(new DragDropTextEvent(text, position));
     }
 
     private unsafe int getDisplayRefreshRate()
