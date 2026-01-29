@@ -5,6 +5,7 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.InteropServices;
 using Sakura.Framework.Input;
 using Silk.NET.SDL;
 using Sakura.Framework.Logging;
@@ -82,6 +83,7 @@ public class SDLWindow : IWindow
     public event Action<SakuraMouseButtonEvent> OnMouseUp = delegate { };
     public event Action<MouseEvent> OnMouseMove = delegate { };
     public event Action<ScrollEvent> OnScroll = delegate { };
+    public event Action<DragDropEvent> OnDragDrop = delegate { };
 
     public event Action RenderRequested = delegate { };
 
@@ -273,6 +275,10 @@ public class SDLWindow : IWindow
                 case EventType.Mousewheel:
                     handleMouseWheelEvent(sdlEvent.Wheel);
                     break;
+
+                case EventType.Dropfile:
+                    handleDropEvent(sdlEvent.Drop);
+                    break;
             }
         }
     }
@@ -377,6 +383,19 @@ public class SDLWindow : IWindow
         sdl.GetMouseState(&x, &y);
         mouseState.Position = new Vector2(x * scaleX, y * scaleY);
         OnScroll.Invoke(new ScrollEvent(mouseState, new Vector2(wheelEvent.X, wheelEvent.Y)));
+    }
+
+    private unsafe void handleDropEvent(DropEvent dropEvent)
+    {
+        string filePath = Marshal.PtrToStringUTF8((nint)dropEvent.File);
+        sdl.Free(dropEvent.File);
+        if (string.IsNullOrEmpty(filePath))
+            return;
+        int x, y;
+        sdl.GetMouseState(&x, &y);
+        (float scaleX, float scaleY) = getDisplayScale();
+        Vector2 position = new Vector2(x * scaleX, y * scaleY);
+        OnDragDrop.Invoke(new DragDropEvent(filePath, position));
     }
 
     private unsafe int getDisplayRefreshRate()

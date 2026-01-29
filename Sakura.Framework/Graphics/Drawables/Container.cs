@@ -340,5 +340,19 @@ public class Container : Drawable
         return children.Any(c => c.OnKeyUp(e));
     }
 
+    public override bool OnDragDrop(DragDropEvent e)
+    {
+        foreach (var c in children.OrderByDescending(d => d.Depth))
+        {
+            if (c.IsLoaded && !c.IsHidden && c.Contains(e.Position))
+            {
+                if (c.OnDragDrop(e))
+                    return true;
+            }
+        }
+
+        return base.OnDragDrop(e);
+    }
+
     #endregion
 }
