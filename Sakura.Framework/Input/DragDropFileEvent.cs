@@ -5,7 +5,7 @@ using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Input;
 
-public readonly struct DragDropEvent
+public readonly struct DragDropFileEvent
 {
     /// <summary>
     /// The full path to the file that was dropped.
@@ -17,7 +17,7 @@ public readonly struct DragDropEvent
     /// </summary>
     public Vector2 Position { get; }
 
-    public DragDropEvent(string filePath, Vector2 position)
+    public DragDropFileEvent(string filePath, Vector2 position)
     {
         FilePath = filePath;
         Position = position;
