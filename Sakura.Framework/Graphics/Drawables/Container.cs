@@ -340,5 +340,33 @@ public class Container : Drawable
         return children.Any(c => c.OnKeyUp(e));
     }
 
+    public override bool OnDragDropFile(DragDropFileEvent e)
+    {
+        foreach (var c in children.OrderByDescending(d => d.Depth))
+        {
+            if (c.IsLoaded && !c.IsHidden && c.Contains(e.Position))
+            {
+                if (c.OnDragDropFile(e))
+                    return true;
+            }
+        }
+
+        return base.OnDragDropFile(e);
+    }
+
+    public override bool OnDragDropText(DragDropTextEvent e)
+    {
+        foreach (var c in children.OrderByDescending(d => d.Depth))
+        {
+            if (c.IsLoaded && !c.IsHidden && c.Contains(e.Position))
+            {
+                if (c.OnDragDropText(e))
+                    return true;
+            }
+        }
+
+        return base.OnDragDropText(e);
+    }
+
     #endregion
 }

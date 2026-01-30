@@ -110,6 +110,8 @@ public interface IWindow : IDisposable
     event Action<MouseButtonEvent> OnMouseUp;
     event Action<MouseEvent> OnMouseMove;
     event Action<ScrollEvent> OnScroll;
+    event Action<DragDropFileEvent> OnDragDropFile;
+    event Action<DragDropTextEvent> OnDragDropText;
 
     /// <summary>
     /// Invoked when a render is requested.

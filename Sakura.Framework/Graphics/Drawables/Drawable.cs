@@ -895,6 +895,9 @@ public abstract class Drawable
     public virtual bool OnKeyDown(KeyEvent e) => false;
     public virtual bool OnKeyUp(KeyEvent e) => false;
 
+    public virtual bool OnDragDropFile(DragDropFileEvent e) => false;
+    public virtual bool OnDragDropText(DragDropTextEvent e) => false;
+
     #endregion
 
     #region Event Hooks
