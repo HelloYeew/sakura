@@ -85,6 +85,11 @@ public interface IWindow : IDisposable
     /// </summary>
     void GetDrawableSize(out int width, out int height);
 
+    /// <summary>
+    /// Gets the physical size of the window in pixels.
+    /// </summary>
+    void GetPhysicalSize(out int width, out int height);
+
     event Action Update;
     event Action FocusLost;
     event Action FocusGained;

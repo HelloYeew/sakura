@@ -393,7 +393,11 @@ public abstract class AppHost : IDisposable
 
     private void onResize(int width, int height)
     {
-        Renderer?.Resize(width, height);
+        int physicalWidth = width;
+        int physicalHeight = height;
+        if (Window is SDLWindow sdlWindow)
+            sdlWindow.GetPhysicalSize(out physicalWidth, out physicalHeight);
+        Renderer?.Resize(physicalWidth, physicalHeight, width, height);
         if (app != null) app.Size = new Vector2(width, height);
     }
 

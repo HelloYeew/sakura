@@ -35,6 +35,8 @@ public class SDLWindow : IWindow
     private bool resizable = true;
     private int currentWidth;
     private int currentHeight;
+    private int logicalWidth;
+    private int logicalHeight;
 
     private WindowFlags windowFlags = WindowFlags.Opengl | WindowFlags.AllowHighdpi;
 
@@ -56,8 +58,8 @@ public class SDLWindow : IWindow
         set => setResizable(value);
     }
 
-    public int Width => currentWidth;
-    public int Height => currentHeight;
+    public int Width => logicalWidth;
+    public int Height => logicalHeight;
 
     public IGraphicsSurface GraphicsSurface => graphicsSurface;
 
@@ -163,9 +165,20 @@ public class SDLWindow : IWindow
 
         GetDrawableSize(out currentWidth, out currentHeight);
 
+        int w, h, phyW, phyH;
+        sdl.GetWindowSize(window, &w, &h);
+        sdl.GLGetDrawableSize(window, &phyW, &phyH);
+
+        logicalWidth = w;
+        logicalHeight = h;
+        currentWidth = phyW;
+        currentHeight = phyH;
+
         Logger.Verbose("SDL window created successfully");
 
         graphicsSurface.GetFunctionAddress = proc => (nint)sdl.GLGetProcAddress(proc);
+
+        Resized.Invoke(logicalWidth, logicalHeight);
     }
 
     public void Close()
@@ -200,6 +213,12 @@ public class SDLWindow : IWindow
         sdl.GLGetDrawableSize(window, &drawableWidth, &drawableHeight);
         width = drawableWidth;
         height = drawableHeight;
+    }
+
+    public void GetPhysicalSize(out int width, out int height)
+    {
+        width = currentWidth;
+        height = currentHeight;
     }
 
     private unsafe (float scaleX, float scaleY) getDisplayScale()
@@ -329,16 +348,19 @@ public class SDLWindow : IWindow
 
             case WindowEventID.SizeChanged:
             case WindowEventID.Resized:
-                int drawableWidth, drawableHeight;
+                int drawableWidth, drawableHeight, windowWidth, windowHeight;
+                sdl.GetWindowSize(window, &windowWidth, &windowHeight);
                 sdl.GLGetDrawableSize(window, &drawableWidth, &drawableHeight);
                 // SDL sometimes sends multiple resize events with the same size, ignore them
                 // to prevent resize event got invoke multiple times
-                if (drawableWidth == currentWidth && drawableHeight == currentHeight)
+                if (drawableWidth == currentWidth && drawableHeight == currentHeight && windowWidth == logicalWidth && windowHeight == logicalHeight)
                     break;
-                Logger.Verbose($"Window resized to {drawableWidth}x{drawableHeight}");
                 currentWidth = drawableWidth;
                 currentHeight = drawableHeight;
-                Resized.Invoke(drawableWidth, drawableHeight);
+                logicalWidth = windowWidth;
+                logicalHeight = windowHeight;
+                Logger.Verbose($"Window resized to {drawableWidth}x{drawableHeight} (logical size: {windowWidth}x{windowHeight})");
+                Resized.Invoke(logicalWidth, logicalHeight);
                 break;
         }
     }
@@ -374,9 +396,8 @@ public class SDLWindow : IWindow
 
     private void handleMouseMotionEvent(MouseMotionEvent motionEvent)
     {
-        var (scaleX, scaleY) = getDisplayScale();
-        mouseState.Position = new Vector2(motionEvent.X * scaleX, motionEvent.Y * scaleY);
-        var delta = new Vector2(motionEvent.Xrel * scaleX, motionEvent.Yrel * scaleY);
+        mouseState.Position = new Vector2(motionEvent.X, motionEvent.Y);
+        var delta = new Vector2(motionEvent.Xrel, motionEvent.Yrel);
         OnMouseMove.Invoke(new MouseEvent(mouseState, delta));
     }
 
