@@ -387,9 +387,7 @@ public class SDLWindow : IWindow
     {
         var button = SDLEnumMapping.ToSakuraMouseButton(buttonEvent.Button);
         if (button == MouseButton.Unknown) return;
-
-        var (scaleX, scaleY) = getDisplayScale();
-        mouseState.Position = new Vector2(buttonEvent.X * scaleX, buttonEvent.Y * scaleY);
+        mouseState.Position = new Vector2(buttonEvent.X, buttonEvent.Y);
         mouseState.SetPressed(button, buttonEvent.State == 1);
         action.Invoke(new Input.MouseButtonEvent(mouseState, button, buttonEvent.Clicks));
     }
@@ -405,9 +403,8 @@ public class SDLWindow : IWindow
     {
         int x = 0;
         int y = 0;
-        var (scaleX, scaleY) = getDisplayScale();
         sdl.GetMouseState(&x, &y);
-        mouseState.Position = new Vector2(x * scaleX, y * scaleY);
+        mouseState.Position = new Vector2(x, y);
         OnScroll.Invoke(new ScrollEvent(mouseState, new Vector2(wheelEvent.X, wheelEvent.Y)));
     }
 
@@ -419,8 +416,7 @@ public class SDLWindow : IWindow
             return;
         int x, y;
         sdl.GetMouseState(&x, &y);
-        (float scaleX, float scaleY) = getDisplayScale();
-        Vector2 position = new Vector2(x * scaleX, y * scaleY);
+        Vector2 position = new Vector2(x, y);
         OnDragDropFile.Invoke(new DragDropFileEvent(filePath, position));
     }
 
@@ -432,8 +428,7 @@ public class SDLWindow : IWindow
             return;
         int x, y;
         sdl.GetMouseState(&x, &y);
-        (float scaleX, float scaleY) = getDisplayScale();
-        Vector2 position = new Vector2(x * scaleX, y * scaleY);
+        Vector2 position = new Vector2(x, y);
         OnDragDropText.Invoke(new DragDropTextEvent(text, position));
     }
 
