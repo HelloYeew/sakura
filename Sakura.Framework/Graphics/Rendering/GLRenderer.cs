@@ -107,6 +107,7 @@ public class GLRenderer : IRenderer
         projectionMatrix = Matrix4x4.CreateOrthographicOffCenter(0, logicalWidth, logicalHeight, 0, -1, 1);
         renderScaleX = (float)physicalWidth / logicalWidth;
         renderScaleY = (float)physicalHeight / logicalHeight;
+        Logger.Debug($"Renderer resized: physical=({physicalWidth},{physicalHeight}) logical=({logicalWidth},{logicalHeight}) scale=({renderScaleX},{renderScaleY})");
     }
 
     public void Clear()
