@@ -28,7 +28,7 @@ public interface IRenderer
 
     void SetRoot(Drawable root);
 
-    void Resize(int width, int height);
+    void Resize(int physicalWidth, int physicalHeight, int logicalWidth, int logicalHeight);
 
     void Draw(IClock clock);
 

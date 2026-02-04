@@ -35,6 +35,8 @@ public class SDLWindow : IWindow
     private bool resizable = true;
     private int currentWidth;
     private int currentHeight;
+    private int logicalWidth;
+    private int logicalHeight;
 
     private WindowFlags windowFlags = WindowFlags.Opengl | WindowFlags.AllowHighdpi;
 
@@ -56,8 +58,8 @@ public class SDLWindow : IWindow
         set => setResizable(value);
     }
 
-    public int Width => currentWidth;
-    public int Height => currentHeight;
+    public int Width => logicalWidth;
+    public int Height => logicalHeight;
 
     public IGraphicsSurface GraphicsSurface => graphicsSurface;
 
@@ -163,9 +165,20 @@ public class SDLWindow : IWindow
 
         GetDrawableSize(out currentWidth, out currentHeight);
 
+        int w, h, phyW, phyH;
+        sdl.GetWindowSize(window, &w, &h);
+        sdl.GLGetDrawableSize(window, &phyW, &phyH);
+
+        logicalWidth = w;
+        logicalHeight = h;
+        currentWidth = phyW;
+        currentHeight = phyH;
+
         Logger.Verbose("SDL window created successfully");
 
         graphicsSurface.GetFunctionAddress = proc => (nint)sdl.GLGetProcAddress(proc);
+
+        Resized.Invoke(logicalWidth, logicalHeight);
     }
 
     public void Close()
@@ -200,6 +213,12 @@ public class SDLWindow : IWindow
         sdl.GLGetDrawableSize(window, &drawableWidth, &drawableHeight);
         width = drawableWidth;
         height = drawableHeight;
+    }
+
+    public void GetPhysicalSize(out int width, out int height)
+    {
+        width = currentWidth;
+        height = currentHeight;
     }
 
     private unsafe (float scaleX, float scaleY) getDisplayScale()
@@ -329,16 +348,19 @@ public class SDLWindow : IWindow
 
             case WindowEventID.SizeChanged:
             case WindowEventID.Resized:
-                int drawableWidth, drawableHeight;
+                int drawableWidth, drawableHeight, windowWidth, windowHeight;
+                sdl.GetWindowSize(window, &windowWidth, &windowHeight);
                 sdl.GLGetDrawableSize(window, &drawableWidth, &drawableHeight);
                 // SDL sometimes sends multiple resize events with the same size, ignore them
                 // to prevent resize event got invoke multiple times
-                if (drawableWidth == currentWidth && drawableHeight == currentHeight)
+                if (drawableWidth == currentWidth && drawableHeight == currentHeight && windowWidth == logicalWidth && windowHeight == logicalHeight)
                     break;
-                Logger.Verbose($"Window resized to {drawableWidth}x{drawableHeight}");
                 currentWidth = drawableWidth;
                 currentHeight = drawableHeight;
-                Resized.Invoke(drawableWidth, drawableHeight);
+                logicalWidth = windowWidth;
+                logicalHeight = windowHeight;
+                Logger.Verbose($"Window resized to {drawableWidth}x{drawableHeight} (logical size: {windowWidth}x{windowHeight})");
+                Resized.Invoke(logicalWidth, logicalHeight);
                 break;
         }
     }
@@ -365,18 +387,15 @@ public class SDLWindow : IWindow
     {
         var button = SDLEnumMapping.ToSakuraMouseButton(buttonEvent.Button);
         if (button == MouseButton.Unknown) return;
-
-        var (scaleX, scaleY) = getDisplayScale();
-        mouseState.Position = new Vector2(buttonEvent.X * scaleX, buttonEvent.Y * scaleY);
+        mouseState.Position = new Vector2(buttonEvent.X, buttonEvent.Y);
         mouseState.SetPressed(button, buttonEvent.State == 1);
         action.Invoke(new Input.MouseButtonEvent(mouseState, button, buttonEvent.Clicks));
     }
 
     private void handleMouseMotionEvent(MouseMotionEvent motionEvent)
     {
-        var (scaleX, scaleY) = getDisplayScale();
-        mouseState.Position = new Vector2(motionEvent.X * scaleX, motionEvent.Y * scaleY);
-        var delta = new Vector2(motionEvent.Xrel * scaleX, motionEvent.Yrel * scaleY);
+        mouseState.Position = new Vector2(motionEvent.X, motionEvent.Y);
+        var delta = new Vector2(motionEvent.Xrel, motionEvent.Yrel);
         OnMouseMove.Invoke(new MouseEvent(mouseState, delta));
     }
 
@@ -384,9 +403,8 @@ public class SDLWindow : IWindow
     {
         int x = 0;
         int y = 0;
-        var (scaleX, scaleY) = getDisplayScale();
         sdl.GetMouseState(&x, &y);
-        mouseState.Position = new Vector2(x * scaleX, y * scaleY);
+        mouseState.Position = new Vector2(x, y);
         OnScroll.Invoke(new ScrollEvent(mouseState, new Vector2(wheelEvent.X, wheelEvent.Y)));
     }
 
@@ -398,8 +416,7 @@ public class SDLWindow : IWindow
             return;
         int x, y;
         sdl.GetMouseState(&x, &y);
-        (float scaleX, float scaleY) = getDisplayScale();
-        Vector2 position = new Vector2(x * scaleX, y * scaleY);
+        Vector2 position = new Vector2(x, y);
         OnDragDropFile.Invoke(new DragDropFileEvent(filePath, position));
     }
 
@@ -411,8 +428,7 @@ public class SDLWindow : IWindow
             return;
         int x, y;
         sdl.GetMouseState(&x, &y);
-        (float scaleX, float scaleY) = getDisplayScale();
-        Vector2 position = new Vector2(x * scaleX, y * scaleY);
+        Vector2 position = new Vector2(x, y);
         OnDragDropText.Invoke(new DragDropTextEvent(text, position));
     }
 

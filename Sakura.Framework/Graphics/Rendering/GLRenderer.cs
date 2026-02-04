@@ -45,6 +45,9 @@ public class GLRenderer : IRenderer
     private int viewportHeight;
     private readonly Stack<Vector4> scissorStack = new Stack<Vector4>();
 
+    private float renderScaleX = 1.0f;
+    private float renderScaleY = 1.0f;
+
     public unsafe void Initialize(IGraphicsSurface graphicsSurface)
     {
         gl = GL.GetApi(graphicsSurface.GetFunctionAddress);
@@ -97,11 +100,14 @@ public class GLRenderer : IRenderer
         root = drawableRoot;
     }
 
-    public void Resize(int width, int height)
+    public void Resize(int physicalWidth, int physicalHeight, int logicalWidth, int logicalHeight)
     {
-        gl.Viewport(0, 0, (uint)width, (uint)height);
-        viewportHeight = height;
-        projectionMatrix = Matrix4x4.CreateOrthographicOffCenter(0, width, height, 0, -1, 1);
+        gl.Viewport(0, 0, (uint)physicalWidth, (uint)physicalHeight);
+        viewportHeight = physicalHeight;
+        projectionMatrix = Matrix4x4.CreateOrthographicOffCenter(0, logicalWidth, logicalHeight, 0, -1, 1);
+        renderScaleX = (float)physicalWidth / logicalWidth;
+        renderScaleY = (float)physicalHeight / logicalHeight;
+        Logger.Debug($"Renderer resized: physical=({physicalWidth},{physicalHeight}) logical=({logicalWidth},{logicalHeight}) scale=({renderScaleX},{renderScaleY})");
     }
 
     public void Clear()
@@ -233,10 +239,10 @@ public class GLRenderer : IRenderer
             var rect = maskDrawable.DrawRectangle;
 
             // Calculate OpenGL Scissor Rect (Bottom-Left origin) from UI Rect (Top-Left origin)
-            int scissorX = (int)Math.Max(0, rect.X);
-            int scissorY = (int)Math.Max(0, viewportHeight - (rect.Y + rect.Height));
-            int scissorW = (int)Math.Max(0, rect.Width);
-            int scissorH = (int)Math.Max(0, rect.Height);
+            int scissorX = (int)(rect.X * renderScaleX);
+            int scissorY = (int)(viewportHeight - (rect.Y + rect.Height) * renderScaleY);
+            int scissorW = (int)(rect.Width * renderScaleX);
+            int scissorH = (int)(rect.Height * renderScaleY);
 
             // Handle Nesting: Intersect with current scissor rect if one exists
             if (scissorStack.Count > 0)

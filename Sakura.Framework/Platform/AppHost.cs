@@ -280,9 +280,7 @@ public abstract class AppHost : IDisposable
 
             Renderer?.SetRoot(this.app);
 
-            // Set initial size to current window size.
-            Window.GetDrawableSize(out int initialWidth, out int initialHeight);
-            onResize(initialWidth, initialHeight);
+            onResize(Window.Width, Window.Height);
 
             AppClock = new Clock(true);
 
@@ -391,10 +389,14 @@ public abstract class AppHost : IDisposable
         app?.OnKeyUp(e);
     }
 
-    private void onResize(int width, int height)
+    private void onResize(int logicalWidth, int logicalHeight)
     {
-        Renderer?.Resize(width, height);
-        if (app != null) app.Size = new Vector2(width, height);
+        int physicalWidth = logicalWidth;
+        int physicalHeight = logicalHeight;
+        if (Window is SDLWindow sdlWindow)
+            sdlWindow.GetPhysicalSize(out physicalWidth, out physicalHeight);
+        Renderer?.Resize(physicalWidth, physicalHeight, logicalWidth, logicalHeight);
+        if (app != null) app.Size = new Vector2(logicalWidth, logicalHeight);
     }
 
     private void OnMouseDown(MouseButtonEvent e) => app?.OnMouseDown(e);
