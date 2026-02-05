@@ -1,6 +1,8 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+#nullable disable
+
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
@@ -24,30 +26,53 @@ public class GLFontStore : IFontStore
         atlas = new TextureAtlas(gl, 1024, 1024);
     }
 
-    public void LoadDefaultFont(Storage resourceStorage)
+    private void loadFrameworkFonts(Storage resourceStorage)
     {
-        try
+        string[] weights = {
+            "Thin", "ExtraLight", "Light", "Regular", "Medium",
+            "SemiBold", "Bold", "ExtraBold", "Black"
+        };
+
+        string family = "NotoSans";
+
+        foreach (string weight in weights)
         {
-            if (resourceStorage.Exists("NotoSans-Regular.ttf"))
+            string normalFileName = $"{family}-{weight}.ttf";
+            AddFont(resourceStorage, normalFileName, alias: $"{family}-{weight}");
+
+            string italicFileName;
+            string italicKey = $"{family}-{weight}Italic";
+
+            if (weight == "Regular")
             {
-                using var stream = resourceStorage.GetStream("NotoSans-Regular.ttf");
-                defaultFont = loadFontFromStream("NotoSans-Regular", stream);
-                fontCache["NotoSans"] = defaultFont;
-                fontCache["NotoSans-Regular"] = defaultFont;
-                fontCache["Default"] = defaultFont;
+                italicFileName = $"{family}-Italic.ttf";
             }
             else
             {
-                Logger.Warning("Default font 'NotoSans-Regular.ttf' not found in resources. Text rendering may fail.");
+                italicFileName = $"{family}-{weight}Italic.ttf";
             }
+
+            AddFont(resourceStorage, italicFileName, alias: italicKey);
         }
-        catch (Exception e)
+
+        if (fontCache.TryGetValue("NotoSans-Regular", out var reg))
         {
-            Logger.Error($"Failed to load default font: {e.Message}");
+            defaultFont = reg;
+            fontCache["Default"] = reg;
+            fontCache["NotoSans"] = reg; // Allow lookup by just family name
+        }
+        else
+        {
+            Logger.Warning("FontLoader : NotoSans-Regular.ttf was not found. Default font is missing.");
         }
     }
 
-    public void AddFont(Storage storage, string filename, string alias = null)
+    public void LoadDefaultFont(Storage resourceStorage)
+    {
+        loadFrameworkFonts(resourceStorage);
+    }
+
+    public void AddFont(Storage storage, string filename, string alias = null!)
     {
         try
         {
@@ -62,7 +87,7 @@ public class GLFontStore : IFontStore
             var font = loadFontFromStream(name, stream);
 
             fontCache[name] = font;
-            Logger.Verbose($"Loaded font: {name}");
+            Logger.Verbose($"Loaded font {name} from {filename}");
         }
         catch (Exception ex)
         {
@@ -79,26 +104,27 @@ public class GLFontStore : IFontStore
 
     public Font Get(FontUsage usage)
     {
-        // 1. Construct lookup keys
         string specificKey = $"{usage.Family}-{usage.Weight}";
+
+        if (usage.Italics)
+            specificKey += "Italic";
+
         string familyKey = usage.Family;
 
         if (fontCache.TryGetValue(specificKey, out var font))
             return font;
 
-        if (fontCache.TryGetValue(familyKey, out font))
+        if (usage.Italics)
+        {
+            string nonItalicKey = $"{usage.Family}-{usage.Weight}";
+            if (fontCache.TryGetValue(nonItalicKey, out font))
+                return font;
+        }
+
+        if (fontCache.TryGetValue(usage.Family, out font))
             return font;
 
-        // 2. Fallback to default
-        if (defaultFont != null)
-            return defaultFont;
-
-        // 3. Absolute fallback
-        foreach (var f in fontCache.Values)
-            return f;
-
-        // If we reach here, we are likely crashing soon if used, but let's return null to handle gracefully upstream
-        return null;
+        return defaultFont;
     }
 
     public Font Get(string name)
