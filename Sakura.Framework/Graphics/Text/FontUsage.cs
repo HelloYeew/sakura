@@ -10,6 +10,9 @@ namespace Sakura.Framework.Graphics.Text;
 /// </summary>
 public readonly struct FontUsage : IEquatable<FontUsage>
 {
+    public const float DEFAULT_FONT_SIZE = 24;
+    public const string DEFAULT_FONT_FAMILY = "NotoSans";
+
     public string Family { get; }
     public float Size { get; }
     public string Weight { get; }
@@ -18,13 +21,21 @@ public readonly struct FontUsage : IEquatable<FontUsage>
     /// <summary>
     /// Gets the default font usage (NotoSans-Regular, 24px).
     /// </summary>
-    public static FontUsage Default => new FontUsage("NotoSans", 24);
+    public static FontUsage Default => new FontUsage("NotoSans", weight: DefaultFontWeights.Regular);
 
-    public FontUsage(string family = "NotoSans", float size = 24, string weight = "Regular", bool italics = false)
+    public FontUsage(string family = DEFAULT_FONT_FAMILY, float size = DEFAULT_FONT_SIZE, string weight = "Regular", bool italics = false)
     {
         Family = family;
         Size = size;
         Weight = weight;
+        Italics = italics;
+    }
+
+    public FontUsage(string family = DEFAULT_FONT_FAMILY, float size = DEFAULT_FONT_SIZE, DefaultFontWeights weight = DefaultFontWeights.Regular, bool italics = false)
+    {
+        Family = family;
+        Size = size;
+        Weight = weight.ToString();
         Italics = italics;
     }
 
