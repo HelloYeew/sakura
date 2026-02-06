@@ -28,10 +28,7 @@ public class GLFontStore : IFontStore
 
     private void loadFrameworkFonts(Storage resourceStorage)
     {
-        string[] weights = {
-            "Thin", "ExtraLight", "Light", "Regular", "Medium",
-            "SemiBold", "Bold", "ExtraBold", "Black"
-        };
+        string[] weights = Enum.GetNames(typeof(DefaultFontWeights));
 
         string family = "NotoSans";
 
