@@ -43,14 +43,7 @@ public class GLFontStore : IFontStore
             string italicFileName;
             string italicKey = $"{family}-{weight}Italic";
 
-            if (weight == "Regular")
-            {
-                italicFileName = $"{family}-Italic.ttf";
-            }
-            else
-            {
-                italicFileName = $"{family}-{weight}Italic.ttf";
-            }
+            italicFileName = weight == "Regular" ? $"{family}-Italic.ttf" : $"{family}-{weight}Italic.ttf";
 
             AddFont(resourceStorage, italicFileName, alias: italicKey);
         }

@@ -18,7 +18,7 @@ public readonly struct FontUsage : IEquatable<FontUsage>
     /// <summary>
     /// Gets the default font usage (NotoSans-Regular, 24px).
     /// </summary>
-    public static FontUsage Default => new FontUsage("NotoSans", 24);
+    public static FontUsage Default => new FontUsage("NotoSans");
 
     public FontUsage(string family = "NotoSans", float size = 24, string weight = "Regular", bool italics = false)
     {
