@@ -117,6 +117,16 @@ public class Container : Drawable
         }
     }
 
+    public virtual void Clear()
+    {
+        foreach (var child in children)
+        {
+            child.Parent = null;
+        }
+        children.Clear();
+        Invalidate(InvalidationFlags.DrawInfo);
+    }
+
     public override void Update()
     {
         if (AutoSizeAxes != Axes.None)

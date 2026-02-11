@@ -108,6 +108,11 @@ public class ScrollableContainer : Container
         CreateHorizontalScrollbar();
     }
 
+    public override void Clear()
+    {
+        ScrollContent.Clear();
+    }
+
     protected virtual void CreateVerticalScrollbar()
     {
         verticalScrollbar.Child = new Box()

@@ -53,6 +53,8 @@ public class App : Container, IDisposable
 
     internal void SetHost(AppHost host) => Host = host;
 
+    private DrawVisualiser visualiser;
+
     public override void Load()
     {
         base.Load();
@@ -112,6 +114,33 @@ public class App : Container, IDisposable
             else
                 FpsGraph.FadeOut(200, Easing.OutQuint);
         };
+    }
+
+    public void ToggleVisualiser()
+    {
+        if (visualiser == null)
+        {
+            // Initialize the visualiser, targeting 'this' (the App root)
+            visualiser = new DrawVisualiser(this);
+
+            // Add it to the App container.
+            // Because your Update loop iterates backwards or based on logic,
+            // we typically want it to be processed last/drawn last.
+            Add(visualiser);
+        }
+        else
+        {
+            if (visualiser.IsHidden)
+                visualiser.Show();
+            else
+                visualiser.Hide();
+        }
+
+        // Ensure it's always at the very front
+        // Assuming your list sorts by depth, set a very low depth (since often negative is closer)
+        // or very high depending on your sort order.
+        // Based on your Drawable.cs, it sorts by Depth in Draw().
+        visualiser.Depth = float.MaxValue;
     }
 
     /// <summary>
