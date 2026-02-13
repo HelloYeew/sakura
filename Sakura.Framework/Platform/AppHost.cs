@@ -378,6 +378,22 @@ public abstract class AppHost : IDisposable
             Logger.Log(builder.ToString());
             Logger.Log("Hierarchy dumped to console. Press F1 to dump again.");
         }
+
+        if (!e.IsRepeat && e.Key == Key.F11)
+        {
+            switch (Window.WindowMode)
+            {
+                case WindowMode.Windowed:
+                    Window.WindowMode = WindowMode.Borderless;
+                    break;
+                case WindowMode.Borderless:
+                    Window.WindowMode = WindowMode.Fullscreen;
+                    break;
+                case WindowMode.Fullscreen:
+                    Window.WindowMode = WindowMode.Windowed;
+                    break;
+            }
+        }
         if (!e.IsRepeat && e.Key == Key.F12 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
             Storage.OpenFileExternally("");
