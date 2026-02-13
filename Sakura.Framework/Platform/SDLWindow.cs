@@ -135,6 +135,13 @@ public class SDLWindow : IWindow
             windowFlags |= WindowFlags.Resizable;
         }
 
+        if (RuntimeInfo.IsMacOS && windowMode == WindowMode.Fullscreen)
+        {
+            // SDL's full screen on MacOS has a lot of issues so we force MacOS to use only window and borderless window modes
+            Logger.Warning("Fullscreen mode is not supported on MacOS due to a lot of issues with SDL implementation, falling back to Borderless window mode.");
+            windowMode = WindowMode.Borderless;
+        }
+
         switch (windowMode)
         {
             case WindowMode.Borderless:
@@ -282,6 +289,11 @@ public class SDLWindow : IWindow
         if (windowMode == newMode)
             return;
 
+        if (RuntimeInfo.IsMacOS && newMode == WindowMode.Fullscreen)
+        {
+            newMode = WindowMode.Borderless;
+        }
+
         windowMode = newMode;
         WindowModeReactive.Value = newMode;
 
@@ -315,6 +327,8 @@ public class SDLWindow : IWindow
         currentHeight = phyH;
 
         Resized.Invoke(logicalWidth, logicalHeight);
+
+        Logger.Debug($"Window mode changed to {newMode}");
     }
 
     private unsafe void handleSdlEvents()
