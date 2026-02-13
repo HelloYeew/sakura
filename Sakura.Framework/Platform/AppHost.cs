@@ -243,6 +243,9 @@ public abstract class AppHost : IDisposable
                 Window = CreateWindow();
                 Window.Title = Options.FriendlyAppName;
                 Window.ApplicationName = Name;
+                var windowModeConfig = FrameworkConfigManager.Get<WindowMode>(FrameworkSetting.WindowMode);
+                Window.WindowMode = windowModeConfig.Value;
+                Window.WindowModeReactive.ValueChanged += e => windowModeConfig.Value = e.NewValue;
 
                 Window.OnKeyDown += OnKeyDown;
                 Window.OnKeyUp += OnKeyUp;
@@ -379,7 +382,7 @@ public abstract class AppHost : IDisposable
             Logger.Log("Hierarchy dumped to console. Press F1 to dump again.");
         }
 
-        if (!e.IsRepeat && e.Key == Key.F11)
+        if (!e.IsRepeat && e.Key == Key.F11 && (e.Modifiers & KeyModifiers.Control) == 0)
         {
             switch (Window.WindowMode)
             {
