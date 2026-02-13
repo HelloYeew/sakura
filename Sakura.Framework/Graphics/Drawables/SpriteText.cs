@@ -10,6 +10,7 @@ using Sakura.Framework.Graphics.Rendering.Vertex;
 using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Maths;
+using Sakura.Framework.Platform;
 
 namespace Sakura.Framework.Graphics.Drawables;
 
@@ -31,6 +32,9 @@ public class SpriteText : Drawable
 
     [Resolved]
     private IFontStore fontStore { get; set; } = null!;
+
+    [Resolved]
+    private IWindow window { get; set; } = null!;
 
     /// <summary>
     /// The actual measured size of the text content in pixels.
@@ -78,17 +82,22 @@ public class SpriteText : Drawable
 
     private void computeLayout()
     {
-        if (fontStore == null && Dependencies != null)
-             Dependencies.Inject(this);
+        if ((fontStore == null || window == null) && Dependencies != null)
+            Dependencies.Inject(this);
 
-        if (fontStore == null) return;
+        if (fontStore == null || window == null) return;
 
         if (resolvedFont == null)
             resolvedFont = fontStore.Get(fontUsage);
 
         if (resolvedFont == null) return;
 
-        shapedText = resolvedFont.ProcessText(Text, fontUsage.Size);
+        window.GetPhysicalSize(out int physW, out int physH);
+        float dpiScale = (float)physW / window.Width;
+
+        if (dpiScale <= 0) dpiScale = 1.0f;
+
+        shapedText = resolvedFont.ProcessText(Text, fontUsage.Size, dpiScale);
         ContentSize = new Vector2(shapedText.BoundingBox.X, shapedText.BoundingBox.Y);
 
         layoutInvalidated = false;
