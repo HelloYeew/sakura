@@ -51,7 +51,7 @@ public abstract class AppHost : IDisposable
     /// Determines whether the host should run without a window or renderer.
     /// Override this in a headless host implementation.
     /// </summary>
-    protected virtual bool IsHeadless => false;
+    public virtual bool IsHeadless => false;
 
     [NotNull]
     public HostOptions Options { get; private set; }
@@ -236,50 +236,44 @@ public abstract class AppHost : IDisposable
 
             executionState = ExecutionState.Running;
 
-            if (!IsHeadless)
+            FrameLimiter.ValueChanged += onFrameLimiterChanged;
+
+            Window = CreateWindow();
+            Window.Title = Options.FriendlyAppName;
+            Window.ApplicationName = Name;
+
+            Window.OnKeyDown += OnKeyDown;
+            Window.OnKeyUp += OnKeyUp;
+            Window.OnMouseDown += OnMouseDown;
+            Window.OnMouseUp += OnMouseUp;
+            Window.OnMouseMove += OnMouseMove;
+            Window.OnScroll += OnScroll;
+            Window.OnDragDropFile += onDragDropFile;
+            Window.OnDragDropText += onDragDropText;
+            Window.Resized += onResize;
+            Window.FocusLost += updateTargetUpdateHz;
+            Window.FocusGained += updateTargetUpdateHz;
+            Window.Minimized += updateTargetUpdateHz;
+            Window.Restored += updateTargetUpdateHz;
+            Window.DisplayChanged += _ => updateTargetUpdateHz();
+            Window.RenderRequested += () =>
             {
-                FrameLimiter.ValueChanged += onFrameLimiterChanged;
-
-                Window = CreateWindow();
-                Window.Title = Options.FriendlyAppName;
-                Window.ApplicationName = Name;
-                var windowModeConfig = FrameworkConfigManager.Get<WindowMode>(FrameworkSetting.WindowMode);
-                Window.WindowMode = windowModeConfig.Value;
-                Window.WindowModeReactive.ValueChanged += e => windowModeConfig.Value = e.NewValue;
-
-                Window.OnKeyDown += OnKeyDown;
-                Window.OnKeyUp += OnKeyUp;
-                Window.OnMouseDown += OnMouseDown;
-                Window.OnMouseUp += OnMouseUp;
-                Window.OnMouseMove += OnMouseMove;
-                Window.OnScroll += OnScroll;
-                Window.OnDragDropFile += onDragDropFile;
-                Window.OnDragDropText += onDragDropText;
-                Window.Resized += onResize;
-                Window.FocusLost += updateTargetUpdateHz;
-                Window.FocusGained += updateTargetUpdateHz;
-                Window.Minimized += updateTargetUpdateHz;
-                Window.Restored += updateTargetUpdateHz;
-                Window.DisplayChanged += _ => updateTargetUpdateHz();
-                Window.RenderRequested += () =>
+                if (executionState == ExecutionState.Running)
                 {
-                    if (executionState == ExecutionState.Running)
-                    {
-                        // Force an update and draw when requested
-                        // during the resize operation since the loop is blocked.
-                        app?.Update();
-                        if (!IsHeadless)
-                            PerformDraw();
-                    }
-                };
+                    // Force an update and draw when requested
+                    // during the resize operation since the loop is blocked.
+                    app?.Update();
+                    if (!IsHeadless)
+                        PerformDraw();
+                }
+            };
 
-                Window.Initialize();
-                Window.Create();
+            Window.Initialize();
+            Window.Create();
 
-                onFrameLimiterChanged(new ValueChangedEvent<FrameSync>(default, FrameLimiter.Value));
+            onFrameLimiterChanged(new ValueChangedEvent<FrameSync>(default, FrameLimiter.Value));
 
-                SetupRenderer();
-            }
+            SetupRenderer();
 
             Renderer?.SetRoot(this.app);
 
@@ -315,9 +309,7 @@ public abstract class AppHost : IDisposable
                     // Will introduce it again when want multi-threaded audio update.
 
                     PerformUpdate();
-
-                    if (!IsHeadless)
-                        PerformDraw();
+                    PerformDraw();
 
                     if (FrameLimiter.Value != FrameSync.VSync && FrameLimiter.Value != FrameSync.Unlimited)
                     {
