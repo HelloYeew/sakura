@@ -4,6 +4,7 @@
 using System;
 using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
+using Sakura.Framework.Reactive;
 
 namespace Sakura.Framework.Platform;
 
@@ -17,6 +18,8 @@ public class HeadlessWindow : IWindow
     public int DisplayHz => 60;
     public int Width => 800;
     public int Height => 600;
+    public WindowMode WindowMode { get; set; } = WindowMode.Windowed;
+    public Reactive<WindowMode> WindowModeReactive { get; } = new Reactive<WindowMode>(WindowMode.Windowed);
     public IGraphicsSurface GraphicsSurface { get; } = new HeadlessGraphicsSurface();
     public void Initialize()
     {
