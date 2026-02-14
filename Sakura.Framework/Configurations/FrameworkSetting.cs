@@ -10,5 +10,6 @@ public enum FrameworkSetting
     ShowFpsGraph,
     MasterVolume,
     TrackVolume,
-    SampleVolume
+    SampleVolume,
+    WindowMode
 }

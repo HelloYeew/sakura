@@ -3,6 +3,7 @@
 
 using System;
 using Sakura.Framework.Input;
+using Sakura.Framework.Reactive;
 
 namespace Sakura.Framework.Platform;
 
@@ -56,6 +57,16 @@ public interface IWindow : IDisposable
     /// </remarks>
     /// </summary>
     int Height { get; }
+
+    /// <summary>
+    /// The current window mode (e.g., Windowed, Borderless, Fullscreen).
+    /// </summary>
+    WindowMode WindowMode { get; set; }
+
+    /// <summary>
+    /// A reactive wrapper around the current window mode.
+    /// </summary>
+    Reactive<WindowMode> WindowModeReactive { get; }
 
     /// <summary>
     /// The graphic surface associated with this window to render graphics to.

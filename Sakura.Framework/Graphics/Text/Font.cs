@@ -28,7 +28,9 @@ public class Font : IDisposable
 
     // Cache stores GlyphData instead of just Texture, because we need bearing info per glyph
     // Key by (CodePoint, Size) so multiple sizes can be cached in the same Font instance.
-    private readonly Dictionary<(uint CodePoint, float Size), GlyphData> glyphCache = new();
+    private readonly Dictionary<(uint CodePoint, float PhysicalSize), GlyphData> glyphCache = new();
+
+    private float currentPhysicalSize = 24;
 
     private readonly Lock stateLock = new Lock();
 
@@ -70,22 +72,24 @@ public class Font : IDisposable
 
     private GCHandle pinnedFontData;
 
-    public ShapedText ProcessText(string text, float fontSize)
+    public ShapedText ProcessText(string text, float fontSize, float dpiScale = 1.0f)
     {
         if (string.IsNullOrEmpty(text))
             return ShapedText.Empty;
 
         lock (stateLock)
         {
+            float renderFontSize = fontSize * dpiScale;
+
             // 1. Update Font Size if needed
-            if (Math.Abs(Size - fontSize) > 0.01f)
+            if (Math.Abs(currentPhysicalSize - renderFontSize) > 0.01f)
             {
-                Size = fontSize;
+                currentPhysicalSize = renderFontSize;
                 unsafe
                 {
-                    FT.FT_Set_Pixel_Sizes((FT_FaceRec_*)faceHandle, 0, (uint)Size);
+                    FT.FT_Set_Pixel_Sizes((FT_FaceRec_*)faceHandle, 0, (uint)currentPhysicalSize);
                 }
-                hbFont.SetScale((int)(Size * 64), (int)(Size * 64));
+                hbFont.SetScale((int)(currentPhysicalSize * 64), (int)(currentPhysicalSize * 64));
             }
 
             // 2. Get Vertical Metrics
@@ -121,8 +125,8 @@ public class Font : IDisposable
                 float xAdvance = pos[i].XAdvance / 64.0f;
                 float yAdvance = pos[i].YAdvance / 64.0f;
 
-                // --- FIX: Lookup using Composite Key (Codepoint + Size) ---
-                var cacheKey = (codepoint, fontSize);
+                // Since change render to DPI scaling, change to cache by real render size
+                var cacheKey = (codepoint, renderFontSize);
 
                 if (!glyphCache.TryGetValue(cacheKey, out GlyphData data))
                 {
@@ -149,14 +153,14 @@ public class Font : IDisposable
                 glyphs.Add(new TextGlyph
                 {
                     Texture = data.Texture,
-                    Position = new Vector2(finalX, finalY),
-                    Size = new Vector2(data.Texture.Width, data.Texture.Height)
+                    Position = new Vector2(finalX / dpiScale, finalY / dpiScale),
+                    Size = new Vector2(data.Texture.Width / dpiScale, data.Texture.Height / dpiScale)
                 });
 
                 cursorX += xAdvance;
             }
 
-            return new ShapedText(glyphs, new Vector2(cursorX, lineHeightPx));
+            return new ShapedText(glyphs, new Vector2(cursorX / dpiScale, lineHeightPx / dpiScale));
         }
     }
 

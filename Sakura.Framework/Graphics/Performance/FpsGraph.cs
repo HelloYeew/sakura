@@ -30,6 +30,7 @@ public class FpsGraph : Container
     private readonly IClock clock;
     private SpriteText fpsText;
     private SpriteText limiterText;
+    private SpriteText windowModeText;
 
     private FontUsage graphFontUsage = FontUsage.Default.With(size: 20);
 
@@ -99,7 +100,7 @@ public class FpsGraph : Container
                     Anchor = Anchor.TopLeft,
                     Origin = Anchor.TopLeft,
                     Direction = FlowDirection.Vertical,
-                    Spacing = new Vector2(0, 15),
+                    Spacing = new Vector2(0, 10),
                     Size = new Vector2(1, 1),
                     RelativeSizeAxes = Axes.Both,
                     Children = new Drawable[]
@@ -119,6 +120,14 @@ public class FpsGraph : Container
                             Size = new Vector2(200, 20),
                             Color = Color.White,
                             Font = graphFontUsage
+                        },
+                        windowModeText = new SpriteText()
+                        {
+                            Anchor = Anchor.TopLeft,
+                            Origin = Anchor.TopLeft,
+                            Size = new Vector2(200, 20),
+                            Color = Color.White,
+                            Font = graphFontUsage
                         }
                     }
                 }
@@ -129,11 +138,20 @@ public class FpsGraph : Container
     public override void LoadComplete()
     {
         base.LoadComplete();
+        windowModeText.Text = $"WindowMode: {host.Window.WindowModeReactive.Value} ({host.Window.Width}x{host.Window.Height})";
 
         limiterText.Text = $"FrameLimiter: {host.FrameLimiter.Value}";
         host.FrameLimiter.ValueChanged += value =>
         {
             limiterText.Text = $"FrameLimiter: {value.NewValue}";
+        };
+        host.Window.WindowModeReactive.ValueChanged += value =>
+        {
+            windowModeText.Text = $"WindowMode: {value.NewValue} ({host.Window.Width}x{host.Window.Height})";
+        };
+        host.Window.Resized += (w, h) =>
+        {
+            windowModeText.Text = $"WindowMode: {host.Window.WindowModeReactive.Value} ({w}x{h})";
         };
     }
 
