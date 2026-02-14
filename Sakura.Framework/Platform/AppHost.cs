@@ -243,6 +243,9 @@ public abstract class AppHost : IDisposable
                 Window = CreateWindow();
                 Window.Title = Options.FriendlyAppName;
                 Window.ApplicationName = Name;
+                var windowModeConfig = FrameworkConfigManager.Get<WindowMode>(FrameworkSetting.WindowMode);
+                Window.WindowMode = windowModeConfig.Value;
+                Window.WindowModeReactive.ValueChanged += e => windowModeConfig.Value = e.NewValue;
 
                 Window.OnKeyDown += OnKeyDown;
                 Window.OnKeyUp += OnKeyUp;
@@ -377,6 +380,25 @@ public abstract class AppHost : IDisposable
             PrintHierarchy(app, builder);
             Logger.Log(builder.ToString());
             Logger.Log("Hierarchy dumped to console. Press F1 to dump again.");
+        }
+
+        if (!e.IsRepeat && e.Key == Key.F11 && (e.Modifiers & KeyModifiers.Control) == 0)
+        {
+            switch (Window.WindowMode)
+            {
+                case WindowMode.Windowed:
+                    Window.WindowMode = WindowMode.Borderless;
+                    break;
+                case WindowMode.Borderless:
+                    if (RuntimeInfo.IsMacOS)
+                        Window.WindowMode = WindowMode.Windowed;
+                    else
+                        Window.WindowMode = WindowMode.Fullscreen;
+                    break;
+                case WindowMode.Fullscreen:
+                    Window.WindowMode = WindowMode.Windowed;
+                    break;
+            }
         }
         if (!e.IsRepeat && e.Key == Key.F12 && (e.Modifiers & KeyModifiers.Control) > 0)
         {

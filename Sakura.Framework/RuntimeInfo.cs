@@ -57,6 +57,9 @@ public static class RuntimeInfo
     public static bool IsMobile => OS == Platform.iOS || OS == Platform.Android;
     public static bool IsApple => OS == Platform.iOS || OS == Platform.macOS;
 
+    [SuppressMessage("ReSharper", "InconsistentNaming")]
+    public static bool IsMacOS => OS == Platform.macOS;
+
     static RuntimeInfo()
     {
         if (OperatingSystem.IsWindows())
