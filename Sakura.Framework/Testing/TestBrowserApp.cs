@@ -4,6 +4,7 @@
 using System;
 using System.Linq;
 using System.Reflection;
+using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
@@ -19,6 +20,7 @@ public class TestBrowserApp : App
     private FlowContainer testListFlow;
     private FlowContainer stepsFlow;
     private TestScene currentTest;
+    private SpriteText hotReloadText;
 
     private readonly Assembly testAssembly;
 
@@ -130,7 +132,32 @@ public class TestBrowserApp : App
         rightSidebar.Add(rightScroll);
         Add(rightSidebar);
 
+        hotReloadText = new SpriteText
+        {
+            Text = "Hot Reloaded!",
+            Anchor = Anchor.Centre,
+            Origin = Anchor.Centre,
+            Color = Color.LightGreen,
+            Size = new Vector2(100, 100),
+            Depth = float.MaxValue,
+            Alpha = 0
+        };
+        Add(hotReloadText);
+
         loadTestClasses();
+
+        HotReloadManager.OnHotReload += () =>
+        {
+            Scheduler.Add(() =>
+            {
+                if (currentTest != null)
+                {
+                    Logger.Log("[TestBrowser] 🔄 Code changes detected! Hot Reloading current test...");
+                    loadTest(currentTest.GetType());
+                }
+                hotReloadText.FadeIn(200).Then().Wait(1000).Then().FadeOut(200);
+            });
+        };
     }
 
     private void loadTestClasses()
@@ -152,6 +179,7 @@ public class TestBrowserApp : App
     {
         if (currentTest != null)
         {
+            currentTest.RunTearDownMethods();
             testContentContainer.Remove(currentTest);
         }
 
@@ -161,6 +189,7 @@ public class TestBrowserApp : App
         }
 
         currentTest = (TestScene)Activator.CreateInstance(testSceneType);
+        currentTest.RunSetUpMethods();
         testContentContainer.Add(currentTest);
 
         foreach (var step in currentTest.Steps)

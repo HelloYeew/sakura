@@ -3,6 +3,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
 using NUnit.Framework;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
@@ -42,6 +44,34 @@ public abstract class TestScene : Container
             Action = () => Assert.That(assert(), description),
             IsAssert = true
         });
+    }
+
+    /// <summary>
+    /// Finds and executes all methods marked with NUnit's [SetUp] attribute.
+    /// </summary>
+    public void RunSetUpMethods()
+    {
+        var setUpMethods = GetType().GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .Where(m => m.GetCustomAttribute<SetUpAttribute>() != null);
+
+        foreach (var method in setUpMethods)
+        {
+            method.Invoke(this, null);
+        }
+    }
+
+    /// <summary>
+    /// Finds and executes all methods marked with NUnit's [TearDown] attribute.
+    /// </summary>
+    public void RunTearDownMethods()
+    {
+        var tearDownMethods = GetType().GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .Where(m => m.GetCustomAttribute<TearDownAttribute>() != null);
+
+        foreach (var method in tearDownMethods)
+        {
+            method.Invoke(this, null);
+        }
     }
 
     [Test]
