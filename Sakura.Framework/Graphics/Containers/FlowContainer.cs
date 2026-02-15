@@ -119,7 +119,7 @@ public class FlowContainer : Container
             if (Direction == FlowDirection.Horizontal)
             {
                 // check for wrap (all in pixels)
-                if (currentPosPixels.X > 0 && currentPosPixels.X + childTotalSizePixels.X > maxBounds.X)
+                if ((AutoSizeAxes & Axes.X) == 0 && currentPosPixels.X > 0 && currentPosPixels.X + childTotalSizePixels.X > maxBounds.X)
                 {
                     currentPosPixels.X = 0;
                     currentPosPixels.Y += lineMaxSizePixels + Spacing.Y;
@@ -152,7 +152,7 @@ public class FlowContainer : Container
             else // Vertical
             {
                 // check for wrap (all in pixels)
-                if (currentPosPixels.Y > 0 && currentPosPixels.Y + childTotalSizePixels.Y > maxBounds.Y)
+                if ((AutoSizeAxes & Axes.Y) == 0 && currentPosPixels.Y > 0 && currentPosPixels.Y + childTotalSizePixels.Y > maxBounds.Y)
                 {
                     currentPosPixels.Y = 0;
                     currentPosPixels.X += lineMaxSizePixels + Spacing.X;
