@@ -49,4 +49,6 @@ public class FramedClock : IClock
     }
 
     public void ProcessFrame() => Update();
+
+    public override string ToString() => $"FramedClock: {CurrentTime:F2}ms (Rate: {Rate}, Running: {IsRunning})";
 }
