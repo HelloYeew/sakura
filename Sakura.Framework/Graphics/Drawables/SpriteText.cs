@@ -100,6 +100,11 @@ public class SpriteText : Drawable
         shapedText = resolvedFont.ProcessText(Text, fontUsage.Size, dpiScale);
         ContentSize = new Vector2(shapedText.BoundingBox.X, shapedText.BoundingBox.Y);
 
+        if (Size != ContentSize)
+        {
+            Size = ContentSize;
+        }
+
         layoutInvalidated = false;
     }
 
