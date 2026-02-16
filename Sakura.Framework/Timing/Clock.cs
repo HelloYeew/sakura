@@ -50,4 +50,9 @@ public class Clock : IClock
             fpsAccumulator -= 1000;
         }
     }
+
+    public override string ToString()
+    {
+        return $"Clock: {CurrentTime:F2}ms (FPS: {FramesPerSecond:F2})";
+    }
 }
