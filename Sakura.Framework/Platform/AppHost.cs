@@ -445,6 +445,7 @@ public abstract class AppHost : IDisposable
         builder.AppendLine($"{indent}  DrawRectangle (Absolute): {drawable.DrawRectangle}");
         builder.AppendLine($"{indent}  Alpha: {drawable.Alpha} (DrawAlpha: {drawable.DrawAlpha})");
         builder.AppendLine($"{indent}  ModelMatrix: {drawable.ModelMatrix}");
+        builder.AppendLine($"{indent}  Clock: {drawable.Clock}");
 
         if (drawable is Container container)
         {

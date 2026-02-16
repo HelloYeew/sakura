@@ -54,11 +54,21 @@ public abstract class Drawable
     private bool alwaysPresent;
     private Texture? texture;
     private TextureFillMode fillMode = TextureFillMode.Stretch;
+    private IClock clock = null!;
 
     /// <summary>
     /// A clock for this drawable, time is relative to the parent's clock
     /// </summary>
-    public IClock Clock { get; internal set; }
+    public virtual IClock Clock
+    {
+        get => clock;
+        set
+        {
+            if (clock == value) return;
+            clock = value;
+            OnClockChanged();
+        }
+    }
 
     /// <summary>
     /// The scheduler for this drawable, used for delaying and scheduling tasks.
@@ -707,6 +717,14 @@ public abstract class Drawable
         }
 
         Invalidation = InvalidationFlags.None;
+    }
+
+    /// <summary>
+    /// Invoked when the <see cref="Clock"/> of this drawable changes or reassigned.
+    /// </summary>
+    protected virtual void OnClockChanged()
+    {
+        // Base do nothing here
     }
 
     #region Transformation Management
