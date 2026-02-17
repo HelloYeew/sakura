@@ -17,12 +17,16 @@ namespace Sakura.Framework.Testing;
 public class TestBrowserApp : App
 {
     private Container testContentContainer;
+    private Container testSidebar;
+    private Container stepSidebar;
     private FlowContainer testListFlow;
     private FlowContainer stepsFlow;
     private TestScene currentTest;
     private SpriteText hotReloadText;
 
     private readonly Assembly testAssembly;
+
+    private const int sidebar_width = 250;
 
     public TestBrowserApp(Assembly testAssembly = null!)
     {
@@ -35,10 +39,8 @@ public class TestBrowserApp : App
 
         testContentContainer = new Container
         {
-            Size = new Vector2(1),
-            RelativeSizeAxes = Axes.Both,
-            Anchor = Anchor.Centre,
-            Origin = Anchor.Centre
+            Anchor = Anchor.TopRight,
+            Origin = Anchor.TopRight
         };
         Add(testContentContainer);
         // testContentContainer.Add(new Box()
@@ -51,15 +53,15 @@ public class TestBrowserApp : App
         // });
 
         // 2. Left Sidebar (List of Tests)
-        var leftSidebar = new Container
+        var testSidebar = new Container
         {
-            Size = new Vector2(250, 1),
+            Size = new Vector2(sidebar_width, 1),
             RelativeSizeAxes = Axes.Y,
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft
         };
 
-        leftSidebar.Add(new Box
+        testSidebar.Add(new Box
         {
             RelativeSizeAxes = Axes.Both,
             Color = Color.DarkBlue,
@@ -89,17 +91,18 @@ public class TestBrowserApp : App
         };
 
         leftScroll.Add(testListFlow);
-        leftSidebar.Add(leftScroll);
-        Add(leftSidebar);
+        testSidebar.Add(leftScroll);
+        Add(testSidebar);
 
-        var rightSidebar = new Container
+        var stepSidebar = new Container
         {
-            Size = new Vector2(250, 1),
+            Size = new Vector2(sidebar_width, 1),
             RelativeSizeAxes = Axes.Y,
-            Anchor = Anchor.TopRight,
-            Origin = Anchor.TopRight,
+            Position = new Vector2(250, 0),
+            Anchor = Anchor.TopLeft,
+            Origin = Anchor.TopLeft,
         };
-        rightSidebar.Add(new Box
+        stepSidebar.Add(new Box
         {
             Size = new Vector2(1),
             RelativeSizeAxes = Axes.Both,
@@ -129,8 +132,8 @@ public class TestBrowserApp : App
         };
 
         rightScroll.Add(stepsFlow);
-        rightSidebar.Add(rightScroll);
-        Add(rightSidebar);
+        stepSidebar.Add(rightScroll);
+        Add(stepSidebar);
 
         hotReloadText = new SpriteText
         {
@@ -158,6 +161,14 @@ public class TestBrowserApp : App
                 hotReloadText.FadeIn(200).Then().Wait(1000).Then().FadeOut(200);
             });
         };
+    }
+
+    public override void LoadComplete()
+    {
+        base.LoadComplete();
+        Window.GetPhysicalSize(out int physW, out int physH);
+        testContentContainer.Size = new Vector2(physW - 2 * sidebar_width, physH);
+        Window.Resized += (w, h) => testContentContainer.Size = new Vector2(w - 2 * sidebar_width, h);
     }
 
     private void loadTestClasses()
