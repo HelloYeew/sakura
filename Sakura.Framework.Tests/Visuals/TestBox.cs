@@ -28,5 +28,7 @@ public class TestBox : TestScene
         AddAssert("Color should be red", () => box.Color == Color.Red);
         AddStep("Resize box to 200x200", () => box.ResizeTo(new Vector2(200), 500));
         AddAssert("Box should be resized to 200x200", () => box.Size == new Vector2(200));
+        AddStep("Fade out box", () => box.FadeOut(500));
+        AddAssert("Box should be faded out", () => box.Alpha == 0);
     }
 }
