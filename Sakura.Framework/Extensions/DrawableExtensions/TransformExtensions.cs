@@ -38,6 +38,7 @@ public static class TransformExtensions
     {
         drawable.addTransform(new MoveTransform
         {
+            StartValue = drawable.Position,
             EndValue = newPosition,
             Easing = easing
         }, duration);
@@ -51,6 +52,7 @@ public static class TransformExtensions
     {
         drawable.addTransform(new MoveTransform
         {
+            StartValue = drawable.Position,
             EndValue = new Vector2(newX, drawable.Position.Y),
             Easing = easing
         }, duration);
@@ -64,6 +66,7 @@ public static class TransformExtensions
     {
         drawable.addTransform(new MoveTransform
         {
+            StartValue = drawable.Position,
             EndValue = new Vector2(drawable.Position.X, newY),
             Easing = easing
         }, duration);
@@ -77,6 +80,7 @@ public static class TransformExtensions
     {
         drawable.addTransform(new ResizeTransform
         {
+            StartValue = drawable.Size,
             EndValue = newSize,
             Easing = easing
         }, duration);
@@ -90,6 +94,7 @@ public static class TransformExtensions
     {
         drawable.addTransform(new ScaleTransform
         {
+            StartValue = drawable.Scale,
             EndValue = newScale,
             Easing = easing
         }, duration);
@@ -109,6 +114,7 @@ public static class TransformExtensions
     {
         drawable.addTransform(new RotateTransform
         {
+            StartValue = drawable.Rotation,
             EndValue = newRotation,
             Easing = easing
         }, duration);
@@ -122,6 +128,7 @@ public static class TransformExtensions
     {
         drawable.addTransform(new AlphaTransform
         {
+            StartValue = drawable.Alpha,
             EndValue = newAlpha,
             Easing = easing
         }, duration);
