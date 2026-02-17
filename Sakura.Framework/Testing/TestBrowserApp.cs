@@ -9,6 +9,7 @@ using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
+using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 
@@ -26,7 +27,7 @@ public class TestBrowserApp : App
 
     private readonly Assembly testAssembly;
 
-    private const int sidebar_width = 250;
+    private const int sidebar_width = 150;
 
     public TestBrowserApp(Assembly testAssembly = null!)
     {
@@ -94,11 +95,11 @@ public class TestBrowserApp : App
         testSidebar.Add(leftScroll);
         Add(testSidebar);
 
-        var stepSidebar = new Container
+        stepSidebar = new Container
         {
             Size = new Vector2(sidebar_width, 1),
             RelativeSizeAxes = Axes.Y,
-            Position = new Vector2(250, 0),
+            Position = new Vector2(sidebar_width, 0),
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
         };
@@ -141,7 +142,6 @@ public class TestBrowserApp : App
             Anchor = Anchor.Centre,
             Origin = Anchor.Centre,
             Color = Color.LightGreen,
-            Size = new Vector2(100, 100),
             Depth = float.MaxValue,
             Alpha = 0
         };
@@ -158,7 +158,7 @@ public class TestBrowserApp : App
                     Logger.Log("[TestBrowser] 🔄 Code changes detected! Hot Reloading current test...");
                     loadTest(currentTest.GetType());
                 }
-                hotReloadText.FadeIn(200).Then().Wait(1000).Then().FadeOut(200);
+                hotReloadText.FadeIn(200).Wait(1000).FadeOut(200);
             });
         };
     }
@@ -182,7 +182,6 @@ public class TestBrowserApp : App
         {
             var btn = new BrowserButton(type.Name, () => loadTest(type), Color.DarkGray);
             testListFlow.Add(btn);
-            Logger.Log($"[TestBrowser] Found test: {type.Name}");
         }
     }
 
@@ -229,7 +228,7 @@ public class TestBrowserApp : App
         public BrowserButton(string text, Action action, Color bgColor)
         {
             RelativeSizeAxes = Axes.X;
-            Height = 40;
+            Height = 30;
             Width = 1;
             Action = action;
             Anchor = Anchor.TopLeft;
@@ -248,9 +247,9 @@ public class TestBrowserApp : App
             Add(new SpriteText
             {
                 Text = text,
-                Size = new Vector2(100, 100),
-                Anchor = Anchor.TopCentre,
-                Origin = Anchor.TopCentre
+                Font = FontUsage.Default.With(size: 20),
+                Anchor = Anchor.CentreLeft,
+                Origin = Anchor.CentreLeft
             });
         }
     }
