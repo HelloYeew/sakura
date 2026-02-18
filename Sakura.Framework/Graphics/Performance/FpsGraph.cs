@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using Sakura.Framework.Allocation;
+using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
@@ -34,6 +35,7 @@ public class FpsGraph : Container
     private SpriteText windowModeText;
 
     private FontUsage graphFontUsage = FontUsage.Default.With(size: 20);
+    private FontUsage boldGraphFontUsage = FontUsage.Default.With(size: 20, weight: "Bold");
 
     [Resolved]
     private AppHost host { get; set; }
@@ -108,30 +110,96 @@ public class FpsGraph : Container
                     RelativeSizeAxes = Axes.Both,
                     Children = new Drawable[]
                     {
-                        fpsText = new SpriteText()
+                        new FlowContainer()
                         {
                             Anchor = Anchor.TopLeft,
                             Origin = Anchor.TopLeft,
-                            Size = new Vector2(200, 10),
-                            Color = Color.White,
-                            Font = graphFontUsage
+                            Direction = FlowDirection.Horizontal,
+                            Size = new Vector2(1, 30),
+                            RelativeSizeAxes = Axes.X,
+                            Spacing = new Vector2(10, 0),
+                            Children = new Drawable[]
+                            {
+                                new SpriteText()
+                                {
+                                    Anchor = Anchor.TopLeft,
+                                    Origin = Anchor.TopLeft,
+                                    Size = new Vector2(200, 10),
+                                    Color = Color.White,
+                                    Font = boldGraphFontUsage,
+                                    Text = "FPS"
+                                },
+                                fpsText = new SpriteText()
+                                {
+                                    Anchor = Anchor.TopLeft,
+                                    Origin = Anchor.TopLeft,
+                                    Size = new Vector2(200, 10),
+                                    Color = Color.White,
+                                    Font = graphFontUsage,
+                                    Text = "N/A"
+                                }
+                            }
                         },
-                        limiterText = new SpriteText()
+                        new FlowContainer()
                         {
                             Anchor = Anchor.TopLeft,
                             Origin = Anchor.TopLeft,
-                            Size = new Vector2(200, 10),
-                            Color = Color.White,
-                            Font = graphFontUsage
+                            Direction = FlowDirection.Horizontal,
+                            Size = new Vector2(1, 30),
+                            RelativeSizeAxes = Axes.X,
+                            Spacing = new Vector2(10, 0),
+                            Children = new Drawable[]
+                            {
+                                new SpriteText()
+                                {
+                                    Anchor = Anchor.TopLeft,
+                                    Origin = Anchor.TopLeft,
+                                    Size = new Vector2(200, 10),
+                                    Color = Color.White,
+                                    Font = boldGraphFontUsage,
+                                    Text = "FrameLimiter"
+                                },
+                                limiterText = new SpriteText()
+                                {
+                                    Anchor = Anchor.TopLeft,
+                                    Origin = Anchor.TopLeft,
+                                    Size = new Vector2(200, 10),
+                                    Color = Color.White,
+                                    Font = graphFontUsage,
+                                    Text = "N/A"
+                                }
+                            }
                         },
-                        windowModeText = new SpriteText()
+                        new FlowContainer()
                         {
                             Anchor = Anchor.TopLeft,
                             Origin = Anchor.TopLeft,
-                            Size = new Vector2(200, 10),
-                            Color = Color.White,
-                            Font = graphFontUsage
-                        }
+                            Direction = FlowDirection.Horizontal,
+                            Size = new Vector2(1, 30),
+                            RelativeSizeAxes = Axes.X,
+                            Spacing = new Vector2(10, 0),
+                            Children = new Drawable[]
+                            {
+                                new SpriteText()
+                                {
+                                    Anchor = Anchor.TopLeft,
+                                    Origin = Anchor.TopLeft,
+                                    Size = new Vector2(200, 10),
+                                    Color = Color.White,
+                                    Font = boldGraphFontUsage,
+                                    Text = "WindowMode"
+                                },
+                                windowModeText = new SpriteText()
+                                {
+                                    Anchor = Anchor.TopLeft,
+                                    Origin = Anchor.TopLeft,
+                                    Size = new Vector2(200, 10),
+                                    Color = Color.White,
+                                    Font = graphFontUsage,
+                                    Text = "N/A"
+                                }
+                            }
+                        },
                     }
                 }
             }
@@ -141,20 +209,20 @@ public class FpsGraph : Container
     public override void LoadComplete()
     {
         base.LoadComplete();
-        windowModeText.Text = $"WindowMode: {host.Window.WindowModeReactive.Value} ({host.Window.Width}x{host.Window.Height})";
+        windowModeText.Text = $"{host.Window.WindowModeReactive.Value} ({host.Window.Width}x{host.Window.Height})";
 
-        limiterText.Text = $"FrameLimiter: {host.FrameLimiter.Value}";
+        limiterText.Text = $"{host.FrameLimiter.Value}";
         host.FrameLimiter.ValueChanged += value =>
         {
-            limiterText.Text = $"FrameLimiter: {value.NewValue}";
+            limiterText.Text = $"{value.NewValue}";
         };
         host.Window.WindowModeReactive.ValueChanged += value =>
         {
-            windowModeText.Text = $"WindowMode: {value.NewValue} ({host.Window.Width}x{host.Window.Height})";
+            windowModeText.Text = $"{value.NewValue} ({host.Window.Width}x{host.Window.Height})";
         };
         host.Window.Resized += (w, h) =>
         {
-            windowModeText.Text = $"WindowMode: {host.Window.WindowModeReactive.Value} ({w}x{h})";
+            windowModeText.Text = $"{host.Window.WindowModeReactive.Value} ({w}x{h})";
         };
     }
 
@@ -218,7 +286,7 @@ public class FpsGraph : Container
     {
         if (frameHistory.Count == 0)
         {
-            fpsText.Text = "FPS: N/A";
+            fpsText.Text = "N/A";
             return;
         }
 
@@ -226,7 +294,7 @@ public class FpsGraph : Container
         foreach (double ft in frameHistory)
             latestFrameTime = ft;
         double fps = latestFrameTime > 0 ? 1000.0 / latestFrameTime : 0;
-        fpsText.Text = $"FPS: {fps:F1}";
+        fpsText.Text = $"{fps:F1}";
     }
 }
 
