@@ -70,4 +70,9 @@ public class HeadlessRenderer : IRenderer
     {
 
     }
+
+    public void SetBlendMode(BlendingMode blendingMode)
+    {
+
+    }
 }
