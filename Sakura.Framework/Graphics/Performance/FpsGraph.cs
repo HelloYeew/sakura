@@ -295,6 +295,13 @@ public class FpsGraph : Container
             latestFrameTime = ft;
         double fps = latestFrameTime > 0 ? 1000.0 / latestFrameTime : 0;
         fpsText.Text = $"{fps:F1}";
+
+        if (fps < 30)
+            fpsText.Color = Color.Red;
+        else if (fps < 58)
+            fpsText.Color = Color.LightYellow;
+        else
+            fpsText.Color = Color.LightGreen;
     }
 }
 
