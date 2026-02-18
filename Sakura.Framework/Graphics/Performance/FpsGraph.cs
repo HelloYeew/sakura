@@ -8,6 +8,7 @@ using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
+using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
@@ -54,7 +55,9 @@ public class FpsGraph : Container
             Origin = Anchor.Centre,
             Size = new Vector2(1, 1),
             RelativeSizeAxes = Axes.Both,
-            Color = Color.Red
+            Color = Color.Black,
+            Alpha = 0.4f,
+            Blending = BlendingMode.Alpha
         });
     }
 
@@ -71,7 +74,8 @@ public class FpsGraph : Container
                 Anchor = Anchor.BottomLeft,
                 Origin = Anchor.BottomLeft,
                 Position = new Vector2(i * bar_width, 0), // Position each bar next to the previous one
-                Color = Color.Green
+                Color = Color.Green,
+                Blending = BlendingMode.Additive
             };
             graphBars[i] = bar;
             Add(bar);
@@ -81,7 +85,7 @@ public class FpsGraph : Container
         {
             Anchor = Anchor.BottomRight,
             Origin = Anchor.BottomRight,
-            Size = new Vector2(max_history * bar_width, 100),
+            Size = new Vector2(max_history * bar_width, 125),
             Position = new Vector2(0, -graph_height-10),
             Padding = new MarginPadding(5),
             Children = new Drawable[]
@@ -93,14 +97,13 @@ public class FpsGraph : Container
                     Size = new Vector2(1, 1),
                     RelativeSizeAxes = Axes.Both,
                     Color = Color.Black,
-                    Alpha = 0.9f
+                    Alpha = 0.8f
                 },
                 new FlowContainer()
                 {
                     Anchor = Anchor.TopLeft,
                     Origin = Anchor.TopLeft,
                     Direction = FlowDirection.Vertical,
-                    Spacing = new Vector2(0, 10),
                     Size = new Vector2(1, 1),
                     RelativeSizeAxes = Axes.Both,
                     Children = new Drawable[]
@@ -109,7 +112,7 @@ public class FpsGraph : Container
                         {
                             Anchor = Anchor.TopLeft,
                             Origin = Anchor.TopLeft,
-                            Size = new Vector2(200, 20),
+                            Size = new Vector2(200, 10),
                             Color = Color.White,
                             Font = graphFontUsage
                         },
@@ -117,7 +120,7 @@ public class FpsGraph : Container
                         {
                             Anchor = Anchor.TopLeft,
                             Origin = Anchor.TopLeft,
-                            Size = new Vector2(200, 20),
+                            Size = new Vector2(200, 10),
                             Color = Color.White,
                             Font = graphFontUsage
                         },
@@ -125,7 +128,7 @@ public class FpsGraph : Container
                         {
                             Anchor = Anchor.TopLeft,
                             Origin = Anchor.TopLeft,
-                            Size = new Vector2(200, 20),
+                            Size = new Vector2(200, 10),
                             Color = Color.White,
                             Font = graphFontUsage
                         }
