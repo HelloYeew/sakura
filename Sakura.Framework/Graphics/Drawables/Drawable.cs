@@ -312,6 +312,11 @@ public abstract class Drawable
         set => Size = new Vector2(Size.X, value);
     }
 
+    /// <summary>
+    /// The blending mode to use when drawing this drawable.
+    /// </summary>
+    public BlendingMode Blending { get; set; } = BlendingMode.Alpha;
+
     public void Hide() => Alpha = 0f;
     public void Show() => Alpha = 1f;
     public bool IsHidden => Alpha <= 0f;
@@ -593,6 +598,8 @@ public abstract class Drawable
     {
         if (DrawAlpha <= 0)
             return;
+
+        renderer.SetBlendMode(Blending);
 
         renderer.DrawVertices(Vertices, Texture ?? renderer.WhitePixel);
     }
