@@ -709,7 +709,11 @@ public abstract class Drawable
             return;
 
         if (!AlwaysPresent && Precision.AlmostEqualZero(Alpha))
+        {
+            DrawAlpha = 0;
+            Invalidation = InvalidationFlags.None;
             return;
+        }
 
         if ((Invalidation & (InvalidationFlags.DrawInfo | InvalidationFlags.Colour)) != 0)
         {
