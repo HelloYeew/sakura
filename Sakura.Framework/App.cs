@@ -7,6 +7,7 @@ using System;
 using System.Reflection;
 using Sakura.Framework.Audio;
 using Sakura.Framework.Audio.BassEngine;
+using Sakura.Framework.Audio.Headless;
 using Sakura.Framework.Configurations;
 using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Drawables;
@@ -74,19 +75,25 @@ public class App : Container, IDisposable
         TrackStore = new TrackStore(embeddedResourceStorage.GetStorageForDirectory("Tracks"), AudioManager);
         SampleStore = new SampleStore(embeddedResourceStorage.GetStorageForDirectory("Samples"), AudioManager);
 
-        if (Host.Renderer is GLRenderer)
+        switch (Host.Renderer)
         {
-            TextureManager = new GLTextureManager(GLRenderer.GL, embeddedResourceStorage.GetStorageForDirectory("Textures"), CreateImageLoader());
-            FontStore = new GLFontStore(GLRenderer.GL);
-            // TODO: This will exposed all framework file resource out, maybe find better way?
-            var frameworkFontStorage = Host.FrameworkStorage.GetStorageForDirectory("Fonts");
-            var fontStorage = embeddedResourceStorage.GetStorageForDirectory("Fonts");
-            fontStorage = new CompositeStorage(frameworkFontStorage, fontStorage);
-            FontStore.LoadDefaultFont(fontStorage);
-        }
-        else
-        {
-            throw new NotSupportedException("Only OpenGL renderer is supported currently.");
+            case GLRenderer:
+                TextureManager = new GLTextureManager(GLRenderer.GL, embeddedResourceStorage.GetStorageForDirectory("Textures"), CreateImageLoader());
+                FontStore = new GLFontStore(GLRenderer.GL);
+                // TODO: This will exposed all framework file resource out, maybe find better way?
+                var frameworkFontStorage = Host.FrameworkStorage.GetStorageForDirectory("Fonts");
+                var fontStorage = embeddedResourceStorage.GetStorageForDirectory("Fonts");
+                fontStorage = new CompositeStorage(frameworkFontStorage, fontStorage);
+                FontStore.LoadDefaultFont(fontStorage);
+                break;
+
+            case HeadlessRenderer:
+                TextureManager = new HeadlessTextureManager();
+                FontStore = new HeadlessFontStore((HeadlessTextureManager)TextureManager);
+                break;
+
+            default:
+                throw new NotSupportedException($"Renderer type {Host.Renderer.GetType().FullName} is not supported.");
         }
         Cache(TextureManager);
         Cache(FontStore);
@@ -156,7 +163,12 @@ public class App : Container, IDisposable
     /// <summary>
     /// Create the audio manager used for this app, defaults to <see cref="BassAudioManager"/>.
     /// </summary>
-    protected virtual IAudioManager CreateAudioManager() => new BassAudioManager();
+    protected virtual IAudioManager CreateAudioManager()
+    {
+        if (Host.IsHeadless)
+            return new HeadlessAudioManager();
+        return new BassAudioManager();
+    }
 
     public void Dispose()
     {

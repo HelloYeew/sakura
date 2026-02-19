@@ -10,6 +10,7 @@ using Sakura.Framework.Input;
 using Silk.NET.SDL;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
+using Sakura.Framework.Reactive;
 using Silk.NET.OpenGL;
 using SilkMouseButtonEvent = Silk.NET.SDL.MouseButtonEvent;
 using SakuraMouseButtonEvent = Sakura.Framework.Input.MouseButtonEvent;
@@ -38,6 +39,8 @@ public class SDLWindow : IWindow
     private int logicalWidth;
     private int logicalHeight;
 
+    private WindowMode windowMode = WindowMode.Windowed;
+
     private WindowFlags windowFlags = WindowFlags.Opengl | WindowFlags.AllowHighdpi;
 
     public string Title
@@ -57,6 +60,14 @@ public class SDLWindow : IWindow
         get => resizable;
         set => setResizable(value);
     }
+
+    public WindowMode WindowMode
+    {
+        get => windowMode;
+        set => setWindowMode(value);
+    }
+
+    public Reactive<WindowMode> WindowModeReactive { get; } = new Reactive<WindowMode>(WindowMode.Windowed);
 
     public int Width => logicalWidth;
     public int Height => logicalHeight;
@@ -122,6 +133,23 @@ public class SDLWindow : IWindow
         if (Resizable)
         {
             windowFlags |= WindowFlags.Resizable;
+        }
+
+        if (RuntimeInfo.IsMacOS && windowMode == WindowMode.Fullscreen)
+        {
+            // SDL's full screen on MacOS has a lot of issues so we force MacOS to use only window and borderless window modes
+            Logger.Warning("Fullscreen mode is not supported on MacOS due to a lot of issues with SDL implementation, falling back to Borderless window mode.");
+            windowMode = WindowMode.Borderless;
+        }
+
+        switch (windowMode)
+        {
+            case WindowMode.Borderless:
+                windowFlags |= WindowFlags.FullscreenDesktop;
+                break;
+            case WindowMode.Fullscreen:
+                windowFlags |= WindowFlags.Fullscreen;
+                break;
         }
 
         // Make sure SDL use OpenGL 3.3 or later
@@ -254,6 +282,53 @@ public class SDLWindow : IWindow
         }
 
         return 1;
+    }
+
+    private unsafe void setWindowMode(WindowMode newMode)
+    {
+        if (windowMode == newMode)
+            return;
+
+        if (RuntimeInfo.IsMacOS && newMode == WindowMode.Fullscreen)
+        {
+            newMode = WindowMode.Borderless;
+        }
+
+        windowMode = newMode;
+        WindowModeReactive.Value = newMode;
+
+        if (window == null) return;
+
+        switch (newMode)
+        {
+            case WindowMode.Windowed:
+                sdl.SetWindowFullscreen(window, 0);
+                sdl.SetWindowBordered(window, SdlBool.True);
+                sdl.SetWindowPosition(window, Sdl.WindowposCentered, Sdl.WindowposCentered);
+                break;
+
+            case WindowMode.Borderless:
+                sdl.SetWindowFullscreen(window, (uint)WindowFlags.FullscreenDesktop);
+                sdl.SetWindowFullscreen(window, (uint)WindowFlags.FullscreenDesktop);
+                break;
+
+            case WindowMode.Fullscreen:
+                sdl.SetWindowFullscreen(window, (uint)WindowFlags.Fullscreen);
+                break;
+        }
+
+        int w, h, phyW, phyH;
+        sdl.GetWindowSize(window, &w, &h);
+        sdl.GLGetDrawableSize(window, &phyW, &phyH);
+
+        logicalWidth = w;
+        logicalHeight = h;
+        currentWidth = phyW;
+        currentHeight = phyH;
+
+        Resized.Invoke(logicalWidth, logicalHeight);
+
+        Logger.Debug($"Window mode changed to {newMode}");
     }
 
     private unsafe void handleSdlEvents()

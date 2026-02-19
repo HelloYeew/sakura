@@ -59,7 +59,7 @@ public abstract class ConfigManager<TLookup> where TLookup : struct, Enum
 
         var reactive = new Reactive<TValue>(defaultValue);
         reactive.ValueChanged += _ => Save();
-        reactive.ValueChanged += _ => Logger.Debug($"Setting '{lookup}' changed to '{reactive.Value}'.");
+        reactive.ValueChanged += _ => Logger.Debug($"[{GetType().Name}] Setting '{lookup}' changed to '{reactive.Value}'.");
         settings[lookup] = reactive;
 
         return reactive;

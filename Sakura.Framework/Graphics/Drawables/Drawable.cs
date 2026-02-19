@@ -54,11 +54,21 @@ public abstract class Drawable
     private bool alwaysPresent;
     private Texture? texture;
     private TextureFillMode fillMode = TextureFillMode.Stretch;
+    private IClock clock = null!;
 
     /// <summary>
     /// A clock for this drawable, time is relative to the parent's clock
     /// </summary>
-    public IClock Clock { get; internal set; }
+    public virtual IClock Clock
+    {
+        get => clock;
+        set
+        {
+            if (clock == value) return;
+            clock = value;
+            OnClockChanged();
+        }
+    }
 
     /// <summary>
     /// The scheduler for this drawable, used for delaying and scheduling tasks.
@@ -302,6 +312,11 @@ public abstract class Drawable
         set => Size = new Vector2(Size.X, value);
     }
 
+    /// <summary>
+    /// The blending mode to use when drawing this drawable.
+    /// </summary>
+    public BlendingMode Blending { get; set; } = BlendingMode.Alpha;
+
     public void Hide() => Alpha = 0f;
     public void Show() => Alpha = 1f;
     public bool IsHidden => Alpha <= 0f;
@@ -353,38 +368,45 @@ public abstract class Drawable
             // This is a child drawable
 
             // Final pixel size of the parent's content area.
-            Vector2 parentPixelSize = Parent.ChildSize;
+            Vector2 parentChildSize = Parent.ChildSize;
+            Vector2 parentDrawSize = Parent.DrawSize;
 
             // prevent division by zero for drawables with no area.
-            if (parentPixelSize.X == 0) parentPixelSize.X = 1;
-            if (parentPixelSize.Y == 0) parentPixelSize.Y = 1;
+            if (parentChildSize.X == 0)
+                parentChildSize.X = 1;
+            if (parentChildSize.Y == 0)
+                parentChildSize.Y = 1;
+            if (parentDrawSize.X == 0)
+                parentDrawSize.X = 1;
+            if (parentDrawSize.Y == 0)
+                parentDrawSize.Y = 1;
 
             // Calculate scale relative to parent
-            Vector2 localScale = Size;
-            if ((RelativeSizeAxes & Axes.X) == 0)
-                localScale.X /= parentPixelSize.X;
-            if ((RelativeSizeAxes & Axes.Y) == 0)
-                localScale.Y /= parentPixelSize.Y;
+            finalDrawSize = Size;
+            if ((RelativeSizeAxes & Axes.X) != 0)
+                finalDrawSize.X *= parentChildSize.X;
+            if ((RelativeSizeAxes & Axes.Y) != 0)
+                finalDrawSize.Y *= parentChildSize.Y;
 
             // Calculate position relative to parent
-            Vector2 localPosition = Position;
-            if ((RelativePositionAxes & Axes.X) == 0)
-                localPosition.X /= parentPixelSize.X;
-            if ((RelativePositionAxes & Axes.Y) == 0)
-                localPosition.Y /= parentPixelSize.Y;
+            Vector2 pixelPosition = Position;
+            if ((RelativePositionAxes & Axes.X) != 0)
+                pixelPosition.X *= parentChildSize.X;
+            if ((RelativePositionAxes & Axes.Y) != 0)
+                pixelPosition.Y *= parentChildSize.Y;
 
-            MarginPadding localMargin = Margin;
-            localMargin.Left /= parentPixelSize.X;
-            localMargin.Right /= parentPixelSize.X;
-            localMargin.Top /= parentPixelSize.Y;
-            localMargin.Bottom /= parentPixelSize.Y;
+            Vector2 anchorOffset = GetAnchorOriginVector(Anchor);
+            pixelPosition.X += anchorOffset.X * parentChildSize.X;
+            pixelPosition.Y += anchorOffset.Y * parentChildSize.Y;
 
-            // Anchor and Origin are naturally relative, so they work correctly in this 0-1 space.
-            Vector2 anchorPosition = GetAnchorOriginVector(Anchor);
-            Vector2 finalOriginPosition = anchorPosition + localPosition + new Vector2(localMargin.Left - localMargin.Right, localMargin.Top - localMargin.Bottom);
+            pixelPosition.X += Margin.Left - Margin.Right;
+            pixelPosition.Y += Margin.Top - Margin.Bottom;
 
-            var finalScale = new Vector3(localScale.X * Scale.X, localScale.Y * Scale.Y, 1);
-            var finalPosition = new Vector3(finalOriginPosition.X, finalOriginPosition.Y, 0);
+            // Shift by Parent's Padding to get position relative to Parent's Top-Left (DrawSize space)
+            pixelPosition.X += Parent.Padding.Left;
+            pixelPosition.Y += Parent.Padding.Top;
+
+            var finalScale = new Vector3(finalDrawSize.X * Scale.X, finalDrawSize.Y * Scale.Y, 1);
 
             var m = Matrix4x4.CreateTranslation(-originVector.X, -originVector.Y, 0);
             m *= Matrix4x4.CreateScale(finalScale);
@@ -398,14 +420,13 @@ public abstract class Drawable
             }
 
             m *= Matrix4x4.CreateRotationZ((float)(Rotation * Math.PI / 180.0f));
-            m *= Matrix4x4.CreateTranslation(finalPosition);
+            m *= Matrix4x4.CreateTranslation(pixelPosition.X, pixelPosition.Y, 0);
+
+            // Normalize to Parent's 0..1 space so Parent.ModelMatrix applies correctly
+            m *= Matrix4x4.CreateScale(1.0f / parentDrawSize.X, 1.0f / parentDrawSize.Y, 1.0f);
 
             localMatrix = m;
             ModelMatrix = localMatrix * Parent.ModelMatrix;
-
-            finalDrawSize = Size;
-            if ((RelativeSizeAxes & Axes.X) != 0) finalDrawSize.X *= parentPixelSize.X;
-            if ((RelativeSizeAxes & Axes.Y) != 0) finalDrawSize.Y *= parentPixelSize.Y;
         }
 
         DrawSize = finalDrawSize;
@@ -578,6 +599,8 @@ public abstract class Drawable
         if (DrawAlpha <= 0)
             return;
 
+        renderer.SetBlendMode(Blending);
+
         renderer.DrawVertices(Vertices, Texture ?? renderer.WhitePixel);
     }
 
@@ -699,7 +722,11 @@ public abstract class Drawable
             return;
 
         if (!AlwaysPresent && Precision.AlmostEqualZero(Alpha))
+        {
+            DrawAlpha = 0;
+            Invalidation = InvalidationFlags.None;
             return;
+        }
 
         if ((Invalidation & (InvalidationFlags.DrawInfo | InvalidationFlags.Colour)) != 0)
         {
@@ -707,6 +734,14 @@ public abstract class Drawable
         }
 
         Invalidation = InvalidationFlags.None;
+    }
+
+    /// <summary>
+    /// Invoked when the <see cref="Clock"/> of this drawable changes or reassigned.
+    /// </summary>
+    protected virtual void OnClockChanged()
+    {
+        // Base do nothing here
     }
 
     #region Transformation Management

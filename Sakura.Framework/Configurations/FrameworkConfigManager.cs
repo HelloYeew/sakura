@@ -19,5 +19,6 @@ public class FrameworkConfigManager : ConfigManager<FrameworkSetting>
         Get(FrameworkSetting.MasterVolume, 1.0);
         Get(FrameworkSetting.TrackVolume, 1.0);
         Get(FrameworkSetting.SampleVolume, 1.0);
+        Get(FrameworkSetting.WindowMode, WindowMode.Windowed);
     }
 }

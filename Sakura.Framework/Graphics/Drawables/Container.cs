@@ -271,6 +271,16 @@ public class Container : Drawable
         }
     }
 
+    protected override void OnClockChanged()
+    {
+        base.OnClockChanged();
+
+        foreach (var child in children)
+        {
+            child.Clock = new FramedClock(Clock);
+        }
+    }
+
     #region Event Propagation
 
     public override bool OnMouseDown(MouseButtonEvent e)
