@@ -69,7 +69,7 @@ public class ResizeTransform : Transform
     {
         if (!valueCaptured)
         {
-            StartValue = drawable.Scale;
+            StartValue = drawable.Size;
             valueCaptured = true;
         }
         drawable.Size = Vector2.Lerp(StartValue, EndValue, (float)GetEasedProgress(time));

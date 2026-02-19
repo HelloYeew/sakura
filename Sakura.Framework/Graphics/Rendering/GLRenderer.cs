@@ -48,6 +48,8 @@ public class GLRenderer : IRenderer
     private float renderScaleX = 1.0f;
     private float renderScaleY = 1.0f;
 
+    private BlendingMode currentBlendMode = BlendingMode.Alpha;
+
     public unsafe void Initialize(IGraphicsSurface graphicsSurface)
     {
         gl = GL.GetApi(graphicsSurface.GetFunctionAddress);
@@ -142,6 +144,7 @@ public class GLRenderer : IRenderer
         shader.SetUniform("u_IsBorder", false);
 
         lastBoundTextureHandle = uint.MaxValue;
+        SetBlendMode(BlendingMode.Alpha);
 
         root.Draw(this);
         triangleBatch.Draw();
@@ -358,6 +361,44 @@ public class GLRenderer : IRenderer
         gl.StencilOp(StencilOp.Keep, StencilOp.Keep, StencilOp.Keep);
 
         drawBorder(maskDrawable, cornerRadius, borderThickness, borderColor);
+    }
+
+    public void SetBlendMode(BlendingMode blendingMode)
+    {
+        if (blendingMode == currentBlendMode)
+            return;
+
+        triangleBatch.Draw();
+
+        currentBlendMode = blendingMode;
+
+        switch (blendingMode)
+        {
+            case BlendingMode.Additive:
+                gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.One);
+                break;
+
+            case BlendingMode.Opaque:
+                gl.BlendFunc(BlendingFactor.One, BlendingFactor.Zero);
+                break;
+
+            case BlendingMode.Multiply:
+                gl.BlendFunc(BlendingFactor.DstColor, BlendingFactor.OneMinusSrcAlpha);
+                break;
+
+            case BlendingMode.Screen:
+                gl.BlendFunc(BlendingFactor.One, BlendingFactor.OneMinusSrcColor);
+                break;
+
+            case BlendingMode.Premultiplied:
+                gl.BlendFunc(BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha);
+                break;
+
+            case BlendingMode.Alpha:
+            default:
+                gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+                break;
+        }
     }
 
     /// <summary>

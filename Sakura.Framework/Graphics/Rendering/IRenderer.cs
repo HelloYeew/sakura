@@ -39,4 +39,10 @@ public interface IRenderer
     void PushMask(Drawable maskDrawable, float cornerRadius);
 
     void PopMask(Drawable maskDrawable, float cornerRadius, float borderThickness, Color borderColor);
+
+    /// <summary>
+    /// Sets the blend mode for subsequent draw calls. This will affect how colors are blended when drawing.
+    /// </summary>
+    /// <param name="blendingMode">The blend mode to set.</param>
+    void SetBlendMode(BlendingMode blendingMode);
 }
