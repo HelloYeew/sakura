@@ -64,7 +64,7 @@ public class ScrollableContainer : Container
         verticalScrollbar = new Container()
         {
             Name = "VerticalScrollbar",
-            Width = 20,
+            Width = 10,
             Anchor = Anchor.TopRight,
             Origin = Anchor.TopRight,
             Margin = new MarginPadding()
@@ -77,7 +77,7 @@ public class ScrollableContainer : Container
         horizontalScrollbar = new Container()
         {
             Name = "HorizontalScrollbar",
-            Height = 20,
+            Height = 10,
             Anchor = Anchor.BottomLeft,
             Origin = Anchor.BottomLeft,
             Margin = new MarginPadding()
@@ -86,15 +86,6 @@ public class ScrollableContainer : Container
             },
             Alpha = 0
         };
-
-        base.Add(new Box()
-        {
-            RelativeSizeAxes = Axes.Both,
-            Size = new Vector2(1),
-            Color = Color.Gray,
-            Anchor = Anchor.Centre,
-            Origin = Anchor.Centre
-        });
 
         base.Add(ScrollContent);
         base.Add(verticalScrollbar);
@@ -122,7 +113,7 @@ public class ScrollableContainer : Container
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
             Size = new Vector2(1),
-            Color = Color.Purple
+            Color = Color.DeepPink
         };
     }
 
@@ -135,7 +126,7 @@ public class ScrollableContainer : Container
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
             Size = new Vector2(1),
-            Color = Color.Purple
+            Color = Color.DeepPink
         };
     }
 
