@@ -477,8 +477,7 @@ public class VisualiserTreeItem : Container
     public override void Update()
     {
         base.Update();
-
-        // Dynamically update colors every frame based on state
+        
         bool isSelected = checkSelected();
 
         var bgColor = isSelected ? Color.Blue : Color.Transparent;
