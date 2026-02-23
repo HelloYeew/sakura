@@ -138,9 +138,9 @@ public class App : Container, IDisposable
         else
         {
             if (visualiser.IsHidden)
-                visualiser.Show();
+                visualiser.FadeIn(200, Easing.OutQuint);
             else
-                visualiser.Hide();
+                visualiser.FadeOut(200, Easing.OutQuint);
         }
 
         // Ensure it's always at the very front
