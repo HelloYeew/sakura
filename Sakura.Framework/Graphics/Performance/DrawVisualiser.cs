@@ -477,7 +477,7 @@ public class VisualiserTreeItem : Container
     public override void Update()
     {
         base.Update();
-        
+
         bool isSelected = checkSelected();
 
         var bgColor = isSelected ? Color.Blue : Color.Transparent;
