@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using Sakura.Framework.Development;
 using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
@@ -12,6 +13,7 @@ using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Input;
+using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.Performance;
@@ -19,15 +21,15 @@ namespace Sakura.Framework.Graphics.Performance;
 public class DrawVisualiser : Container
 {
     private readonly Drawable targetRoot;
-    private Box backgroundBox;
+    private readonly Box backgroundBox;
     private readonly FlowContainer treeFlow;
     private readonly FlowContainer propertyFlow;
     private readonly ScrollableContainer parentPropertyFlow;
     private readonly Container rightContainer;
     private readonly Box highlightBox;
     private Drawable selectedDrawable;
-    private SpriteText currentTimeText;
-    private SpriteText runningTimeText;
+    private readonly SpriteText currentTimeText;
+    private readonly SpriteText runningTimeText;
 
     private Drawable lastSelectedDrawable;
     private PropertyInfo[] cachedProperties;
@@ -36,21 +38,19 @@ public class DrawVisualiser : Container
     private readonly List<(Drawable drawable, int depth)> cachedTreeStructure = new();
     private readonly List<(Drawable drawable, int depth)> currentTreeStructure = new();
 
-    // UI Constants
-    private const float WIDTH_SPLIT = 0.4f; // 40% for tree, 60% for props
+    private const float WIDTH_SPLIT = 0.4f;
     private const float ENTRY_HEIGHT = 20;
 
     public DrawVisualiser(Drawable root)
     {
         targetRoot = root;
         RelativeSizeAxes = Axes.Both;
-        // Depth = float.MinValue; // Ensure it draws on top
         Size = new Vector2(1);
         Anchor = Anchor.TopLeft;
         Origin = Anchor.TopLeft;
         AlwaysPresent = true;
 
-        // 1. Background
+        // Background
         Add(backgroundBox = new Box
         {
             RelativeSizeAxes = Axes.Both,
@@ -61,6 +61,7 @@ public class DrawVisualiser : Container
             Alpha = 0.75f
         });
 
+        // Header
         Add(new SpriteText
         {
             Text = "Draw Visualiser (Ctrl + F2)",
@@ -97,6 +98,32 @@ public class DrawVisualiser : Container
             Height = 30
         });
 
+        Add(new SpriteText()
+        {
+            Text =
+                $"Sakura Framework v{DebugUtils.GetFrameworkVersion()}",
+            Font = FontUsage.Default.With(size: 16),
+            Anchor = Anchor.TopRight,
+            Origin = Anchor.TopRight,
+            Position = new Vector2(-10, 50),
+            Color = Color.LightPink,
+            RelativeSizeAxes = Axes.X,
+            Height = 30
+        });
+
+        Add(new SpriteText()
+        {
+            Text = $"Running {Logger.AppIdentifier} v{Logger.VersionIdentifier} {(DebugUtils.IsDebugBuild ? "(Debug Build)" : "")}",
+            Font = FontUsage.Default.With(size: 16),
+            Anchor = Anchor.TopRight,
+            Origin = Anchor.TopRight,
+            Position = new Vector2(-10, 70),
+            Color = Color.LightPink,
+            RelativeSizeAxes = Axes.X,
+            Height = 30
+        });
+
+        // Footer
         Add(new SpriteText
         {
             Text = "Note : Use ArrowDown and ArrowUp to dim or brighten the background!",
@@ -192,8 +219,6 @@ public class DrawVisualiser : Container
 
         refreshProperties();
 
-        // Refresh the tree periodically or if dirty (Doing every frame for simplicity here,
-        // in production you might want to throttle this or only do it on structure change)
         timeUntilNextRefresh -= Clock.ElapsedFrameTime;
         if (timeUntilNextRefresh <= 0)
         {
@@ -225,11 +250,11 @@ public class DrawVisualiser : Container
     {
         if (targetRoot == null) return;
 
-        // 1. Gather the current state of the game's tree
+        // Gather the current state of the game's tree
         currentTreeStructure.Clear();
         buildTreeSnapshot(targetRoot, 0);
 
-        // 2. Compare it against our cached UI state
+        // Compare with cached state
         bool treeChanged = false;
         if (currentTreeStructure.Count != cachedTreeStructure.Count)
         {
@@ -248,7 +273,7 @@ public class DrawVisualiser : Container
             }
         }
 
-        // 3. Only rebuild the heavy UI if the hierarchy actually changed
+        // Only rebuild the heavy UI if the hierarchy actually changed
         if (treeChanged)
         {
             cachedTreeStructure.Clear();
@@ -261,11 +286,12 @@ public class DrawVisualiser : Container
                 var item = cachedTreeStructure[i];
 
                 // Pass a function so the item can check if it's currently selected
-                var entry = new VisualiserTreeItem(item.drawable, item.depth,() => item.drawable == selectedDrawable);
-
-                entry.Position = new Vector2(0, i * 20);
-                entry.Height = 20;
-                entry.ClickAction = () => selectDrawable(item.drawable);
+                var entry = new VisualiserTreeItem(item.drawable, item.depth,() => item.drawable == selectedDrawable)
+                {
+                    Position = new Vector2(0, i * 20),
+                    Height = 20,
+                    ClickAction = () => selectDrawable(item.drawable)
+                };
 
                 treeFlow.Add(entry);
             }
@@ -276,7 +302,6 @@ public class DrawVisualiser : Container
     {
         if (d == null) return;
 
-        // Filter out the Visualiser and all its descendants
         Drawable cursor = d;
         while (cursor != null)
         {
@@ -284,57 +309,15 @@ public class DrawVisualiser : Container
             cursor = cursor.Parent;
         }
 
-        // Record this drawable
         currentTreeStructure.Add((d, depth));
 
-        if (d is FpsGraph || d is DrawVisualiser) return;
+        if (d is DrawVisualiser || d is FpsGraph) return;
 
-        // Recurse
         if (d is Container c)
         {
             for (int i = 0; i < c.Children.Count; i++)
             {
                 buildTreeSnapshot(c.Children[i], depth + 1);
-            }
-        }
-    }
-
-    private void scanDrawable(Drawable d, int depth)
-    {
-        // 1. Safety Check: If d is null, stop.
-        if (d == null) return;
-
-        // 2. Filter out the Visualiser and all its descendants.
-        // We check if the drawable is the visualiser, or if it is inside the visualiser.
-        Drawable cursor = d;
-        while (cursor != null)
-        {
-            if (cursor == this) return; // Found visualiser in parent chain -> Skip
-            cursor = cursor.Parent;
-        }
-
-        // 3. Create UI entry
-        var entry = new VisualiserTreeItem(d, depth, () => d == selectedDrawable);
-        entry.Position = new Vector2(0, treeFlow.Children.Count * 20); // Force Y position
-        entry.Height = 20;
-        entry.ClickAction = () => selectDrawable(d);
-        treeFlow.Add(entry);
-
-        if (d is FpsGraph || d is DrawVisualiser)
-        {
-            // Skip children of known heavy or self-referential drawables
-            return;
-        }
-
-        // 4. Recurse
-        if (d is Container c)
-        {
-            // Iterate backwards or forwards? usually forwards for tree view.
-            // We use a copy or loop by index to avoid 'Collection Modified' errors
-            // if the game modifies children during this frame.
-            for (int i = 0; i < c.Children.Count; i++)
-            {
-                scanDrawable(c.Children[i], depth + 1);
             }
         }
     }
@@ -359,7 +342,7 @@ public class DrawVisualiser : Container
 
         Type type = selectedDrawable.GetType();
 
-        // STEP 1: Rebuild the UI layout ONLY if we clicked a new/different drawable
+        // Rebuild UI layout only if we've selected a different drawable than last time.
         if (lastSelectedDrawable != selectedDrawable)
         {
             propertyFlow.Clear();
@@ -386,7 +369,7 @@ public class DrawVisualiser : Container
             }
         }
 
-        // STEP 2: Update the text values of the EXISTING UI elements
+        // Update state in existing UI elements
         if (loadStateText != null)
         {
             loadStateText.Text = $"Load State: {selectedDrawable.IsLoaded}";
@@ -403,13 +386,8 @@ public class DrawVisualiser : Container
                 if (val is bool b) textColor = b ? Color.Green : Color.Red;
                 else if (val is ValueType) textColor = Color.Cyan;
 
-                // Optional optimization: Only update the text string if it actually changed
                 string newText = $"{mapping.prop.Name}: {valStr}";
-                if (mapping.textElement.Text != newText)
-                {
-                    mapping.textElement.Text = newText;
-                }
-
+                mapping.textElement.Text = newText;
                 mapping.textElement.Color = textColor;
             }
             catch
@@ -419,7 +397,6 @@ public class DrawVisualiser : Container
         }
     }
 
-    // Updated to return the SpriteText so we can track it
     private SpriteText addPropertyText(string text, Color color)
     {
         var spriteText = new SpriteText
@@ -460,7 +437,6 @@ public class DrawVisualiser : Container
     }
 }
 
-// A helper class for the tree items
 public class VisualiserTreeItem : Container
 {
     public Action ClickAction;
@@ -489,7 +465,7 @@ public class VisualiserTreeItem : Container
 
         Add(label = new SpriteText
         {
-            Text = d.GetDisplayName(), // Assuming GetDisplayName is an extension or method you have
+            Text = d.GetDisplayName(),
             Position = new Vector2(depth * 15 + 5, 0),
             Font = FontUsage.Default.With(size: 14),
             Size = new Vector2(1, 20),
