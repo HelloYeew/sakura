@@ -108,10 +108,18 @@ public class App : Container, IDisposable
         Cache(Host.FrameworkConfigManager);
 
         showFpsGraph = Host.FrameworkConfigManager.Get(FrameworkSetting.ShowFpsGraph, false);
+
+
+        Add(visualiser = new DrawVisualiser(this)
+        {
+            Depth = float.MaxValue - 10,
+            Alpha = 0
+        });
         Add(FpsGraph = new FpsGraph(Host.AppClock)
         {
             Depth = float.MaxValue
         });
+
         if (!showFpsGraph)
             FpsGraph.Hide();
         showFpsGraph.ValueChanged += value =>
@@ -123,21 +131,12 @@ public class App : Container, IDisposable
         };
     }
 
-    public void ToggleVisualiser()
+    private void toggleVisualiser()
     {
-        if (visualiser == null)
-        {
-            visualiser = new DrawVisualiser(this);
-            visualiser.Depth = float.MaxValue;
-            Add(visualiser);
-        }
+        if (visualiser.IsHidden)
+            visualiser.FadeIn(200, Easing.OutQuint);
         else
-        {
-            if (visualiser.IsHidden)
-                visualiser.FadeIn(200, Easing.OutQuint);
-            else
-                visualiser.FadeOut(200, Easing.OutQuint);
-        }
+            visualiser.FadeOut(200, Easing.OutQuint);
     }
 
     /// <summary>
@@ -173,6 +172,10 @@ public class App : Container, IDisposable
 
     public override bool OnKeyDown(KeyEvent e)
     {
+        if (!e.IsRepeat && e.Key == Key.F1 && (e.Modifiers & KeyModifiers.Control) > 0)
+        {
+            toggleVisualiser();
+        }
         if (!e.IsRepeat && e.Key == Key.F11 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
             showFpsGraph.Value = !showFpsGraph.Value;
