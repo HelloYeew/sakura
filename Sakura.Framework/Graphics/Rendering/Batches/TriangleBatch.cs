@@ -3,6 +3,7 @@
 
 using System;
 using System.Runtime.InteropServices;
+using Sakura.Framework.Statistic;
 using Silk.NET.OpenGL;
 using SakuraVertex = Sakura.Framework.Graphics.Rendering.Vertex.Vertex;
 
@@ -95,6 +96,9 @@ public class TriangleBatch
 
         // Issue the draw call to render the vertices as triangles.
         gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)vertexCount);
+
+        GlobalStatistics.Get<int>("Renderer", "Draw Calls").Value++;
+        GlobalStatistics.Get<int>("Renderer", "Vertices Drawn").Value += vertexCount;
 
         int count = vertexCount;
         vertexCount = 0; // Reset for the next frame.

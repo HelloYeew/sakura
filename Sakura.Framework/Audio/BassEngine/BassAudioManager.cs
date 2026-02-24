@@ -10,6 +10,7 @@ using ManagedBass.Fx;
 using ManagedBass.Mix;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Reactive;
+using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Audio.BassEngine;
 
@@ -163,6 +164,9 @@ public class BassAudioManager : IAudioManager, IDisposable
 
             // TODO: Remve disposed channels or sample can be removed if needed
         }
+
+        GlobalStatistics.Get<int>("Audio", "Active Channels").Value = activeChannels.Count;
+
         Bass.Update((int)Math.Max(1, frameTime));
     }
 

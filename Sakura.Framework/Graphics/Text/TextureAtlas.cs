@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using Sakura.Framework.Graphics.Textures;
+using Sakura.Framework.Statistic;
 using Silk.NET.OpenGL;
 using Texture = Sakura.Framework.Graphics.Textures.Texture;
 
@@ -48,6 +49,7 @@ public class TextureAtlas : IDisposable
             // 2. If it doesn't fit, create a new page
             page = new AtlasPage(gl, width, height);
             pages.Add(page);
+            GlobalStatistics.Get<int>("Fonts", "Atlas Pages").Value = pages.Count;
         }
 
         // if it still doesn't fit (glyph larger than entire texture?), fail.

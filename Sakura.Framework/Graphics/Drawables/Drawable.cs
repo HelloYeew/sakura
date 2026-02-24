@@ -15,6 +15,7 @@ using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
+using Sakura.Framework.Statistic;
 using Sakura.Framework.Timing;
 using Sakura.Framework.Utilities;
 using Silk.NET.OpenGL;
@@ -598,6 +599,8 @@ public abstract class Drawable
     {
         if (DrawAlpha <= 0)
             return;
+
+        GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame").Value++;
 
         renderer.SetBlendMode(Blending);
 

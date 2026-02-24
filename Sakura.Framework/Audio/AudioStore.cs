@@ -4,6 +4,7 @@
 using System.Collections.Concurrent;
 using System.IO;
 using Sakura.Framework.Platform;
+using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Audio;
 
@@ -37,6 +38,7 @@ public abstract class AudioStore<T> : IAudioStore<T> where T : class
             if (component != null)
             {
                 cache.TryAdd(name, component);
+                GlobalStatistics.Get<int>("Audio", $"Cached {typeof(T).Name}s").Value = cache.Count;
                 return component;
             }
         }

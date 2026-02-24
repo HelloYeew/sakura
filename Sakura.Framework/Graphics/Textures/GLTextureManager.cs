@@ -7,6 +7,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
+using Sakura.Framework.Statistic;
 using Silk.NET.OpenGL;
 
 namespace Sakura.Framework.Graphics.Textures;
@@ -57,6 +58,7 @@ public class GLTextureManager : ITextureManager
             var texture = new Texture(glTexture);
 
             textureCache[path] = texture;
+            GlobalStatistics.Get<int>("Textures", "Loaded Textures").Value = textureCache.Count;
             return texture;
         }
         catch (Exception ex)

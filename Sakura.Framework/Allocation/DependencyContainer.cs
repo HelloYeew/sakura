@@ -6,6 +6,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Allocation;
 
@@ -32,6 +33,7 @@ public class DependencyContainer : IReadOnlyDependencyContainer
     public void Cache<T>(T instance) where T : class
     {
         cache[typeof(T)] = instance!;
+        GlobalStatistics.Get<int>("DI", "Cached Dependencies").Value = cache.Count;
     }
 
     /// <summary>

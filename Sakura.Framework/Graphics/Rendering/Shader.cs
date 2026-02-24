@@ -8,6 +8,7 @@ using System.Text;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
+using Sakura.Framework.Statistic;
 using Silk.NET.OpenGL;
 
 namespace Sakura.Framework.Graphics.Rendering;
@@ -42,6 +43,8 @@ public class Shader : IDisposable
         this.gl.DetachShader(handle, fragment);
         this.gl.DeleteShader(vertex);
         this.gl.DeleteShader(fragment);
+
+        GlobalStatistics.Get<int>("Graphics", "Loaded Shaders").Value++;
     }
 
     public uint Handle => handle;
@@ -52,6 +55,7 @@ public class Shader : IDisposable
     public void Use()
     {
         gl.UseProgram(handle);
+        GlobalStatistics.Get<int>("Renderer", "Shader Binds").Value++;
     }
 
     /// <summary>
@@ -200,6 +204,7 @@ public class Shader : IDisposable
     {
         if (disposed) return;
         gl.DeleteProgram(handle);
+        GlobalStatistics.Get<int>("Graphics", "Loaded Shaders").Value--;
         disposed = true;
         GC.SuppressFinalize(this);
     }

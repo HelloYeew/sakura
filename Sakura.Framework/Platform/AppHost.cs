@@ -21,6 +21,7 @@ using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Reactive;
+using Sakura.Framework.Statistic;
 using Sakura.Framework.Timing;
 
 namespace Sakura.Framework.Platform;
@@ -440,6 +441,9 @@ public abstract class AppHost : IDisposable
     /// </summary>
     protected virtual void PerformUpdate()
     {
+        GlobalStatistics.Get<double>("Host", "Uptime (ms)").Value = AppClock.CurrentTime;
+        GlobalStatistics.Get<double>("Host", "Target Update Hz").Value = targetUpdateHz;
+
         if (targetUpdateHz == 0) // Unlimited mode
         {
             // In unlimited mode, we just update once per loop iteration.
@@ -465,6 +469,7 @@ public abstract class AppHost : IDisposable
     /// </summary>
     protected virtual void PerformDraw()
     {
+        GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame").Value = 0;
         Renderer?.Clear();
         Renderer?.StartFrame();
         Renderer?.Draw(AppClock);
