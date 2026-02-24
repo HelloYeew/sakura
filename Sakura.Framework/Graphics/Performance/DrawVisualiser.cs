@@ -387,7 +387,7 @@ public class DrawVisualiser : Container
             lastSelectedDrawable = selectedDrawable;
 
             // Cache the reflection call so we aren't doing it every frame
-            cachedProperties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+            cachedProperties = type.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static);
 
             // If it's container, don't track "child" or "children" properties.
             if (selectedDrawable is Container)
@@ -414,7 +414,7 @@ public class DrawVisualiser : Container
                 {
                     Prop = prop,
                     TextElement = textElement,
-                    LastValue = null
+                    LastStringValue = null
                 });
             }
         }
@@ -431,16 +431,17 @@ public class DrawVisualiser : Container
             {
                 object? val = tracker.Prop.GetValue(selectedDrawable);
 
-                if (val == null && tracker.LastValue == null) continue;
-                if (val != null && val.Equals(tracker.LastValue)) continue;
-
-                tracker.LastValue = val;
-
                 string valStr = val?.ToString() ?? "null";
+
+                if (valStr == tracker.LastStringValue) continue;
+
+                tracker.LastStringValue = valStr;
 
                 Color textColor = Color.White;
                 if (val is bool b) textColor = b ? Color.Green : Color.Red;
                 else if (val is ValueType) textColor = Color.Cyan;
+                else if (tracker.Prop.GetMethod != null && !tracker.Prop.GetMethod.IsPublic) textColor = Color.DeepPink;
+                else if (tracker.Prop.GetMethod != null && tracker.Prop.GetMethod.IsStatic) textColor = Color.Orange;
 
                 string newText = $"{tracker.Prop.Name}: {valStr}";
                 tracker.TextElement.Text = newText;
@@ -496,7 +497,7 @@ public class DrawVisualiser : Container
     {
         public PropertyInfo Prop;
         public SpriteText TextElement;
-        public object? LastValue;
+        public string? LastStringValue;
     }
 }
 
