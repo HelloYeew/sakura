@@ -52,6 +52,15 @@ public class DrawVisualiser : Container
         Origin = Anchor.TopLeft;
         AlwaysPresent = true;
 
+        Add(highlightBox = new Box
+        {
+            Anchor = Anchor.TopLeft,
+            Origin = Anchor.TopLeft,
+            Color = Color.Red,
+            Alpha = 0,
+            Blending = BlendingMode.Additive
+        });
+
         // Background
         Add(backgroundBox = new Box
         {
@@ -226,18 +235,6 @@ public class DrawVisualiser : Container
         };
 
         parentPropertyFlow.Add(propertyFlow);
-
-        // 4. Highlight Box (Overlay)
-        // We add this to a separate container that doesn't mask, or just on top.
-        // It needs to follow the target drawable's screen position.
-        Add(highlightBox = new Box
-        {
-            Anchor = Anchor.TopLeft,
-            Origin = Anchor.TopLeft,
-            Color = Color.Red,
-            Alpha = 0,
-            Blending = BlendingMode.Additive
-        });
     }
 
     private double timeUntilNextRefresh;
