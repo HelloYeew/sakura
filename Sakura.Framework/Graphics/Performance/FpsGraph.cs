@@ -4,7 +4,6 @@
 using System;
 using System.Collections.Generic;
 using Sakura.Framework.Allocation;
-using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
