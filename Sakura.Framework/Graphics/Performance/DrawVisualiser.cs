@@ -75,7 +75,7 @@ public class DrawVisualiser : Container
         // Header
         Add(new SpriteText
         {
-            Text = "Draw Visualiser (Ctrl + F2)",
+            Text = "Draw Visualiser (Ctrl + F1)",
             Font = FontUsage.Default.With(size: 30, weight: "Bold"),
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
@@ -377,6 +377,14 @@ public class DrawVisualiser : Container
 
             // Cache the reflection call so we aren't doing it every frame
             cachedProperties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+
+            // If it's container, don't track "child" or "children" properties.
+            if (selectedDrawable is Container)
+            {
+                cachedProperties = Array.FindAll(cachedProperties, p =>
+                    !string.Equals(p.Name, "Child", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(p.Name, "Children", StringComparison.OrdinalIgnoreCase));
+            }
 
             // Header (Static, doesn't need to be tracked)
             addPropertyText($"Type: {type.Name}", Color.Yellow);
