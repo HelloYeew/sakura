@@ -14,7 +14,7 @@ namespace Sakura.Framework.Development;
 /// <summary>
 /// Utility class for debugging purposes.
 /// </summary>
-public class DebugUtils
+public static class DebugUtils
 {
     public static bool IsNUnitRunning => is_nunit_running.Value;
 
@@ -59,4 +59,6 @@ public class DebugUtils
 
     // https://stackoverflow.com/a/2186634
     private static bool isDebugAssembly(Assembly? assembly) => assembly?.GetCustomAttributes(false).OfType<DebuggableAttribute>().Any(da => da.IsJITTrackingEnabled) ?? false;
+
+    public static string GetFrameworkVersion() => typeof(DebugUtils).Assembly.GetName().Version?.ToString() ?? "Unknown";
 }

@@ -54,6 +54,8 @@ public class App : Container, IDisposable
 
     internal void SetHost(AppHost host) => Host = host;
 
+    private DrawVisualiser visualiser;
+
     public override void Load()
     {
         base.Load();
@@ -119,6 +121,23 @@ public class App : Container, IDisposable
             else
                 FpsGraph.FadeOut(200, Easing.OutQuint);
         };
+    }
+
+    public void ToggleVisualiser()
+    {
+        if (visualiser == null)
+        {
+            visualiser = new DrawVisualiser(this);
+            visualiser.Depth = float.MaxValue;
+            Add(visualiser);
+        }
+        else
+        {
+            if (visualiser.IsHidden)
+                visualiser.FadeIn(200, Easing.OutQuint);
+            else
+                visualiser.FadeOut(200, Easing.OutQuint);
+        }
     }
 
     /// <summary>
