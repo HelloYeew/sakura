@@ -23,8 +23,10 @@ public class DrawVisualiser : Container
     private readonly Drawable targetRoot;
     private readonly Box backgroundBox;
     private readonly FlowContainer treeFlow;
-    private readonly FlowContainer propertyFlow;
+    private readonly ScrollableContainer parentTreeFlow;
     private readonly ScrollableContainer parentPropertyFlow;
+    private readonly FlowContainer propertyFlow;
+    private readonly Container leftContainer;
     private readonly Container rightContainer;
     private readonly Box highlightBox;
     private Drawable selectedDrawable;
@@ -38,8 +40,8 @@ public class DrawVisualiser : Container
     private readonly List<(Drawable drawable, int depth)> cachedTreeStructure = new();
     private readonly List<(Drawable drawable, int depth)> currentTreeStructure = new();
 
-    private const float WIDTH_SPLIT = 0.4f;
-    private const float ENTRY_HEIGHT = 20;
+    private const float width_split = 0.4f;
+    private const float entry_height = 20;
 
     public DrawVisualiser(Drawable root)
     {
@@ -136,32 +138,59 @@ public class DrawVisualiser : Container
             Height = 30
         });
 
-        // 2. Tree View (Left Side)
-        Add(new Container
+        // Tree view (left)
+        Add(leftContainer = new Container
+        {
+            RelativeSizeAxes = Axes.Both,
+            Anchor = Anchor.CentreLeft,
+            Origin = Anchor.CentreLeft,
+            Size = new Vector2(width_split, 0.75f),
+            RelativePositionAxes = Axes.X,
+            Name = "Left Container"
+        });
+
+        leftContainer.Add(new Box()
+        {
+            Anchor = Anchor.Centre,
+            Origin = Anchor.Centre,
+            RelativeSizeAxes = Axes.Both,
+            Color = Color.Black,
+            Alpha = 0.2f,
+            Size = new Vector2(1)
+        });
+
+        leftContainer.Add(parentTreeFlow = new ScrollableContainer()
         {
             RelativeSizeAxes = Axes.Both,
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
-            Size = new Vector2(WIDTH_SPLIT, 1f),
-            Child = treeFlow = new FlowContainer
-            {
-                Anchor = Anchor.CentreLeft,
-                Origin = Anchor.CentreLeft,
-                RelativeSizeAxes = Axes.X,
-                AutoSizeAxes = Axes.Y,
-                Direction = FlowDirection.Vertical,
-                Width = 1f
-            }
+            Size = new Vector2(1),
+            RelativePositionAxes = Axes.Both,
+            Name = "Tree View Container"
         });
 
+        treeFlow = new FlowContainer
+        {
+            Anchor = Anchor.TopLeft,
+            Origin = Anchor.TopLeft,
+            RelativeSizeAxes = Axes.X,
+            AutoSizeAxes = Axes.Y,
+            Spacing = new Vector2(0, 2),
+            Width = 1f,
+            Name = "Tree Flow"
+        };
+
+        parentTreeFlow.Add(treeFlow);
+
+        // Property (right)
         Add(rightContainer = new Container
         {
             RelativeSizeAxes = Axes.Both,
             Anchor = Anchor.CentreLeft,
             Origin = Anchor.CentreLeft,
-            Size = new Vector2(1f - WIDTH_SPLIT, 0.75f),
+            Size = new Vector2(1f - width_split, 0.75f),
             RelativePositionAxes = Axes.X,
-            Position = new Vector2(WIDTH_SPLIT, 0),
+            Position = new Vector2(width_split, 0),
             Name = "Right Container"
         });
 
