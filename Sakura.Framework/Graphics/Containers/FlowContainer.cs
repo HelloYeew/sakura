@@ -5,7 +5,6 @@ using System;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Maths;
-using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Graphics.Containers;
 

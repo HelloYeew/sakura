@@ -2,8 +2,6 @@
 // See the LICENSE file for full license text.
 
 using System;
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
 using Sakura.Framework.Allocation;
 using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Graphics.Rendering;
@@ -26,7 +24,8 @@ public class SpriteText : Drawable
     // Tracks if the text content/font has changed, requiring re-measurement.
     private bool layoutInvalidated = true;
 
-    private readonly List<Vertex> textVertices = new List<Vertex>();
+    private Vertex[] textVertices = Array.Empty<Vertex>();
+    private int currentVertexCount = 0;
     private ShapedText? shapedText;
 
     private Font? resolvedFont;
@@ -111,8 +110,22 @@ public class SpriteText : Drawable
 
     protected override void GenerateVertices()
     {
-        textVertices.Clear();
-        if (shapedText == null) return;
+        if (shapedText == null || shapedText.Glyphs.Count == 0)
+        {
+            currentVertexCount = 0;
+            return;
+        }
+
+        currentVertexCount = shapedText.Glyphs.Count * 6;
+
+        if (textVertices.Length < currentVertexCount)
+        {
+            int newSize = Math.Max(textVertices.Length * 2, currentVertexCount);
+            Array.Resize(ref textVertices, newSize);
+        }
+
+        Span<Vertex> vertices = textVertices.AsSpan(0, currentVertexCount);
+        int vIndex = 0;
 
         var drawColor = new Vector4(
             ColorExtensions.SrgbToLinear(Color.R),
@@ -166,19 +179,19 @@ public class SpriteText : Drawable
             var uvTopLeft = new Vector2(uv.X, uv.Y);
             var uvBottomRight = new Vector2(uv.X + uv.Width, uv.Y + uv.Height);
 
-            textVertices.Add(new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = drawColor });
-            textVertices.Add(new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(uvBottomRight.X, uvTopLeft.Y), Color = drawColor });
-            textVertices.Add(new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight, Color = drawColor });
+            vertices[vIndex++] = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = drawColor };
+            vertices[vIndex++] = new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(uvBottomRight.X, uvTopLeft.Y), Color = drawColor };
+            vertices[vIndex++] = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight, Color = drawColor };
 
-            textVertices.Add(new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight, Color = drawColor });
-            textVertices.Add(new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(uvTopLeft.X, uvBottomRight.Y), Color = drawColor });
-            textVertices.Add(new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = drawColor });
+            vertices[vIndex++] = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight, Color = drawColor };
+            vertices[vIndex++] = new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(uvTopLeft.X, uvBottomRight.Y), Color = drawColor };
+            vertices[vIndex++] = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = drawColor };
         }
     }
 
     public override void Draw(IRenderer renderer)
     {
-        if (DrawAlpha <= 0 || textVertices.Count == 0 || shapedText == null || shapedText.Glyphs.Count == 0)
+        if (DrawAlpha <= 0 || currentVertexCount == 0 || shapedText == null || shapedText.Glyphs.Count == 0)
             return;
 
         Texture? currentTextureRegion = null;
@@ -219,7 +232,7 @@ public class SpriteText : Drawable
         int vertexStart = glyphStart * 6;
         int vertexCount = glyphCount * 6;
 
-        var slice = CollectionsMarshal.AsSpan(textVertices).Slice(vertexStart, vertexCount);
+        var slice = textVertices.AsSpan(vertexStart, vertexCount);
         renderer.DrawVertices(slice, texture);
     }
 }
