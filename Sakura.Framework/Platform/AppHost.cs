@@ -365,6 +365,10 @@ public abstract class AppHost : IDisposable
             int nextValue = (currentValue + 1) % Enum.GetValues(typeof(FrameSync)).Length;
             FrameLimiter.Value = (FrameSync)nextValue;
         }
+        if (!e.IsRepeat && e.Key == Key.F2 && (e.Modifiers & KeyModifiers.Control) > 0)
+        {
+            app?.ToggleVisualiser();
+        }
         if (!e.IsRepeat && e.Key == Key.F1)
         {
             var builder = new StringBuilder();
