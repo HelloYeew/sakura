@@ -1,8 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
+using System;
 using Sakura.Framework.Allocation;
 using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Graphics.Rendering;
@@ -25,7 +24,8 @@ public class SpriteText : Drawable
     // Tracks if the text content/font has changed, requiring re-measurement.
     private bool layoutInvalidated = true;
 
-    private readonly List<Vertex> textVertices = new List<Vertex>();
+    private Vertex[] textVertices = Array.Empty<Vertex>();
+    private int currentVertexCount = 0;
     private ShapedText? shapedText;
 
     private Font? resolvedFont;
@@ -100,7 +100,7 @@ public class SpriteText : Drawable
         shapedText = resolvedFont.ProcessText(Text, fontUsage.Size, dpiScale);
         ContentSize = new Vector2(shapedText.BoundingBox.X, shapedText.BoundingBox.Y);
 
-        if (Size != ContentSize)
+        if (Math.Abs(Size.X - ContentSize.X) > 1.0f || Math.Abs(Size.Y - ContentSize.Y) > 1.0f)
         {
             Size = ContentSize;
         }
@@ -110,8 +110,22 @@ public class SpriteText : Drawable
 
     protected override void GenerateVertices()
     {
-        textVertices.Clear();
-        if (shapedText == null) return;
+        if (shapedText == null || shapedText.Glyphs.Count == 0)
+        {
+            currentVertexCount = 0;
+            return;
+        }
+
+        currentVertexCount = shapedText.Glyphs.Count * 6;
+
+        if (textVertices.Length < currentVertexCount)
+        {
+            int newSize = Math.Max(textVertices.Length * 2, currentVertexCount);
+            Array.Resize(ref textVertices, newSize);
+        }
+
+        Span<Vertex> vertices = textVertices.AsSpan(0, currentVertexCount);
+        int vIndex = 0;
 
         var drawColor = new Vector4(
             ColorExtensions.SrgbToLinear(Color.R),
@@ -165,22 +179,22 @@ public class SpriteText : Drawable
             var uvTopLeft = new Vector2(uv.X, uv.Y);
             var uvBottomRight = new Vector2(uv.X + uv.Width, uv.Y + uv.Height);
 
-            textVertices.Add(new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = drawColor });
-            textVertices.Add(new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(uvBottomRight.X, uvTopLeft.Y), Color = drawColor });
-            textVertices.Add(new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight, Color = drawColor });
+            vertices[vIndex++] = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = drawColor };
+            vertices[vIndex++] = new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(uvBottomRight.X, uvTopLeft.Y), Color = drawColor };
+            vertices[vIndex++] = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight, Color = drawColor };
 
-            textVertices.Add(new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight, Color = drawColor });
-            textVertices.Add(new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(uvTopLeft.X, uvBottomRight.Y), Color = drawColor });
-            textVertices.Add(new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = drawColor });
+            vertices[vIndex++] = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight, Color = drawColor };
+            vertices[vIndex++] = new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(uvTopLeft.X, uvBottomRight.Y), Color = drawColor };
+            vertices[vIndex++] = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = drawColor };
         }
     }
 
     public override void Draw(IRenderer renderer)
     {
-        if (DrawAlpha <= 0 || textVertices.Count == 0 || shapedText == null || shapedText.Glyphs.Count == 0)
+        if (DrawAlpha <= 0 || currentVertexCount == 0 || shapedText == null || shapedText.Glyphs.Count == 0)
             return;
 
-        Texture? currentTexture = null;
+        Texture? currentTextureRegion = null;
         int batchStart = 0;
         int batchCount = 0;
 
@@ -191,21 +205,24 @@ public class SpriteText : Drawable
             var glyph = shapedText.Glyphs[i];
 
             // If texture changes (and it's not the start), flush the draw
-            if (currentTexture != null && glyph.Texture != currentTexture)
+            bool isNewAtlasPage = currentTextureRegion != null &&
+                                  glyph.Texture.GlTexture.Handle != currentTextureRegion.GlTexture.Handle;
+
+            if (isNewAtlasPage)
             {
-                flushBatch(renderer, currentTexture, batchStart, batchCount);
+                flushBatch(renderer, currentTextureRegion, batchStart, batchCount);
                 batchStart += batchCount;
                 batchCount = 0;
             }
 
-            currentTexture = glyph.Texture;
+            currentTextureRegion = glyph.Texture;
             batchCount++;
         }
 
         // Flush final batch
-        if (currentTexture != null && batchCount > 0)
+        if (currentTextureRegion != null && batchCount > 0)
         {
-            flushBatch(renderer, currentTexture, batchStart, batchCount);
+            flushBatch(renderer, currentTextureRegion, batchStart, batchCount);
         }
     }
 
@@ -215,7 +232,7 @@ public class SpriteText : Drawable
         int vertexStart = glyphStart * 6;
         int vertexCount = glyphCount * 6;
 
-        var slice = CollectionsMarshal.AsSpan(textVertices).Slice(vertexStart, vertexCount);
+        var slice = textVertices.AsSpan(vertexStart, vertexCount);
         renderer.DrawVertices(slice, texture);
     }
 }

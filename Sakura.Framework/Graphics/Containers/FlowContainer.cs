@@ -5,7 +5,6 @@ using System;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Maths;
-using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Graphics.Containers;
 
@@ -53,43 +52,13 @@ public class FlowContainer : Container
     public override void Update()
     {
         bool layoutWasInvalidated = (Invalidation & InvalidationFlags.DrawInfo) != 0;
-        bool colourWasInvalidated = (Invalidation & InvalidationFlags.Colour) != 0;
 
-        // run base update (from Drawable.Update())
-        base.Update();
-
-        if (!AlwaysPresent && Precision.AlmostEqualZero(Alpha))
-            return;
-
-        // calculate layout if needed
         if (layoutWasInvalidated)
         {
             PerformLayout();
         }
 
-        // propagate after layout, because PerformLayout() might have
-        // set properties on children that invalidate them (like Position).
-        if (layoutWasInvalidated)
-        {
-            foreach (var child in Children)
-            {
-                child.Invalidate(InvalidationFlags.DrawInfo, false);
-            }
-        }
-
-        if (colourWasInvalidated)
-        {
-            foreach (var child in Children)
-            {
-                child.Invalidate(InvalidationFlags.Colour, false);
-            }
-        }
-
-        // Run update on children
-        foreach (var child in Children)
-        {
-            child.Update();
-        }
+        base.Update();
     }
 
     /// <summary>

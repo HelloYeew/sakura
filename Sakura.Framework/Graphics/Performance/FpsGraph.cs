@@ -2,9 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
-using System.Collections.Generic;
 using Sakura.Framework.Allocation;
-using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
@@ -26,7 +24,9 @@ public class FpsGraph : Container
     private const int max_history = 120; // Number of frames to show in the graph
     private const int bar_width = 4;    // Width of each bar in the graph
     private const int graph_height = 150; // Height of the graph
-    private readonly Queue<double> frameHistory = new();
+    private readonly double[] frameHistory = new double[max_history];
+    private int currentIndex;
+    private int currentCount;
 
     private readonly Drawable[] graphBars = new Drawable[max_history];
     private readonly IClock clock;
@@ -233,50 +233,48 @@ public class FpsGraph : Container
         if (Precision.AlmostEqualZero(Alpha))
             return;
 
-        // Add the latest frame time to our history
-        if(clock != null)
-            frameHistory.Enqueue(clock.ElapsedFrameTime);
+        if (clock != null)
+        {
+            frameHistory[currentIndex] = clock.ElapsedFrameTime;
+            currentIndex = (currentIndex + 1) % max_history;
 
-        // Ensure the history does not exceed our maximum size
-        while (frameHistory.Count > max_history)
-            frameHistory.Dequeue();
+            if (currentCount < max_history)
+                currentCount++;
+        }
 
-        // Update the visual representation of the graph
         updateGraph();
         updateFpsText();
     }
 
     private void updateGraph()
     {
-        double[] historyArray = frameHistory.ToArray();
+        int startIndex = currentCount == max_history ? currentIndex : 0;
 
         for (int i = 0; i < max_history; i++)
         {
             var bar = graphBars[i];
 
-            if (i < historyArray.Length)
+            if (i < currentCount)
             {
-                double frameTime = historyArray[i];
+                int bufferIndex = (startIndex + i) % max_history;
+                double frameTime = frameHistory[bufferIndex];
+
                 double fps = frameTime > 0 ? 1000.0 / frameTime : 0;
 
-                // Make the bar visible
                 bar.Alpha = 1;
-
-                // Calculate bar height as a fraction of the graph's total height (0 to 1).
-                float barHeight = (float)(fps / 120.0); // Assume 120fps is a good max for the graph height
+                float barHeight = (float)(fps / 120.0);
                 barHeight = Math.Clamp(barHeight, 0, 1);
                 bar.Size = new Vector2(bar_width, barHeight);
 
                 if (fps < 30)
                     bar.Color = Color.Red;
-                else if (fps < 58) // Leave a gap for less tolerance on 60hz monitors
+                else if (fps < 58)
                     bar.Color = Color.Yellow;
                 else
                     bar.Color = Color.Green;
             }
             else
             {
-                // Hide bars that don't have data yet
                 bar.Alpha = 0;
             }
         }
@@ -284,15 +282,15 @@ public class FpsGraph : Container
 
     private void updateFpsText()
     {
-        if (frameHistory.Count == 0)
+        if (currentCount == 0)
         {
             fpsText.Text = "N/A";
             return;
         }
 
-        double latestFrameTime = 0;
-        foreach (double ft in frameHistory)
-            latestFrameTime = ft;
+        int lastIndex = (currentIndex - 1 + max_history) % max_history;
+        double latestFrameTime = frameHistory[lastIndex];
+
         double fps = latestFrameTime > 0 ? 1000.0 / latestFrameTime : 0;
         fpsText.Text = $"{fps:F1}";
 
