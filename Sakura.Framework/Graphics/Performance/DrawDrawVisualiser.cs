@@ -18,7 +18,7 @@ using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.Performance;
 
-public class DrawVisualiser : Container
+public class DrawDrawVisualiser : Container, IRemoveFromDrawVisualiser
 {
     private readonly Drawable targetRoot;
     private readonly Box backgroundBox;
@@ -43,7 +43,7 @@ public class DrawVisualiser : Container
     private const float width_split = 0.4f;
     private const float entry_height = 20;
 
-    public DrawVisualiser(Drawable root)
+    public DrawDrawVisualiser(Drawable root)
     {
         targetRoot = root;
         RelativeSizeAxes = Axes.Both;
@@ -348,7 +348,7 @@ public class DrawVisualiser : Container
 
         currentTreeStructure.Add((d, depth));
 
-        if (d is DrawVisualiser || d is FpsGraph || d is GlobalStatisticsDisplay) return;
+        if (d is IRemoveFromDrawVisualiser) return;
 
         if (d is Container c)
         {

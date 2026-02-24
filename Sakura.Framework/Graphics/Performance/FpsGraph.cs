@@ -19,7 +19,7 @@ namespace Sakura.Framework.Graphics.Performance;
 /// <summary>
 /// A drawable that displays a real-time graph of the application's frame times.
 /// </summary>
-public class FpsGraph : Container
+public class FpsGraph : Container, IRemoveFromDrawVisualiser
 {
     private const int max_history = 120; // Number of frames to show in the graph
     private const int bar_width = 4;    // Width of each bar in the graph
