@@ -54,7 +54,7 @@ public class App : Container, IDisposable
 
     internal void SetHost(AppHost host) => Host = host;
 
-    private DrawVisualiser visualiser;
+    private DrawVisualiser drawVisualiser;
     private GlobalStatisticsDisplay globalStatisticsDisplay;
 
     public override void Load()
@@ -111,7 +111,7 @@ public class App : Container, IDisposable
         showFpsGraph = Host.FrameworkConfigManager.Get(FrameworkSetting.ShowFpsGraph, false);
 
 
-        Add(visualiser = new DrawVisualiser(this)
+        Add(drawVisualiser = new DrawVisualiser(this)
         {
             Depth = float.MaxValue - 10,
             Alpha = 0
@@ -142,16 +142,16 @@ public class App : Container, IDisposable
     {
         if (!globalStatisticsDisplay.IsHidden)
             globalStatisticsDisplay.FadeOut(200, Easing.OutQuint);
-        if (visualiser.IsHidden)
-            visualiser.FadeIn(200, Easing.OutQuint);
+        if (drawVisualiser.IsHidden)
+            drawVisualiser.FadeIn(200, Easing.OutQuint);
         else
-            visualiser.FadeOut(200, Easing.OutQuint);
+            drawVisualiser.FadeOut(200, Easing.OutQuint);
     }
 
     private void toggleStatisticsDisplay()
     {
-        if (!visualiser.IsHidden)
-            visualiser.FadeOut(200, Easing.OutQuint);
+        if (!drawVisualiser.IsHidden)
+            drawVisualiser.FadeOut(200, Easing.OutQuint);
         if (globalStatisticsDisplay.IsHidden)
             globalStatisticsDisplay.FadeIn(200, Easing.OutQuint);
         else

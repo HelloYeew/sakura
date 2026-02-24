@@ -18,7 +18,7 @@ using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.Performance;
 
-public class DrawDrawVisualiser : Container, IRemoveFromDrawVisualiser
+public class DrawVisualiser : Container, IRemoveFromDrawVisualiser
 {
     private readonly Drawable targetRoot;
     private readonly Box backgroundBox;
@@ -43,7 +43,7 @@ public class DrawDrawVisualiser : Container, IRemoveFromDrawVisualiser
     private const float width_split = 0.4f;
     private const float entry_height = 20;
 
-    public DrawDrawVisualiser(Drawable root)
+    public DrawVisualiser(Drawable root)
     {
         targetRoot = root;
         RelativeSizeAxes = Axes.Both;

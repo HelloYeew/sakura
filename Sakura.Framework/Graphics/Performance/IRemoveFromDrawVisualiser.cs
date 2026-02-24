@@ -4,7 +4,7 @@
 namespace Sakura.Framework.Graphics.Performance;
 
 /// <summary>
-/// Mark this class as a drawable that's not required <see cref="DrawDrawVisualiser"/>
+/// Mark this class as a drawable that's not required <see cref="DrawVisualiser"/>
 /// to be displayed information about this drawable.
 /// </summary>
 public interface IRemoveFromDrawVisualiser
