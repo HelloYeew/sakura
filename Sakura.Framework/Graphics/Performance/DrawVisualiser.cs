@@ -348,7 +348,7 @@ public class DrawVisualiser : Container
 
         currentTreeStructure.Add((d, depth));
 
-        if (d is DrawVisualiser || d is FpsGraph) return;
+        if (d is DrawVisualiser || d is FpsGraph || d is GlobalStatisticsDisplay) return;
 
         if (d is Container c)
         {
