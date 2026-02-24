@@ -143,7 +143,7 @@ public class GlobalStatisticsDisplay : Container, IRemoveFromDrawVisualiser
         {
             AutoSizeAxes = Axes.Y,
             Width = 1,
-            Spacing = new Vector2(0, 10),
+            Spacing = new Vector2(0, 5),
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft
         });
@@ -155,7 +155,6 @@ public class GlobalStatisticsDisplay : Container, IRemoveFromDrawVisualiser
 
         foreach (var stat in GlobalStatistics.GetStatistics())
         {
-            // 1. Ensure Group Container exists
             if (!groupContainers.TryGetValue(stat.Group, out var groupFlow))
             {
                 groupFlow = new FlowContainer
@@ -163,10 +162,10 @@ public class GlobalStatisticsDisplay : Container, IRemoveFromDrawVisualiser
                     AutoSizeAxes = Axes.Both,
                     Spacing = new Vector2(0, 5),
                     Anchor = Anchor.TopLeft,
-                    Origin = Anchor.TopLeft
+                    Origin = Anchor.TopLeft,
+                    Padding = new MarginPadding { Bottom = 5 }
                 };
 
-                // Add Group Header
                 groupFlow.Add(new SpriteText
                 {
                     Anchor = Anchor.TopLeft,
@@ -181,7 +180,6 @@ public class GlobalStatisticsDisplay : Container, IRemoveFromDrawVisualiser
                 groupsFlow.Add(groupFlow);
             }
 
-            // 2. Ensure Text Element exists
             if (!statTexts.TryGetValue(stat, out var textElement))
             {
                 textElement = new SpriteText
@@ -193,7 +191,6 @@ public class GlobalStatisticsDisplay : Container, IRemoveFromDrawVisualiser
                 groupFlow.Add(textElement);
             }
 
-            // 3. Update Value (optimizing by only setting if changed)
             string newText = $"{stat.Name}: {stat.DisplayValue}";
             if (textElement.Text != newText)
             {
@@ -207,7 +204,6 @@ public class GlobalStatisticsDisplay : Container, IRemoveFromDrawVisualiser
 
     public override bool OnKeyDown(KeyEvent e)
     {
-        // Allow user to dismiss with Esc, just like a nice overlay should
         if (e.Key == Key.Escape)
         {
             this.FadeOut(200, Easing.OutQuint);
