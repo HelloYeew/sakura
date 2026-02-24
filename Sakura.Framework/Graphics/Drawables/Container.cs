@@ -129,17 +129,29 @@ public class Container : Drawable
 
     public override void Update()
     {
-        if (AutoSizeAxes != Axes.None)
-            UpdateAutoSize();
-
         // Check whether our layout was dirty before base.Update() is called, as it will clear our invalidation flags.
         bool layoutWasInvalidated = (Invalidation & InvalidationFlags.DrawInfo) != 0;
         bool colourWasInvalidated = (Invalidation & InvalidationFlags.Colour) != 0;
+
+        if (AutoSizeAxes != Axes.None && layoutWasInvalidated)
+        {
+            UpdateAutoSize();
+        }
 
         base.Update();
 
         if (!AlwaysPresent && Precision.AlmostEqualZero(Alpha))
             return;
+
+        for (int i = children.Count - 1; i >= 0; i--)
+        {
+            var child = children[i];
+
+            if (!child.IsAlive && child.RemoveWhenNotAlive)
+            {
+                Remove(child);
+            }
+        }
 
         if (layoutWasInvalidated)
         {
@@ -153,11 +165,6 @@ public class Container : Drawable
         {
             foreach (var child in children)
             {
-                if (!child.IsAlive && child.RemoveWhenNotAlive)
-                {
-                    Remove(child);
-                    continue;
-                }
                 child.Invalidate(InvalidationFlags.Colour, false);
             }
         }

@@ -181,7 +181,7 @@ public class SpriteText : Drawable
         if (DrawAlpha <= 0 || textVertices.Count == 0 || shapedText == null || shapedText.Glyphs.Count == 0)
             return;
 
-        Texture? currentTexture = null;
+        Texture? currentTextureRegion = null;
         int batchStart = 0;
         int batchCount = 0;
 
@@ -192,21 +192,24 @@ public class SpriteText : Drawable
             var glyph = shapedText.Glyphs[i];
 
             // If texture changes (and it's not the start), flush the draw
-            if (currentTexture != null && glyph.Texture != currentTexture)
+            bool isNewAtlasPage = currentTextureRegion != null &&
+                                  glyph.Texture.GlTexture.Handle != currentTextureRegion.GlTexture.Handle;
+
+            if (isNewAtlasPage)
             {
-                flushBatch(renderer, currentTexture, batchStart, batchCount);
+                flushBatch(renderer, currentTextureRegion, batchStart, batchCount);
                 batchStart += batchCount;
                 batchCount = 0;
             }
 
-            currentTexture = glyph.Texture;
+            currentTextureRegion = glyph.Texture;
             batchCount++;
         }
 
         // Flush final batch
-        if (currentTexture != null && batchCount > 0)
+        if (currentTextureRegion != null && batchCount > 0)
         {
-            flushBatch(renderer, currentTexture, batchStart, batchCount);
+            flushBatch(renderer, currentTextureRegion, batchStart, batchCount);
         }
     }
 

@@ -148,9 +148,9 @@ public class ScrollableContainer : Container
 
     public override void Update()
     {
-        base.Update();
         updateScrollPosition();
         updateScrollbars();
+        base.Update();
     }
 
     private void updateScrollPosition()
