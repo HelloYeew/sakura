@@ -12,6 +12,7 @@ using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Text;
+using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
@@ -556,5 +557,15 @@ public class VisualiserTreeItem : Container
     {
         ClickAction?.Invoke();
         return true;
+    }
+
+    public override bool OnKeyDown(KeyEvent e)
+    {
+        if (e.Key == Key.Escape)
+        {
+            this.FadeOut(200, Easing.OutQuint);
+            return true;
+        }
+        return base.OnKeyDown(e);
     }
 }
