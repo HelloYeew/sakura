@@ -26,6 +26,8 @@ public class Font : IDisposable
     private readonly HarfBuzzSharp.Face hbFace;
     private readonly HarfBuzzSharp.Font hbFont;
 
+    private readonly HarfBuzzSharp.Buffer sharedBuffer = new HarfBuzzSharp.Buffer();
+
     // Cache stores GlyphData instead of just Texture, because we need bearing info per glyph
     // Key by (CodePoint, Size) so multiple sizes can be cached in the same Font instance.
     private readonly Dictionary<(uint CodePoint, float PhysicalSize), GlyphData> glyphCache = new();
@@ -104,14 +106,14 @@ public class Font : IDisposable
             }
 
             // 3. Shape Text
-            using var buffer = new HarfBuzzSharp.Buffer();
-            buffer.AddUtf16(text);
-            buffer.GuessSegmentProperties();
-            hbFont.Shape(buffer);
+            sharedBuffer.ClearContents();
+            sharedBuffer.AddUtf16(text);
+            sharedBuffer.GuessSegmentProperties();
+            hbFont.Shape(sharedBuffer);
 
-            int length = buffer.Length;
-            var info = buffer.GlyphInfos;
-            var pos = buffer.GlyphPositions;
+            int length = sharedBuffer.Length;
+            var info = sharedBuffer.GlyphInfos;
+            var pos = sharedBuffer.GlyphPositions;
 
             var glyphs = new List<TextGlyph>(length);
 
@@ -219,6 +221,7 @@ public class Font : IDisposable
 
     public void Dispose()
     {
+        sharedBuffer.Dispose();
         hbFont.Dispose();
         hbFace.Dispose();
         hbBlob.Dispose();

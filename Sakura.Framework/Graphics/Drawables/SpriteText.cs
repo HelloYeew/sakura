@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Sakura.Framework.Allocation;
@@ -100,7 +101,7 @@ public class SpriteText : Drawable
         shapedText = resolvedFont.ProcessText(Text, fontUsage.Size, dpiScale);
         ContentSize = new Vector2(shapedText.BoundingBox.X, shapedText.BoundingBox.Y);
 
-        if (Size != ContentSize)
+        if (Math.Abs(Size.X - ContentSize.X) > 1.0f || Math.Abs(Size.Y - ContentSize.Y) > 1.0f)
         {
             Size = ContentSize;
         }
