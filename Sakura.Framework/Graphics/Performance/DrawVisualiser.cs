@@ -36,7 +36,7 @@ public class DrawVisualiser : Container
     private Drawable lastSelectedDrawable;
     private PropertyInfo[] cachedProperties;
     private SpriteText loadStateText;
-    private readonly List<(PropertyInfo prop, SpriteText textElement)> propertyTextMap = new();
+    private readonly List<PropertyTracker> propertyTextMap = new();
     private readonly List<(Drawable drawable, int depth)> cachedTreeStructure = new();
     private readonly List<(Drawable drawable, int depth)> currentTreeStructure = new();
 
@@ -410,7 +410,12 @@ public class DrawVisualiser : Container
 
                 // Create the UI text once, and save a reference to it in our map
                 var textElement = addPropertyText($"{prop.Name}: loading...", Color.White);
-                propertyTextMap.Add((prop, textElement));
+                propertyTextMap.Add(new PropertyTracker
+                {
+                    Prop = prop,
+                    TextElement = textElement,
+                    LastValue = null
+                });
             }
         }
 
@@ -420,20 +425,26 @@ public class DrawVisualiser : Container
             loadStateText.Text = $"Load State: {selectedDrawable.IsLoaded}";
         }
 
-        foreach (var mapping in propertyTextMap)
+        foreach (var tracker in propertyTextMap)
         {
             try
             {
-                object val = mapping.prop.GetValue(selectedDrawable);
+                object? val = tracker.Prop.GetValue(selectedDrawable);
+
+                if (val == null && tracker.LastValue == null) continue;
+                if (val != null && val.Equals(tracker.LastValue)) continue;
+
+                tracker.LastValue = val;
+
                 string valStr = val?.ToString() ?? "null";
 
                 Color textColor = Color.White;
                 if (val is bool b) textColor = b ? Color.Green : Color.Red;
                 else if (val is ValueType) textColor = Color.Cyan;
 
-                string newText = $"{mapping.prop.Name}: {valStr}";
-                mapping.textElement.Text = newText;
-                mapping.textElement.Color = textColor;
+                string newText = $"{tracker.Prop.Name}: {valStr}";
+                tracker.TextElement.Text = newText;
+                tracker.TextElement.Color = textColor;
             }
             catch
             {
@@ -479,6 +490,13 @@ public class DrawVisualiser : Container
         }
 
         return base.OnKeyDown(e);
+    }
+
+    private class PropertyTracker
+    {
+        public PropertyInfo Prop;
+        public SpriteText TextElement;
+        public object? LastValue;
     }
 }
 
