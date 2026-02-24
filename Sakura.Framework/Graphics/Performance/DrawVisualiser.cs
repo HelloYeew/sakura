@@ -29,7 +29,7 @@ public class DrawVisualiser : Container
     private readonly Container leftContainer;
     private readonly Container rightContainer;
     private readonly Box highlightBox;
-    private Drawable selectedDrawable;
+    private Drawable? selectedDrawable;
     private readonly SpriteText currentTimeText;
     private readonly SpriteText runningTimeText;
 
@@ -237,22 +237,33 @@ public class DrawVisualiser : Container
         parentPropertyFlow.Add(propertyFlow);
     }
 
-    private double timeUntilNextRefresh;
+    private double timeUntilNextTreeRefresh;
+    private double timeUntilNextPropertyRefresh;
 
     public override void Update()
     {
         base.Update();
 
-        refreshProperties();
+        if (IsHidden) return;
 
-        timeUntilNextRefresh -= Clock.ElapsedFrameTime;
-        if (timeUntilNextRefresh <= 0)
+        timeUntilNextPropertyRefresh -= Clock.ElapsedFrameTime;
+        if (timeUntilNextPropertyRefresh <= 0)
         {
-            refreshTree();
-            timeUntilNextRefresh = 500;
+            refreshProperties();
+
+            currentTimeText.Text = $"{DateTime.Now:dd MMMM yyyy HH:mm:ss tt}";
+            runningTimeText.Text = $"Has been running for {TimeSpan.FromSeconds(targetRoot.Clock.CurrentTime / 1000):hh\\:mm\\:ss}";
+
+            timeUntilNextPropertyRefresh = 100;
         }
 
-        // Update highlight box position
+        timeUntilNextTreeRefresh -= Clock.ElapsedFrameTime;
+        if (timeUntilNextTreeRefresh <= 0)
+        {
+            refreshTree();
+            timeUntilNextTreeRefresh = 500;
+        }
+
         if (selectedDrawable != null && selectedDrawable.IsAlive && selectedDrawable.Parent != null)
         {
             highlightBox.Alpha = 0.4f;
