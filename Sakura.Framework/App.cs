@@ -55,6 +55,7 @@ public class App : Container, IDisposable
     internal void SetHost(AppHost host) => Host = host;
 
     private DrawVisualiser visualiser;
+    private GlobalStatisticsDisplay globalStatisticsDisplay;
 
     public override void Load()
     {
@@ -115,9 +116,15 @@ public class App : Container, IDisposable
             Depth = float.MaxValue - 10,
             Alpha = 0
         });
+        Add(globalStatisticsDisplay = new GlobalStatisticsDisplay()
+        {
+            Depth = float.MaxValue - 10,
+            Alpha = 0
+        });
         Add(FpsGraph = new FpsGraph(Host.AppClock)
         {
-            Depth = float.MaxValue
+            Depth = float.MaxValue,
+            Alpha = 0
         });
 
         if (!showFpsGraph)
@@ -133,10 +140,22 @@ public class App : Container, IDisposable
 
     private void toggleVisualiser()
     {
+        if (!globalStatisticsDisplay.IsHidden)
+            globalStatisticsDisplay.FadeOut(200, Easing.OutQuint);
         if (visualiser.IsHidden)
             visualiser.FadeIn(200, Easing.OutQuint);
         else
             visualiser.FadeOut(200, Easing.OutQuint);
+    }
+
+    private void toggleStatisticsDisplay()
+    {
+        if (!visualiser.IsHidden)
+            visualiser.FadeOut(200, Easing.OutQuint);
+        if (globalStatisticsDisplay.IsHidden)
+            globalStatisticsDisplay.FadeIn(200, Easing.OutQuint);
+        else
+            globalStatisticsDisplay.FadeOut(200, Easing.OutQuint);
     }
 
     /// <summary>
@@ -175,6 +194,10 @@ public class App : Container, IDisposable
         if (!e.IsRepeat && e.Key == Key.F1 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
             toggleVisualiser();
+        }
+        else if (!e.IsRepeat && e.Key == Key.F2 && (e.Modifiers & KeyModifiers.Control) > 0)
+        {
+            toggleStatisticsDisplay();
         }
         if (!e.IsRepeat && e.Key == Key.F11 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
