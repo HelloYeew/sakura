@@ -12,13 +12,14 @@ using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Text;
+using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.Performance;
 
-public class DrawVisualiser : Container
+public class DrawVisualiser : Container, IRemoveFromDrawVisualiser
 {
     private readonly Drawable targetRoot;
     private readonly Box backgroundBox;
@@ -348,7 +349,7 @@ public class DrawVisualiser : Container
 
         currentTreeStructure.Add((d, depth));
 
-        if (d is DrawVisualiser || d is FpsGraph) return;
+        if (d is IRemoveFromDrawVisualiser) return;
 
         if (d is Container c)
         {
@@ -387,7 +388,7 @@ public class DrawVisualiser : Container
             lastSelectedDrawable = selectedDrawable;
 
             // Cache the reflection call so we aren't doing it every frame
-            cachedProperties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+            cachedProperties = type.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static);
 
             // If it's container, don't track "child" or "children" properties.
             if (selectedDrawable is Container)
@@ -414,7 +415,7 @@ public class DrawVisualiser : Container
                 {
                     Prop = prop,
                     TextElement = textElement,
-                    LastValue = null
+                    LastStringValue = null
                 });
             }
         }
@@ -431,16 +432,17 @@ public class DrawVisualiser : Container
             {
                 object? val = tracker.Prop.GetValue(selectedDrawable);
 
-                if (val == null && tracker.LastValue == null) continue;
-                if (val != null && val.Equals(tracker.LastValue)) continue;
-
-                tracker.LastValue = val;
-
                 string valStr = val?.ToString() ?? "null";
+
+                if (valStr == tracker.LastStringValue) continue;
+
+                tracker.LastStringValue = valStr;
 
                 Color textColor = Color.White;
                 if (val is bool b) textColor = b ? Color.Green : Color.Red;
                 else if (val is ValueType) textColor = Color.Cyan;
+                else if (tracker.Prop.GetMethod != null && !tracker.Prop.GetMethod.IsPublic) textColor = Color.DeepPink;
+                else if (tracker.Prop.GetMethod != null && tracker.Prop.GetMethod.IsStatic) textColor = Color.Orange;
 
                 string newText = $"{tracker.Prop.Name}: {valStr}";
                 tracker.TextElement.Text = newText;
@@ -496,7 +498,7 @@ public class DrawVisualiser : Container
     {
         public PropertyInfo Prop;
         public SpriteText TextElement;
-        public object? LastValue;
+        public string? LastStringValue;
     }
 }
 
@@ -555,5 +557,15 @@ public class VisualiserTreeItem : Container
     {
         ClickAction?.Invoke();
         return true;
+    }
+
+    public override bool OnKeyDown(KeyEvent e)
+    {
+        if (e.Key == Key.Escape)
+        {
+            this.FadeOut(200, Easing.OutQuint);
+            return true;
+        }
+        return base.OnKeyDown(e);
     }
 }

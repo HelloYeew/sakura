@@ -9,6 +9,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
+using Sakura.Framework.Statistic;
 using Silk.NET.OpenGL;
 
 namespace Sakura.Framework.Graphics.Text;
@@ -77,6 +78,7 @@ public class GLFontStore : IFontStore
             var font = loadFontFromStream(name, stream);
 
             fontCache[name] = font;
+            GlobalStatistics.Get<int>("Fonts", "Loaded Fonts").Value = fontCache.Count;
             Logger.Verbose($"Loaded font {name} from {filename}");
         }
         catch (Exception ex)

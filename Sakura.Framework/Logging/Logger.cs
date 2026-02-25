@@ -12,6 +12,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Sakura.Framework.Development;
 using Sakura.Framework.Platform;
+using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Logging;
 
@@ -261,6 +262,8 @@ public class Logger
             return;
 
         message_queue.Enqueue(new LogMessage(DateTime.UtcNow, level, target, message));
+
+        GlobalStatistics.Get<int>("Logger", $"Log {level} Count").Value++;
     }
 
     private static async Task processLogQueue(CancellationToken token)

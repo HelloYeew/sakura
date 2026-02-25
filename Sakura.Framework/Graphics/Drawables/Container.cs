@@ -9,6 +9,7 @@ using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
+using Sakura.Framework.Statistic;
 using Sakura.Framework.Timing;
 using Sakura.Framework.Utilities;
 
@@ -247,6 +248,8 @@ public class Container : Drawable
     {
         if (DrawAlpha <= 0)
             return;
+
+        GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame").Value++;
 
         if (Masking)
             renderer.PushMask(this, CornerRadius);

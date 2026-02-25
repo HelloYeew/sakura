@@ -14,6 +14,7 @@ using Silk.NET.OpenGL;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
+using Sakura.Framework.Statistic;
 using Sakura.Framework.Timing;
 using Color = Sakura.Framework.Graphics.Colors.Color;
 using SakuraVertex = Sakura.Framework.Graphics.Rendering.Vertex.Vertex;
@@ -129,6 +130,11 @@ public class GLRenderer : IRenderer
     {
         if (root == null) return;
 
+        GlobalStatistics.Get<int>("Renderer", "Draw Calls").Value = 0;
+        GlobalStatistics.Get<int>("Renderer", "Vertices Drawn").Value = 0;
+        GlobalStatistics.Get<int>("Renderer", "Shader Binds").Value = 0;
+        GlobalStatistics.Get<int>("Renderer", "Texture Binds").Value = 0;
+
         shader.Use();
         shader.SetUniform("u_Projection", projectionMatrix);
         shader.SetUniform("u_Texture", 0);
@@ -159,6 +165,7 @@ public class GLRenderer : IRenderer
             triangleBatch.Draw();
             texture.GlTexture.Bind();
             lastBoundTextureHandle = newTextureHandle;
+            GlobalStatistics.Get<int>("Renderer", "Texture Binds").Value++;
         }
 
         triangleBatch.AddRange(vertices);
