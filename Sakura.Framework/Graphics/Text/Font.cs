@@ -74,38 +74,107 @@ public class Font : IDisposable
 
     private GCHandle pinnedFontData;
 
-    public ShapedText ProcessText(string text, float fontSize, float dpiScale = 1.0f)
+    public ShapedText ProcessText(string text, float fontSize, float dpiScale = 1.0f, IEnumerable<Font>? fallbacks = null)
     {
         if (string.IsNullOrEmpty(text))
             return ShapedText.Empty;
 
+        float renderFontSize = fontSize * dpiScale;
+
+        // Determine base vertical metrics from the PRIMARY font so line height stays consistent
+        float ascenderPx = 0;
+        float lineHeightPx = Size;
+
         lock (stateLock)
         {
-            float renderFontSize = fontSize * dpiScale;
-
-            // 1. Update Font Size if needed
-            if (Math.Abs(currentPhysicalSize - renderFontSize) > 0.01f)
-            {
-                currentPhysicalSize = renderFontSize;
-                unsafe
-                {
-                    FT.FT_Set_Pixel_Sizes((FT_FaceRec_*)faceHandle, 0, (uint)currentPhysicalSize);
-                }
-                hbFont.SetScale((int)(currentPhysicalSize * 64), (int)(currentPhysicalSize * 64));
-            }
-
-            // 2. Get Vertical Metrics
-            float ascenderPx = 0;
-            float lineHeightPx = Size;
-
+            updateFontSize(renderFontSize);
             unsafe
             {
                 var face = (FT_FaceRec_*)faceHandle;
                 ascenderPx = face->size->metrics.ascender / 64f;
                 lineHeightPx = face->size->metrics.height / 64f;
             }
+        }
 
-            // 3. Shape Text
+        // Segment the text into runs based on font support
+        var glyphs = new List<TextGlyph>();
+        float cursorX = 0;
+
+        int currentRunStart = 0;
+        Font? currentFont = null;
+
+        int i = 0;
+        while (i < text.Length)
+        {
+            // Handle surrogate pairs properly (e.g., Emojis)
+            int charLen = char.IsSurrogatePair(text, i) ? 2 : 1;
+            uint codepoint = (uint)char.ConvertToUtf32(text, i);
+
+            // Find which font supports this codepoint
+            Font assignedFont = this;
+            if (!HasGlyph(codepoint))
+            {
+                if (fallbacks != null)
+                {
+                    foreach (var fallback in fallbacks)
+                    {
+                        if (fallback.HasGlyph(codepoint))
+                        {
+                            assignedFont = fallback;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // If the font changed, process the previous run
+            if (currentFont != assignedFont)
+            {
+                if (currentFont != null)
+                {
+                    string runText = text.Substring(currentRunStart, i - currentRunStart);
+                    var runGlyphs = currentFont.shapeRun(runText, renderFontSize, dpiScale, ascenderPx, ref cursorX);
+                    glyphs.AddRange(runGlyphs);
+                }
+                currentFont = assignedFont;
+                currentRunStart = i;
+            }
+
+            i += charLen;
+        }
+
+        // 3. Process the final remaining run
+        if (currentFont != null && currentRunStart < text.Length)
+        {
+            string runText = text.Substring(currentRunStart);
+            var runGlyphs = currentFont.shapeRun(runText, renderFontSize, dpiScale, ascenderPx, ref cursorX);
+            glyphs.AddRange(runGlyphs);
+        }
+
+        return new ShapedText(glyphs, new Vector2(cursorX / dpiScale, lineHeightPx / dpiScale));
+    }
+
+    private void updateFontSize(float renderFontSize)
+    {
+        if (Math.Abs(currentPhysicalSize - renderFontSize) > 0.01f)
+        {
+            currentPhysicalSize = renderFontSize;
+            unsafe
+            {
+                FT.FT_Set_Pixel_Sizes((FT_FaceRec_*)faceHandle, 0, (uint)currentPhysicalSize);
+            }
+            hbFont.SetScale((int)(currentPhysicalSize * 64), (int)(currentPhysicalSize * 64));
+        }
+    }
+
+    private List<TextGlyph> shapeRun(string text, float renderFontSize, float dpiScale, float baselineY, ref float cursorX)
+    {
+        var glyphs = new List<TextGlyph>();
+
+        lock (stateLock)
+        {
+            updateFontSize(renderFontSize);
+
             sharedBuffer.ClearContents();
             sharedBuffer.AddUtf16(text);
             sharedBuffer.GuessSegmentProperties();
@@ -115,25 +184,19 @@ public class Font : IDisposable
             var info = sharedBuffer.GlyphInfos;
             var pos = sharedBuffer.GlyphPositions;
 
-            var glyphs = new List<TextGlyph>(length);
-
-            float cursorX = 0;
-            float baselineY = ascenderPx;
-
             for (int i = 0; i < length; i++)
             {
-                uint codepoint = info[i].Codepoint;
+                // HarfBuzz info[i].Codepoint is actually the specific glyph index for THIS font face.
+                uint glyphIndex = info[i].Codepoint;
 
                 float xAdvance = pos[i].XAdvance / 64.0f;
-                float yAdvance = pos[i].YAdvance / 64.0f;
 
-                // Since change render to DPI scaling, change to cache by real render size
-                var cacheKey = (codepoint, renderFontSize);
+                // Cache by glyph index and size.
+                var cacheKey = (glyphIndex, renderFontSize);
 
                 if (!glyphCache.TryGetValue(cacheKey, out GlyphData data))
                 {
-                    // Rasterize will use the current 'Size' set above
-                    var loaded = rasterizeGlyph(codepoint);
+                    var loaded = rasterizeGlyph(glyphIndex);
                     if (loaded.HasValue)
                     {
                         data = loaded.Value;
@@ -141,6 +204,7 @@ public class Font : IDisposable
                     }
                     else
                     {
+                        // Move the cursor even if it's an invisible character like a space
                         cursorX += xAdvance;
                         continue;
                     }
@@ -161,9 +225,9 @@ public class Font : IDisposable
 
                 cursorX += xAdvance;
             }
-
-            return new ShapedText(glyphs, new Vector2(cursorX / dpiScale, lineHeightPx / dpiScale));
         }
+
+        return glyphs;
     }
 
     private unsafe GlyphData? rasterizeGlyph(uint glyphIndex)
@@ -217,6 +281,15 @@ public class Font : IDisposable
             BitmapLeft = glyphSlotPtr->bitmap_left,
             BitmapTop = glyphSlotPtr->bitmap_top
         };
+    }
+
+    public bool HasGlyph(uint codepoint)
+    {
+        unsafe
+        {
+            // FT_Get_Char_Index returns 0 if the glyph is missing
+            return FT.FT_Get_Char_Index((FT_FaceRec_*)faceHandle, codepoint) > 0;
+        }
     }
 
     public void Dispose()
