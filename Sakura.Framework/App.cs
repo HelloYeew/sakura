@@ -56,6 +56,7 @@ public class App : Container, IDisposable
 
     private DrawVisualiser drawVisualiser;
     private GlobalStatisticsDisplay globalStatisticsDisplay;
+    private TextureViewerDisplay textureViewerDisplay;
 
     public override void Load()
     {
@@ -121,6 +122,11 @@ public class App : Container, IDisposable
             Depth = float.MaxValue - 10,
             Alpha = 0
         });
+        Add(textureViewerDisplay = new TextureViewerDisplay()
+        {
+            Depth = float.MaxValue - 10,
+            Alpha = 0
+        });
         Add(FpsGraph = new FpsGraph(Host.AppClock)
         {
             Depth = float.MaxValue,
@@ -142,6 +148,8 @@ public class App : Container, IDisposable
     {
         if (!globalStatisticsDisplay.IsHidden)
             globalStatisticsDisplay.FadeOut(200, Easing.OutQuint);
+        if (!textureViewerDisplay.IsHidden)
+            textureViewerDisplay.FadeOut(200, Easing.OutQuint);
         if (drawVisualiser.IsHidden)
             drawVisualiser.FadeIn(200, Easing.OutQuint);
         else
@@ -152,10 +160,24 @@ public class App : Container, IDisposable
     {
         if (!drawVisualiser.IsHidden)
             drawVisualiser.FadeOut(200, Easing.OutQuint);
+        if (!textureViewerDisplay.IsHidden)
+            textureViewerDisplay.FadeOut(200, Easing.OutQuint);
         if (globalStatisticsDisplay.IsHidden)
             globalStatisticsDisplay.FadeIn(200, Easing.OutQuint);
         else
             globalStatisticsDisplay.FadeOut(200, Easing.OutQuint);
+    }
+
+    private void toggleTextureViewerDisplay()
+    {
+        if (!drawVisualiser.IsHidden)
+            drawVisualiser.FadeOut(200, Easing.OutQuint);
+        if (!globalStatisticsDisplay.IsHidden)
+            globalStatisticsDisplay.FadeOut(200, Easing.OutQuint);
+        if (textureViewerDisplay.IsHidden)
+            textureViewerDisplay.FadeIn(200, Easing.OutQuint);
+        else
+            textureViewerDisplay.FadeOut(200, Easing.OutQuint);
     }
 
     /// <summary>
@@ -198,6 +220,10 @@ public class App : Container, IDisposable
         else if (!e.IsRepeat && e.Key == Key.F2 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
             toggleStatisticsDisplay();
+        }
+        else if (!e.IsRepeat && e.Key == Key.F3 && (e.Modifiers & KeyModifiers.Control) > 0)
+        {
+            toggleTextureViewerDisplay();
         }
         if (!e.IsRepeat && e.Key == Key.F11 && (e.Modifiers & KeyModifiers.Control) > 0)
         {

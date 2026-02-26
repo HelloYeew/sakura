@@ -199,6 +199,8 @@ public class GLFontStore : IFontStore
         return fallbacks;
     }
 
+    public TextureAtlas Atlas => atlas;
+
     public void Dispose()
     {
         foreach (var font in fontCache.Values)

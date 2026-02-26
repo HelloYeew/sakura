@@ -68,6 +68,8 @@ public class TextureAtlas : IDisposable
         page.GlTexture.Bind();
         gl.TexSubImage2D(TextureTarget.Texture2D, 0, page.CurrentX, page.CurrentY, (uint)regionWidth, (uint)regionHeight, PixelFormat.Rgba, PixelType.UnsignedByte, rgbaData);
 
+        gl.GenerateMipmap(TextureTarget.Texture2D);
+
         // Calculate UVs
         float u = (float)page.CurrentX / width;
         float v = (float)page.CurrentY / height;
@@ -113,6 +115,14 @@ public class TextureAtlas : IDisposable
     {
         glTexture.Dispose();
         GC.SuppressFinalize(this);
+    }
+
+    public IEnumerable<Texture> GetAllPages()
+    {
+        foreach (var page in pages)
+        {
+            yield return new Texture(page.GlTexture);
+        }
     }
 
     /// <summary>

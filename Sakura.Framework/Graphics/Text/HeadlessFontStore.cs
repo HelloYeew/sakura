@@ -62,4 +62,6 @@ public class HeadlessFontStore : IFontStore
     {
         throw new System.NotImplementedException();
     }
+
+    public TextureAtlas Atlas => null;
 }
