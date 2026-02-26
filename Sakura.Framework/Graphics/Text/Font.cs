@@ -9,6 +9,7 @@ using FreeTypeSharp;
 using HarfBuzzSharp;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Maths;
+using Logger = Sakura.Framework.Logging.Logger;
 
 namespace Sakura.Framework.Graphics.Text;
 
@@ -267,6 +268,7 @@ public class Font : IDisposable
         var err = FT.FT_Load_Glyph(facePtr, glyphIndex, (FreeTypeSharp.FT_LOAD)loadFlags);
         if (err != FT_Error.FT_Err_Ok)
         {
+            Logger.Error($"Failed to load glyph index {glyphIndex} with FT_LOAD_COLOR. Error: {err}. Retrying without color flag.");
             err = FT.FT_Load_Glyph(facePtr, glyphIndex, FreeTypeSharp.FT_LOAD.FT_LOAD_DEFAULT);
             if (err != FT_Error.FT_Err_Ok) return null;
         }

@@ -54,7 +54,8 @@ public class GLFontStore : IFontStore
             "NotoSansTC",
             "NotoSansArabic",
             "NotoSansDevanagari",
-            "NotoSansHebrew"
+            "NotoSansHebrew",
+            "NotoEmoji"
         };
 
         foreach (string family in fallbackFamilies)
@@ -62,14 +63,6 @@ public class GLFontStore : IFontStore
             // These families don't have italics
             loadFamily(resourceStorage, family, hasItalics: false);
             AddFallbackFamily(family);
-        }
-
-        // emoji support as a final fallback (color emoji font, so no italics or weights)
-        AddFont(resourceStorage, "NotoColorEmoji-Regular.ttf", "NotoColorEmoji-Regular");
-        // Map the family name to the regular weight for fallback purposes
-        if (fontCache.TryGetValue("NotoColorEmoji-Regular", out var emojiFont))
-        {
-            fontCache["NotoColorEmoji"] = emojiFont;
         }
 
         AddFallbackFamily("NotoColorEmoji");
