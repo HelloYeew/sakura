@@ -153,6 +153,8 @@ public class GlobalStatisticsDisplay : Container, IRemoveFromDrawVisualiser
     {
         base.Update();
 
+        if (IsHidden) return;
+
         foreach (var stat in GlobalStatistics.GetStatistics())
         {
             if (!groupContainers.TryGetValue(stat.Group, out var groupFlow))

@@ -33,4 +33,6 @@ public interface IFontStore : IDisposable
     /// Retrieves a font by direct name.
     /// </summary>
     Font Get(string name);
+
+    TextureAtlas Atlas { get; }
 }

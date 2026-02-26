@@ -68,9 +68,23 @@ public class GLTextureManager : ITextureManager
         }
     }
 
-    public Texture FromPixelData(int width, int height, ReadOnlySpan<byte> pixelData)
+    public Texture FromPixelData(int width, int height, ReadOnlySpan<byte> pixelData, string cacheKey = null)
     {
-        return new Texture(new GLTexture(gl, width, height, pixelData));
+        var texture = new Texture(new GLTexture(gl, width, height, pixelData));
+
+        if (!string.IsNullOrEmpty(cacheKey))
+        {
+            if (textureCache.TryGetValue(cacheKey, out var oldTexture))
+            {
+                oldTexture.GlTexture?.Dispose();
+            }
+
+            textureCache[cacheKey] = texture;
+            GlobalStatistics.Get<int>("Textures", "Loaded Textures").Value = textureCache.Count;
+            GlobalStatistics.Get<int>("Textures", "Texture Updates").Value++;
+        }
+
+        return texture;
     }
 
     /// <summary>
@@ -99,4 +113,6 @@ public class GLTextureManager : ITextureManager
 
         textureCache.Clear();
     }
+
+    public IEnumerable<Texture> GetAllTextures() => textureCache.Values;
 }

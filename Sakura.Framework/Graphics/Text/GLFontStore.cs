@@ -126,6 +126,8 @@ public class GLFontStore : IFontStore
         return defaultFont;
     }
 
+    public TextureAtlas Atlas => atlas;
+
     public void Dispose()
     {
         foreach (var font in fontCache.Values)
