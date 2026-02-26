@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 
@@ -21,7 +22,7 @@ public class HeadlessTextureManager : ITextureManager
         return WhitePixel;
     }
 
-    public Texture FromPixelData(int width, int height, ReadOnlySpan<byte> pixelData)
+    public Texture FromPixelData(int width, int height, ReadOnlySpan<byte> pixelData, string cacheKey = null)
     {
         return createDummyTexture(width, height);
     }
@@ -64,4 +65,6 @@ public class HeadlessTextureManager : ITextureManager
 
         return new Texture(dummyGlTexture);
     }
+
+    public IEnumerable<Texture> GetAllTextures() => new[] { WhitePixel };
 }
