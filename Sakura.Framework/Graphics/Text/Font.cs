@@ -33,6 +33,7 @@ public class Font : IDisposable
     private readonly Dictionary<(uint CodePoint, float PhysicalSize), GlyphData> glyphCache = new();
 
     private float currentPhysicalSize = 24;
+    private float currentGlyphScale = 1.0f;
 
     private readonly Lock stateLock = new Lock();
 
@@ -159,9 +160,28 @@ public class Font : IDisposable
         if (Math.Abs(currentPhysicalSize - renderFontSize) > 0.01f)
         {
             currentPhysicalSize = renderFontSize;
+            currentGlyphScale = 1.0f; // Reset scale for normal fonts
+
             unsafe
             {
-                FT.FT_Set_Pixel_Sizes((FT_FaceRec_*)faceHandle, 0, (uint)currentPhysicalSize);
+                var face = (FT_FaceRec_*)faceHandle;
+
+                // Try to set the exact scalable pixel size
+                var err = FT.FT_Set_Pixel_Sizes(face, 0, (uint)currentPhysicalSize);
+
+                // If the font is a bitmap-only font (like Color Emojis), it will fail if the size isn't exact.
+                if (err != FT_Error.FT_Err_Ok && face->num_fixed_sizes > 0)
+                {
+                    // Fallback to the first available fixed size strike
+                    FT.FT_Select_Size(face, 0);
+
+                    // Pull the height directly from the fixed size strike array
+                    float actualSize = face->available_sizes[0].height;
+                    if (actualSize > 0)
+                    {
+                        currentGlyphScale = currentPhysicalSize / actualSize;
+                    }
+                }
             }
             hbFont.SetScale((int)(currentPhysicalSize * 64), (int)(currentPhysicalSize * 64));
         }
@@ -213,14 +233,19 @@ public class Font : IDisposable
                 float hbXOffset = pos[i].XOffset / 64.0f;
                 float hbYOffset = pos[i].YOffset / 64.0f;
 
-                float finalX = cursorX + hbXOffset + data.BitmapLeft;
-                float finalY = baselineY - hbYOffset - data.BitmapTop;
+                float scaledLeft = data.BitmapLeft * currentGlyphScale;
+                float scaledTop = data.BitmapTop * currentGlyphScale;
+                float scaledWidth = data.Texture.Width * currentGlyphScale;
+                float scaledHeight = data.Texture.Height * currentGlyphScale;
+
+                float finalX = cursorX + hbXOffset + scaledLeft;
+                float finalY = baselineY - hbYOffset - scaledTop;
 
                 glyphs.Add(new TextGlyph
                 {
                     Texture = data.Texture,
                     Position = new Vector2(finalX / dpiScale, finalY / dpiScale),
-                    Size = new Vector2(data.Texture.Width / dpiScale, data.Texture.Height / dpiScale)
+                    Size = new Vector2(scaledWidth / dpiScale, scaledHeight / dpiScale)
                 });
 
                 cursorX += xAdvance;
@@ -239,14 +264,22 @@ public class Font : IDisposable
         int loadFlags = 0 | FT_LOAD_COLOR; // 0 is FT_LOAD_DEFAULT
 
         // Load glyph
-        var err = FT.FT_Load_Glyph(facePtr, glyphIndex, (FT_LOAD)loadFlags);
-        if (err != FT_Error.FT_Err_Ok) return null;
+        var err = FT.FT_Load_Glyph(facePtr, glyphIndex, (FreeTypeSharp.FT_LOAD)loadFlags);
+        if (err != FT_Error.FT_Err_Ok)
+        {
+            err = FT.FT_Load_Glyph(facePtr, glyphIndex, FreeTypeSharp.FT_LOAD.FT_LOAD_DEFAULT);
+            if (err != FT_Error.FT_Err_Ok) return null;
+        }
 
         var glyphSlotPtr = facePtr->glyph;
 
-        // Render to bitmap
-        err = FT.FT_Render_Glyph(glyphSlotPtr, FT_Render_Mode_.FT_RENDER_MODE_NORMAL);
-        if (err != FT_Error.FT_Err_Ok) return null;
+        // Only render if the glyph is a vector outline
+        // If it's an emoji, it will already be FT_GLYPH_FORMAT_BITMAP
+        if (glyphSlotPtr->format != FreeTypeSharp.FT_Glyph_Format_.FT_GLYPH_FORMAT_BITMAP)
+        {
+            err = FT.FT_Render_Glyph(glyphSlotPtr, FreeTypeSharp.FT_Render_Mode_.FT_RENDER_MODE_NORMAL);
+            if (err != FT_Error.FT_Err_Ok) return null;
+        }
 
         // Get bitmap info
         FT_Bitmap_ bitmap = glyphSlotPtr->bitmap;
@@ -266,27 +299,39 @@ public class Font : IDisposable
         byte[] rgba = new byte[width * height * 4];
         byte* buffer = bitmap.buffer;
 
+        int pitch = Math.Abs(bitmap.pitch);
+
         if (bitmap.pixel_mode == FT_Pixel_Mode_.FT_PIXEL_MODE_BGRA)
         {
-            for (int i = 0; i < width * height; i++)
+            for (int y = 0; y < height; y++)
             {
-                // Convert BGRA to RGBA for OpenGL
-                rgba[i * 4 + 0] = buffer[i * 4 + 2]; // R
-                rgba[i * 4 + 1] = buffer[i * 4 + 1]; // G
-                rgba[i * 4 + 2] = buffer[i * 4 + 0]; // B
-                rgba[i * 4 + 3] = buffer[i * 4 + 3]; // A
+                for (int x = 0; x < width; x++)
+                {
+                    int src = y * pitch + x * 4;
+                    int dst = (y * width + x) * 4;
+                    // Convert BGRA to RGBA for OpenGL
+                    rgba[dst + 0] = buffer[src + 2]; // R
+                    rgba[dst + 1] = buffer[src + 1]; // G
+                    rgba[dst + 2] = buffer[src + 0]; // B
+                    rgba[dst + 3] = buffer[src + 3]; // A
+                }
             }
         }
         else
         {
             // Standard grayscale anti-aliased font
-            for (int i = 0; i < width * height; i++)
+            for (int y = 0; y < height; y++)
             {
-                byte val = buffer[i * 1]; // Grayscale uses 1 byte per pixel
-                rgba[i * 4 + 0] = 255;
-                rgba[i * 4 + 1] = 255;
-                rgba[i * 4 + 2] = 255;
-                rgba[i * 4 + 3] = val;
+                for (int x = 0; x < width; x++)
+                {
+                    int src = y * pitch + x;
+                    int dst = (y * width + x) * 4;
+                    byte val = buffer[src];
+                    rgba[dst + 0] = 255;
+                    rgba[dst + 1] = 255;
+                    rgba[dst + 2] = 255;
+                    rgba[dst + 3] = val;
+                }
             }
         }
 

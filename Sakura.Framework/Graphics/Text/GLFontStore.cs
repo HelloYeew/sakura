@@ -66,6 +66,12 @@ public class GLFontStore : IFontStore
 
         // emoji support as a final fallback (color emoji font, so no italics or weights)
         AddFont(resourceStorage, "NotoColorEmoji-Regular.ttf", "NotoColorEmoji-Regular");
+        // Map the family name to the regular weight for fallback purposes
+        if (fontCache.TryGetValue("NotoColorEmoji-Regular", out var emojiFont))
+        {
+            fontCache["NotoColorEmoji"] = emojiFont;
+        }
+
         AddFallbackFamily("NotoColorEmoji");
     }
 
