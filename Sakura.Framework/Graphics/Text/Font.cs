@@ -233,10 +233,13 @@ public class Font : IDisposable
     private unsafe GlyphData? rasterizeGlyph(uint glyphIndex)
     {
         var facePtr = (FT_FaceRec_*)faceHandle;
-        const int ft_load_default = 0;
+
+        // FT_LOAD_COLOR is 1 << 20 in FreeType. This tells FreeType to load colored emoji bitmaps if they exist.
+        const int FT_LOAD_COLOR = 1 << 20;
+        int loadFlags = 0 | FT_LOAD_COLOR; // 0 is FT_LOAD_DEFAULT
 
         // Load glyph
-        var err = FT.FT_Load_Glyph(facePtr, glyphIndex, ft_load_default);
+        var err = FT.FT_Load_Glyph(facePtr, glyphIndex, (FT_LOAD)loadFlags);
         if (err != FT_Error.FT_Err_Ok) return null;
 
         var glyphSlotPtr = facePtr->glyph;
@@ -263,13 +266,28 @@ public class Font : IDisposable
         byte[] rgba = new byte[width * height * 4];
         byte* buffer = bitmap.buffer;
 
-        for (int i = 0; i < width * height; i++)
+        if (bitmap.pixel_mode == FT_Pixel_Mode_.FT_PIXEL_MODE_BGRA)
         {
-            byte val = buffer[i];
-            rgba[i * 4 + 0] = 255;
-            rgba[i * 4 + 1] = 255;
-            rgba[i * 4 + 2] = 255;
-            rgba[i * 4 + 3] = val;
+            for (int i = 0; i < width * height; i++)
+            {
+                // Convert BGRA to RGBA for OpenGL
+                rgba[i * 4 + 0] = buffer[i * 4 + 2]; // R
+                rgba[i * 4 + 1] = buffer[i * 4 + 1]; // G
+                rgba[i * 4 + 2] = buffer[i * 4 + 0]; // B
+                rgba[i * 4 + 3] = buffer[i * 4 + 3]; // A
+            }
+        }
+        else
+        {
+            // Standard grayscale anti-aliased font
+            for (int i = 0; i < width * height; i++)
+            {
+                byte val = buffer[i * 1]; // Grayscale uses 1 byte per pixel
+                rgba[i * 4 + 0] = 255;
+                rgba[i * 4 + 1] = 255;
+                rgba[i * 4 + 2] = 255;
+                rgba[i * 4 + 3] = val;
+            }
         }
 
         var texture = atlas.AddRegion(width, height, rgba);
