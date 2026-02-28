@@ -304,7 +304,7 @@ public class Logger
     {
         foreach (string message in logMessage.Message.Split(new[] { '\n' }, StringSplitOptions.None))
         {
-            string formattedMessage = getFormattedMessage(logMessage);
+            string formattedMessage = getFormattedMessage(logMessage.Timestamp, logMessage.Level, message);
 
             var writer = getFileWriter(logMessage.Target);
             await writer.WriteLineAsync(formattedMessage);
