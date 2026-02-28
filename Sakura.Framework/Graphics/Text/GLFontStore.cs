@@ -109,7 +109,7 @@ public class GLFontStore : IFontStore
 
             fontCache[name] = font;
             GlobalStatistics.Get<int>("Fonts", "Loaded Fonts").Value = fontCache.Count;
-            Logger.Verbose($"Loaded font {name} from {filename}");
+            Logger.Debug($"Loaded font {name} from {filename}");
         }
         catch (Exception ex)
         {
