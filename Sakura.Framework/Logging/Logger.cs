@@ -225,7 +225,7 @@ public class Logger
 
         Debug("Logger is shutting down...");
 
-        cancellationTokenSource.CancelAfter(1000);
+        cancellationTokenSource.Cancel();
 
         try
         {
@@ -292,9 +292,10 @@ public class Logger
                 }
                 catch (OperationCanceledException)
                 {
-                    // This is expected when shutdown is called and the queue is empty.
-                    // Exit the loop.
-                    break;
+                    // In case on shutdown signal triggered
+                    // Just don't break the loop immediately
+                    // Continue looping and it will automatically exit when the queue is empty.
+                    continue;
                 }
             }
         }
