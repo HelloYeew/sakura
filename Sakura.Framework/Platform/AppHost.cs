@@ -328,13 +328,16 @@ public abstract class AppHost : IDisposable
                     }
                 }
             }
-            catch (OutOfMemoryException)
+            catch (OutOfMemoryException ex)
             {
+                Logger.Error("The application has run out of memory and needs to close.", ex);
             }
         }
         catch (Exception ex)
         {
             Logger.Error("An unhandled exception occurred during runtime.", ex);
+            // Rethrow so process will exit with error code
+            throw;
         }
         finally
         {
@@ -525,15 +528,15 @@ public abstract class AppHost : IDisposable
         // ignore if consumer wishes to handle the exception themselves
         if (ExceptionThrown?.Invoke(exception) == true) return;
 
-        if (isTerminating)
-        {
-            return;
-        }
-
         AppDomain.CurrentDomain.UnhandledException -= unhandledExceptionHandler;
         TaskScheduler.UnobservedTaskException -= unobservedTaskExceptionHandler;
 
         Logger.Shutdown();
+
+        if (isTerminating)
+        {
+            return;
+        }
 
         var captured = ExceptionDispatchInfo.Capture(exception);
 
