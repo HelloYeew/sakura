@@ -54,8 +54,7 @@ public class GLFontStore : IFontStore
             "NotoSansTC",
             "NotoSansArabic",
             "NotoSansDevanagari",
-            "NotoSansHebrew",
-            "NotoEmoji"
+            "NotoSansHebrew"
         };
 
         foreach (string family in fallbackFamilies)
@@ -64,8 +63,12 @@ public class GLFontStore : IFontStore
             loadFamily(resourceStorage, family, hasItalics: false);
             AddFallbackFamily(family);
         }
-
-        AddFallbackFamily("NotoColorEmoji");
+        
+        // Use NotoEmoji for fallback of emoji and other symbols
+        // Since to use NotoColorEmoji need to change the freetype to compile with libpng so just use monochrome NotoEmoji for now
+        // which is still better than missing glyphs.
+        // TODO: Add support for color emoji in the future
+        AddFallbackFamily("NotoEmoji");
     }
 
     private void loadFamily(Storage storage, string family, bool hasItalics)
