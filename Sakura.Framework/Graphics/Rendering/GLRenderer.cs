@@ -102,6 +102,7 @@ public class GLRenderer : IRenderer
 
         GLTexture.CreateWhitePixel(gl);
         WhitePixel = new Texture(GLTexture.WhitePixel);
+        resetTextureSlots();
 
         shader = new Shader(gl, "Resources/Shaders/shader.vert", "Resources/Shaders/shader.frag");
 
@@ -142,8 +143,7 @@ public class GLRenderer : IRenderer
     {
         if (root == null) return;
 
-        boundTextureCount = 0;
-        Array.Clear(boundTextureHandles, 0, boundTextureHandles.Length);
+        resetTextureSlots();
 
         GlobalStatistics.Get<int>("Renderer", "Draw Calls").Value = 0;
         GlobalStatistics.Get<int>("Renderer", "Vertices Drawn").Value = 0;
@@ -214,8 +214,7 @@ public class GLRenderer : IRenderer
             triangleBatch.Draw();
 
             // Reset slots
-            boundTextureCount = 0;
-            Array.Clear(boundTextureHandles, 0, boundTextureHandles.Length);
+            resetTextureSlots();
 
             // Bind to slot 0
             textureIndex = 0;
@@ -364,6 +363,24 @@ public class GLRenderer : IRenderer
                 gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
                 break;
         }
+    }
+
+    private void resetTextureSlots()
+    {
+        boundTextureCount = 0;
+        Array.Clear(boundTextureHandles, 0, boundTextureHandles.Length);
+
+        // Pre-fill all OpenGL texture units with a valid texture (WhitePixel)
+        // to fix some strict driver that will complain about "unloadable texture"
+        if (GLTexture.WhitePixel != null)
+        {
+            for (int i = 0; i < 8; i++)
+            {
+                GLTexture.WhitePixel.Bind(TextureUnit.Texture0 + i);
+            }
+        }
+
+        gl.ActiveTexture(TextureUnit.Texture0);
     }
 
     /// <summary>
