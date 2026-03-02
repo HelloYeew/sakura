@@ -18,7 +18,7 @@ namespace Sakura.Framework.Graphics.Text;
 public class GLFontStore : IFontStore
 {
     private readonly TextureAtlas atlas;
-    private readonly Dictionary<string, Font> fontCache = new Dictionary<string, Font>();
+    private readonly Dictionary<string, Lazy<Font>> fontCache = new Dictionary<string, Lazy<Font>>();
     private readonly List<string> fallbackFamilies = new List<string>();
     public int CacheVersion { get; private set; } = 0;
 
@@ -36,7 +36,7 @@ public class GLFontStore : IFontStore
 
         if (fontCache.TryGetValue("NotoSans-Regular", out var reg))
         {
-            defaultFont = reg;
+            defaultFont = reg.Value;
             fontCache["Default"] = reg;
             fontCache["NotoSans"] = reg; // Allow lookup by just family name
         }
@@ -99,26 +99,32 @@ public class GLFontStore : IFontStore
 
     public void AddFont(Storage storage, string filename, string alias = null!)
     {
-        try
+        string name = alias ?? Path.GetFileNameWithoutExtension(filename);
+
+        fontCache[name] = new Lazy<Font>(() =>
         {
-            using var stream = storage.GetStream(filename);
-            if (stream == null)
+            try
             {
-                Logger.Error($"Could not find font file: {filename}");
-                return;
+                using var stream = storage.GetStream(filename);
+                if (stream == null)
+                {
+                    Logger.Error($"Could not find font file: {filename}");
+                    return null!;
+                }
+
+                var font = loadFontFromStream(name, stream);
+                Logger.Debug($"Loaded font {name} from {filename}");
+
+                GlobalStatistics.Get<int>("Fonts", "Loaded Fonts").Value++;
+
+                return font;
             }
-
-            string name = alias ?? Path.GetFileNameWithoutExtension(filename);
-            var font = loadFontFromStream(name, stream);
-
-            fontCache[name] = font;
-            GlobalStatistics.Get<int>("Fonts", "Loaded Fonts").Value = fontCache.Count;
-            Logger.Debug($"Loaded font {name} from {filename}");
-        }
-        catch (Exception ex)
-        {
-            Logger.Error($"Failed to load font {filename}: {ex.Message}");
-        }
+            catch (Exception ex)
+            {
+                Logger.Error($"Failed to load font {filename}: {ex.Message}");
+                return null!;
+            }
+        });
     }
 
     private Font loadFontFromStream(string name, Stream stream)
@@ -137,18 +143,18 @@ public class GLFontStore : IFontStore
 
         string familyKey = usage.Family;
 
-        if (fontCache.TryGetValue(specificKey, out var font))
-            return font;
+        if (fontCache.TryGetValue(specificKey, out var font) && font.Value != null)
+            return font.Value;
 
         if (usage.Italics)
         {
             string nonItalicKey = $"{usage.Family}-{usage.Weight}";
-            if (fontCache.TryGetValue(nonItalicKey, out font))
-                return font;
+            if (fontCache.TryGetValue(nonItalicKey, out var nonItalic) && nonItalic.Value != null)
+                return nonItalic.Value;
         }
 
-        if (fontCache.TryGetValue(usage.Family, out font))
-            return font;
+        if (fontCache.TryGetValue(usage.Family, out var family) && family.Value != null)
+            return family.Value;
 
         return defaultFont;
     }
@@ -156,7 +162,7 @@ public class GLFontStore : IFontStore
     public Font Get(string name)
     {
         if (string.IsNullOrEmpty(name)) return defaultFont;
-        if (fontCache.TryGetValue(name, out var font)) return font;
+        if (fontCache.TryGetValue(name, out var font) && font.Value != null) return font.Value;
         return defaultFont;
     }
 
@@ -179,21 +185,19 @@ public class GLFontStore : IFontStore
 
     public IEnumerable<Font> GetFallbacks(FontUsage usage)
     {
-        var fallbacks = new List<Font>();
+        var returnedFonts = new HashSet<Font>();
 
         foreach (var family in fallbackFamilies)
         {
             var fallbackUsage = usage.With(family: family);
             var fallbackFont = Get(fallbackUsage);
 
-            // If the font exists and isn't just returning the default NotoSans-Regular fallback
-            if (fallbackFont != null && fallbackFont != defaultFont && !fallbacks.Contains(fallbackFont))
+            if (fallbackFont != null && fallbackFont != defaultFont && !returnedFonts.Contains(fallbackFont))
             {
-                fallbacks.Add(fallbackFont);
+                returnedFonts.Add(fallbackFont);
+                yield return fallbackFont;
             }
         }
-
-        return fallbacks;
     }
 
     public void ClearCaches()
@@ -202,7 +206,10 @@ public class GLFontStore : IFontStore
 
         foreach (var font in fontCache.Values)
         {
-            font.ClearCache();
+            if (font.IsValueCreated && font.Value != null)
+            {
+                font.Value.ClearCache();
+            }
         }
 
         CacheVersion++;
@@ -217,7 +224,12 @@ public class GLFontStore : IFontStore
     public void Dispose()
     {
         foreach (var font in fontCache.Values)
-            font.Dispose();
+        {
+            if (font.IsValueCreated && font.Value != null)
+            {
+                font.Value.Dispose();
+            }
+        }
 
         atlas.Dispose();
     }
