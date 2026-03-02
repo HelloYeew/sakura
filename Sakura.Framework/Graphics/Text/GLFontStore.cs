@@ -48,11 +48,11 @@ public class GLFontStore : IFontStore
         // fallback families for various languages
         string[] fallbackFamiliesList = new[]
         {
-            "NotoSansThai",
-            "NotoSansJP",
-            "NotoSansKR",
             "NotoSansSC",
             "NotoSansTC",
+            "NotoSansJP",
+            "NotoSansKR",
+            "NotoSansThai",
             "NotoSansArabic",
             "NotoSansDevanagari",
             "NotoSansHebrew"
