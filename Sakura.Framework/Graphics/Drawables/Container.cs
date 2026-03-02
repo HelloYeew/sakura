@@ -279,7 +279,10 @@ public class Container : Drawable
 
                 // If the child is completely outside the masking bounds, skip drawing it entirely
                 if (!isVisible)
+                {
+                    GlobalStatistics.Get<int>("Drawables", "Culled").Value++;
                     continue;
+                }
             }
 
             child.Draw(renderer);

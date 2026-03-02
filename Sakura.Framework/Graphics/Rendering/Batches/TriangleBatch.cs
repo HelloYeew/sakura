@@ -66,6 +66,7 @@ public class TriangleBatch
         // If the batch is full, automatically flush it to make room.
         if (vertexCount >= maxVertices)
         {
+            GlobalStatistics.Get<int>("Renderer", "Buffer Full Flushes").Value++;
             Draw();
         }
         vertices[vertexCount++] = vertex;

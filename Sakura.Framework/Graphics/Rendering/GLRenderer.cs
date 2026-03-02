@@ -141,6 +141,12 @@ public class GLRenderer : IRenderer
         GlobalStatistics.Get<int>("Renderer", "Shader Binds").Value = 0;
         GlobalStatistics.Get<int>("Renderer", "Texture Binds").Value = 0;
 
+        GlobalStatistics.Get<int>("Renderer", "Slot Exhaustion Flushes").Value = 0;
+        GlobalStatistics.Get<int>("Renderer", "State Change Flushes").Value = 0;
+        GlobalStatistics.Get<int>("Renderer", "Buffer Full Flushes").Value = 0;
+        GlobalStatistics.Get<int>("Drawables", "Culled").Value = 0;
+        GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame").Value = 0;
+
         shader.Use();
         shader.SetUniform("u_Projection", projectionMatrix);
         int[] samplers = new int[] { 0, 1, 2, 3, 4, 5, 6, 7 };
@@ -189,6 +195,8 @@ public class GLRenderer : IRenderer
         // If slot is full, flush and start over
         if (textureIndex == -1)
         {
+            GlobalStatistics.Get<int>("Renderer", "Slot Exhaustion Flushes").Value++;
+
             triangleBatch.Draw();
 
             // Reset slots
@@ -287,6 +295,7 @@ public class GLRenderer : IRenderer
 
     public void PushMask(Drawable maskDrawable, float cornerRadius)
     {
+        GlobalStatistics.Get<int>("Renderer", "State Change Flushes").Value++;
         triangleBatch.Draw(); // Flush all drawing before this
 
         // Case 1 : Scissor optimization (Rectangular)
@@ -358,6 +367,7 @@ public class GLRenderer : IRenderer
 
     public void PopMask(Drawable maskDrawable, float cornerRadius, float borderThickness, Color borderColor)
     {
+        GlobalStatistics.Get<int>("Renderer", "State Change Flushes").Value++;
         triangleBatch.Draw(); // Flush all drawing within the mask
 
         // Case 1 : Scissor optimization (Rectangular), just restore previous scissor
@@ -422,6 +432,7 @@ public class GLRenderer : IRenderer
         if (blendingMode == currentBlendMode)
             return;
 
+        GlobalStatistics.Get<int>("Renderer", "State Change Flushes").Value++;
         triangleBatch.Draw();
 
         currentBlendMode = blendingMode;
