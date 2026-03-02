@@ -322,8 +322,7 @@ public abstract class Drawable
     public void Show() => Alpha = 1f;
     public bool IsHidden => Alpha <= 0f;
 
-    // Caches for computed values
-    public RectangleF DrawRectangle { get; private set; }
+    public RectangleF DrawRectangle { get; protected set; }
     public Vector2 DrawSize { get; private set; }
     public Matrix4x4 ModelMatrix = Matrix4x4.Identity;
 
