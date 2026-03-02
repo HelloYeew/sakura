@@ -146,8 +146,6 @@ public class App : Container, IDisposable
 
     private void toggleVisualiser()
     {
-        if (!globalStatisticsDisplay.IsHidden)
-            globalStatisticsDisplay.FadeOut(200, Easing.OutQuint);
         if (!textureViewerDisplay.IsHidden)
             textureViewerDisplay.FadeOut(200, Easing.OutQuint);
         if (drawVisualiser.IsHidden)
@@ -158,10 +156,6 @@ public class App : Container, IDisposable
 
     private void toggleStatisticsDisplay()
     {
-        if (!drawVisualiser.IsHidden)
-            drawVisualiser.FadeOut(200, Easing.OutQuint);
-        if (!textureViewerDisplay.IsHidden)
-            textureViewerDisplay.FadeOut(200, Easing.OutQuint);
         if (globalStatisticsDisplay.IsHidden)
             globalStatisticsDisplay.FadeIn(200, Easing.OutQuint);
         else
@@ -170,8 +164,6 @@ public class App : Container, IDisposable
 
     private void toggleTextureViewerDisplay()
     {
-        if (!drawVisualiser.IsHidden)
-            drawVisualiser.FadeOut(200, Easing.OutQuint);
         if (!globalStatisticsDisplay.IsHidden)
             globalStatisticsDisplay.FadeOut(200, Easing.OutQuint);
         if (textureViewerDisplay.IsHidden)
