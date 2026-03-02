@@ -11,6 +11,9 @@ namespace Sakura.Framework.Graphics.Text;
 public class HeadlessFontStore : IFontStore
 {
     private readonly Font dummyFont;
+    private int cacheVersion = 0;
+
+    public int CacheVersion => cacheVersion;
 
     public HeadlessFontStore(HeadlessTextureManager textureManager)
     {
@@ -61,6 +64,11 @@ public class HeadlessFontStore : IFontStore
     public void Dispose()
     {
         throw new System.NotImplementedException();
+    }
+
+    public void ClearCaches()
+    {
+        cacheVersion++;
     }
 
     public TextureAtlas Atlas => null;

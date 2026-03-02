@@ -359,6 +359,14 @@ public class Font : IDisposable
         }
     }
 
+    public void ClearCache()
+    {
+        lock (stateLock)
+        {
+            glyphCache.Clear();
+        }
+    }
+
     public void Dispose()
     {
         sharedBuffer.Dispose();

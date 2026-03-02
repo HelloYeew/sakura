@@ -20,6 +20,7 @@ public class GLFontStore : IFontStore
     private readonly TextureAtlas atlas;
     private readonly Dictionary<string, Font> fontCache = new Dictionary<string, Font>();
     private readonly List<string> fallbackFamilies = new List<string>();
+    public int CacheVersion { get; private set; } = 0;
 
     private Font defaultFont;
 
@@ -63,7 +64,7 @@ public class GLFontStore : IFontStore
             loadFamily(resourceStorage, family, hasItalics: false);
             AddFallbackFamily(family);
         }
-        
+
         // Use NotoEmoji for fallback of emoji and other symbols
         // Since to use NotoColorEmoji need to change the freetype to compile with libpng so just use monochrome NotoEmoji for now
         // which is still better than missing glyphs.
@@ -193,6 +194,22 @@ public class GLFontStore : IFontStore
         }
 
         return fallbacks;
+    }
+
+    public void ClearCaches()
+    {
+        atlas.Clear();
+
+        foreach (var font in fontCache.Values)
+        {
+            font.ClearCache();
+        }
+
+        CacheVersion++;
+
+        GlobalStatistics.Get<int>("Fonts", "Cached Glyphs").Value = 0;
+        GlobalStatistics.Get<int>("Fonts", "Cache Version").Value = CacheVersion;
+        Logger.Debug($"Font caches evicted. Cache version is now {CacheVersion}.");
     }
 
     public TextureAtlas Atlas => atlas;

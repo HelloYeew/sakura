@@ -27,6 +27,7 @@ public class SpriteText : Drawable
     private Vertex[] textVertices = Array.Empty<Vertex>();
     private int currentVertexCount = 0;
     private ShapedText? shapedText;
+    private int lastCacheVersion = -1;
 
     private Font? resolvedFont;
 
@@ -69,6 +70,19 @@ public class SpriteText : Drawable
                 Invalidate(InvalidationFlags.DrawInfo);
             }
         }
+    }
+
+    public override void Update()
+    {
+        if (fontStore != null && lastCacheVersion != fontStore.CacheVersion)
+        {
+            lastCacheVersion = fontStore.CacheVersion;
+            layoutInvalidated = true;
+            shapedText = null;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+
+        base.Update();
     }
 
     protected override void UpdateTransforms()
