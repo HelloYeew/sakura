@@ -32,6 +32,12 @@ public struct Vertex
     public Vector2 TexCoords;
 
     /// <summary>
+    /// The index of the texture to use for this vertex to make it able to bind multiple textures in a single draw call.
+    /// </summary>
+    [VertexMember(1, VertexAttribPointerType.Float)]
+    public float TexIndex;
+
+    /// <summary>
     /// The size of the Vertex struct in bytes.
     /// </summary>
     public static readonly int Size = Marshal.SizeOf<Vertex>();

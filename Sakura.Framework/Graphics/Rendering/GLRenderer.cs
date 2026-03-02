@@ -39,12 +39,15 @@ public class GLRenderer : IRenderer
 
     private Drawable root;
 
-    private int stencilLevel = 0;
+    private int stencilLevel;
 
     private uint lastBoundTextureHandle = uint.MaxValue;
 
     private int viewportHeight;
     private readonly Stack<Vector4> scissorStack = new Stack<Vector4>();
+
+    private readonly uint[] boundTextureHandles = new uint[8];
+    private int boundTextureCount;
 
     private float renderScaleX = 1.0f;
     private float renderScaleY = 1.0f;
@@ -130,6 +133,9 @@ public class GLRenderer : IRenderer
     {
         if (root == null) return;
 
+        boundTextureCount = 0;
+        Array.Clear(boundTextureHandles, 0, boundTextureHandles.Length);
+
         GlobalStatistics.Get<int>("Renderer", "Draw Calls").Value = 0;
         GlobalStatistics.Get<int>("Renderer", "Vertices Drawn").Value = 0;
         GlobalStatistics.Get<int>("Renderer", "Shader Binds").Value = 0;
@@ -137,7 +143,8 @@ public class GLRenderer : IRenderer
 
         shader.Use();
         shader.SetUniform("u_Projection", projectionMatrix);
-        shader.SetUniform("u_Texture", 0);
+        int[] samplers = new int[] { 0, 1, 2, 3, 4, 5, 6, 7 };
+        shader.SetUniformIntArray("u_Textures", samplers);
 
         stencilLevel = 0;
         scissorStack.Clear();
@@ -158,17 +165,53 @@ public class GLRenderer : IRenderer
 
     public void DrawVertices(ReadOnlySpan<SakuraVertex> vertices, Texture texture)
     {
-        uint newTextureHandle = texture.GlTexture.Handle;
+        uint handle = texture.GlTexture.Handle;
+        float textureIndex = -1;
 
-        if (newTextureHandle != lastBoundTextureHandle)
+        for (int i = 0; i < boundTextureCount; i++)
         {
-            triangleBatch.Draw();
-            texture.GlTexture.Bind();
-            lastBoundTextureHandle = newTextureHandle;
+            if (boundTextureHandles[i] == handle)
+            {
+                textureIndex = i;
+                break;
+            }
+        }
+
+        if (textureIndex == -1 && boundTextureCount < 8)
+        {
+            textureIndex = boundTextureCount;
+            texture.GlTexture.Bind(TextureUnit.Texture0 + boundTextureCount);
+            boundTextureHandles[boundTextureCount] = handle;
+            boundTextureCount++;
             GlobalStatistics.Get<int>("Renderer", "Texture Binds").Value++;
         }
 
-        triangleBatch.AddRange(vertices);
+        // If slot is full, flush and start over
+        if (textureIndex == -1)
+        {
+            triangleBatch.Draw();
+
+            // Reset slots
+            boundTextureCount = 0;
+            Array.Clear(boundTextureHandles, 0, boundTextureHandles.Length);
+
+            // Bind to slot 0
+            textureIndex = 0;
+            texture.GlTexture.Bind();
+            boundTextureHandles[0] = handle;
+            boundTextureCount++;
+            GlobalStatistics.Get<int>("Renderer", "Texture Binds").Value++;
+        }
+
+        // Create a local copy of vertex since vertices is ReadOnlySpan
+        Span<SakuraVertex> batchedVertices = stackalloc SakuraVertex[vertices.Length];
+        for (int i = 0; i < vertices.Length; i++)
+        {
+            batchedVertices[i] = vertices[i];
+            batchedVertices[i].TexIndex = textureIndex;
+        }
+
+        triangleBatch.AddRange(vertices, textureIndex);
     }
 
     public void DrawCircle(Drawable circleDrawable)
@@ -179,15 +222,17 @@ public class GLRenderer : IRenderer
         var rect = circleDrawable.DrawRectangle;
         shader.SetUniform("u_CircleRect", new Vector4(rect.X, rect.Y, rect.Width, rect.Height));
 
-        if (GLTexture.WhitePixel.Handle != lastBoundTextureHandle)
+        if (boundTextureCount == 0 || GLTexture.WhitePixel.Handle != boundTextureHandles[0])
         {
             triangleBatch.Draw();
+            gl.ActiveTexture(TextureUnit.Texture0);
             GLTexture.WhitePixel.Bind();
-            lastBoundTextureHandle = GLTexture.WhitePixel.Handle;
+            boundTextureHandles[0] = GLTexture.WhitePixel.Handle;
+            if (boundTextureCount == 0) boundTextureCount = 1;
         }
 
         GLTexture.WhitePixel.Bind();
-        triangleBatch.AddRange(circleDrawable.Vertices);
+        triangleBatch.AddRange(circleDrawable.Vertices, 0f);
         triangleBatch.Draw();
 
         shader.SetUniform("u_IsCircle", false);
@@ -197,16 +242,17 @@ public class GLRenderer : IRenderer
 
     private void drawMaskShape(Drawable maskDrawable, float cornerRadius)
     {
-        // Bind a texture. WhitePixel is fine since we're only writing to stencil
-        if (GLTexture.WhitePixel.Handle != lastBoundTextureHandle)
+        if (boundTextureCount == 0 || GLTexture.WhitePixel.Handle != boundTextureHandles[0])
         {
             triangleBatch.Draw();
+            gl.ActiveTexture(TextureUnit.Texture0);
             GLTexture.WhitePixel.Bind();
-            lastBoundTextureHandle = GLTexture.WhitePixel.Handle;
+            boundTextureHandles[0] = GLTexture.WhitePixel.Handle;
+            if (boundTextureCount == 0) boundTextureCount = 1;
         }
 
         // Add the mask's vertices to the batch and draw *only* them.
-        triangleBatch.AddRange(maskDrawable.Vertices);
+        triangleBatch.AddRange(maskDrawable.Vertices, 0f);
         triangleBatch.Draw(); // Flush *just* the mask
     }
 
@@ -223,15 +269,16 @@ public class GLRenderer : IRenderer
         shader.SetUniform("u_BorderThickness", borderThickness);
         shader.SetUniform("u_BorderColor", borderColor);
 
-        // Bind white pixel for drawing the shape
-        if (GLTexture.WhitePixel.Handle != lastBoundTextureHandle)
+        if (boundTextureCount == 0 || GLTexture.WhitePixel.Handle != boundTextureHandles[0])
         {
             triangleBatch.Draw();
+            gl.ActiveTexture(TextureUnit.Texture0);
             GLTexture.WhitePixel.Bind();
-            lastBoundTextureHandle = GLTexture.WhitePixel.Handle;
+            boundTextureHandles[0] = GLTexture.WhitePixel.Handle;
+            if (boundTextureCount == 0) boundTextureCount = 1;
         }
 
-        triangleBatch.AddRange(maskDrawable.Vertices);
+        triangleBatch.AddRange(maskDrawable.Vertices, 0f);
         triangleBatch.Draw();
 
         shader.SetUniform("u_IsBorder", false);

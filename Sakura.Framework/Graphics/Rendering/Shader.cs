@@ -151,6 +151,24 @@ public class Shader : IDisposable
     }
 
     /// <summary>
+    /// Sets an integer array uniform variable in the shader program (used for Sampler Arrays).
+    /// </summary>
+    public void SetUniformIntArray(string name, int[] values)
+    {
+        int location = gl.GetUniformLocation(handle, name);
+        if (location != -1)
+        {
+            unsafe
+            {
+                fixed (int* ptr = values)
+                {
+                    gl.Uniform1(location, (uint)values.Length, ptr);
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// Loads and compiles a shader from an embedded resource.
     /// </summary>
     /// <param name="type">Type of the shader (OpenGL enum).</param>

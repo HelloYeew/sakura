@@ -3,10 +3,11 @@
 in vec4 v_Color;
 in vec2 v_TexCoords;
 in vec2 v_FragPos;
+in float v_TexIndex;
 
 out vec4 FragColor;
 
-uniform sampler2D u_Texture;
+uniform sampler2D u_Textures[8];
 
 // Masking uniforms
 uniform bool u_IsMasking;
@@ -61,8 +62,21 @@ void main()
         FragColor = finalColor;
         return;
     }
-    
-    vec4 texColor = texture(u_Texture, v_TexCoords) * v_Color;
+
+    vec4 texColor;
+    int index = int(v_TexIndex + 0.5);
+
+    if (index == 0) texColor = texture(u_Textures[0], v_TexCoords);
+    else if(index == 1) texColor = texture(u_Textures[1], v_TexCoords);
+    else if(index == 2) texColor = texture(u_Textures[2], v_TexCoords);
+    else if(index == 3) texColor = texture(u_Textures[3], v_TexCoords);
+    else if(index == 4) texColor = texture(u_Textures[4], v_TexCoords);
+    else if(index == 5) texColor = texture(u_Textures[5], v_TexCoords);
+    else if(index == 6) texColor = texture(u_Textures[6], v_TexCoords);
+    else if(index == 7) texColor = texture(u_Textures[7], v_TexCoords);
+    else texColor = vec4(1.0); // Fallback
+
+    texColor *= v_Color;
 
     if (u_IsCircle)
     {

@@ -54,6 +54,10 @@ public class TriangleBatch
         gl.EnableVertexAttribArray(2);
         gl.VertexAttribPointer(2, 4, VertexAttribPointerType.Float, false, (uint)vertexSize, (void*)Marshal.OffsetOf<SakuraVertex>(nameof(SakuraVertex.Color)));
 
+        // Location 3: Texture Index
+        gl.EnableVertexAttribArray(3);
+        gl.VertexAttribPointer(3, 1, VertexAttribPointerType.Float, false, (uint)vertexSize, (void*)Marshal.OffsetOf<SakuraVertex>(nameof(SakuraVertex.TexIndex)));
+
         gl.BindVertexArray(0);
     }
 
@@ -67,11 +71,13 @@ public class TriangleBatch
         vertices[vertexCount++] = vertex;
     }
 
-    public void AddRange(ReadOnlySpan<SakuraVertex> newVertices)
+    public void AddRange(ReadOnlySpan<SakuraVertex> newVertices, float textureIndex = 0f)
     {
         foreach (var vertex in newVertices)
         {
-            Add(vertex);
+            var v = vertex;
+            v.TexIndex = textureIndex;
+            Add(v);
         }
     }
 

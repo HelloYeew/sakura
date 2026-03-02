@@ -3,10 +3,12 @@
 layout (location = 0) in vec2 aPosition;
 layout (location = 1) in vec2 aTexCoords;
 layout (location = 2) in vec4 aColor;
+layout (location = 3) in float aTexIndex;
 
 out vec4 v_Color;
 out vec2 v_TexCoords;
 out vec2 v_FragPos;
+out float v_TexIndex;
 
 uniform mat4 u_Projection;
 
@@ -16,4 +18,5 @@ void main()
     v_Color = aColor;
     v_TexCoords = aTexCoords;
     v_FragPos = aPosition;
+    v_TexIndex = aTexIndex;
 }
