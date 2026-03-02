@@ -4,6 +4,8 @@ in vec4 v_Color;
 in vec2 v_TexCoords;
 in vec2 v_FragPos;
 in float v_TexIndex;
+in vec4 v_ClipRect;
+in float v_ClipRadius;
 
 out vec4 FragColor;
 
@@ -112,4 +114,31 @@ void main()
     }
 
     FragColor = texColor;
+    
+    // Software clipping
+    // If Z >= X, a valid clip rect was passed into the vertex
+    if (v_ClipRect.z > v_ClipRect.x)
+    {
+        // Hard clipping (Replaces glScissor)
+        if (v_FragPos.x < v_ClipRect.x || v_FragPos.x > v_ClipRect.z ||
+        v_FragPos.y < v_ClipRect.y || v_FragPos.y > v_ClipRect.w)
+        {
+            discard;
+        }
+
+        // Soft clipping (Replaces glStencil for rounded corners)
+        if (v_ClipRadius > 0.0)
+        {
+            vec2 halfSize = (v_ClipRect.zw - v_ClipRect.xy) / 2.0;
+            vec2 center = v_ClipRect.xy + halfSize;
+            vec2 posInRect = v_FragPos - center;
+
+            float dist = sdRoundBox(posInRect, halfSize, v_ClipRadius);
+            // Smoothly fade the edge pixels for perfect anti-aliasing
+            float clipAlpha = 1.0 - smoothstep(-0.5, 0.5, dist);
+            texColor.a *= clipAlpha;
+
+            if (texColor.a <= 0.01) discard;
+        }
+    }
 }
