@@ -61,6 +61,11 @@ public class FlowContainer : Container
         base.Update();
     }
 
+    protected override void UpdateAutoSize()
+    {
+        // Do nothing since PerformLayout will handle auto-sizing based on content size.
+    }
+
     /// <summary>
     /// Calculates and applies the position for each child.
     /// </summary>
@@ -173,9 +178,9 @@ public class FlowContainer : Container
         if (parentPixelSize.Y <= 0) parentPixelSize.Y = 1;
 
         if ((child.RelativeSizeAxes & Axes.X) != 0)
-            finalDrawSize.X *= parentPixelSize.X;
+            finalDrawSize.X = (AutoSizeAxes & Axes.X) != 0 ? 0 : finalDrawSize.X * parentPixelSize.X;
         if ((child.RelativeSizeAxes & Axes.Y) != 0)
-            finalDrawSize.Y *= parentPixelSize.Y;
+            finalDrawSize.Y = (AutoSizeAxes & Axes.Y) != 0 ? 0 : finalDrawSize.Y * parentPixelSize.Y;
 
         return finalDrawSize;
     }
