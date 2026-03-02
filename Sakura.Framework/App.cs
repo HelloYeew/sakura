@@ -117,12 +117,12 @@ public class App : Container, IDisposable
             Depth = float.MaxValue - 10,
             Alpha = 0
         });
-        Add(globalStatisticsDisplay = new GlobalStatisticsDisplay()
+        Add(textureViewerDisplay = new TextureViewerDisplay()
         {
             Depth = float.MaxValue - 10,
             Alpha = 0
         });
-        Add(textureViewerDisplay = new TextureViewerDisplay()
+        Add(globalStatisticsDisplay = new GlobalStatisticsDisplay()
         {
             Depth = float.MaxValue - 10,
             Alpha = 0
