@@ -20,7 +20,7 @@ public class GLFontStore : IFontStore
     private readonly TextureAtlas atlas;
     private readonly Dictionary<string, Lazy<Font>> fontCache = new Dictionary<string, Lazy<Font>>();
     private readonly List<string> fallbackFamilies = new List<string>();
-    public int CacheVersion { get; private set; } = 0;
+    public int CacheVersion { get; private set; }
 
     private Font defaultFont;
 
@@ -46,7 +46,7 @@ public class GLFontStore : IFontStore
         }
 
         // fallback families for various languages
-        string[] fallbackFamilies = new[]
+        string[] fallbackFamiliesList = new[]
         {
             "NotoSansThai",
             "NotoSansJP",
@@ -58,7 +58,7 @@ public class GLFontStore : IFontStore
             "NotoSansHebrew"
         };
 
-        foreach (string family in fallbackFamilies)
+        foreach (string family in fallbackFamiliesList)
         {
             // These families don't have italics
             loadFamily(resourceStorage, family, hasItalics: false);
@@ -141,8 +141,6 @@ public class GLFontStore : IFontStore
         if (usage.Italics)
             specificKey += "Italic";
 
-        string familyKey = usage.Family;
-
         if (fontCache.TryGetValue(specificKey, out var font) && font.Value != null)
             return font.Value;
 
@@ -187,7 +185,7 @@ public class GLFontStore : IFontStore
     {
         var returnedFonts = new HashSet<Font>();
 
-        foreach (var family in fallbackFamilies)
+        foreach (string family in fallbackFamilies)
         {
             var fallbackUsage = usage.With(family: family);
             var fallbackFont = Get(fallbackUsage);
