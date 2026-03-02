@@ -92,12 +92,14 @@ public class SpriteText : Drawable
 
         if (resolvedFont == null) return;
 
+        var fallbacks = fontStore.GetFallbacks(fontUsage);
+
         window.GetPhysicalSize(out int physW, out int physH);
         float dpiScale = (float)physW / window.Width;
 
         if (dpiScale <= 0) dpiScale = 1.0f;
-
-        shapedText = resolvedFont.ProcessText(Text, fontUsage.Size, dpiScale);
+        
+        shapedText = resolvedFont.ProcessText(Text, fontUsage.Size, dpiScale, fallbacks);
         ContentSize = new Vector2(shapedText.BoundingBox.X, shapedText.BoundingBox.Y);
 
         if (Math.Abs(Size.X - ContentSize.X) > 1.0f || Math.Abs(Size.Y - ContentSize.Y) > 1.0f)

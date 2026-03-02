@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Generic;
 using Sakura.Framework.Platform;
 
 namespace Sakura.Framework.Graphics.Text;
@@ -23,6 +24,26 @@ public interface IFontStore : IDisposable
     /// <param name="filename">The filename of the font.</param>
     /// <param name="alias">Optional alias to refer to this font. If null, uses filename without extension.</param>
     void AddFont(Storage storage, string filename, string alias = null);
+
+    /// <summary>
+    /// Adds a font family to be used as a fallback.
+    /// </summary>
+    void AddFallbackFamily(string familyName);
+
+    /// <summary>
+    /// Inserts a fallback family at a specific priority level.
+    /// </summary>
+    void InsertFallbackFamily(int index, string familyName);
+
+    /// <summary>
+    /// Clears all currently registered fallback families.
+    /// </summary>
+    void ClearFallbackFamilies();
+
+    /// <summary>
+    /// Retrieves all registered fallback fonts configured for the requested usage (Weight/Italics).
+    /// </summary>
+    IEnumerable<Font> GetFallbacks(FontUsage usage);
 
     /// <summary>
     /// Retrieves a font matching the specified usage.
