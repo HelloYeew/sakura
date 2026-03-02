@@ -9,6 +9,7 @@ using FreeTypeSharp;
 using HarfBuzzSharp;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Maths;
+using Sakura.Framework.Statistic;
 using Logger = Sakura.Framework.Logging.Logger;
 
 namespace Sakura.Framework.Graphics.Text;
@@ -222,6 +223,7 @@ public class Font : IDisposable
                     {
                         data = loaded.Value;
                         glyphCache[cacheKey] = data;
+                        GlobalStatistics.Get<int>("Fonts", "Cached Glyphs").Value = glyphCache.Count;
                     }
                     else
                     {

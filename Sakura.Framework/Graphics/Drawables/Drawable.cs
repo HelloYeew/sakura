@@ -616,6 +616,8 @@ public abstract class Drawable
         if ((Invalidation & flags) == flags)
             return; // Already invalidated for these flags.
 
+        GlobalStatistics.Get<int>("Drawables", "Invalidations").Value++;
+
         Invalidation |= flags;
 
         if (propagateToParent && (flags & InvalidationFlags.DrawInfo) != 0)
@@ -715,6 +717,8 @@ public abstract class Drawable
     public virtual void Update()
     {
         if (!IsLoaded) return;
+
+        GlobalStatistics.Get<int>("Drawables", "Updated Last Frame").Value++;
 
         (Clock as FramedClock)?.Update();
         Scheduler.Update();

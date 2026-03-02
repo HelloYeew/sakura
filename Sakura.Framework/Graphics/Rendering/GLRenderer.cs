@@ -153,6 +153,8 @@ public class GLRenderer : IRenderer
         GlobalStatistics.Get<int>("Renderer", "Slot Exhaustion Flushes").Value = 0;
         GlobalStatistics.Get<int>("Renderer", "State Change Flushes").Value = 0;
         GlobalStatistics.Get<int>("Renderer", "Buffer Full Flushes").Value = 0;
+        GlobalStatistics.Get<int>("Drawables", "Updated Last Frame").Value = 0;
+        GlobalStatistics.Get<int>("Drawables", "Invalidations").Value = 0;
         GlobalStatistics.Get<int>("Drawables", "Culled").Value = 0;
         GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame").Value = 0;
 
