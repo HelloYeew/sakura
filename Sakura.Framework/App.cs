@@ -10,6 +10,7 @@ using Sakura.Framework.Audio.BassEngine;
 using Sakura.Framework.Audio.Headless;
 using Sakura.Framework.Configurations;
 using Sakura.Framework.Extensions.DrawableExtensions;
+using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Graphics.Rendering;
@@ -17,6 +18,7 @@ using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Input;
+using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Reactive;
 
@@ -57,6 +59,7 @@ public class App : Container, IDisposable
     private DrawVisualiser drawVisualiser;
     private GlobalStatisticsDisplay globalStatisticsDisplay;
     private TextureViewerDisplay textureViewerDisplay;
+    private DrawSizePreservingFillContainer frameworkElementContainer;
 
     public override void Load()
     {
@@ -111,23 +114,29 @@ public class App : Container, IDisposable
 
         showFpsGraph = Host.FrameworkConfigManager.Get(FrameworkSetting.ShowFpsGraph, false);
 
+        Add(frameworkElementContainer = new DrawSizePreservingFillContainer()
+        {
+            Name = "FrameworkElementContainer",
+            Size = Vector2.One,
+            Depth = float.MaxValue
+        });
 
-        Add(drawVisualiser = new DrawVisualiser(this)
+        frameworkElementContainer.Add(drawVisualiser = new DrawVisualiser(this)
         {
             Depth = float.MaxValue - 10,
             Alpha = 0
         });
-        Add(textureViewerDisplay = new TextureViewerDisplay()
+        frameworkElementContainer.Add(textureViewerDisplay = new TextureViewerDisplay()
         {
             Depth = float.MaxValue - 10,
             Alpha = 0
         });
-        Add(globalStatisticsDisplay = new GlobalStatisticsDisplay()
+        frameworkElementContainer.Add(globalStatisticsDisplay = new GlobalStatisticsDisplay()
         {
             Depth = float.MaxValue - 10,
             Alpha = 0
         });
-        Add(FpsGraph = new FpsGraph(Host.AppClock)
+        frameworkElementContainer.Add(FpsGraph = new FpsGraph(Host.AppClock)
         {
             Depth = float.MaxValue
         });
