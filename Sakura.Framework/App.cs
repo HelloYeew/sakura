@@ -116,6 +116,7 @@ public class App : Container, IDisposable
 
         Add(frameworkElementContainer = new DrawSizePreservingFillContainer()
         {
+            TargetDrawSize = new Vector2(1920, 1080),
             Name = "FrameworkElementContainer",
             Size = Vector2.One,
             Depth = float.MaxValue
