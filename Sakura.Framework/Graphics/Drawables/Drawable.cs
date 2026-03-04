@@ -38,7 +38,7 @@ public abstract class Drawable
     /// </summary>
     public bool IsLoaded { get; private set; }
 
-    private Anchor anchor = Anchor.Centre;
+    private Anchor anchor = Anchor.TopLeft;
     private Anchor origin = Anchor.TopLeft;
     private Vector2 position = Vector2.Zero;
     private Vector2 size = Vector2.Zero;
