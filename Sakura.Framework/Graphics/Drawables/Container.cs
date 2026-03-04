@@ -271,7 +271,7 @@ public class Container : Drawable
                 var cr = clipRect.Value;
                 var dr = child.DrawRectangle;
 
-                // Simple Axis-Aligned Bounding Box (AABB) intersection test
+                // Simple AABB intersection test
                 bool isVisible = dr.X <= cr.X + cr.Width &&
                                  dr.X + dr.Width >= cr.X &&
                                  dr.Y <= cr.Y + cr.Height &&
