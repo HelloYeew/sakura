@@ -129,8 +129,7 @@ public class App : Container, IDisposable
         });
         Add(FpsGraph = new FpsGraph(Host.AppClock)
         {
-            Depth = float.MaxValue,
-            Alpha = 0
+            Depth = float.MaxValue
         });
 
         if (!showFpsGraph)
