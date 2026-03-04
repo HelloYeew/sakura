@@ -117,20 +117,19 @@ public class App : Container, IDisposable
             Depth = float.MaxValue - 10,
             Alpha = 0
         });
-        Add(globalStatisticsDisplay = new GlobalStatisticsDisplay()
+        Add(textureViewerDisplay = new TextureViewerDisplay()
         {
             Depth = float.MaxValue - 10,
             Alpha = 0
         });
-        Add(textureViewerDisplay = new TextureViewerDisplay()
+        Add(globalStatisticsDisplay = new GlobalStatisticsDisplay()
         {
             Depth = float.MaxValue - 10,
             Alpha = 0
         });
         Add(FpsGraph = new FpsGraph(Host.AppClock)
         {
-            Depth = float.MaxValue,
-            Alpha = 0
+            Depth = float.MaxValue
         });
 
         if (!showFpsGraph)
@@ -146,8 +145,6 @@ public class App : Container, IDisposable
 
     private void toggleVisualiser()
     {
-        if (!globalStatisticsDisplay.IsHidden)
-            globalStatisticsDisplay.FadeOut(200, Easing.OutQuint);
         if (!textureViewerDisplay.IsHidden)
             textureViewerDisplay.FadeOut(200, Easing.OutQuint);
         if (drawVisualiser.IsHidden)
@@ -158,10 +155,6 @@ public class App : Container, IDisposable
 
     private void toggleStatisticsDisplay()
     {
-        if (!drawVisualiser.IsHidden)
-            drawVisualiser.FadeOut(200, Easing.OutQuint);
-        if (!textureViewerDisplay.IsHidden)
-            textureViewerDisplay.FadeOut(200, Easing.OutQuint);
         if (globalStatisticsDisplay.IsHidden)
             globalStatisticsDisplay.FadeIn(200, Easing.OutQuint);
         else
@@ -170,8 +163,6 @@ public class App : Container, IDisposable
 
     private void toggleTextureViewerDisplay()
     {
-        if (!drawVisualiser.IsHidden)
-            drawVisualiser.FadeOut(200, Easing.OutQuint);
         if (!globalStatisticsDisplay.IsHidden)
             globalStatisticsDisplay.FadeOut(200, Easing.OutQuint);
         if (textureViewerDisplay.IsHidden)

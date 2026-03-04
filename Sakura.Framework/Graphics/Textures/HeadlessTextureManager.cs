@@ -66,5 +66,10 @@ public class HeadlessTextureManager : ITextureManager
         return new Texture(dummyGlTexture);
     }
 
+    public bool Evict(string path)
+    {
+        return true;
+    }
+
     public IEnumerable<Texture> GetAllTextures() => new[] { WhitePixel };
 }

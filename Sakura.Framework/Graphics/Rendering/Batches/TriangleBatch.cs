@@ -3,6 +3,7 @@
 
 using System;
 using System.Runtime.InteropServices;
+using Sakura.Framework.Maths;
 using Sakura.Framework.Statistic;
 using Silk.NET.OpenGL;
 using SakuraVertex = Sakura.Framework.Graphics.Rendering.Vertex.Vertex;
@@ -54,6 +55,18 @@ public class TriangleBatch
         gl.EnableVertexAttribArray(2);
         gl.VertexAttribPointer(2, 4, VertexAttribPointerType.Float, false, (uint)vertexSize, (void*)Marshal.OffsetOf<SakuraVertex>(nameof(SakuraVertex.Color)));
 
+        // Location 3: Texture Index
+        gl.EnableVertexAttribArray(3);
+        gl.VertexAttribPointer(3, 1, VertexAttribPointerType.Float, false, (uint)vertexSize, (void*)Marshal.OffsetOf<SakuraVertex>(nameof(SakuraVertex.TexIndex)));
+
+        // Location 4: Clip Rect (Vector4: Left, Top, Right, Bottom)
+        gl.EnableVertexAttribArray(4);
+        gl.VertexAttribPointer(4, 4, VertexAttribPointerType.Float, false, (uint)vertexSize, (void*)Marshal.OffsetOf<SakuraVertex>(nameof(SakuraVertex.ClipRect)));
+
+        // Location 5: Clip Radius
+        gl.EnableVertexAttribArray(5);
+        gl.VertexAttribPointer(5, 1, VertexAttribPointerType.Float, false, (uint)vertexSize, (void*)Marshal.OffsetOf<SakuraVertex>(nameof(SakuraVertex.ClipRadius)));
+
         gl.BindVertexArray(0);
     }
 
@@ -62,16 +75,24 @@ public class TriangleBatch
         // If the batch is full, automatically flush it to make room.
         if (vertexCount >= maxVertices)
         {
+            GlobalStatistics.Get<int>("Renderer", "Buffer Full Flushes").Value++;
             Draw();
         }
         vertices[vertexCount++] = vertex;
     }
 
-    public void AddRange(ReadOnlySpan<SakuraVertex> newVertices)
+    public void AddRange(ReadOnlySpan<SakuraVertex> newVertices, float textureIndex = 0f, Vector4? clipRect = null, float clipRadius = 0f)
     {
+        // If no clip rect is provided, use an invalid rect so let shader ignore it
+        Vector4 actualClipRect = clipRect ?? new Vector4(-1, -1, -2, -2);
+
         foreach (var vertex in newVertices)
         {
-            Add(vertex);
+            var v = vertex;
+            v.TexIndex = textureIndex;
+            v.ClipRect = actualClipRect;
+            v.ClipRadius = clipRadius;
+            Add(v);
         }
     }
 

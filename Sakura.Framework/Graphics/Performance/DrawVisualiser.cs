@@ -36,6 +36,7 @@ public class DrawVisualiser : Container, IRemoveFromDrawVisualiser
 
     private Drawable lastSelectedDrawable;
     private PropertyInfo[] cachedProperties;
+    private FieldInfo[] cachedFields;
     private SpriteText loadStateText;
     private readonly List<PropertyTracker> propertyTextMap = new();
     private readonly List<(Drawable drawable, int depth)> cachedTreeStructure = new();
@@ -398,6 +399,10 @@ public class DrawVisualiser : Container, IRemoveFromDrawVisualiser
                     !string.Equals(p.Name, "Children", StringComparison.OrdinalIgnoreCase));
             }
 
+            cachedFields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static);
+            // Filter out compiler-generated backing fields for auto-properties
+            cachedFields = Array.FindAll(cachedFields, f => !f.Name.Contains("k__BackingField"));
+
             // Header (Static, doesn't need to be tracked)
             addPropertyText($"Type: {type.Name}", Color.Yellow);
 
@@ -418,6 +423,16 @@ public class DrawVisualiser : Container, IRemoveFromDrawVisualiser
                     LastStringValue = null
                 });
             }
+
+            foreach (var field in cachedFields)
+            {
+                var textElement = addPropertyText($"{field.Name}: loading...", Color.White);
+                propertyTextMap.Add(new PropertyTracker
+                {
+                    Field = field,
+                    TextElement = textElement
+                });
+            }
         }
 
         // Update state in existing UI elements
@@ -430,7 +445,9 @@ public class DrawVisualiser : Container, IRemoveFromDrawVisualiser
         {
             try
             {
-                object? val = tracker.Prop.GetValue(selectedDrawable);
+                object? val = tracker.Prop != null
+                    ? tracker.Prop.GetValue(selectedDrawable)
+                    : tracker.Field?.GetValue(selectedDrawable);
 
                 string valStr = val?.ToString() ?? "null";
 
@@ -441,11 +458,13 @@ public class DrawVisualiser : Container, IRemoveFromDrawVisualiser
                 Color textColor = Color.White;
                 if (val is bool b) textColor = b ? Color.Green : Color.Red;
                 else if (val is ValueType) textColor = Color.Cyan;
-                else if (tracker.Prop.GetMethod != null && !tracker.Prop.GetMethod.IsPublic) textColor = Color.DeepPink;
-                else if (tracker.Prop.GetMethod != null && tracker.Prop.GetMethod.IsStatic) textColor = Color.Orange;
 
-                string newText = $"{tracker.Prop.Name}: {valStr}";
-                tracker.TextElement.Text = newText;
+                bool isPrivate = (tracker.Prop?.GetMethod != null && !tracker.Prop.GetMethod.IsPublic) ||
+                                 (tracker.Field != null && tracker.Field.IsPrivate);
+                if (isPrivate) textColor = Color.LightGray;
+
+                string name = tracker.Prop != null ? tracker.Prop.Name : tracker.Field!.Name;
+                tracker.TextElement.Text = $"{name}: {valStr}";
                 tracker.TextElement.Color = textColor;
             }
             catch
@@ -497,6 +516,7 @@ public class DrawVisualiser : Container, IRemoveFromDrawVisualiser
     private class PropertyTracker
     {
         public PropertyInfo Prop;
+        public FieldInfo? Field;
         public SpriteText TextElement;
         public string? LastStringValue;
     }

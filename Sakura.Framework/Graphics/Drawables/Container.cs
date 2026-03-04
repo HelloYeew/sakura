@@ -254,8 +254,37 @@ public class Container : Drawable
         if (Masking)
             renderer.PushMask(this, CornerRadius);
 
+        RectangleF? clipRect = null;
+        for (Container p = this; p != null; p = p.Parent)
+        {
+            if (p.Masking)
+            {
+                clipRect = p.DrawRectangle;
+                break;
+            }
+        }
+
         foreach (var child in children.OrderBy(c => c.Depth))
         {
+            if (clipRect.HasValue)
+            {
+                var cr = clipRect.Value;
+                var dr = child.DrawRectangle;
+
+                // Simple AABB intersection test
+                bool isVisible = dr.X <= cr.X + cr.Width &&
+                                 dr.X + dr.Width >= cr.X &&
+                                 dr.Y <= cr.Y + cr.Height &&
+                                 dr.Y + dr.Height >= cr.Y;
+
+                // If the child is completely outside the masking bounds, skip drawing it entirely
+                if (!isVisible)
+                {
+                    GlobalStatistics.Get<int>("Drawables", "Culled").Value++;
+                    continue;
+                }
+            }
+
             child.Draw(renderer);
         }
 
@@ -340,10 +369,11 @@ public class Container : Drawable
         // We don't use .Any() because multiple children might need to react
         // (e.g., one losing hover, another gaining it).
         bool handled = false;
-        foreach (var c in children)
+        foreach (var c in children.OrderByDescending(d => d.Depth))
         {
-            if (c.OnMouseMove(e))
-                handled = true;
+            if (c.IsHovered || c.Contains(e.ScreenSpaceMousePosition))
+                if (c.OnMouseMove(e))
+                    handled = true;
         }
 
         return handled;

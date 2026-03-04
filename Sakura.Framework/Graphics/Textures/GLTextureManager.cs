@@ -101,6 +101,26 @@ public class GLTextureManager : ITextureManager
         return new Texture(glTex);
     }
 
+    public bool Evict(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return false;
+
+        if (textureCache.TryGetValue(path, out var texture))
+        {
+            if (texture != WhitePixel && texture.GlTexture.Handle != missingTexture.GlTexture.Handle)
+            {
+                texture.Dispose();
+            }
+
+            textureCache.Remove(path);
+
+            GlobalStatistics.Get<int>("Textures", "Loaded Textures").Value = textureCache.Count;
+            return true;
+        }
+
+        return false;
+    }
+
     public void Dispose()
     {
         foreach (var tex in textureCache.Values)

@@ -3,10 +3,13 @@
 in vec4 v_Color;
 in vec2 v_TexCoords;
 in vec2 v_FragPos;
+in float v_TexIndex;
+in vec4 v_ClipRect;
+in float v_ClipRadius;
 
 out vec4 FragColor;
 
-uniform sampler2D u_Texture;
+uniform sampler2D u_Textures[8];
 
 // Masking uniforms
 uniform bool u_IsMasking;
@@ -61,8 +64,21 @@ void main()
         FragColor = finalColor;
         return;
     }
-    
-    vec4 texColor = texture(u_Texture, v_TexCoords) * v_Color;
+
+    vec4 texColor;
+    int index = int(v_TexIndex + 0.5);
+
+    if (index == 0) texColor = texture(u_Textures[0], v_TexCoords);
+    else if(index == 1) texColor = texture(u_Textures[1], v_TexCoords);
+    else if(index == 2) texColor = texture(u_Textures[2], v_TexCoords);
+    else if(index == 3) texColor = texture(u_Textures[3], v_TexCoords);
+    else if(index == 4) texColor = texture(u_Textures[4], v_TexCoords);
+    else if(index == 5) texColor = texture(u_Textures[5], v_TexCoords);
+    else if(index == 6) texColor = texture(u_Textures[6], v_TexCoords);
+    else if(index == 7) texColor = texture(u_Textures[7], v_TexCoords);
+    else texColor = vec4(1.0); // Fallback
+
+    texColor *= v_Color;
 
     if (u_IsCircle)
     {
@@ -98,4 +114,31 @@ void main()
     }
 
     FragColor = texColor;
+    
+    // Software clipping
+    // If Z >= X, a valid clip rect was passed into the vertex
+    if (v_ClipRect.z > v_ClipRect.x)
+    {
+        // Hard clipping (Replaces glScissor)
+        if (v_FragPos.x < v_ClipRect.x || v_FragPos.x > v_ClipRect.z ||
+        v_FragPos.y < v_ClipRect.y || v_FragPos.y > v_ClipRect.w)
+        {
+            discard;
+        }
+
+        // Soft clipping (Replaces glStencil for rounded corners)
+        if (v_ClipRadius > 0.0)
+        {
+            vec2 halfSize = (v_ClipRect.zw - v_ClipRect.xy) / 2.0;
+            vec2 center = v_ClipRect.xy + halfSize;
+            vec2 posInRect = v_FragPos - center;
+
+            float dist = sdRoundBox(posInRect, halfSize, v_ClipRadius);
+            // Smoothly fade the edge pixels for perfect anti-aliasing
+            float clipAlpha = 1.0 - smoothstep(-0.5, 0.5, dist);
+            texColor.a *= clipAlpha;
+
+            if (texColor.a <= 0.01) discard;
+        }
+    }
 }

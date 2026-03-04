@@ -55,5 +55,16 @@ public interface IFontStore : IDisposable
     /// </summary>
     Font Get(string name);
 
+    /// <summary>
+    /// A version number that increments whenever the font store's cache is updated.
+    /// Will increment mostly when <see cref="ClearCaches"/> is called.
+    /// </summary>
+    int CacheVersion { get; }
+
+    /// <summary>
+    /// Clear internal caches of the font.
+    /// </summary>
+    void ClearCaches();
+
     TextureAtlas Atlas { get; }
 }

@@ -111,6 +111,25 @@ public class TextureAtlas : IDisposable
         return (testY + areaHeight + padding <= height);
     }
 
+    public void Clear()
+    {
+        for (int i = 1; i < pages.Count; i++)
+        {
+            pages[i].Dispose();
+        }
+
+        if (pages.Count > 1)
+        {
+            pages.RemoveRange(1, pages.Count - 1);
+        }
+
+        pages[0].CurrentX = 0;
+        pages[0].CurrentY = 0;
+        pages[0].RowHeight = 0;
+
+        GlobalStatistics.Get<int>("Fonts", "Atlas Pages").Value = pages.Count;
+    }
+
     public void Dispose()
     {
         glTexture.Dispose();

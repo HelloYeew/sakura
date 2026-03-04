@@ -27,6 +27,7 @@ public class SpriteText : Drawable
     private Vertex[] textVertices = Array.Empty<Vertex>();
     private int currentVertexCount = 0;
     private ShapedText? shapedText;
+    private int lastCacheVersion = -1;
 
     private Font? resolvedFont;
 
@@ -71,6 +72,19 @@ public class SpriteText : Drawable
         }
     }
 
+    public override void Update()
+    {
+        if (fontStore != null && lastCacheVersion != fontStore.CacheVersion)
+        {
+            lastCacheVersion = fontStore.CacheVersion;
+            layoutInvalidated = true;
+            shapedText = null;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+
+        base.Update();
+    }
+
     protected override void UpdateTransforms()
     {
         if (layoutInvalidated)
@@ -98,7 +112,7 @@ public class SpriteText : Drawable
         float dpiScale = (float)physW / window.Width;
 
         if (dpiScale <= 0) dpiScale = 1.0f;
-        
+
         shapedText = resolvedFont.ProcessText(Text, fontUsage.Size, dpiScale, fallbacks);
         ContentSize = new Vector2(shapedText.BoundingBox.X, shapedText.BoundingBox.Y);
 
@@ -115,6 +129,7 @@ public class SpriteText : Drawable
         if (shapedText == null || shapedText.Glyphs.Count == 0)
         {
             currentVertexCount = 0;
+            DrawRectangle = new RectangleF(0, 0, 0, 0); // Reset bounds if empty
             return;
         }
 
@@ -136,15 +151,9 @@ public class SpriteText : Drawable
             DrawAlpha
         );
 
-        // We need to normalize pixel coordinates to 0..1 space because Drawable's ModelMatrix
-        // scales (0..1) up to (Size.X..Size.Y).
-
-        // Get the relative origin
         Vector2 originRelative = GetAnchorOriginVector(Origin);
-
         Vector2 availableSpace = DrawSize - ContentSize;
 
-        // The starting position (top-left) of the text block relative to the Drawable's top-left.
         Vector2 textOffset = new Vector2(
             availableSpace.X * originRelative.X,
             availableSpace.Y * originRelative.Y
@@ -156,6 +165,11 @@ public class SpriteText : Drawable
         );
         Vector2 normalizationScale = new Vector2(1.0f / safeDrawSize.X, 1.0f / safeDrawSize.Y);
 
+        float minX = float.MaxValue;
+        float minY = float.MaxValue;
+        float maxX = float.MinValue;
+        float maxY = float.MinValue;
+
         foreach (var glyph in shapedText.Glyphs)
         {
             var texture = glyph.Texture;
@@ -165,17 +179,20 @@ public class SpriteText : Drawable
             float pixelX = pos.X + textOffset.X;
             float pixelY = pos.Y + textOffset.Y;
 
-            // Normalize coordinates to 0..1 relative to the Drawable.Size
             float x = pixelX * normalizationScale.X;
             float y = pixelY * normalizationScale.Y;
             float w = size.X * normalizationScale.X;
             float h = size.Y * normalizationScale.Y;
 
-            // Transform 0..1 local coords to World coords using the matrix
             var vTopLeft = Vector4.Transform(new Vector4(x, y, 0, 1), ModelMatrix);
             var vTopRight = Vector4.Transform(new Vector4(x + w, y, 0, 1), ModelMatrix);
             var vBottomLeft = Vector4.Transform(new Vector4(x, y + h, 0, 1), ModelMatrix);
             var vBottomRight = Vector4.Transform(new Vector4(x + w, y + h, 0, 1), ModelMatrix);
+
+            minX = Math.Min(minX, Math.Min(vTopLeft.X, Math.Min(vTopRight.X, Math.Min(vBottomLeft.X, vBottomRight.X))));
+            minY = Math.Min(minY, Math.Min(vTopLeft.Y, Math.Min(vTopRight.Y, Math.Min(vBottomLeft.Y, vBottomRight.Y))));
+            maxX = Math.Max(maxX, Math.Max(vTopLeft.X, Math.Max(vTopRight.X, Math.Max(vBottomLeft.X, vBottomRight.X))));
+            maxY = Math.Max(maxY, Math.Max(vTopLeft.Y, Math.Max(vTopRight.Y, Math.Max(vBottomLeft.Y, vBottomRight.Y))));
 
             var uv = texture.UvRect;
             var uvTopLeft = new Vector2(uv.X, uv.Y);
@@ -189,6 +206,8 @@ public class SpriteText : Drawable
             vertices[vIndex++] = new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(uvTopLeft.X, uvBottomRight.Y), Color = drawColor };
             vertices[vIndex++] = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = drawColor };
         }
+
+        DrawRectangle = new RectangleF(minX, minY, maxX - minX, maxY - minY);
     }
 
     public override void Draw(IRenderer renderer)

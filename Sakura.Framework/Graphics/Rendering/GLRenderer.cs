@@ -39,17 +39,29 @@ public class GLRenderer : IRenderer
 
     private Drawable root;
 
-    private int stencilLevel = 0;
+    private int stencilLevel;
 
     private uint lastBoundTextureHandle = uint.MaxValue;
 
     private int viewportHeight;
     private readonly Stack<Vector4> scissorStack = new Stack<Vector4>();
 
+    private readonly uint[] boundTextureHandles = new uint[8];
+    private int boundTextureCount;
+
     private float renderScaleX = 1.0f;
     private float renderScaleY = 1.0f;
 
     private BlendingMode currentBlendMode = BlendingMode.Alpha;
+
+    private readonly Stack<ClipState> clipStack = new Stack<ClipState>();
+    private ClipState currentClip;
+
+    private struct ClipState
+    {
+        public Vector4 Rect;
+        public float Radius;
+    }
 
     public unsafe void Initialize(IGraphicsSurface graphicsSurface)
     {
@@ -90,6 +102,7 @@ public class GLRenderer : IRenderer
 
         GLTexture.CreateWhitePixel(gl);
         WhitePixel = new Texture(GLTexture.WhitePixel);
+        resetTextureSlots();
 
         shader = new Shader(gl, "Resources/Shaders/shader.vert", "Resources/Shaders/shader.frag");
 
@@ -130,21 +143,35 @@ public class GLRenderer : IRenderer
     {
         if (root == null) return;
 
+        resetTextureSlots();
+
         GlobalStatistics.Get<int>("Renderer", "Draw Calls").Value = 0;
         GlobalStatistics.Get<int>("Renderer", "Vertices Drawn").Value = 0;
         GlobalStatistics.Get<int>("Renderer", "Shader Binds").Value = 0;
         GlobalStatistics.Get<int>("Renderer", "Texture Binds").Value = 0;
 
+        GlobalStatistics.Get<int>("Renderer", "Slot Exhaustion Flushes").Value = 0;
+        GlobalStatistics.Get<int>("Renderer", "State Change Flushes").Value = 0;
+        GlobalStatistics.Get<int>("Renderer", "Buffer Full Flushes").Value = 0;
+        GlobalStatistics.Get<int>("Drawables", "Updated Last Frame").Value = 0;
+        GlobalStatistics.Get<int>("Drawables", "Invalidations").Value = 0;
+        GlobalStatistics.Get<int>("Drawables", "Culled").Value = 0;
+        GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame").Value = 0;
+
         shader.Use();
         shader.SetUniform("u_Projection", projectionMatrix);
-        shader.SetUniform("u_Texture", 0);
+        int[] samplers = new int[] { 0, 1, 2, 3, 4, 5, 6, 7 };
+        shader.SetUniformIntArray("u_Textures", samplers);
 
         stencilLevel = 0;
         scissorStack.Clear();
-        gl.Disable(EnableCap.ScissorTest);
-        gl.StencilMask(0x00);
-        gl.StencilFunc(StencilFunction.Always, 0, 0xFF);
-        gl.StencilOp(StencilOp.Keep, StencilOp.Keep, StencilOp.Keep);
+        clipStack.Clear();
+        currentClip = new ClipState
+        {
+            // Default to -2 so make the right edge less than left
+            Rect = new Vector4(-1, -1, -2, -2),
+            Radius = 0
+        };
         shader.SetUniform("u_IsMasking", false);
         shader.SetUniform("u_IsCircle", false);
         shader.SetUniform("u_IsBorder", false);
@@ -158,17 +185,46 @@ public class GLRenderer : IRenderer
 
     public void DrawVertices(ReadOnlySpan<SakuraVertex> vertices, Texture texture)
     {
-        uint newTextureHandle = texture.GlTexture.Handle;
+        uint handle = texture.GlTexture.Handle;
+        float textureIndex = -1;
 
-        if (newTextureHandle != lastBoundTextureHandle)
+        for (int i = 0; i < boundTextureCount; i++)
         {
-            triangleBatch.Draw();
-            texture.GlTexture.Bind();
-            lastBoundTextureHandle = newTextureHandle;
+            if (boundTextureHandles[i] == handle)
+            {
+                textureIndex = i;
+                break;
+            }
+        }
+
+        if (textureIndex == -1 && boundTextureCount < 8)
+        {
+            textureIndex = boundTextureCount;
+            texture.GlTexture.Bind(TextureUnit.Texture0 + boundTextureCount);
+            boundTextureHandles[boundTextureCount] = handle;
+            boundTextureCount++;
             GlobalStatistics.Get<int>("Renderer", "Texture Binds").Value++;
         }
 
-        triangleBatch.AddRange(vertices);
+        // If slot is full, flush and start over
+        if (textureIndex == -1)
+        {
+            GlobalStatistics.Get<int>("Renderer", "Slot Exhaustion Flushes").Value++;
+
+            triangleBatch.Draw();
+
+            // Reset slots
+            resetTextureSlots();
+
+            // Bind to slot 0
+            textureIndex = 0;
+            texture.GlTexture.Bind();
+            boundTextureHandles[0] = handle;
+            boundTextureCount++;
+            GlobalStatistics.Get<int>("Renderer", "Texture Binds").Value++;
+        }
+
+        triangleBatch.AddRange(vertices, textureIndex, currentClip.Rect, currentClip.Radius);
     }
 
     public void DrawCircle(Drawable circleDrawable)
@@ -179,15 +235,17 @@ public class GLRenderer : IRenderer
         var rect = circleDrawable.DrawRectangle;
         shader.SetUniform("u_CircleRect", new Vector4(rect.X, rect.Y, rect.Width, rect.Height));
 
-        if (GLTexture.WhitePixel.Handle != lastBoundTextureHandle)
+        if (boundTextureCount == 0 || GLTexture.WhitePixel.Handle != boundTextureHandles[0])
         {
             triangleBatch.Draw();
+            gl.ActiveTexture(TextureUnit.Texture0);
             GLTexture.WhitePixel.Bind();
-            lastBoundTextureHandle = GLTexture.WhitePixel.Handle;
+            boundTextureHandles[0] = GLTexture.WhitePixel.Handle;
+            if (boundTextureCount == 0) boundTextureCount = 1;
         }
 
         GLTexture.WhitePixel.Bind();
-        triangleBatch.AddRange(circleDrawable.Vertices);
+        triangleBatch.AddRange(circleDrawable.Vertices, 0f, currentClip.Rect, currentClip.Radius);
         triangleBatch.Draw();
 
         shader.SetUniform("u_IsCircle", false);
@@ -197,16 +255,17 @@ public class GLRenderer : IRenderer
 
     private void drawMaskShape(Drawable maskDrawable, float cornerRadius)
     {
-        // Bind a texture. WhitePixel is fine since we're only writing to stencil
-        if (GLTexture.WhitePixel.Handle != lastBoundTextureHandle)
+        if (boundTextureCount == 0 || GLTexture.WhitePixel.Handle != boundTextureHandles[0])
         {
             triangleBatch.Draw();
+            gl.ActiveTexture(TextureUnit.Texture0);
             GLTexture.WhitePixel.Bind();
-            lastBoundTextureHandle = GLTexture.WhitePixel.Handle;
+            boundTextureHandles[0] = GLTexture.WhitePixel.Handle;
+            if (boundTextureCount == 0) boundTextureCount = 1;
         }
 
         // Add the mask's vertices to the batch and draw *only* them.
-        triangleBatch.AddRange(maskDrawable.Vertices);
+        triangleBatch.AddRange(maskDrawable.Vertices, 0f, currentClip.Rect, currentClip.Radius);
         triangleBatch.Draw(); // Flush *just* the mask
     }
 
@@ -223,15 +282,16 @@ public class GLRenderer : IRenderer
         shader.SetUniform("u_BorderThickness", borderThickness);
         shader.SetUniform("u_BorderColor", borderColor);
 
-        // Bind white pixel for drawing the shape
-        if (GLTexture.WhitePixel.Handle != lastBoundTextureHandle)
+        if (boundTextureCount == 0 || GLTexture.WhitePixel.Handle != boundTextureHandles[0])
         {
             triangleBatch.Draw();
+            gl.ActiveTexture(TextureUnit.Texture0);
             GLTexture.WhitePixel.Bind();
-            lastBoundTextureHandle = GLTexture.WhitePixel.Handle;
+            boundTextureHandles[0] = GLTexture.WhitePixel.Handle;
+            if (boundTextureCount == 0) boundTextureCount = 1;
         }
 
-        triangleBatch.AddRange(maskDrawable.Vertices);
+        triangleBatch.AddRange(maskDrawable.Vertices, 0f, currentClip.Rect, currentClip.Radius);
         triangleBatch.Draw();
 
         shader.SetUniform("u_IsBorder", false);
@@ -240,132 +300,28 @@ public class GLRenderer : IRenderer
 
     public void PushMask(Drawable maskDrawable, float cornerRadius)
     {
-        triangleBatch.Draw(); // Flush all drawing before this
+        var rect = maskDrawable.DrawRectangle;
+        float left = rect.X;
+        float top = rect.Y;
+        float right = rect.X + rect.Width;
+        float bottom = rect.Y + rect.Height;
 
-        // Case 1 : Scissor optimization (Rectangular)
-        // For enable masking but no effect required
-        if (cornerRadius <= 0.0f)
+        // If already inside a mask, intersect the rectangles so they don't break out
+        if (currentClip.Rect.X >= 0)
         {
-            var rect = maskDrawable.DrawRectangle;
-
-            // Calculate OpenGL Scissor Rect (Bottom-Left origin) from UI Rect (Top-Left origin)
-            int scissorX = (int)(rect.X * renderScaleX);
-            int scissorY = (int)(viewportHeight - (rect.Y + rect.Height) * renderScaleY);
-            int scissorW = (int)(rect.Width * renderScaleX);
-            int scissorH = (int)(rect.Height * renderScaleY);
-
-            // Handle Nesting: Intersect with current scissor rect if one exists
-            if (scissorStack.Count > 0)
-            {
-                var parentScissor = scissorStack.Peek();
-
-                // Simple AABB intersection logic
-                int newX = Math.Max(scissorX, (int)parentScissor.X);
-                int newY = Math.Max(scissorY, (int)parentScissor.Y);
-                int newRight = Math.Min(scissorX + scissorW, (int)(parentScissor.X + parentScissor.Z));
-                int newTop = Math.Min(scissorY + scissorH, (int)(parentScissor.Y + parentScissor.W));
-
-                scissorX = newX;
-                scissorY = newY;
-                scissorW = Math.Max(0, newRight - newX);
-                scissorH = Math.Max(0, newTop - newY);
-            }
-
-            Vector4 finalScissor = new Vector4(scissorX, scissorY, scissorW, scissorH);
-            scissorStack.Push(finalScissor);
-
-            gl.Enable(EnableCap.ScissorTest);
-            gl.Scissor(scissorX, scissorY, (uint)scissorW, (uint)scissorH);
-
-            // increment stencilLevel to maintain logic parity, though we aren't using stencils here.
-            stencilLevel++;
-            return;
+            left = Math.Max(left, currentClip.Rect.X);
+            top = Math.Max(top, currentClip.Rect.Y);
+            right = Math.Min(right, currentClip.Rect.Z);
+            bottom = Math.Min(bottom, currentClip.Rect.W);
         }
 
-        // Case 2 : Stencil Masking (Rounded corners or complex shapes)
-        lastBoundTextureHandle = uint.MaxValue;
-
-        gl.StencilMask(0xFF); // Enable stencil writing
-        gl.ColorMask(false, false, false, false); // Disable color writing
-        gl.StencilFunc(StencilFunction.Always, stencilLevel + 1, 0xFF); // Always pass test, ref is new level
-        gl.StencilOp(StencilOp.Keep, StencilOp.Keep, StencilOp.Replace); // Replace stencil value on pass
-
-        // Draw the mask shape into the stencil buffer
-        drawMaskShape(maskDrawable, cornerRadius);
-
-        gl.StencilMask(0x00); // Disable stencil writing
-        gl.ColorMask(true, true, true, true); // Re-enable color writing
-        gl.StencilFunc(StencilFunction.Equal, stencilLevel + 1, 0xFF); // Only draw where stencil == new level
-        gl.StencilOp(StencilOp.Keep, StencilOp.Keep, StencilOp.Keep); // Don't change stencil buffer
-
-        stencilLevel++;
-
-        if (cornerRadius > 0.0f)
-        {
-            shader.SetUniform("u_IsMasking", true);
-            var rect = maskDrawable.DrawRectangle;
-            shader.SetUniform("u_MaskRect", new Vector4(rect.X, rect.Y, rect.Width, rect.Height));
-            shader.SetUniform("u_CornerRadius", cornerRadius);
-        }
+        clipStack.Push(currentClip);
+        currentClip = new ClipState { Rect = new Vector4(left, top, right, bottom), Radius = cornerRadius };
     }
 
     public void PopMask(Drawable maskDrawable, float cornerRadius, float borderThickness, Color borderColor)
     {
-        triangleBatch.Draw(); // Flush all drawing within the mask
-
-        // Case 1 : Scissor optimization (Rectangular), just restore previous scissor
-        if (cornerRadius <= 0.0f)
-        {
-            if (scissorStack.Count > 0)
-                scissorStack.Pop();
-
-            if (scissorStack.Count > 0)
-            {
-                // Restore parent mask
-                var parentScissor = scissorStack.Peek();
-                gl.Scissor((int)parentScissor.X, (int)parentScissor.Y, (uint)parentScissor.Z, (uint)parentScissor.W);
-            }
-            else
-            {
-                // No more masks
-                gl.Disable(EnableCap.ScissorTest);
-            }
-
-            drawBorder(maskDrawable, cornerRadius, borderThickness, borderColor);
-
-            stencilLevel--;
-            return;
-        }
-
-        // Case 2 : Stencil Masking (Rounded corners or complex shapes)
-        // Disable masking shader effects
-        shader.SetUniform("u_IsMasking", false);
-
-        gl.StencilMask(0xFF); // Enable stencil writing
-        gl.ColorMask(false, false, false, false); // Disable color writing
-        gl.StencilFunc(StencilFunction.Always, stencilLevel - 1, 0xFF); // Always pass, ref is parent level
-        gl.StencilOp(StencilOp.Keep, StencilOp.Keep, StencilOp.Replace); // Replace stencil value to "pop"
-
-        // Re-draw the same shape to restore the parent's stencil level
-        drawMaskShape(maskDrawable, cornerRadius);
-
-        stencilLevel--;
-
-        gl.StencilMask(0x00); // Disable stencil writing
-        gl.ColorMask(true, true, true, true); // Re-enable color writing
-
-        if (stencilLevel > 0)
-        {
-            // Still inside a parent mask
-            gl.StencilFunc(StencilFunction.Equal, stencilLevel, 0xFF);
-        }
-        else
-        {
-            // No more masks, draw everywhere
-            gl.StencilFunc(StencilFunction.Always, 0, 0xFF);
-        }
-
-        gl.StencilOp(StencilOp.Keep, StencilOp.Keep, StencilOp.Keep);
+        currentClip = clipStack.Pop();
 
         drawBorder(maskDrawable, cornerRadius, borderThickness, borderColor);
     }
@@ -375,6 +331,7 @@ public class GLRenderer : IRenderer
         if (blendingMode == currentBlendMode)
             return;
 
+        GlobalStatistics.Get<int>("Renderer", "State Change Flushes").Value++;
         triangleBatch.Draw();
 
         currentBlendMode = blendingMode;
@@ -406,6 +363,24 @@ public class GLRenderer : IRenderer
                 gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
                 break;
         }
+    }
+
+    private void resetTextureSlots()
+    {
+        boundTextureCount = 0;
+        Array.Clear(boundTextureHandles, 0, boundTextureHandles.Length);
+
+        // Pre-fill all OpenGL texture units with a valid texture (WhitePixel)
+        // to fix some strict driver that will complain about "unloadable texture"
+        if (GLTexture.WhitePixel != null)
+        {
+            for (int i = 0; i < 8; i++)
+            {
+                GLTexture.WhitePixel.Bind(TextureUnit.Texture0 + i);
+            }
+        }
+
+        gl.ActiveTexture(TextureUnit.Texture0);
     }
 
     /// <summary>
