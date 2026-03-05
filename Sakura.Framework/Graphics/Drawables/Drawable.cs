@@ -384,9 +384,9 @@ public abstract class Drawable
             // Calculate scale relative to parent
             finalDrawSize = Size;
             if ((RelativeSizeAxes & Axes.X) != 0)
-                finalDrawSize.X *= parentChildSize.X;
+                finalDrawSize.X = Math.Max(0, parentChildSize.X * Size.X - Margin.Total.X);
             if ((RelativeSizeAxes & Axes.Y) != 0)
-                finalDrawSize.Y *= parentChildSize.Y;
+                finalDrawSize.Y = Math.Max(0, parentChildSize.Y * Size.Y - Margin.Total.Y);
 
             // Calculate position relative to parent
             Vector2 pixelPosition = Position;
@@ -399,8 +399,9 @@ public abstract class Drawable
             pixelPosition.X += anchorOffset.X * parentChildSize.X;
             pixelPosition.Y += anchorOffset.Y * parentChildSize.Y;
 
-            pixelPosition.X += Margin.Left - Margin.Right;
-            pixelPosition.Y += Margin.Top - Margin.Bottom;
+            // Apply margin based on the anchor offset
+            pixelPosition.X += Margin.Left - anchorOffset.X * Margin.Total.X;
+            pixelPosition.Y += Margin.Top - anchorOffset.Y * Margin.Total.Y;
 
             // Shift by Parent's Padding to get position relative to Parent's Top-Left (DrawSize space)
             pixelPosition.X += Parent.Padding.Left;
