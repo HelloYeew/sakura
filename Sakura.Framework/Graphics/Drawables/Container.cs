@@ -383,7 +383,10 @@ public class Container : Drawable
         {
             if (c.IsHovered || c.Contains(e.ScreenSpaceMousePosition))
                 if (c.OnMouseMove(e))
+                {
                     handled = true;
+                    break;
+                }
         }
 
         return handled;

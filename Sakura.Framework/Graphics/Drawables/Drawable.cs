@@ -318,8 +318,8 @@ public abstract class Drawable
     /// </summary>
     public BlendingMode Blending { get; set; } = BlendingMode.Alpha;
 
-    public void Hide() => Alpha = 0f;
-    public void Show() => Alpha = 1f;
+    public virtual void Hide() => Alpha = 0f;
+    public virtual void Show() => Alpha = 1f;
     public bool IsHidden => Alpha <= 0f;
 
     public RectangleF DrawRectangle { get; protected set; }
