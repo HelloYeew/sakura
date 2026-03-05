@@ -106,7 +106,7 @@ public class GLRenderer : IRenderer
 
         shader = new Shader(gl, "Resources/Shaders/shader.vert", "Resources/Shaders/shader.frag");
 
-        triangleBatch = new TriangleBatch(gl, 1000 * 3);
+        triangleBatch = new TriangleBatch(gl, 1000 * 12);
 
         lastBoundTextureHandle = uint.MaxValue;
     }
