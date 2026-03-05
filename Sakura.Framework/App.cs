@@ -111,7 +111,6 @@ public class App : Container, IDisposable
 
         showFpsGraph = Host.FrameworkConfigManager.Get(FrameworkSetting.ShowFpsGraph, false);
 
-
         Add(drawVisualiser = new DrawVisualiser(this)
         {
             Depth = float.MaxValue - 10,
