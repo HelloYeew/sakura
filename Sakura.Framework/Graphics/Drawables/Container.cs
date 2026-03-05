@@ -97,7 +97,14 @@ public class Container : Drawable
 
         drawable.Parent = this;
         children.Add(drawable);
-        drawable.Clock = new FramedClock(Clock);
+        if (drawable.Clock is FramedClock framedClock)
+        {
+            framedClock.Source = Clock;
+        }
+        else
+        {
+            drawable.Clock = new FramedClock(Clock, true);
+        }
 
         Invalidate(InvalidationFlags.DrawInfo);
 
@@ -316,7 +323,10 @@ public class Container : Drawable
 
         foreach (var child in children)
         {
-            child.Clock = new FramedClock(Clock);
+            if (child.Clock is FramedClock framedClock)
+                framedClock.Source = Clock;
+            else
+                child.Clock = new FramedClock(Clock);
         }
     }
 
