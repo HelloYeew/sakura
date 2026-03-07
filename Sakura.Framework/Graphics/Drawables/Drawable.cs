@@ -441,7 +441,9 @@ public abstract class Drawable
         float gLinear = ColorExtensions.SrgbToLinear(Color.G);
         float bLinear = ColorExtensions.SrgbToLinear(Color.B);
 
-        var calculatedColor = new System.Numerics.Vector4(rLinear, gLinear, bLinear, DrawAlpha);
+        float colorAlpha = Color.A / 255f;
+
+        var calculatedColor = new Vector4(rLinear, gLinear, bLinear, DrawAlpha);
 
         // Default UVs (0 to 1)
         var uvRect = Texture?.UvRect ?? new RectangleF(0, 0, 1, 1);
