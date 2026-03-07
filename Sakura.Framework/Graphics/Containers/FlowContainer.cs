@@ -74,6 +74,9 @@ public class FlowContainer : Container
         // use ChildSize, which is correct and respects Padding.
         var maxBounds = ChildSize;
 
+        float limitX = (AutoSizeAxes & Axes.X) != 0 ? float.MaxValue : maxBounds.X;
+        float limitY = (AutoSizeAxes & Axes.Y) != 0 ? float.MaxValue : maxBounds.Y;
+
         float maxRight = 0;
         float maxBottom = 0;
 
@@ -93,7 +96,7 @@ public class FlowContainer : Container
             if (Direction == FlowDirection.Horizontal)
             {
                 // check for wrap (all in pixels)
-                if (currentPosPixels.X > 0 && currentPosPixels.X + childTotalSizePixels.X > maxBounds.X)
+                if (currentPosPixels.X > 0 && currentPosPixels.X + childTotalSizePixels.X > limitX)
                 {
                     currentPosPixels.X = 0;
                     currentPosPixels.Y += lineMaxSizePixels + Spacing.Y;
@@ -126,7 +129,7 @@ public class FlowContainer : Container
             else // Vertical
             {
                 // check for wrap (all in pixels)
-                if (currentPosPixels.Y > 0 && currentPosPixels.Y + childTotalSizePixels.Y > maxBounds.Y)
+                if (currentPosPixels.Y > 0 && currentPosPixels.Y + childTotalSizePixels.Y > limitY)
                 {
                     currentPosPixels.Y = 0;
                     currentPosPixels.X += lineMaxSizePixels + Spacing.X;

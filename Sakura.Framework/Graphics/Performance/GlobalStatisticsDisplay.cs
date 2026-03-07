@@ -141,10 +141,11 @@ public class GlobalStatisticsDisplay : FocusedOverlayContainer, IRemoveFromDrawV
 
         scrollContainer.Add(groupsFlow = new FlowContainer
         {
+            Direction = FlowDirection.Horizontal,
             RelativeSizeAxes = Axes.X,
             AutoSizeAxes = Axes.Y,
             Width = 1,
-            Spacing = new Vector2(0, 5),
+            Spacing = new Vector2(30, 15),
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft
         });
@@ -162,11 +163,12 @@ public class GlobalStatisticsDisplay : FocusedOverlayContainer, IRemoveFromDrawV
             {
                 groupFlow = new FlowContainer
                 {
+                    Direction = FlowDirection.Vertical,
                     AutoSizeAxes = Axes.Both,
-                    Spacing = new Vector2(0, 5),
+                    Spacing = new Vector2(0, 2),
                     Anchor = Anchor.TopLeft,
                     Origin = Anchor.TopLeft,
-                    Padding = new MarginPadding { Bottom = 5 }
+                    Padding = new MarginPadding { Bottom = 10 }
                 };
 
                 groupFlow.Add(new SpriteText
@@ -175,8 +177,7 @@ public class GlobalStatisticsDisplay : FocusedOverlayContainer, IRemoveFromDrawV
                     Origin = Anchor.TopLeft,
                     Text = stat.Group,
                     Font = FontUsage.Default.With(size: 20, weight: "Bold"),
-                    Color = Color.Yellow,
-                    Size = new Vector2(1, 30)
+                    Color = Color.Yellow
                 });
 
                 groupContainers[stat.Group] = groupFlow;
