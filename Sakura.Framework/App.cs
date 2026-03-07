@@ -4,6 +4,7 @@
 #nullable disable
 
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using Sakura.Framework.Audio;
 using Sakura.Framework.Audio.BassEngine;
@@ -197,23 +198,27 @@ public class App : Container, IFocusManager, IDisposable
         if (!e.IsRepeat && e.Key == Key.F1 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
             toggleVisualiser();
+            return true;
         }
         else if (!e.IsRepeat && e.Key == Key.F2 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
             toggleStatisticsDisplay();
+            return true;
         }
         else if (!e.IsRepeat && e.Key == Key.F3 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
             toggleTextureViewerDisplay();
+            return true;
         }
         if (!e.IsRepeat && e.Key == Key.F11 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
             showFpsGraph.Value = !showFpsGraph.Value;
+            return true;
         }
 
-        if (FocusedDrawable != null && FocusedDrawable.IsLoaded && FocusedDrawable.IsAlive)
+        if (focusedDrawable != null && focusedDrawable.IsLoaded && focusedDrawable.IsAlive)
         {
-            if (FocusedDrawable.OnKeyDown(e))
+            if (focusedDrawable.OnKeyDown(e))
                 return true;
         }
 
@@ -222,34 +227,70 @@ public class App : Container, IFocusManager, IDisposable
 
     #region Focus Management
 
-    public Drawable? FocusedDrawable { get; private set; }
+    private readonly List<Drawable> focusStack = new();
 
-    public virtual bool ChangeFocus(Drawable? potentialFocusTarget)
+    private Drawable focusedDrawable { get; set; }
+
+    public virtual bool ChangeFocus(Drawable potentialFocusTarget)
     {
-        var focusedBefore = FocusedDrawable;
+        var focusedBefore = focusedDrawable;
 
-        if (FocusedDrawable == potentialFocusTarget)
+        if (focusedDrawable == potentialFocusTarget)
             return true;
 
         if (potentialFocusTarget != null && !potentialFocusTarget.AcceptsFocus)
             return false;
 
-        if (FocusedDrawable != null)
+        if (potentialFocusTarget == null)
         {
-            FocusedDrawable.HasFocus = false;
-            FocusedDrawable.OnFocusLost(new FocusLostEvent());
+            if (focusedDrawable != null)
+            {
+                focusedDrawable.HasFocus = false;
+                focusedDrawable.OnFocusLost(new FocusLostEvent());
+                focusStack.Remove(focusedDrawable);
+            }
+
+            focusedDrawable = null;
+
+            while (focusStack.Count > 0)
+            {
+                var previous = focusStack[^1];
+
+                if (previous.IsAlive && previous.IsLoaded && previous.AcceptsFocus)
+                {
+                    focusedDrawable = previous;
+                    focusStack.RemoveAt(focusStack.Count - 1);
+
+                    focusedDrawable.HasFocus = true;
+                    focusedDrawable.OnFocus(new FocusEvent());
+                    break;
+                }
+
+                focusStack.RemoveAt(focusStack.Count - 1);
+            }
+
+            Logger.Verbose($"Focus changed from {focusedBefore?.ToString() ?? "null"} to {focusedDrawable?.ToString() ?? "null"}");
+            return true;
         }
 
-        FocusedDrawable = potentialFocusTarget;
-
-        if (FocusedDrawable != null)
+        if (focusedDrawable != null)
         {
-            FocusedDrawable.HasFocus = true;
-            FocusedDrawable.OnFocus(new FocusEvent());
+            focusedDrawable.HasFocus = false;
+            focusedDrawable.OnFocusLost(new FocusLostEvent());
+
+            if (!focusStack.Contains(focusedDrawable))
+            {
+                focusStack.Add(focusedDrawable);
+            }
         }
 
-        Logger.Verbose($"Focus changed from {focusedBefore?.ToString() ?? "null"} to {FocusedDrawable?.ToString() ?? "null"}");
+        focusedDrawable = potentialFocusTarget;
+        focusStack.Remove(focusedDrawable);
 
+        focusedDrawable.HasFocus = true;
+        focusedDrawable.OnFocus(new FocusEvent());
+
+        Logger.Verbose($"Focus changed from {focusedBefore?.ToString() ?? "null"} to {focusedDrawable?.ToString() ?? "null"}");
         return true;
     }
 
