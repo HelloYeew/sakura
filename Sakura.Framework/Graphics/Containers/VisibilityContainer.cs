@@ -18,7 +18,6 @@ public abstract class VisibilityContainer : Container
         set
         {
             if (state == value) return;
-
             state = value;
             UpdateState(state);
         }
@@ -63,14 +62,9 @@ public abstract class VisibilityContainer : Container
     protected virtual void UpdateState(Visibility newState)
     {
         if (newState == Visibility.Visible)
-        {
-            AlwaysPresent = true; // Ensure it updates during animation
             PopIn();
-        }
         else
-        {
             PopOut();
-        }
     }
 }
 

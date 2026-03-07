@@ -10,6 +10,7 @@ using Sakura.Framework.Audio.BassEngine;
 using Sakura.Framework.Audio.Headless;
 using Sakura.Framework.Configurations;
 using Sakura.Framework.Extensions.DrawableExtensions;
+using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Graphics.Rendering;
@@ -17,12 +18,13 @@ using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Input;
+using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Reactive;
 
 namespace Sakura.Framework;
 
-public class App : Container, IDisposable
+public class App : Container, IFocusManager, IDisposable
 {
     public IWindow Window => Host?.Window;
 
@@ -144,30 +146,19 @@ public class App : Container, IDisposable
 
     private void toggleVisualiser()
     {
-        if (!textureViewerDisplay.IsHidden)
-            textureViewerDisplay.FadeOut(200, Easing.OutQuint);
-        if (drawVisualiser.IsHidden)
-            drawVisualiser.FadeIn(200, Easing.OutQuint);
-        else
-            drawVisualiser.FadeOut(200, Easing.OutQuint);
+        if (textureViewerDisplay.State == Visibility.Visible) textureViewerDisplay.Hide();
+        drawVisualiser.ToggleVisibility();
     }
 
     private void toggleStatisticsDisplay()
     {
-        if (globalStatisticsDisplay.IsHidden)
-            globalStatisticsDisplay.FadeIn(200, Easing.OutQuint);
-        else
-            globalStatisticsDisplay.FadeOut(200, Easing.OutQuint);
+        globalStatisticsDisplay.ToggleVisibility();
     }
 
     private void toggleTextureViewerDisplay()
     {
-        if (!globalStatisticsDisplay.IsHidden)
-            globalStatisticsDisplay.FadeOut(200, Easing.OutQuint);
-        if (textureViewerDisplay.IsHidden)
-            textureViewerDisplay.FadeIn(200, Easing.OutQuint);
-        else
-            textureViewerDisplay.FadeOut(200, Easing.OutQuint);
+        if (globalStatisticsDisplay.State == Visibility.Visible) globalStatisticsDisplay.Hide();
+        textureViewerDisplay.ToggleVisibility();
     }
 
     /// <summary>
@@ -219,6 +210,56 @@ public class App : Container, IDisposable
         {
             showFpsGraph.Value = !showFpsGraph.Value;
         }
+
+        if (FocusedDrawable != null && FocusedDrawable.IsLoaded && FocusedDrawable.IsAlive)
+        {
+            if (FocusedDrawable.OnKeyDown(e))
+                return true;
+        }
+
         return base.OnKeyDown(e);
     }
+
+    #region Focus Management
+
+    public Drawable? FocusedDrawable { get; private set; }
+
+    public virtual bool ChangeFocus(Drawable? potentialFocusTarget)
+    {
+        var focusedBefore = FocusedDrawable;
+
+        if (FocusedDrawable == potentialFocusTarget)
+            return true;
+
+        if (potentialFocusTarget != null && !potentialFocusTarget.AcceptsFocus)
+            return false;
+
+        if (FocusedDrawable != null)
+        {
+            FocusedDrawable.HasFocus = false;
+            FocusedDrawable.OnFocusLost(new FocusLostEvent());
+        }
+
+        FocusedDrawable = potentialFocusTarget;
+
+        if (FocusedDrawable != null)
+        {
+            FocusedDrawable.HasFocus = true;
+            FocusedDrawable.OnFocus(new FocusEvent());
+        }
+
+        Logger.Verbose($"Focus changed from {focusedBefore?.ToString() ?? "null"} to {FocusedDrawable?.ToString() ?? "null"}");
+
+        return true;
+    }
+
+    public virtual void TriggerFocusContention(Drawable? triggerSource)
+    {
+        if (triggerSource != null && triggerSource.RequestsFocus)
+        {
+            ChangeFocus(triggerSource);
+        }
+    }
+
+    #endregion
 }

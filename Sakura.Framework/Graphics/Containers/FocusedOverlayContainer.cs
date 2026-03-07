@@ -10,10 +10,30 @@ namespace Sakura.Framework.Graphics.Containers;
 /// </summary>
 public abstract class FocusedOverlayContainer : OverlayContainer
 {
+    public override bool RequestsFocus => State == Visibility.Visible;
+    public override bool AcceptsFocus => State == Visibility.Visible;
+
     /// <summary>
     /// Whether we should block keyboard input from reaching underlying drawables.
     /// </summary>
     protected virtual bool BlockNonPositionalInput => true;
+
+    protected override void UpdateState(Visibility newState)
+    {
+        base.UpdateState(newState);
+
+        switch (newState)
+        {
+            case Visibility.Hidden:
+                if (HasFocus)
+                    GetContainingFocusManager()?.ChangeFocus(null);
+                break;
+
+            case Visibility.Visible:
+                GetContainingFocusManager()?.TriggerFocusContention(this);
+                break;
+        }
+    }
 
     public override bool OnKeyDown(KeyEvent e)
     {

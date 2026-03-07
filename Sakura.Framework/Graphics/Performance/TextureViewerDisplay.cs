@@ -21,7 +21,7 @@ using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Graphics.Performance;
 
-public class TextureViewerDisplay : Container, IRemoveFromDrawVisualiser
+public class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFromDrawVisualiser
 {
     private readonly FlowContainer flowContainer;
     private readonly ScrollableContainer scrollContainer;
@@ -182,7 +182,7 @@ public class TextureViewerDisplay : Container, IRemoveFromDrawVisualiser
     {
         base.Update();
 
-        if (IsHidden) return;
+        if (State == Visibility.Hidden) return;
 
         currentTimeText.Text = $"{DateTime.Now:dd MMMM yyyy HH:mm:ss tt}";
         runningTimeText.Text = $"Has been running for {TimeSpan.FromSeconds(host.AppClock.CurrentTime / 1000):hh\\:mm\\:ss}";
@@ -287,9 +287,13 @@ public class TextureViewerDisplay : Container, IRemoveFromDrawVisualiser
     {
         if (e.Key == Key.Escape)
         {
-            this.FadeOut(200, Easing.OutQuint);
+            Hide();
             return true;
         }
         return base.OnKeyDown(e);
     }
+
+    protected override void PopIn() => this.FadeIn(200, Easing.OutQuint);
+
+    protected override void PopOut() => this.FadeOut(200, Easing.OutQuint);
 }

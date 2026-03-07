@@ -20,7 +20,7 @@ using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Graphics.Performance;
 
-public class GlobalStatisticsDisplay : Container, IRemoveFromDrawVisualiser
+public class GlobalStatisticsDisplay : FocusedOverlayContainer, IRemoveFromDrawVisualiser
 {
     private readonly FlowContainer groupsFlow;
     private readonly ScrollableContainer scrollContainer;
@@ -141,6 +141,7 @@ public class GlobalStatisticsDisplay : Container, IRemoveFromDrawVisualiser
 
         scrollContainer.Add(groupsFlow = new FlowContainer
         {
+            RelativeSizeAxes = Axes.X,
             AutoSizeAxes = Axes.Y,
             Width = 1,
             Spacing = new Vector2(0, 5),
@@ -153,7 +154,7 @@ public class GlobalStatisticsDisplay : Container, IRemoveFromDrawVisualiser
     {
         base.Update();
 
-        if (IsHidden) return;
+        if (State == Visibility.Hidden) return;
 
         foreach (var stat in GlobalStatistics.GetStatistics())
         {
@@ -208,9 +209,13 @@ public class GlobalStatisticsDisplay : Container, IRemoveFromDrawVisualiser
     {
         if (e.Key == Key.Escape)
         {
-            this.FadeOut(200, Easing.OutQuint);
+            Hide();
             return true;
         }
         return base.OnKeyDown(e);
     }
+
+    protected override void PopIn() => this.FadeIn(200, Easing.OutQuint);
+
+    protected override void PopOut() => this.FadeOut(200, Easing.OutQuint);
 }

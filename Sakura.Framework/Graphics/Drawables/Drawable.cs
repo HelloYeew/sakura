@@ -872,6 +872,9 @@ public abstract class Drawable
 
     public virtual bool OnMouseDown(MouseButtonEvent e)
     {
+        if (AcceptsFocus)
+            GetContainingFocusManager()?.ChangeFocus(this);
+
         bool handled = false;
 
         if (e.Clicks >= 3)
@@ -939,6 +942,45 @@ public abstract class Drawable
 
     public virtual bool OnDragDropFile(DragDropFileEvent e) => false;
     public virtual bool OnDragDropText(DragDropTextEvent e) => false;
+
+    #endregion
+
+    #region Focus Management
+
+    /// <summary>
+    /// Whether this drawable can currently accept keyboard focus.
+    /// </summary>
+    public virtual bool AcceptsFocus => false;
+
+    /// <summary>
+    /// Whether this drawable wants to automatically grab focus when possible.
+    /// </summary>
+    public virtual bool RequestsFocus => false;
+
+    /// <summary>
+    /// Whether this drawable currently holds the keyboard focus.
+    /// </summary>
+    public bool HasFocus { get; internal set; }
+
+    /// <summary>
+    /// Walks up the parent hierarchy to find the nearest FocusManager.
+    /// </summary>
+    protected internal IFocusManager? GetContainingFocusManager()
+    {
+        Drawable? p = Parent;
+        while (p != null)
+        {
+            // Check if the parent implements the interface
+            if (p is IFocusManager focusManager)
+                return focusManager;
+
+            p = p.Parent;
+        }
+        return null;
+    }
+
+    public virtual void OnFocus(FocusEvent e) { }
+    public virtual void OnFocusLost(FocusLostEvent e) { }
 
     #endregion
 

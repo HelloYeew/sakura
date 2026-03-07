@@ -15,18 +15,13 @@ public abstract class OverlayContainer : VisibilityContainer
     /// </summary>
     protected virtual bool BlockPositionalInput => true;
 
-    public override bool OnMouseDown(MouseButtonEvent e)
-        => (State == Visibility.Visible && BlockPositionalInput) || base.OnMouseDown(e);
+    public override bool OnMouseDown(MouseButtonEvent e) => base.OnMouseDown(e) || (State == Visibility.Visible && BlockPositionalInput);
 
-    public override bool OnMouseUp(MouseButtonEvent e)
-        => (State == Visibility.Visible && BlockPositionalInput) || base.OnMouseUp(e);
+    public override bool OnMouseUp(MouseButtonEvent e) => base.OnMouseUp(e) || (State == Visibility.Visible && BlockPositionalInput);
 
-    public override bool OnMouseMove(MouseEvent e)
-        => (State == Visibility.Visible && BlockPositionalInput) || base.OnMouseMove(e);
+    public override bool OnMouseMove(MouseEvent e) => base.OnMouseMove(e) || (State == Visibility.Visible && BlockPositionalInput);
 
-    public override bool OnScroll(ScrollEvent e)
-        => (State == Visibility.Visible && BlockPositionalInput) || base.OnScroll(e);
+    public override bool OnScroll(ScrollEvent e) => base.OnScroll(e) || (State == Visibility.Visible && BlockPositionalInput);
 
-    public override bool OnHover(MouseEvent e)
-        => (State == Visibility.Visible && BlockPositionalInput) || base.OnHover(e);
+    public override bool OnHover(MouseEvent e) => base.OnHover(e) || (State == Visibility.Visible && BlockPositionalInput);
 }

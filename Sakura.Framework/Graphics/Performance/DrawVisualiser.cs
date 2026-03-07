@@ -19,7 +19,7 @@ using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.Performance;
 
-public class DrawVisualiser : Container, IRemoveFromDrawVisualiser
+public class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisualiser
 {
     private readonly Drawable targetRoot;
     private readonly Box backgroundBox;
@@ -246,7 +246,7 @@ public class DrawVisualiser : Container, IRemoveFromDrawVisualiser
     {
         base.Update();
 
-        if (IsHidden) return;
+        if (State == Visibility.Hidden) return;
 
         timeUntilNextPropertyRefresh -= Clock.ElapsedFrameTime;
         if (timeUntilNextPropertyRefresh <= 0)
@@ -513,6 +513,10 @@ public class DrawVisualiser : Container, IRemoveFromDrawVisualiser
         return base.OnKeyDown(e);
     }
 
+    protected override void PopIn() => this.FadeIn(200, Easing.OutQuint);
+
+    protected override void PopOut() => this.FadeOut(200, Easing.OutQuint);
+
     private class PropertyTracker
     {
         public PropertyInfo Prop;
@@ -583,7 +587,7 @@ public class VisualiserTreeItem : Container
     {
         if (e.Key == Key.Escape)
         {
-            this.FadeOut(200, Easing.OutQuint);
+            Hide();
             return true;
         }
         return base.OnKeyDown(e);

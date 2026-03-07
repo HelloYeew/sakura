@@ -334,25 +334,21 @@ public class Container : Drawable
 
     public override bool OnMouseDown(MouseButtonEvent e)
     {
-        base.OnMouseDown(e);
-
-        // Propagate in reverse draw order to handle top-most drawables first.
         foreach (var c in children.OrderByDescending(d => d.Depth))
         {
-            if (c.Contains(e.ScreenSpaceMousePosition) && c.OnMouseDown(e))
+            if (c.IsLoaded && c.IsAlive && !c.IsHidden && c.Contains(e.ScreenSpaceMousePosition) && c.OnMouseDown(e))
             {
-                // This child handled the event, so it becomes our potential drag target.
                 draggedChild = c;
                 return true;
             }
         }
 
-        return false;
+        return base.OnMouseDown(e);
     }
 
     public override bool OnMouseUp(MouseButtonEvent e)
     {
-        base.OnMouseUp(e);
+        bool handled = false;
 
         // If a drag was in progress, only the dragged child should receive the OnMouseUp event.
         if (draggedChild != null)
@@ -362,45 +358,52 @@ public class Container : Drawable
             return result;
         }
 
-        return children.Any(c => c.OnMouseUp(e));
+        foreach (var c in children.OrderBy(d => d.Depth).Reverse())
+        {
+            if (c.IsLoaded && c.IsAlive && !c.IsHidden && c.Contains(e.ScreenSpaceMousePosition) && c.OnMouseUp(e))
+                return true;
+        }
+
+        return base.OnMouseUp(e);
     }
 
     public override bool OnMouseMove(MouseEvent e)
     {
-        base.OnMouseMove(e);
-
         // If a drag is in progress, route the event exclusively to the dragged child.
         if (draggedChild != null)
         {
             return draggedChild.OnMouseMove(e);
         }
 
-        // Otherwise, propagate to all children for hover updates.
-        // We don't use .Any() because multiple children might need to react
-        // (e.g., one losing hover, another gaining it).
         bool handled = false;
-        foreach (var c in children.OrderByDescending(d => d.Depth))
+        foreach (var c in children.OrderBy(d => d.Depth).Reverse())
         {
-            if (c.IsHovered || c.Contains(e.ScreenSpaceMousePosition))
+            if (c.IsLoaded && c.IsAlive && !c.IsHidden && (c.IsHovered || c.Contains(e.ScreenSpaceMousePosition)))
+            {
                 if (c.OnMouseMove(e))
                 {
                     handled = true;
                     break;
                 }
+            }
         }
 
-        return handled;
+        if (handled)
+            return true;
+
+        return base.OnMouseMove(e);
     }
 
     public override bool OnScroll(ScrollEvent e)
     {
         // Propagate to the first child that contains the mouse position.
-        foreach (var c in children.OrderByDescending(d => d.Depth))
+        foreach (var c in children.OrderBy(d => d.Depth).Reverse())
         {
-            if (c.Contains(e.ScreenSpaceMousePosition) && c.OnScroll(e))
+            if (c.IsLoaded && c.IsAlive && !c.IsHidden && c.Contains(e.ScreenSpaceMousePosition) && c.OnScroll(e))
                 return true;
         }
-        return children.Any(c => c.Contains(e.ScreenSpaceMousePosition) && c.OnScroll(e));
+
+        return base.OnScroll(e);
     }
 
     public override bool OnKeyDown(KeyEvent e)
@@ -415,7 +418,7 @@ public class Container : Drawable
 
     public override bool OnDragDropFile(DragDropFileEvent e)
     {
-        foreach (var c in children.OrderByDescending(d => d.Depth))
+        foreach (var c in children.OrderByDescending(d => d.Depth).Reverse())
         {
             if (c.IsLoaded && !c.IsHidden && c.Contains(e.Position))
             {
@@ -429,7 +432,7 @@ public class Container : Drawable
 
     public override bool OnDragDropText(DragDropTextEvent e)
     {
-        foreach (var c in children.OrderByDescending(d => d.Depth))
+        foreach (var c in children.OrderByDescending(d => d.Depth).Reverse())
         {
             if (c.IsLoaded && !c.IsHidden && c.Contains(e.Position))
             {
