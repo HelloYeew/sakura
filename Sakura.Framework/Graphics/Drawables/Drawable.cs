@@ -443,7 +443,7 @@ public abstract class Drawable
 
         float colorAlpha = Color.A / 255f;
 
-        var calculatedColor = new Vector4(rLinear, gLinear, bLinear, DrawAlpha);
+        var calculatedColor = new Vector4(rLinear, gLinear, bLinear, DrawAlpha * colorAlpha);
 
         // Default UVs (0 to 1)
         var uvRect = Texture?.UvRect ?? new RectangleF(0, 0, 1, 1);
