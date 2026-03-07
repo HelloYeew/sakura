@@ -176,6 +176,19 @@ public static class TransformExtensions
     }
 
     /// <summary>
+    /// Fades the drawable's colour to a specific colour over a duration.
+    /// </summary>
+    public static Drawable FadeToColour(this Drawable drawable, Color newColour, double duration = 0, Easing easing = Easing.None)
+    {
+        drawable.addTransform(new ColorTransform
+        {
+            EndValue = newColour,
+            Easing = easing
+        }, duration);
+        return drawable;
+    }
+
+    /// <summary>
     /// Schedules the next transformation to start after a specified delay from the end of the last transformation.
     /// </summary>
     public static Drawable Wait(this Drawable drawable, double duration)
