@@ -2,8 +2,10 @@
 // See the LICENSE file for full license text.
 
 using System;
+using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
+using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.Containers;
@@ -16,6 +18,17 @@ public class FlowContainer : Container
 {
     private FlowDirection direction = FlowDirection.Horizontal;
     private Vector2 spacing = Vector2.Zero;
+
+    /// <summary>
+    /// The duration (in milliseconds) it takes for children to glide into their new positions.
+    /// Set to 0 for instant layout.
+    /// </summary>
+    public double LayoutDuration { get; set; } = 0;
+
+    /// <summary>
+    /// The <see cref="Easing"/> function used when children move to their new positions.
+    /// </summary>
+    public Easing LayoutEasing { get; set; } = Easing.None;
 
     /// <summary>
     /// The direction of flow layout on how children arranged.
@@ -113,7 +126,11 @@ public class FlowContainer : Container
                 var childPosPixels = new Vector2(currentPosPixels.X + child.Margin.Left, currentPosPixels.Y + child.Margin.Top);
 
                 // Apply position (offset by Padding)
-                child.Position = new Vector2(childPosPixels.X + Padding.Left, childPosPixels.Y + Padding.Top);
+                Vector2 targetPos = new Vector2(childPosPixels.X + Padding.Left, childPosPixels.Y + Padding.Top);
+                if (LayoutDuration > 0)
+                    child.MoveTo(targetPos, LayoutDuration, LayoutEasing);
+                else
+                    child.Position = targetPos;
 
                 // Track content size
                 float childRight = childPosPixels.X + childDrawSizePixels.X + child.Margin.Right;
@@ -159,11 +176,21 @@ public class FlowContainer : Container
                 lineMaxSizePixels = Math.Max(lineMaxSizePixels, childTotalSizePixels.X);
             }
 
+            Vector2 targetSize = Size;
+
             if ((AutoSizeAxes & Axes.X) != 0)
-                Width = maxRight + Padding.Right;
+                targetSize.X = maxRight + Padding.Right;
 
             if ((AutoSizeAxes & Axes.Y) != 0)
-                Height = maxBottom + Padding.Bottom;
+                targetSize.Y = maxBottom + Padding.Bottom;
+
+            if (targetSize != Size)
+            {
+                if (LayoutDuration > 0)
+                    this.ResizeTo(targetSize, LayoutDuration, LayoutEasing);
+                else
+                    Size = targetSize;
+            }
         }
     }
 
