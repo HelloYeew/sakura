@@ -96,6 +96,8 @@ public class Font : IDisposable
                 var face = (FT_FaceRec_*)faceHandle;
                 ascenderPx = face->size->metrics.ascender / 64f;
                 lineHeightPx = face->size->metrics.height / 64f;
+                if (lineHeightPx <= 0)
+                    lineHeightPx = renderFontSize;
             }
         }
 
@@ -154,7 +156,21 @@ public class Font : IDisposable
             glyphs.AddRange(runGlyphs);
         }
 
-        return new ShapedText(glyphs, new Vector2(cursorX / dpiScale, lineHeightPx / dpiScale));
+        // If the font had 0 advance (common for icons), compute width from the actual glyph bounds
+        float finalWidth = cursorX;
+        if (finalWidth <= 0 && glyphs.Count > 0)
+        {
+            float maxRight = 0;
+            foreach (var g in glyphs)
+            {
+                // g.Position and g.Size are already divided by dpiScale, so we scale them back for this check
+                float right = (g.Position.X + g.Size.X) * dpiScale;
+                if (right > maxRight) maxRight = right;
+            }
+            finalWidth = maxRight;
+        }
+
+        return new ShapedText(glyphs, new Vector2(finalWidth / dpiScale, lineHeightPx / dpiScale));
     }
 
     private void updateFontSize(float renderFontSize)
