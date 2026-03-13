@@ -376,6 +376,7 @@ public class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisualiser
             propertyTextMap.Clear();
             lastSelectedDrawable = null;
             cachedProperties = null;
+            cachedFields = null;
             return;
         }
 
@@ -388,20 +389,44 @@ public class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisualiser
             propertyTextMap.Clear();
             lastSelectedDrawable = selectedDrawable;
 
-            // Cache the reflection call so we aren't doing it every frame
-            cachedProperties = type.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static);
+            var propList = new List<PropertyInfo>();
+            var fieldList = new List<FieldInfo>();
+            Type? currentType = type;
 
-            // If it's container, don't track "child" or "children" properties.
-            if (selectedDrawable is Container)
+            // Walk up the inheritance tree to capture all private base members
+            while (currentType != null && currentType != typeof(object))
             {
-                cachedProperties = Array.FindAll(cachedProperties, p =>
-                    !string.Equals(p.Name, "Child", StringComparison.OrdinalIgnoreCase) &&
-                    !string.Equals(p.Name, "Children", StringComparison.OrdinalIgnoreCase));
+                var props = currentType.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly);
+                foreach (var prop in props)
+                {
+                    if (prop.GetIndexParameters().Length > 0) continue;
+
+                    // If it's a container, don't track "child" or "children" properties.
+                    if (selectedDrawable is Container &&
+                        (string.Equals(prop.Name, "Child", StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(prop.Name, "Children", StringComparison.OrdinalIgnoreCase)))
+                        continue;
+
+                    // Prevent duplicate properties (e.g., if derived class uses 'new' keyword)
+                    if (!propList.Exists(p => p.Name == prop.Name))
+                        propList.Add(prop);
+                }
+
+                var fields = currentType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly);
+                foreach (var field in fields)
+                {
+                    // Filter out compiler-generated backing fields for auto-properties
+                    if (field.Name.Contains("k__BackingField")) continue;
+
+                    if (!fieldList.Exists(f => f.Name == field.Name))
+                        fieldList.Add(field);
+                }
+
+                currentType = currentType.BaseType;
             }
 
-            cachedFields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static);
-            // Filter out compiler-generated backing fields for auto-properties
-            cachedFields = Array.FindAll(cachedFields, f => !f.Name.Contains("k__BackingField"));
+            cachedProperties = propList.ToArray();
+            cachedFields = fieldList.ToArray();
 
             // Header (Static, doesn't need to be tracked)
             addPropertyText($"Type: {type.Name}", Color.Yellow);
@@ -412,9 +437,6 @@ public class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisualiser
             // Properties
             foreach (var prop in cachedProperties)
             {
-                if (prop.GetIndexParameters().Length > 0) continue;
-
-                // Create the UI text once, and save a reference to it in our map
                 var textElement = addPropertyText($"{prop.Name}: loading...", Color.White);
                 propertyTextMap.Add(new PropertyTracker
                 {
