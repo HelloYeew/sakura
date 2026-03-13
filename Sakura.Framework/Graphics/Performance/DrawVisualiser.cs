@@ -256,7 +256,7 @@ public class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisualiser
             currentTimeText.Text = $"{DateTime.Now:dd MMMM yyyy HH:mm:ss tt}";
             runningTimeText.Text = $"Has been running for {TimeSpan.FromSeconds(targetRoot.Clock.CurrentTime / 1000):hh\\:mm\\:ss}";
 
-            timeUntilNextPropertyRefresh = 100;
+            timeUntilNextPropertyRefresh = 20;
         }
 
         timeUntilNextTreeRefresh -= Clock.ElapsedFrameTime;
