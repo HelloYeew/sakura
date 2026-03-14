@@ -25,10 +25,9 @@ internal class Track : ITrack
         this.manager = manager;
     }
 
-    public IAudioChannel Play()
+    public IAudioChannel GetChannel()
     {
         var channel = new TrackChannel(this, manager);
-        channel.Play();
         return channel;
     }
 }

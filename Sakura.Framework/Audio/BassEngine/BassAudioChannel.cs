@@ -127,17 +127,28 @@ internal class BassAudioChannel : IAudioChannel
         }
     }
 
+    private bool isDisposed;
+
     public void Dispose()
     {
+        if (isDisposed) return;
+        isDisposed = true;
+
         // If it's a stream, we free the stream.
         // If it's a sample channel, BASS manages it, and it's freed when the sample is freed.
         if (isStream)
         {
             Bass.StreamFree(ChannelHandle);
         }
+
+        manager.RemoveChannel(this);
+
         IsRunning.Value = false;
         OnStart = null;
         OnStop = null;
         OnEnd = null;
+
+        // Unpin the sync procedure
+        endSyncProcedure = null;
     }
 }

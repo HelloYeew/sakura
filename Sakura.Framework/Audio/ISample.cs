@@ -9,10 +9,10 @@ namespace Sakura.Framework.Audio;
 public interface ISample
 {
     /// <summary>
-    /// Plays the sample and returns a dedicated channel
+    /// Create a new channel to play this sample.
     /// </summary>
     /// <returns>A channel to control the playback</returns>
-    IAudioChannel Play();
+    IAudioChannel GetChannel();
 
     /// <summary>
     /// Gets the length of the sample in milliseconds

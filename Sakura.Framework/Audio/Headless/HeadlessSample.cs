@@ -20,7 +20,7 @@ public class HeadlessSample : ISample
         this.manager = manager;
     }
 
-    public IAudioChannel Play()
+    public IAudioChannel GetChannel()
     {
         var channel = new HeadlessAudioChannel(Length)
         {

@@ -60,14 +60,13 @@ internal class BassSample : ISample
         Length = (double)info.Length / info.Frequency / info.Channels * 1000.0;
     }
 
-    public IAudioChannel Play()
+    public IAudioChannel GetChannel()
     {
         int channelHandle = Bass.SampleGetChannel(sampleHandle);
         if (channelHandle == 0)
             return null;
 
         var channel = manager.CreateChannel(channelHandle, false);
-        channel.Play();
         return channel;
     }
 

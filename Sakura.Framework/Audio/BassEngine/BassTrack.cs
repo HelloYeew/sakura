@@ -15,13 +15,12 @@ internal class BassTrack : ITrack
 {
     private readonly BassAudioManager manager;
 
-    // FIX 2: Store the source of the track data
     private readonly string filePath;
     private readonly System.IntPtr dataPtr;
     private readonly long dataLength;
     private GCHandle dataHandle;
 
-    private readonly int decoderStreamHandle; // This is the handle to the *decoder*
+    private readonly int decoderStreamHandle;
 
     public double Length { get; }
     public double RestartPoint { get; set; }
@@ -32,7 +31,7 @@ internal class BassTrack : ITrack
     public BassTrack(BassAudioManager manager, Stream stream)
     {
         this.manager = manager;
-        this.filePath = null; // Mark as stream-based
+        filePath = null; // Mark as stream-based
 
         using (var ms = new MemoryStream())
         {
@@ -76,7 +75,7 @@ internal class BassTrack : ITrack
         Length = Bass.ChannelBytes2Seconds(decoderStreamHandle, Bass.ChannelGetLength(decoderStreamHandle)) * 1000.0;
     }
 
-    public IAudioChannel Play()
+    public IAudioChannel GetChannel()
     {
         // FIX 2: Create a new *playback stream* from the original data source, not from the decoder.
         int channelHandle = 0;
@@ -112,7 +111,6 @@ internal class BassTrack : ITrack
             });
         }
 
-        channel.Play();
         return channel;
     }
 
