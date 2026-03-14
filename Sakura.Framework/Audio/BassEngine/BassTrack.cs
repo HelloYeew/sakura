@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using ManagedBass;
@@ -114,23 +115,35 @@ internal class BassTrack : ITrack
         return channel;
     }
 
-    ~BassTrack()
+    private bool isDisposed;
+
+    public void Dispose()
     {
-        Dispose(false);
+        Dispose(true);
+#pragma warning disable CA1816
+        GC.SuppressFinalize(this);
+#pragma warning restore CA1816
     }
 
-    public void Dispose(bool disposing)
+    protected virtual void Dispose(bool disposing)
     {
-        // Free the decoder stream
+        if (isDisposed) return;
+
         if (decoderStreamHandle != 0)
         {
             Bass.StreamFree(decoderStreamHandle);
         }
 
-        // Free the unmanaged memory handle
         if (dataHandle.IsAllocated)
         {
             dataHandle.Free();
         }
+
+        isDisposed = true;
+    }
+
+    ~BassTrack()
+    {
+        Dispose(false);
     }
 }

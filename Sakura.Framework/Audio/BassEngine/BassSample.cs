@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using ManagedBass;
@@ -13,9 +14,6 @@ internal class BassSample : ISample
     private readonly BassAudioManager manager;
     private readonly int sampleHandle;
 
-    private GCHandle dataHandle;
-    private System.IntPtr dataPtr;
-
     public double Length { get; }
 
     public BassSample(BassAudioManager manager, Stream stream)
@@ -25,12 +23,17 @@ internal class BassSample : ISample
         using (var ms = new MemoryStream())
         {
             stream.CopyTo(ms);
-            var data = ms.ToArray();
-            dataHandle = GCHandle.Alloc(data, GCHandleType.Pinned);
-            dataPtr = dataHandle.AddrOfPinnedObject();
-
-            // Load sample data. Max 255 simultaneous plays.
-            sampleHandle = Bass.SampleLoad(dataPtr, 0, data.Length, 255, BassFlags.Default);
+            byte[] data = ms.ToArray();
+            var handle = GCHandle.Alloc(data, GCHandleType.Pinned);
+            try
+            {
+                sampleHandle = Bass.SampleLoad(handle.AddrOfPinnedObject(), 0, data.Length, 255, BassFlags.Default);
+            }
+            finally
+            {
+                if (handle.IsAllocated)
+                    handle.Free();
+            }
         }
 
         if (sampleHandle == 0)
@@ -70,20 +73,31 @@ internal class BassSample : ISample
         return channel;
     }
 
-    ~BassSample()
+    private bool isDisposed;
+
+    public void Dispose()
     {
-        Dispose(false);
+        Dispose(true);
+#pragma warning disable CA1816
+        GC.SuppressFinalize(this);
+#pragma warning restore CA1816
     }
 
-    public void Dispose(bool disposing)
+
+    protected virtual void Dispose(bool disposing)
     {
+        if (isDisposed) return;
+
         if (sampleHandle != 0)
         {
             Bass.SampleFree(sampleHandle);
         }
-        if (dataHandle.IsAllocated)
-        {
-            dataHandle.Free();
-        }
+
+        isDisposed = true;
+    }
+
+    ~BassSample()
+    {
+        Dispose(false);
     }
 }
