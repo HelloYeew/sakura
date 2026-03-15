@@ -70,6 +70,13 @@ public class GLFontStore : IFontStore
         // which is still better than missing glyphs.
         // TODO: Add support for color emoji in the future
         AddFallbackFamily("NotoEmoji");
+
+        // Material Symbols for IconSprite
+        // TODO: The material symbols font support variable font with different weights and italics, should add support in future.
+        AddFont(resourceStorage, "MaterialSymbolsOutlined-Regular.ttf", alias: "MaterialSymbolsOutlined-Regular");
+        AddFont(resourceStorage, "MaterialSymbolsRounded-Regular.ttf", alias: "MaterialSymbolsRounded-Regular");
+        AddFont(resourceStorage, "MaterialSymbolsSharp-Regular.ttf", alias: "MaterialSymbolsSharp-Regular");
+        AddFallbackFamily("MaterialSymbolsOutlined");
     }
 
     private void loadFamily(Storage storage, string family, bool hasItalics)
