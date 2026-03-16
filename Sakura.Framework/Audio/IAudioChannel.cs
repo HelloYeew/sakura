@@ -76,4 +76,9 @@ public interface IAudioChannel : IDisposable
     /// Gets or sets whether the audio should loop.
     /// </summary>
     bool Looping { get; set; }
+
+    /// <summary>
+    /// Gets or sets the position in milliseconds to loop back to when <see cref="Looping"/> is enabled.
+    /// </summary>
+    double RestartPoint { get; set; }
 }

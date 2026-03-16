@@ -18,9 +18,4 @@ public interface ITrack
     /// Gets the length of the track in milliseconds
     /// </summary>
     double Length { get; }
-
-    /// <summary>
-    /// Gets or sets the position in milliseconds to loop back to when <see cref="IAudioChannel.Looping"/> is enabled.
-    /// </summary>
-    double RestartPoint { get; set; }
 }

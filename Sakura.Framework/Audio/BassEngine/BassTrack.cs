@@ -78,7 +78,6 @@ internal class BassTrack : ITrack
 
     public IAudioChannel GetChannel()
     {
-        // FIX 2: Create a new *playback stream* from the original data source, not from the decoder.
         int channelHandle = 0;
         if (filePath != null)
         {
@@ -101,7 +100,6 @@ internal class BassTrack : ITrack
         // Set loop restart point if looping
         channel.Looping = true; // Tracks often loop
 
-        // FIX 3: Use ChannelSetPosition with PositionFlags.Loop to set the loop start point.
         if (RestartPoint > 0)
         {
             long restartPos = Bass.ChannelSeconds2Bytes(channelHandle, RestartPoint / 1000.0);
