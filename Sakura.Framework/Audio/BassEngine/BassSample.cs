@@ -73,6 +73,13 @@ internal class BassSample : ISample
         return channel;
     }
 
+    public IAudioChannel Play()
+    {
+        var channel = GetChannel();
+        channel.Play();
+        return channel;
+    }
+
     private bool isDisposed;
 
     public void Dispose()

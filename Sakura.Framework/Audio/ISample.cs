@@ -15,6 +15,13 @@ public interface ISample
     IAudioChannel GetChannel();
 
     /// <summary>
+    /// Create a new channel and immediately start playing this sample.
+    /// Ideal for standard fire-and-forget sound effects.
+    /// </summary>
+    /// <returns>>A channel to control the playback</returns>
+    IAudioChannel Play();
+
+    /// <summary>
     /// Gets the length of the sample in milliseconds
     /// </summary>
     double Length { get; }

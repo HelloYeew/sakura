@@ -29,4 +29,11 @@ internal class Sample : ISample
         var channel = new SampleChannel(this, manager);
         return channel;
     }
+
+    public IAudioChannel Play()
+    {
+        var channel = GetChannel();
+        channel.Play();
+        return channel;
+    }
 }

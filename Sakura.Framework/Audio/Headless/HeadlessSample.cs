@@ -33,6 +33,13 @@ public class HeadlessSample : ISample
         return channel;
     }
 
+    public IAudioChannel Play()
+    {
+        var channel = GetChannel();
+        channel.Play();
+        return channel;
+    }
+
     public void Dispose()
     {
         // Nothing to dispose
