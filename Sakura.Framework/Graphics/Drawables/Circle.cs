@@ -8,7 +8,7 @@ using Sakura.Framework.Graphics.Rendering;
 namespace Sakura.Framework.Graphics.Drawables;
 
 /// <summary>
-/// A circle drawable draw using shader-based rendering.
+/// A circle drawable that uses masking to draw a circle shape.
 /// </summary>
 public class Circle : Drawable
 {
