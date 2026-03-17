@@ -34,8 +34,6 @@ public interface IRenderer
 
     void DrawVertices(ReadOnlySpan<Vertex.Vertex> vertices, Texture textureGl);
 
-    void DrawCircle(Drawable circleDrawable);
-
     void PushMask(Drawable maskDrawable, float cornerRadius);
 
     void PopMask(Drawable maskDrawable, float cornerRadius, float borderThickness, Color borderColor);

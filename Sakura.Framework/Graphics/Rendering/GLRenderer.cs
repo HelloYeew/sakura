@@ -173,7 +173,6 @@ public class GLRenderer : IRenderer
             Radius = 0
         };
         shader.SetUniform("u_IsMasking", false);
-        shader.SetUniform("u_IsCircle", false);
         shader.SetUniform("u_IsBorder", false);
 
         lastBoundTextureHandle = uint.MaxValue;
@@ -225,32 +224,6 @@ public class GLRenderer : IRenderer
         }
 
         triangleBatch.AddRange(vertices, textureIndex, currentClip.Rect, currentClip.Radius);
-    }
-
-    public void DrawCircle(Drawable circleDrawable)
-    {
-        triangleBatch.Draw();
-
-        shader.SetUniform("u_IsCircle", true);
-        var rect = circleDrawable.DrawRectangle;
-        shader.SetUniform("u_CircleRect", new Vector4(rect.X, rect.Y, rect.Width, rect.Height));
-
-        if (boundTextureCount == 0 || GLTexture.WhitePixel.Handle != boundTextureHandles[0])
-        {
-            triangleBatch.Draw();
-            gl.ActiveTexture(TextureUnit.Texture0);
-            GLTexture.WhitePixel.Bind();
-            boundTextureHandles[0] = GLTexture.WhitePixel.Handle;
-            if (boundTextureCount == 0) boundTextureCount = 1;
-        }
-
-        GLTexture.WhitePixel.Bind();
-        triangleBatch.AddRange(circleDrawable.Vertices, 0f, currentClip.Rect, currentClip.Radius);
-        triangleBatch.Draw();
-
-        shader.SetUniform("u_IsCircle", false);
-
-        lastBoundTextureHandle = uint.MaxValue;
     }
 
     private void drawMaskShape(Drawable maskDrawable, float cornerRadius)
