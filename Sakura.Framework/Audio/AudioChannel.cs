@@ -27,6 +27,16 @@ internal abstract class AudioChannel : IAudioChannel
         set => currentTime = Math.Clamp(value, 0, Length);
     }
 
+    private double restartPoint;
+
+    public bool AutoDispose { get; set; }
+
+    public double RestartPoint
+    {
+        get => restartPoint;
+        set => restartPoint = Math.Clamp(value, 0, Length);
+    }
+
     public double Length { get; protected set; }
     public bool Looping { get; set; }
 

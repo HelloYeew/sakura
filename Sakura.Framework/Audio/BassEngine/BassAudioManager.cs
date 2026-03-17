@@ -115,14 +115,26 @@ public class BassAudioManager : IAudioManager, IDisposable
     internal BassAudioChannel CreateChannel(int channelHandle, bool isStream)
     {
         var channel = new BassAudioChannel(channelHandle, this, isStream);
-        activeChannels.Add(channel);
 
-        // Store original frequency for pitch shifting
+        lock (activeChannels)
+        {
+            activeChannels.Add(channel);
+        }
+
         float freq = 0;
         Bass.ChannelGetAttribute(channelHandle, ChannelAttribute.Frequency, out freq);
         originalFrequencies.TryAdd(channelHandle, freq);
 
         return channel;
+    }
+
+    internal void RemoveChannel(BassAudioChannel channel)
+    {
+        lock (activeChannels)
+        {
+            activeChannels.Remove(channel);
+        }
+        originalFrequencies.TryRemove(channel.ChannelHandle, out _);
     }
 
     internal float GetOriginalFrequency(int channelHandle)
@@ -150,37 +162,43 @@ public class BassAudioManager : IAudioManager, IDisposable
         }
 
         // Clean up disposed or stopped channels
-        for (int i = activeChannels.Count - 1; i >= 0; i--)
+        lock (activeChannels)
         {
-            var channel = activeChannels[i];
-            if (Bass.ChannelIsActive(channel.ChannelHandle) == PlaybackState.Stopped)
+            for (int i = activeChannels.Count - 1; i >= 0; i--)
             {
-                if (channel.IsRunning.Value)
+                var channel = activeChannels[i];
+                if (Bass.ChannelIsActive(channel.ChannelHandle) == PlaybackState.Stopped)
                 {
-                    // Wasn't stopped manually, so it must have ended
-                    channel.IsRunning.Value = false;
+                    if (channel.IsRunning.Value)
+                    {
+                        channel.IsRunning.Value = false;
+                    }
+
+                    if (channel.AutoDispose && !channel.IsRunning.Value)
+                    {
+                        channel.Dispose();
+                    }
                 }
             }
-
-            // TODO: Remve disposed channels or sample can be removed if needed
+            GlobalStatistics.Get<int>("Audio", "Active Channels").Value = activeChannels.Count;
         }
-
-        GlobalStatistics.Get<int>("Audio", "Active Channels").Value = activeChannels.Count;
 
         Bass.Update((int)Math.Max(1, frameTime));
     }
 
     public void Dispose()
     {
-        // Free all active channels
-        foreach (var channel in activeChannels)
+        BassAudioChannel[] channelsToDispose;
+        lock (activeChannels)
+        {
+            channelsToDispose = activeChannels.ToArray();
+        }
+        foreach (var channel in channelsToDispose)
         {
             channel.Dispose();
         }
         activeChannels.Clear();
         originalFrequencies.Clear();
-
-        // Free BASS
         Bass.Free();
     }
 }

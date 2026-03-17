@@ -24,6 +24,7 @@ internal class BassAudioChannel : IAudioChannel
     private readonly bool isStream;
     private SyncProcedure endSyncProcedure; // Keep a reference to prevent GC
     private bool isLooping;
+    public bool AutoDispose { get; set; } = false;
 
     public BassAudioChannel(int channelHandle, BassAudioManager manager, bool isStream)
     {
@@ -33,7 +34,7 @@ internal class BassAudioChannel : IAudioChannel
 
         // Set up a sync to fire the OnEnd event
         endSyncProcedure = new SyncProcedure(OnChannelEnd);
-        Bass.ChannelSetSync(ChannelHandle, SyncFlags.End, 0, endSyncProcedure);
+        Bass.ChannelSetSync(ChannelHandle, SyncFlags.End | SyncFlags.Mixtime, 0, endSyncProcedure);
 
         // Set up reactive property bindings
         IsRunning.ValueChanged += e =>
@@ -49,14 +50,23 @@ internal class BassAudioChannel : IAudioChannel
 
     private void OnChannelEnd(int handle, int channel, int data, IntPtr user)
     {
-        // This callback is from a BASS thread.
-        // We schedule the event to run on the main audio thread (via manager update).
+        // If we are handling a custom RestartPoint, we manually seek and play here.
+        if (isLooping)
+        {
+            long pos = Bass.ChannelSeconds2Bytes(ChannelHandle, restartPoint / 1000.0);
+            Bass.ChannelSetPosition(ChannelHandle, pos);
+            Bass.ChannelPlay(ChannelHandle, false); // Resume immediately for gapless playback
+        }
+
+        // Schedule the event to run on the main audio thread (via manager update).
         manager.ScheduleMainThreadAction(() =>
         {
             OnEnd?.Invoke();
             if (!isLooping)
             {
                 IsRunning.Value = false;
+                if (AutoDispose)
+                    Dispose();
             }
         });
     }
@@ -90,6 +100,7 @@ internal class BassAudioChannel : IAudioChannel
     public Reactive<double> Volume { get; } = new Reactive<double>(1.0);
     public Reactive<double> Frequency { get; } = new Reactive<double>(1.0);
     public Reactive<double> Balance { get; } = new Reactive<double>(0.0);
+    private double restartPoint;
 
     public double CurrentTime
     {
@@ -114,6 +125,16 @@ internal class BassAudioChannel : IAudioChannel
         }
     }
 
+    public double RestartPoint
+    {
+        get => restartPoint;
+        set
+        {
+            restartPoint = value;
+            updateLoopState();
+        }
+    }
+
     public bool Looping
     {
         get => isLooping;
@@ -127,17 +148,42 @@ internal class BassAudioChannel : IAudioChannel
         }
     }
 
+    private void updateLoopState()
+    {
+        // If looping and the restart point exactly 0, BASS loop is perfect
+        if (isLooping && restartPoint == 0)
+        {
+            Bass.ChannelFlags(ChannelHandle, BassFlags.Loop, BassFlags.Loop);
+        }
+        else
+        {
+            // If RestartPoint got set, turn off native looping so our OnChannelEnd sync catches it.
+            Bass.ChannelFlags(ChannelHandle, BassFlags.Default, BassFlags.Loop);
+        }
+    }
+
+    private bool isDisposed;
+
     public void Dispose()
     {
+        if (isDisposed) return;
+        isDisposed = true;
+
         // If it's a stream, we free the stream.
         // If it's a sample channel, BASS manages it, and it's freed when the sample is freed.
         if (isStream)
         {
             Bass.StreamFree(ChannelHandle);
         }
+
+        manager.RemoveChannel(this);
+
         IsRunning.Value = false;
         OnStart = null;
         OnStop = null;
         OnEnd = null;
+
+        // Unpin the sync procedure
+        endSyncProcedure = null;
     }
 }
