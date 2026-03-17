@@ -29,6 +29,8 @@ internal abstract class AudioChannel : IAudioChannel
 
     private double restartPoint;
 
+    public bool AutoDispose { get; set; }
+
     public double RestartPoint
     {
         get => restartPoint;

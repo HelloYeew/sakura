@@ -33,6 +33,7 @@ internal class Sample : ISample
     public IAudioChannel Play()
     {
         var channel = GetChannel();
+        channel.AutoDispose = true;
         channel.Play();
         return channel;
     }

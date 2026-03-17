@@ -24,6 +24,7 @@ internal class BassAudioChannel : IAudioChannel
     private readonly bool isStream;
     private SyncProcedure endSyncProcedure; // Keep a reference to prevent GC
     private bool isLooping;
+    public bool AutoDispose { get; set; } = false;
 
     public BassAudioChannel(int channelHandle, BassAudioManager manager, bool isStream)
     {
@@ -64,6 +65,8 @@ internal class BassAudioChannel : IAudioChannel
             if (!isLooping)
             {
                 IsRunning.Value = false;
+                if (AutoDispose)
+                    Dispose();
             }
         });
     }

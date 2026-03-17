@@ -173,6 +173,11 @@ public class BassAudioManager : IAudioManager, IDisposable
                     {
                         channel.IsRunning.Value = false;
                     }
+
+                    if (channel.AutoDispose && !channel.IsRunning.Value)
+                    {
+                        channel.Dispose();
+                    }
                 }
             }
             GlobalStatistics.Get<int>("Audio", "Active Channels").Value = activeChannels.Count;

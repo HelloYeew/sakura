@@ -78,6 +78,11 @@ public interface IAudioChannel : IDisposable
     bool Looping { get; set; }
 
     /// <summary>
+    /// Whether this channel should automatically dispose and clean itself up when playback finished.
+    /// </summary>
+    bool AutoDispose { get; set; }
+
+    /// <summary>
     /// Gets or sets the position in milliseconds to loop back to when <see cref="Looping"/> is enabled.
     /// </summary>
     double RestartPoint { get; set; }
