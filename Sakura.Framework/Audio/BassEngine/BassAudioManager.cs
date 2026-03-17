@@ -188,15 +188,17 @@ public class BassAudioManager : IAudioManager, IDisposable
 
     public void Dispose()
     {
-        // Free all active channels
-        foreach (var channel in activeChannels)
+        BassAudioChannel[] channelsToDispose;
+        lock (activeChannels)
+        {
+            channelsToDispose = activeChannels.ToArray();
+        }
+        foreach (var channel in channelsToDispose)
         {
             channel.Dispose();
         }
         activeChannels.Clear();
         originalFrequencies.Clear();
-
-        // Free BASS
         Bass.Free();
     }
 }
