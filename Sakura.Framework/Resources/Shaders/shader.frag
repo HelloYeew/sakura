@@ -26,7 +26,7 @@ uniform bool u_IsCircle;
 uniform vec4 u_CircleRect; // x, y, width, height in screen space
 
 // SDF for rounded box
-// https://www.iquilezles.org/www/articles/distfunctions2d/distfunctions2d.htm
+// https://iquilezles.org/articles/distfunctions2d/
 float sdRoundBox(in vec2 p, in vec2 b, in float r) {
     vec2 q = abs(p) - b + r;
     return min(max(q.x,q.y),0.0) + length(max(q,0.0)) - r;
