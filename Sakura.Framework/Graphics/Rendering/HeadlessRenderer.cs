@@ -56,11 +56,6 @@ public class HeadlessRenderer : IRenderer
 
     }
 
-    public void DrawCircle(Drawable circleDrawable)
-    {
-
-    }
-
     public void PushMask(Drawable maskDrawable, float cornerRadius)
     {
 
