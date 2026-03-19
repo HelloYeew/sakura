@@ -32,12 +32,12 @@ internal class BassTrack : ITrack
     public BassTrack(BassAudioManager manager, Stream stream)
     {
         this.manager = manager;
-        filePath = null; // Mark as stream-based
+        filePath = null;
 
         using (var ms = new MemoryStream())
         {
             stream.CopyTo(ms);
-            var data = ms.ToArray();
+            byte[] data = ms.ToArray();
             dataLength = data.Length;
             dataHandle = GCHandle.Alloc(data, GCHandleType.Pinned);
             dataPtr = dataHandle.AddrOfPinnedObject();
@@ -61,8 +61,8 @@ internal class BassTrack : ITrack
     public BassTrack(BassAudioManager manager, string path)
     {
         this.manager = manager;
-        this.filePath = path; // Mark as file-based
-        this.dataPtr = System.IntPtr.Zero;
+        filePath = path; // Mark as file-based
+        dataPtr = IntPtr.Zero;
 
         decoderStreamHandle = Bass.CreateStream(path, 0, 0, BassFlags.Decode | BassFlags.Prescan);
 
@@ -79,13 +79,15 @@ internal class BassTrack : ITrack
     public IAudioChannel GetChannel()
     {
         int channelHandle = 0;
+        var flags = BassFlags.Decode | BassFlags.Float;
+
         if (filePath != null)
         {
-            channelHandle = Bass.CreateStream(filePath, 0, 0, BassFlags.Default);
+            channelHandle = Bass.CreateStream(filePath, 0, 0, flags);
         }
         else if (dataPtr != System.IntPtr.Zero)
         {
-            channelHandle = Bass.CreateStream(dataPtr, 0, dataLength, BassFlags.Default);
+            channelHandle = Bass.CreateStream(dataPtr, 0, dataLength, flags);
         }
 
         if (channelHandle == 0)
@@ -95,7 +97,7 @@ internal class BassTrack : ITrack
             return null;
         }
 
-        var channel = manager.CreateChannel(channelHandle, true);
+        var channel = manager.CreateChannel(channelHandle, true, manager.TrackMixer);
 
         // Set loop restart point if looping
         channel.Looping = true; // Tracks often loop

@@ -3,6 +3,7 @@
 
 using System;
 using ManagedBass;
+using ManagedBass.Mix;
 using Sakura.Framework.Reactive;
 
 namespace Sakura.Framework.Audio.BassEngine;
@@ -26,11 +27,14 @@ internal class BassAudioChannel : IAudioChannel
     private bool isLooping;
     public bool AutoDispose { get; set; } = false;
 
-    public BassAudioChannel(int channelHandle, BassAudioManager manager, bool isStream)
+    public BassAudioMixer Mixer { get; internal set; }
+
+    public BassAudioChannel(int channelHandle, BassAudioManager manager, bool isStream, BassAudioMixer mixer = null)
     {
         ChannelHandle = channelHandle;
         this.manager = manager;
         this.isStream = isStream;
+        Mixer = mixer;
 
         // Set up a sync to fire the OnEnd event
         endSyncProcedure = new SyncProcedure(OnChannelEnd);
@@ -73,7 +77,12 @@ internal class BassAudioChannel : IAudioChannel
 
     public void Play()
     {
-        if (BassUtils.CheckError(Bass.ChannelPlay(ChannelHandle, false), "playing channel"))
+        if (Mixer != null)
+        {
+            BassUtils.CheckError(BassMix.ChannelRemoveFlag(ChannelHandle, BassFlags.MixerChanPause), "resuming mixer channel");
+            IsRunning.Value = true;
+        }
+        else if (BassUtils.CheckError(Bass.ChannelPlay(ChannelHandle, false), "playing channel"))
         {
             IsRunning.Value = true;
         }
@@ -81,9 +90,14 @@ internal class BassAudioChannel : IAudioChannel
 
     public void Stop()
     {
-        if (BassUtils.CheckError(Bass.ChannelStop(ChannelHandle), "stopping channel"))
+        if (Mixer != null)
         {
-            // Reset position to start
+            BassUtils.CheckError(BassMix.ChannelAddFlag(ChannelHandle, BassFlags.MixerChanPause), "stopping mixer channel");
+            Bass.ChannelSetPosition(ChannelHandle, 0);
+            IsRunning.Value = false;
+        }
+        else if (BassUtils.CheckError(Bass.ChannelStop(ChannelHandle), "stopping channel"))
+        {
             Bass.ChannelSetPosition(ChannelHandle, 0);
             IsRunning.Value = false;
         }
@@ -91,7 +105,12 @@ internal class BassAudioChannel : IAudioChannel
 
     public void Pause()
     {
-        if (BassUtils.CheckError(Bass.ChannelPause(ChannelHandle), "pausing channel"))
+        if (Mixer != null)
+        {
+            BassUtils.CheckError(BassMix.ChannelAddFlag(ChannelHandle, BassFlags.MixerChanPause), "pausing mixer channel");
+            IsRunning.Value = false;
+        }
+        else if (BassUtils.CheckError(Bass.ChannelPause(ChannelHandle), "pausing channel"))
         {
             IsRunning.Value = false;
         }

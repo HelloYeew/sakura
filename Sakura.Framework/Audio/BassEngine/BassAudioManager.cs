@@ -18,11 +18,14 @@ namespace Sakura.Framework.Audio.BassEngine;
 /// BASS implementation of the IAudioManager.
 /// Initializes BASS and creates BASS-backed tracks, samples, and channels.
 /// </summary>
-public class BassAudioManager : IAudioManager, IDisposable
+internal class BassAudioManager : IAudioManager, IDisposable
 {
     private readonly List<BassAudioChannel> activeChannels = new List<BassAudioChannel>();
     private readonly ConcurrentQueue<Action> mainThreadActions = new ConcurrentQueue<Action>();
     private readonly ConcurrentDictionary<int, float> originalFrequencies = new ConcurrentDictionary<int, float>();
+
+    public BassAudioMixer TrackMixer { get; private set; }
+    public BassAudioMixer SampleMixer { get; private set; }
 
     public Reactive<double> MasterVolume { get; } = new Reactive<double>(1.0);
     public Reactive<double> TrackVolume { get; } = new Reactive<double>(1.0);
@@ -39,6 +42,12 @@ public class BassAudioManager : IAudioManager, IDisposable
             Bass.Configure(Configuration.UpdatePeriod, 5);
             Bass.Configure(Configuration.DeviceBufferLength, -1);
             Bass.Configure(Configuration.PlaybackBufferLength, 100);
+
+            TrackMixer = new BassAudioMixer(this);
+            SampleMixer = new BassAudioMixer(this);
+
+            TrackMixer.Play();
+            SampleMixer.Play();
 
             TrackVolume.ValueChanged += e => Bass.GlobalStreamVolume = (int)e.NewValue * 10000; // From 0 to 10,000
             SampleVolume.ValueChanged += e => Bass.GlobalSampleVolume = (int)e.NewValue * 10000; // From 0 to 10,000
@@ -112,18 +121,19 @@ public class BassAudioManager : IAudioManager, IDisposable
     /// <summary>
     /// Creates a BASS channel wrapper and registers it.
     /// </summary>
-    internal BassAudioChannel CreateChannel(int channelHandle, bool isStream)
+    internal BassAudioChannel CreateChannel(int channelHandle, bool isStream, BassAudioMixer targetMixer = null)
     {
-        var channel = new BassAudioChannel(channelHandle, this, isStream);
+        var channel = new BassAudioChannel(channelHandle, this, isStream, targetMixer);
 
         lock (activeChannels)
         {
             activeChannels.Add(channel);
         }
 
-        float freq = 0;
-        Bass.ChannelGetAttribute(channelHandle, ChannelAttribute.Frequency, out freq);
+        Bass.ChannelGetAttribute(channelHandle, ChannelAttribute.Frequency, out float freq);
         originalFrequencies.TryAdd(channelHandle, freq);
+
+        targetMixer.AddChannel(channel);
 
         return channel;
     }
