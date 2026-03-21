@@ -9,7 +9,19 @@ public class GlobalStatistic<T> : IGlobalStatistic
     public string Name { get; }
     public T Value { get; set; }
 
-    public string DisplayValue => Value?.ToString() ?? string.Empty;
+    public string DisplayValue
+    {
+        get
+        {
+            if (Value == null)
+                return "null";
+            if (Value is float f)
+                return f.ToString("0.##");
+            if (Value is double d)
+                return d.ToString("0.##");
+            return Value.ToString() ?? string.Empty;
+        }
+    }
 
     public GlobalStatistic(string group, string name)
     {

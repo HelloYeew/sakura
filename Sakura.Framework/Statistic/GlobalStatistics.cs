@@ -1,27 +1,19 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 
 namespace Sakura.Framework.Statistic;
 
 public static class GlobalStatistics
 {
-    private static readonly Dictionary<string, Dictionary<string, IGlobalStatistic>> statistics = new();
+    private static readonly ConcurrentDictionary<string, ConcurrentDictionary<string, IGlobalStatistic>> statistics = new();
 
     public static GlobalStatistic<T> Get<T>(string group, string name)
     {
-        if (!statistics.TryGetValue(group, out var groupStats))
-        {
-            groupStats = new Dictionary<string, IGlobalStatistic>();
-            statistics[group] = groupStats;
-        }
-
-        if (!groupStats.TryGetValue(name, out var stat))
-        {
-            stat = new GlobalStatistic<T>(group, name);
-            groupStats[name] = stat;
-        }
+        var groupStats = statistics.GetOrAdd(group, _ => new ConcurrentDictionary<string, IGlobalStatistic>());
+        var stat = groupStats.GetOrAdd(name, _ => new GlobalStatistic<T>(group, name));
 
         return (GlobalStatistic<T>)stat;
     }
