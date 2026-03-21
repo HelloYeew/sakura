@@ -97,7 +97,7 @@ internal class BassTrack : ITrack
             return null;
         }
 
-        var channel = manager.CreateChannel(channelHandle, true, manager.TrackMixer);
+        var channel = manager.CreateChannel(channelHandle, true, (BassAudioMixer)manager.TrackMixer);
 
         // Set loop restart point if looping
         channel.Looping = true; // Tracks often loop

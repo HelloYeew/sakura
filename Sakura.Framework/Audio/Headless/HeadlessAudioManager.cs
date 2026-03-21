@@ -23,8 +23,19 @@ public class HeadlessAudioManager : IAudioManager, IDisposable
     public ISample CreateSample(Stream stream) => new HeadlessSample(this, stream);
     public ISample CreateSampleFromFile(string path) => new HeadlessSample(this, path);
 
+    public IAudioMixer TrackMixer { get; } = new HeadlessAudioMixer(1000);
+
+    public IAudioMixer SampleMixer { get; } = new HeadlessAudioMixer(1000);
+
     public HeadlessAudioManager()
     {
+        TrackVolume.ValueChanged += e => TrackMixer.Volume.Value = e.NewValue * MasterVolume.Value;
+        SampleVolume.ValueChanged += e => SampleMixer.Volume.Value = e.NewValue * MasterVolume.Value;
+        MasterVolume.ValueChanged += e =>
+        {
+            TrackMixer.Volume.Value = TrackVolume.Value * e.NewValue;
+            SampleMixer.Volume.Value = SampleVolume.Value * e.NewValue;
+        };
         Logger.Verbose("🔈 Headless audio manager initialized");
     }
 

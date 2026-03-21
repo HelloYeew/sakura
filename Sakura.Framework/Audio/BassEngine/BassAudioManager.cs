@@ -24,8 +24,8 @@ internal class BassAudioManager : IAudioManager, IDisposable
     private readonly ConcurrentQueue<Action> mainThreadActions = new ConcurrentQueue<Action>();
     private readonly ConcurrentDictionary<int, float> originalFrequencies = new ConcurrentDictionary<int, float>();
 
-    public BassAudioMixer TrackMixer { get; private set; }
-    public BassAudioMixer SampleMixer { get; private set; }
+    private BassAudioMixer trackMixer;
+    private BassAudioMixer sampleMixer;
 
     public Reactive<double> MasterVolume { get; } = new Reactive<double>(1.0);
     public Reactive<double> TrackVolume { get; } = new Reactive<double>(1.0);
@@ -43,18 +43,18 @@ internal class BassAudioManager : IAudioManager, IDisposable
             Bass.Configure(Configuration.DeviceBufferLength, -1);
             Bass.Configure(Configuration.PlaybackBufferLength, 100);
 
-            TrackMixer = new BassAudioMixer(this);
-            SampleMixer = new BassAudioMixer(this);
+            trackMixer = new BassAudioMixer(this);
+            sampleMixer = new BassAudioMixer(this);
 
-            TrackMixer.Play();
-            SampleMixer.Play();
+            trackMixer.Play();
+            sampleMixer.Play();
 
-            TrackVolume.ValueChanged += e => Bass.GlobalStreamVolume = (int)e.NewValue * 10000; // From 0 to 10,000
-            SampleVolume.ValueChanged += e => Bass.GlobalSampleVolume = (int)e.NewValue * 10000; // From 0 to 10,000
+            TrackVolume.ValueChanged += e => trackMixer.Volume.Value = e.NewValue;
+            SampleVolume.ValueChanged += e => sampleMixer.Volume.Value = e.NewValue;
             MasterVolume.ValueChanged += e =>
             {
-                Bass.GlobalStreamVolume = (int)(TrackVolume.Value * e.NewValue * 10000);
-                Bass.GlobalSampleVolume = (int)(SampleVolume.Value * e.NewValue * 10000);
+                trackMixer.Volume.Value = TrackVolume.Value * e.NewValue;
+                sampleMixer.Volume.Value = SampleVolume.Value * e.NewValue;
             };
 
             Logger.Verbose("🔈 BASS initialised");
@@ -97,6 +97,9 @@ internal class BassAudioManager : IAudioManager, IDisposable
             Logger.Verbose($"Playback buffer length: {playbackBuffer} ms");
         }
     }
+
+    public IAudioMixer TrackMixer => trackMixer;
+    public IAudioMixer SampleMixer => sampleMixer;
 
     public ITrack CreateTrack(Stream stream)
     {

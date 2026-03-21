@@ -65,7 +65,7 @@ internal class BassSample : ISample
 
         if (channelHandle == 0) return null;
 
-        return manager.CreateChannel(channelHandle, true, manager.SampleMixer);
+        return manager.CreateChannel(channelHandle, true, (BassAudioMixer)manager.SampleMixer);
     }
 
     public IAudioChannel Play()

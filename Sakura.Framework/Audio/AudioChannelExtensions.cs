@@ -3,6 +3,7 @@
 
 using System;
 using System.Threading.Tasks;
+using Sakura.Framework.Audio.BassEngine;
 
 namespace Sakura.Framework.Audio;
 
@@ -84,5 +85,21 @@ public static class AudioChannelExtensions
         Task fadeOutTask = currentChannel?.FadeOutAsync(duration, stopAfterFade: true) ?? Task.CompletedTask;
         Task fadeInTask = nextChannel?.FadeInAsync(duration, targetVolume) ?? Task.CompletedTask;
         await Task.WhenAll(fadeOutTask, fadeInTask);
+    }
+
+    /// <summary>
+    /// Applies a reactive Low-Pass filter to the target audio channel.
+    /// </summary>
+    /// <returns>The <see cref="BassLowPassFilter"/> instance to control the cutoff frequency.</returns>
+    public static BassLowPassFilter AddLowPassFilter(this IAudioChannel channel)
+    {
+        if (channel is BassAudioChannel bassChannel)
+        {
+            // Attach the effect directly to the internal BASS handle
+            return new BassLowPassFilter(bassChannel.ChannelHandle);
+        }
+
+        // Return null or a dummy filter if running in Headless mode
+        return null;
     }
 }
