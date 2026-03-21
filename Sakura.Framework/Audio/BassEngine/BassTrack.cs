@@ -6,6 +6,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using ManagedBass;
 using Sakura.Framework.Logging;
+using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Audio.BassEngine;
 
@@ -52,6 +53,8 @@ internal class BassTrack : ITrack
             return;
         }
 
+        GlobalStatistics.Get<int>("Audio", "Loaded Tracks").Value++;
+
         Length = Bass.ChannelBytes2Seconds(decoderStreamHandle, Bass.ChannelGetLength(decoderStreamHandle)) * 1000.0;
     }
 
@@ -72,6 +75,8 @@ internal class BassTrack : ITrack
                 new BassException(Bass.LastError));
             return;
         }
+
+        GlobalStatistics.Get<int>("Audio", "Loaded Tracks").Value++;
 
         Length = Bass.ChannelBytes2Seconds(decoderStreamHandle, Bass.ChannelGetLength(decoderStreamHandle)) * 1000.0;
     }
@@ -138,6 +143,8 @@ internal class BassTrack : ITrack
         {
             dataHandle.Free();
         }
+
+        GlobalStatistics.Get<int>("Audio", "Loaded Tracks").Value--;
 
         isDisposed = true;
     }

@@ -174,27 +174,43 @@ internal class BassAudioManager : IAudioManager, IDisposable
             action.Invoke();
         }
 
+        int playingCount = 0;
+
         // Clean up disposed or stopped channels
         lock (activeChannels)
         {
             for (int i = activeChannels.Count - 1; i >= 0; i--)
             {
                 var channel = activeChannels[i];
-                if (Bass.ChannelIsActive(channel.ChannelHandle) == PlaybackState.Stopped)
+                var state = Bass.ChannelIsActive(channel.ChannelHandle);
+                switch (state)
                 {
-                    if (channel.IsRunning.Value)
+                    case PlaybackState.Stopped:
                     {
-                        channel.IsRunning.Value = false;
-                    }
+                        if (channel.IsRunning.Value)
+                        {
+                            channel.IsRunning.Value = false;
+                        }
 
-                    if (channel.AutoDispose && !channel.IsRunning.Value)
+                        if (channel.AutoDispose && !channel.IsRunning.Value)
+                        {
+                            channel.Dispose();
+                        }
+
+                        break;
+                    }
+                    case PlaybackState.Playing:
                     {
-                        channel.Dispose();
+                        playingCount++;
+                        break;
                     }
                 }
             }
-            GlobalStatistics.Get<int>("Audio", "Active Channels").Value = activeChannels.Count;
+            GlobalStatistics.Get<int>("Audio", "Allocated Channels").Value = activeChannels.Count;
+            GlobalStatistics.Get<int>("Audio", "Playing Channels").Value = playingCount;
         }
+
+        GlobalStatistics.Get<double>("Audio", "BASS CPU Usage (%)").Value = Bass.CPUUsage;
 
         Bass.Update((int)Math.Max(1, frameTime));
     }

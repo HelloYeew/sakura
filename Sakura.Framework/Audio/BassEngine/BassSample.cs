@@ -6,6 +6,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using ManagedBass;
 using Sakura.Framework.Logging;
+using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Audio.BassEngine;
 
@@ -31,6 +32,8 @@ internal class BassSample : ISample
             dataPtr = dataHandle.AddrOfPinnedObject();
         }
 
+        GlobalStatistics.Get<int>("Audio", "Loaded Samples").Value++;
+
         Length = calculateLength();
     }
 
@@ -41,6 +44,8 @@ internal class BassSample : ISample
         dataLength = data.Length;
         dataHandle = GCHandle.Alloc(data, GCHandleType.Pinned);
         dataPtr = dataHandle.AddrOfPinnedObject();
+
+        GlobalStatistics.Get<int>("Audio", "Loaded Samples").Value++;
 
         Length = calculateLength();
     }
@@ -93,6 +98,8 @@ internal class BassSample : ISample
 
         if (dataHandle.IsAllocated)
             dataHandle.Free();
+
+        GlobalStatistics.Get<int>("Audio", "Loaded Samples").Value--;
 
         isDisposed = true;
     }
