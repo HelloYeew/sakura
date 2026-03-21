@@ -750,7 +750,7 @@ public abstract class Drawable
     /// </summary>
     protected virtual void OnClockChanged()
     {
-        // Base do nothing here
+        Scheduler?.SetClock(clock);
     }
 
     #region Transformation Management
