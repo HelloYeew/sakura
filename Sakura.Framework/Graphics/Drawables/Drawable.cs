@@ -314,6 +314,24 @@ public abstract class Drawable
     }
 
     /// <summary>
+    /// The X component of the position of this drawable.
+    /// </summary>
+    public float X
+    {
+        get => Position.X;
+        set => Position = new Vector2(value, Position.Y);
+    }
+
+    /// <summary>
+    /// The Y component of the position of this drawable.
+    /// </summary>
+    public float Y
+    {
+        get => Position.Y;
+        set => Position = new Vector2(Position.X, value);
+    }
+
+    /// <summary>
     /// The blending mode to use when drawing this drawable.
     /// </summary>
     public BlendingMode Blending { get; set; } = BlendingMode.Alpha;
