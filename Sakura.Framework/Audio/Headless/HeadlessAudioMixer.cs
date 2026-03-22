@@ -13,6 +13,8 @@ internal class HeadlessAudioMixer : HeadlessAudioChannel, IAudioMixer
     {
     }
 
+    public IEnumerable<IAudioChannel> ActiveChannels => channels;
+
     public void AddChannel(IAudioChannel channel)
     {
         if (!channels.Contains(channel))

@@ -26,6 +26,8 @@ public class AudioMixer : IAudioMixer
     public double CurrentTime { get; set; }
     public double Length => 0;
     public double RestartPoint { get; set; }
+    public float AmplitudeLeft { get; } = 0;
+    public float AmplitudeRight { get; } = 0;
     public bool Looping { get; set; }
     public bool AutoDispose { get; set; }
 
@@ -47,6 +49,8 @@ public class AudioMixer : IAudioMixer
         CurrentTime = 0;
         OnStop.Invoke();
     }
+
+    public IEnumerable<IAudioChannel> ActiveChannels => MixedChannels;
 
     public virtual void AddChannel(IAudioChannel channel)
     {

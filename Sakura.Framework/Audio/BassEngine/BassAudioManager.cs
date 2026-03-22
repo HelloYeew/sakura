@@ -22,7 +22,6 @@ internal class BassAudioManager : IAudioManager, IDisposable
 {
     private readonly List<BassAudioChannel> activeChannels = new List<BassAudioChannel>();
     private readonly ConcurrentQueue<Action> mainThreadActions = new ConcurrentQueue<Action>();
-    private readonly ConcurrentDictionary<int, float> originalFrequencies = new ConcurrentDictionary<int, float>();
 
     private BassAudioMixer trackMixer;
     private BassAudioMixer sampleMixer;
@@ -134,7 +133,6 @@ internal class BassAudioManager : IAudioManager, IDisposable
         }
 
         Bass.ChannelGetAttribute(channelHandle, ChannelAttribute.Frequency, out float freq);
-        originalFrequencies.TryAdd(channelHandle, freq);
 
         targetMixer.AddChannel(channel);
 
@@ -147,12 +145,6 @@ internal class BassAudioManager : IAudioManager, IDisposable
         {
             activeChannels.Remove(channel);
         }
-        originalFrequencies.TryRemove(channel.ChannelHandle, out _);
-    }
-
-    internal float GetOriginalFrequency(int channelHandle)
-    {
-        return originalFrequencies.TryGetValue(channelHandle, out float freq) ? freq : 48000;
     }
 
     /// <summary>
@@ -212,7 +204,7 @@ internal class BassAudioManager : IAudioManager, IDisposable
 
         GlobalStatistics.Get<double>("Audio", "BASS CPU Usage (%)").Value = Bass.CPUUsage;
 
-        Bass.Update((int)Math.Max(1, frameTime));
+        // Bass.Update((int)Math.Max(1, frameTime));
     }
 
     public void Dispose()
@@ -227,7 +219,6 @@ internal class BassAudioManager : IAudioManager, IDisposable
             channel.Dispose();
         }
         activeChannels.Clear();
-        originalFrequencies.Clear();
         Bass.Free();
     }
 }

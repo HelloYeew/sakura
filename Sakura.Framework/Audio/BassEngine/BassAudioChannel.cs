@@ -20,6 +20,7 @@ internal class BassAudioChannel : IAudioChannel
     public ReactiveBool IsRunning { get; } = new ReactiveBool();
 
     public int ChannelHandle { get; }
+    private readonly float originalFrequency;
 
     private readonly BassAudioManager manager;
     private readonly bool isStream;
@@ -36,6 +37,9 @@ internal class BassAudioChannel : IAudioChannel
         this.isStream = isStream;
         Mixer = mixer;
 
+        Bass.ChannelGetAttribute(ChannelHandle, ChannelAttribute.Frequency, out float freq);
+        originalFrequency = freq > 0 ? freq : 44100;
+
         // Set up a sync to fire the OnEnd event
         endSyncProcedure = new SyncProcedure(OnChannelEnd);
         Bass.ChannelSetSync(ChannelHandle, SyncFlags.End | SyncFlags.Mixtime, 0, endSyncProcedure);
@@ -48,7 +52,16 @@ internal class BassAudioChannel : IAudioChannel
         };
 
         Volume.ValueChanged += e => BassUtils.CheckError(Bass.ChannelSetAttribute(ChannelHandle, ChannelAttribute.Volume, (float)e.NewValue), "setting volume");
-        Frequency.ValueChanged += e => BassUtils.CheckError(Bass.ChannelSetAttribute(ChannelHandle, ChannelAttribute.Frequency, (float)(e.NewValue * manager.GetOriginalFrequency(ChannelHandle))), "setting frequency");
+        bool isFreqInitialized = false;
+        Frequency.ValueChanged += e =>
+        {
+            if (!isFreqInitialized)
+            {
+                isFreqInitialized = true;
+                if (e.NewValue == 1.0) return;
+            }
+            BassUtils.CheckError(Bass.ChannelSetAttribute(ChannelHandle, ChannelAttribute.Frequency, (float)(e.NewValue * originalFrequency)), "setting frequency");
+        };
         Balance.ValueChanged += e => BassUtils.CheckError(Bass.ChannelSetAttribute(ChannelHandle, ChannelAttribute.Pan, (float)e.NewValue), "setting balance");
     }
 
@@ -59,7 +72,7 @@ internal class BassAudioChannel : IAudioChannel
         {
             long pos = Bass.ChannelSeconds2Bytes(ChannelHandle, restartPoint / 1000.0);
             Bass.ChannelSetPosition(ChannelHandle, pos);
-            Bass.ChannelPlay(ChannelHandle, false); // Resume immediately for gapless playback
+            // Bass.ChannelPlay(ChannelHandle, false); // Resume immediately for gapless playback
         }
 
         // Schedule the event to run on the main audio thread (via manager update).
@@ -178,6 +191,24 @@ internal class BassAudioChannel : IAudioChannel
         {
             // If RestartPoint got set, turn off native looping so our OnChannelEnd sync catches it.
             Bass.ChannelFlags(ChannelHandle, BassFlags.Default, BassFlags.Loop);
+        }
+    }
+
+    public float AmplitudeLeft
+    {
+        get
+        {
+            int level = ManagedBass.Bass.ChannelGetLevel(ChannelHandle);
+            return level != -1 ? (level & 0xFFFF) / 32768f : 0f;
+        }
+    }
+
+    public float AmplitudeRight
+    {
+        get
+        {
+            int level = ManagedBass.Bass.ChannelGetLevel(ChannelHandle);
+            return level != -1 ? ((level >> 16) & 0xFFFF) / 32768f : 0f;
         }
     }
 
