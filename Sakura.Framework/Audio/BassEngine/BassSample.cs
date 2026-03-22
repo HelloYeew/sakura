@@ -6,13 +6,16 @@ using System.IO;
 using System.Runtime.InteropServices;
 using ManagedBass;
 using Sakura.Framework.Logging;
+using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Audio.BassEngine;
 
 internal class BassSample : ISample
 {
     private readonly BassAudioManager manager;
-    private readonly int sampleHandle;
+    private readonly IntPtr dataPtr;
+    private readonly long dataLength;
+    private GCHandle dataHandle;
 
     public double Length { get; }
 
@@ -24,53 +27,50 @@ internal class BassSample : ISample
         {
             stream.CopyTo(ms);
             byte[] data = ms.ToArray();
-            var handle = GCHandle.Alloc(data, GCHandleType.Pinned);
-            try
-            {
-                sampleHandle = Bass.SampleLoad(handle.AddrOfPinnedObject(), 0, data.Length, 255, BassFlags.Default);
-            }
-            finally
-            {
-                if (handle.IsAllocated)
-                    handle.Free();
-            }
+            dataLength = data.Length;
+            dataHandle = GCHandle.Alloc(data, GCHandleType.Pinned);
+            dataPtr = dataHandle.AddrOfPinnedObject();
         }
 
-        if (sampleHandle == 0)
-        {
-            Logger.Error($"BASS Error: {Bass.LastError} while creating sample from stream.", new BassException(Bass.LastError));
-            return;
-        }
+        GlobalStatistics.Get<int>("Audio", "Loaded Samples").Value++;
 
-        var info = Bass.SampleGetInfo(sampleHandle);
-        Length = (double)info.Length / info.Frequency / info.Channels * 1000.0;
+        Length = calculateLength();
     }
 
     public BassSample(BassAudioManager manager, string path)
     {
         this.manager = manager;
+        byte[] data = File.ReadAllBytes(path);
+        dataLength = data.Length;
+        dataHandle = GCHandle.Alloc(data, GCHandleType.Pinned);
+        dataPtr = dataHandle.AddrOfPinnedObject();
 
-        // Load sample data from file. Max 255 simultaneous plays.
-        sampleHandle = Bass.SampleLoad(path, 0, 0, 255, BassFlags.Default);
+        GlobalStatistics.Get<int>("Audio", "Loaded Samples").Value++;
 
-        if (sampleHandle == 0)
+        Length = calculateLength();
+    }
+
+    private double calculateLength()
+    {
+        int tempStream = Bass.CreateStream(dataPtr, 0, dataLength, BassFlags.Decode);
+        if (tempStream != 0)
         {
-            Logger.Error($"BASS Error: {Bass.LastError} while creating sample from file: {path}", new BassException(Bass.LastError));
-            return;
+            double length = Bass.ChannelBytes2Seconds(tempStream, Bass.ChannelGetLength(tempStream)) * 1000.0;
+            Bass.StreamFree(tempStream);
+            return length;
         }
 
-        var info = Bass.SampleGetInfo(sampleHandle);
-        Length = (double)info.Length / info.Frequency / info.Channels * 1000.0;
+        Logger.Error($"BASS Error: {Bass.LastError} while loading sample.", new BassException(Bass.LastError));
+        return 0;
     }
 
     public IAudioChannel GetChannel()
     {
-        int channelHandle = Bass.SampleGetChannel(sampleHandle);
-        if (channelHandle == 0)
-            return null;
+        int channelHandle = Bass.CreateStream(dataPtr, 0, dataLength, BassFlags.Decode | BassFlags.Float);
 
-        var channel = manager.CreateChannel(channelHandle, false);
-        return channel;
+        if (channelHandle == 0) return null;
+
+        return manager.CreateChannel(channelHandle, true, (BassAudioMixer)manager.SampleMixer);
     }
 
     public IAudioChannel Play()
@@ -96,10 +96,10 @@ internal class BassSample : ISample
     {
         if (isDisposed) return;
 
-        if (sampleHandle != 0)
-        {
-            Bass.SampleFree(sampleHandle);
-        }
+        if (dataHandle.IsAllocated)
+            dataHandle.Free();
+
+        GlobalStatistics.Get<int>("Audio", "Loaded Samples").Value--;
 
         isDisposed = true;
     }

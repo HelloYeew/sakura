@@ -86,4 +86,14 @@ public interface IAudioChannel : IDisposable
     /// Gets or sets the position in milliseconds to loop back to when <see cref="Looping"/> is enabled.
     /// </summary>
     double RestartPoint { get; set; }
+
+    /// <summary>
+    /// Gets the current real-time playback amplitude of the Left audio channel (0.0 to 1.0).
+    /// </summary>
+    float AmplitudeLeft { get; }
+
+    /// <summary>
+    /// Gets the current real-time playback amplitude of the Right audio channel (0.0 to 1.0).
+    /// </summary>
+    float AmplitudeRight { get; }
 }

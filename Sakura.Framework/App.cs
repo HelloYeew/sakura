@@ -22,6 +22,7 @@ using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Reactive;
+using Sakura.Framework.Timing;
 
 namespace Sakura.Framework;
 
@@ -63,6 +64,8 @@ public class App : Container, IFocusManager, IDisposable
 
     public override void Load()
     {
+        Clock = new FramedClock(Host.AppClock, true);
+
         base.Load();
 
         AudioManager = CreateAudioManager();
@@ -191,6 +194,7 @@ public class App : Container, IFocusManager, IDisposable
     {
         base.Update();
         AudioManager?.Update(Clock.ElapsedFrameTime);
+        Scheduler.Update();
     }
 
     public override bool OnKeyDown(KeyEvent e)

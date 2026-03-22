@@ -27,6 +27,16 @@ public interface IAudioManager
     Reactive<double> SampleVolume { get; }
 
     /// <summary>
+    /// Get the master mixer for track playbacks. All track playbacks will be routed through this mixer.
+    /// </summary>
+    IAudioMixer TrackMixer { get; }
+
+    /// <summary>
+    /// Get the master mixer for sample playbacks. All sample playbacks will be routed through this mixer.
+    /// </summary>
+    IAudioMixer SampleMixer { get; }
+
+    /// <summary>
     /// Loads a track from a <see cref="Stream"/>
     /// </summary>
     /// <param name="stream">The stream to load from</param>

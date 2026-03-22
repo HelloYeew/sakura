@@ -27,3 +27,5 @@ For reference on the generated code, see [generated source repository](https://g
 ## License
 
 This project is licensed under the MIT license. Please see [the license file](LICENSE) for more information. tl;dr you can do whatever you want as long as you include the original copyright and license notice in any copy of the software/source.
+
+The fonts used as the default font in this framework are licensed under [SIL Open Font License 1.1](https://openfontlicense.org).
