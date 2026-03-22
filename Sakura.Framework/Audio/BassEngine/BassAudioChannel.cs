@@ -26,6 +26,8 @@ internal class BassAudioChannel : IAudioChannel
     private readonly bool isStream;
     private SyncProcedure endSyncProcedure; // Keep a reference to prevent GC
     private bool isLooping;
+    private int cachedLevel;
+    private long lastLevelFetchTick;
     public bool AutoDispose { get; set; } = false;
 
     public BassAudioMixer Mixer { get; internal set; }
@@ -196,13 +198,29 @@ internal class BassAudioChannel : IAudioChannel
 
     private int getCurrentLevel()
     {
+        long currentTick = Environment.TickCount64;
+
+        // Cache the level for 15ms (roughly one frame at 60fps).
+        // This ensures left and right properties read the exact same buffer
+        // snapshot without advancing the decode stream twice.
+        if (currentTick - lastLevelFetchTick < 15)
+        {
+            return cachedLevel;
+        }
+
+        lastLevelFetchTick = currentTick;
+
         if (Mixer != null)
         {
             // Use Mix version of it to prevent consuming the buffer
-            return BassMix.ChannelGetLevel(ChannelHandle);
+            cachedLevel = BassMix.ChannelGetLevel(ChannelHandle);
         }
-        
-        return Bass.ChannelGetLevel(ChannelHandle);
+        else
+        {
+            cachedLevel = Bass.ChannelGetLevel(ChannelHandle);
+        }
+
+        return cachedLevel;
     }
 
     public float AmplitudeLeft
@@ -229,6 +247,8 @@ internal class BassAudioChannel : IAudioChannel
     {
         if (isDisposed) return;
         isDisposed = true;
+
+        Mixer?.RemoveChannel(this);
 
         // If it's a stream, we free the stream.
         // If it's a sample channel, BASS manages it, and it's freed when the sample is freed.
