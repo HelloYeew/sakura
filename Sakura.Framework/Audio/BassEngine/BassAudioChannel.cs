@@ -194,11 +194,22 @@ internal class BassAudioChannel : IAudioChannel
         }
     }
 
+    private int getCurrentLevel()
+    {
+        if (Mixer != null)
+        {
+            // Use Mix version of it to prevent consuming the buffer
+            return BassMix.ChannelGetLevel(ChannelHandle);
+        }
+        
+        return Bass.ChannelGetLevel(ChannelHandle);
+    }
+
     public float AmplitudeLeft
     {
         get
         {
-            int level = ManagedBass.Bass.ChannelGetLevel(ChannelHandle);
+            int level = getCurrentLevel();
             return level != -1 ? (level & 0xFFFF) / 32768f : 0f;
         }
     }
@@ -207,7 +218,7 @@ internal class BassAudioChannel : IAudioChannel
     {
         get
         {
-            int level = ManagedBass.Bass.ChannelGetLevel(ChannelHandle);
+            int level = getCurrentLevel();
             return level != -1 ? ((level >> 16) & 0xFFFF) / 32768f : 0f;
         }
     }
