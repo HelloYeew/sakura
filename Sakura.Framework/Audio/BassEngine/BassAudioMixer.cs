@@ -24,7 +24,7 @@ internal class BassAudioMixer : BassAudioChannel, IAudioMixer
             BassUtils.CheckError(BassMix.MixerAddChannel(
                 ChannelHandle,
                 bassChannel.ChannelHandle,
-                BassFlags.MixerChanPause), "adding channel to mixer");
+                BassFlags.MixerChanPause | BassFlags.MixerChanBuffer), "adding channel to mixer");
 
             bassChannel.Mixer = this;
 
