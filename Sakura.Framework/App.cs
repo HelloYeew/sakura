@@ -61,6 +61,7 @@ public class App : Container, IFocusManager, IDisposable
     private DrawVisualiser drawVisualiser;
     private GlobalStatisticsDisplay globalStatisticsDisplay;
     private TextureViewerDisplay textureViewerDisplay;
+    private AudioMixerVisualiser audioMixerVisualiser;
 
     public override void Load()
     {
@@ -132,6 +133,11 @@ public class App : Container, IFocusManager, IDisposable
             Depth = float.MaxValue - 10,
             Alpha = 0
         });
+        Add(audioMixerVisualiser = new AudioMixerVisualiser(AudioManager)
+        {
+            Depth = float.MaxValue - 10,
+            Alpha = 0
+        });
         Add(FpsGraph = new FpsGraph(Host.AppClock)
         {
             Depth = float.MaxValue
@@ -163,6 +169,11 @@ public class App : Container, IFocusManager, IDisposable
     {
         if (globalStatisticsDisplay.State == Visibility.Visible) globalStatisticsDisplay.Hide();
         textureViewerDisplay.ToggleVisibility();
+    }
+
+    private void toggleAudioMixerVisualiserDisplay()
+    {
+        audioMixerVisualiser.ToggleVisibility();
     }
 
     /// <summary>
@@ -212,6 +223,11 @@ public class App : Container, IFocusManager, IDisposable
         else if (!e.IsRepeat && e.Key == Key.F3 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
             toggleTextureViewerDisplay();
+            return true;
+        }
+        else if (!e.IsRepeat && e.Key == Key.F9 && (e.Modifiers & KeyModifiers.Control) > 0)
+        {
+            toggleAudioMixerVisualiserDisplay();
             return true;
         }
         if (!e.IsRepeat && e.Key == Key.F11 && (e.Modifiers & KeyModifiers.Control) > 0)
