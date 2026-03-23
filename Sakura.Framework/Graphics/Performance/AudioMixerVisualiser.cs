@@ -224,7 +224,8 @@ public class ChannelLevelDisplay : Container
     private readonly IAudioChannel channel;
     private readonly SpriteText nameText;
     private readonly SpriteText statsText;
-    private readonly SpriteText dbText;
+    private readonly SpriteText dbTextLeft;
+    private readonly SpriteText dbTextRight;
 
     private readonly Box leftVolumeBar;
     private readonly Box rightVolumeBar;
@@ -317,11 +318,19 @@ public class ChannelLevelDisplay : Container
 
         Add(barBackground);
 
-        Add(dbText = new SpriteText
+        Add(dbTextLeft = new SpriteText
         {
             Font = FontUsage.Default.With(size: 12),
-            Color = Color.LightSkyBlue,
+            Color = Color.LightGoldenrodYellow,
             Position = new Vector2(790, 0),
+            Size = new Vector2(300, Height)
+        });
+
+        Add(dbTextRight = new SpriteText
+        {
+            Font = FontUsage.Default.With(size: 12),
+            Color = Color.LightGoldenrodYellow,
+            Position = new Vector2(790, Height / 2f),
             Size = new Vector2(300, Height)
         });
     }
@@ -358,7 +367,8 @@ public class ChannelLevelDisplay : Container
         peakRight = Math.Max(targetRight, peakRight - 0.005f);
 
         // Update Text
-        dbText.Text = $"L: {formatDb(leftDb)} \nR: {formatDb(rightDb)}";
+        dbTextLeft.Text = $"L: {formatDb(leftDb)}";
+        dbTextRight.Text = $"R: {formatDb(rightDb)}";
 
         // Update Main Bars (Turn red if clipping near 0 dB)
         leftVolumeBar.Color = currentLeft > 0.95f ? Color.Red : Color.Lime;
