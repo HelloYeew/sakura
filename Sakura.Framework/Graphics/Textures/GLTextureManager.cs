@@ -7,6 +7,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
+using Sakura.Framework.Statistic;
 using Silk.NET.OpenGL;
 
 namespace Sakura.Framework.Graphics.Textures;
@@ -57,6 +58,7 @@ public class GLTextureManager : ITextureManager
             var texture = new Texture(glTexture);
 
             textureCache[path] = texture;
+            GlobalStatistics.Get<int>("Textures", "Loaded Textures").Value = textureCache.Count;
             return texture;
         }
         catch (Exception ex)
@@ -66,9 +68,23 @@ public class GLTextureManager : ITextureManager
         }
     }
 
-    public Texture FromPixelData(int width, int height, ReadOnlySpan<byte> pixelData)
+    public Texture FromPixelData(int width, int height, ReadOnlySpan<byte> pixelData, string cacheKey = null)
     {
-        return new Texture(new GLTexture(gl, width, height, pixelData));
+        var texture = new Texture(new GLTexture(gl, width, height, pixelData));
+
+        if (!string.IsNullOrEmpty(cacheKey))
+        {
+            if (textureCache.TryGetValue(cacheKey, out var oldTexture))
+            {
+                oldTexture.GlTexture?.Dispose();
+            }
+
+            textureCache[cacheKey] = texture;
+            GlobalStatistics.Get<int>("Textures", "Loaded Textures").Value = textureCache.Count;
+            GlobalStatistics.Get<int>("Textures", "Texture Updates").Value++;
+        }
+
+        return texture;
     }
 
     /// <summary>
@@ -85,6 +101,26 @@ public class GLTextureManager : ITextureManager
         return new Texture(glTex);
     }
 
+    public bool Evict(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return false;
+
+        if (textureCache.TryGetValue(path, out var texture))
+        {
+            if (texture != WhitePixel && texture.GlTexture.Handle != missingTexture.GlTexture.Handle)
+            {
+                texture.Dispose();
+            }
+
+            textureCache.Remove(path);
+
+            GlobalStatistics.Get<int>("Textures", "Loaded Textures").Value = textureCache.Count;
+            return true;
+        }
+
+        return false;
+    }
+
     public void Dispose()
     {
         foreach (var tex in textureCache.Values)
@@ -97,4 +133,6 @@ public class GLTextureManager : ITextureManager
 
         textureCache.Clear();
     }
+
+    public IEnumerable<Texture> GetAllTextures() => textureCache.Values;
 }

@@ -1,6 +1,8 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+#nullable disable
+
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -10,6 +12,7 @@ using ManagedBass.Fx;
 using ManagedBass.Mix;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Reactive;
+using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Audio.BassEngine;
 
@@ -17,11 +20,13 @@ namespace Sakura.Framework.Audio.BassEngine;
 /// BASS implementation of the IAudioManager.
 /// Initializes BASS and creates BASS-backed tracks, samples, and channels.
 /// </summary>
-public class BassAudioManager : IAudioManager, IDisposable
+internal class BassAudioManager : IAudioManager, IDisposable
 {
     private readonly List<BassAudioChannel> activeChannels = new List<BassAudioChannel>();
     private readonly ConcurrentQueue<Action> mainThreadActions = new ConcurrentQueue<Action>();
-    private readonly ConcurrentDictionary<int, float> originalFrequencies = new ConcurrentDictionary<int, float>();
+
+    private readonly BassAudioMixer trackMixer;
+    private readonly BassAudioMixer sampleMixer;
 
     public Reactive<double> MasterVolume { get; } = new Reactive<double>(1.0);
     public Reactive<double> TrackVolume { get; } = new Reactive<double>(1.0);
@@ -39,12 +44,18 @@ public class BassAudioManager : IAudioManager, IDisposable
             Bass.Configure(Configuration.DeviceBufferLength, -1);
             Bass.Configure(Configuration.PlaybackBufferLength, 100);
 
-            TrackVolume.ValueChanged += e => Bass.GlobalStreamVolume = (int)e.NewValue * 10000; // From 0 to 10,000
-            SampleVolume.ValueChanged += e => Bass.GlobalSampleVolume = (int)e.NewValue * 10000; // From 0 to 10,000
+            trackMixer = new BassAudioMixer(this);
+            sampleMixer = new BassAudioMixer(this);
+
+            trackMixer.Play();
+            sampleMixer.Play();
+
+            TrackVolume.ValueChanged += e => trackMixer.Volume.Value = e.NewValue;
+            SampleVolume.ValueChanged += e => sampleMixer.Volume.Value = e.NewValue;
             MasterVolume.ValueChanged += e =>
             {
-                Bass.GlobalStreamVolume = (int)(TrackVolume.Value * e.NewValue * 10000);
-                Bass.GlobalSampleVolume = (int)(SampleVolume.Value * e.NewValue * 10000);
+                trackMixer.Volume.Value = TrackVolume.Value * e.NewValue;
+                sampleMixer.Volume.Value = SampleVolume.Value * e.NewValue;
             };
 
             Logger.Verbose("🔈 BASS initialised");
@@ -88,6 +99,9 @@ public class BassAudioManager : IAudioManager, IDisposable
         }
     }
 
+    public IAudioMixer TrackMixer => trackMixer;
+    public IAudioMixer SampleMixer => sampleMixer;
+
     public ITrack CreateTrack(Stream stream)
     {
         return new BassTrack(this, stream);
@@ -111,22 +125,28 @@ public class BassAudioManager : IAudioManager, IDisposable
     /// <summary>
     /// Creates a BASS channel wrapper and registers it.
     /// </summary>
-    internal BassAudioChannel CreateChannel(int channelHandle, bool isStream)
+    internal BassAudioChannel CreateChannel(int channelHandle, bool isStream, BassAudioMixer targetMixer = null)
     {
-        var channel = new BassAudioChannel(channelHandle, this, isStream);
-        activeChannels.Add(channel);
+        var channel = new BassAudioChannel(channelHandle, this, isStream, targetMixer);
 
-        // Store original frequency for pitch shifting
-        float freq = 0;
-        Bass.ChannelGetAttribute(channelHandle, ChannelAttribute.Frequency, out freq);
-        originalFrequencies.TryAdd(channelHandle, freq);
+        lock (activeChannels)
+        {
+            activeChannels.Add(channel);
+        }
+
+        Bass.ChannelGetAttribute(channelHandle, ChannelAttribute.Frequency, out float _);
+
+        targetMixer?.AddChannel(channel);
 
         return channel;
     }
 
-    internal float GetOriginalFrequency(int channelHandle)
+    internal void RemoveChannel(BassAudioChannel channel)
     {
-        return originalFrequencies.TryGetValue(channelHandle, out float freq) ? freq : 48000;
+        lock (activeChannels)
+        {
+            activeChannels.Remove(channel);
+        }
     }
 
     /// <summary>
@@ -148,35 +168,59 @@ public class BassAudioManager : IAudioManager, IDisposable
             action.Invoke();
         }
 
+        int playingCount = 0;
+
         // Clean up disposed or stopped channels
-        for (int i = activeChannels.Count - 1; i >= 0; i--)
+        lock (activeChannels)
         {
-            var channel = activeChannels[i];
-            if (Bass.ChannelIsActive(channel.ChannelHandle) == PlaybackState.Stopped)
+            for (int i = activeChannels.Count - 1; i >= 0; i--)
             {
-                if (channel.IsRunning.Value)
+                var channel = activeChannels[i];
+                var state = Bass.ChannelIsActive(channel.ChannelHandle);
+                switch (state)
                 {
-                    // Wasn't stopped manually, so it must have ended
-                    channel.IsRunning.Value = false;
+                    case PlaybackState.Stopped:
+                    {
+                        if (channel.IsRunning.Value)
+                        {
+                            channel.IsRunning.Value = false;
+                        }
+
+                        if (channel.AutoDispose && !channel.IsRunning.Value)
+                        {
+                            channel.Dispose();
+                        }
+
+                        break;
+                    }
+                    case PlaybackState.Playing:
+                    {
+                        playingCount++;
+                        break;
+                    }
                 }
             }
-
-            // TODO: Remve disposed channels or sample can be removed if needed
+            GlobalStatistics.Get<int>("Audio", "Allocated Channels").Value = activeChannels.Count;
+            GlobalStatistics.Get<int>("Audio", "Playing Channels").Value = playingCount;
         }
-        Bass.Update((int)Math.Max(1, frameTime));
+
+        GlobalStatistics.Get<double>("Audio", "BASS CPU Usage (%)").Value = Bass.CPUUsage;
+
+        // Bass.Update((int)Math.Max(1, frameTime));
     }
 
     public void Dispose()
     {
-        // Free all active channels
-        foreach (var channel in activeChannels)
+        BassAudioChannel[] channelsToDispose;
+        lock (activeChannels)
+        {
+            channelsToDispose = activeChannels.ToArray();
+        }
+        foreach (var channel in channelsToDispose)
         {
             channel.Dispose();
         }
         activeChannels.Clear();
-        originalFrequencies.Clear();
-
-        // Free BASS
         Bass.Free();
     }
 }

@@ -12,6 +12,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Sakura.Framework.Development;
 using Sakura.Framework.Platform;
+using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Logging;
 
@@ -224,7 +225,7 @@ public class Logger
 
         Debug("Logger is shutting down...");
 
-        cancellationTokenSource.CancelAfter(1000);
+        cancellationTokenSource.Cancel();
 
         try
         {
@@ -261,6 +262,8 @@ public class Logger
             return;
 
         message_queue.Enqueue(new LogMessage(DateTime.UtcNow, level, target, message));
+
+        GlobalStatistics.Get<int>("Logger", $"Log {level} Count").Value++;
     }
 
     private static async Task processLogQueue(CancellationToken token)
@@ -289,9 +292,10 @@ public class Logger
                 }
                 catch (OperationCanceledException)
                 {
-                    // This is expected when shutdown is called and the queue is empty.
-                    // Exit the loop.
-                    break;
+                    // In case on shutdown signal triggered
+                    // Just don't break the loop immediately
+                    // Continue looping and it will automatically exit when the queue is empty.
+                    continue;
                 }
             }
         }
@@ -301,7 +305,7 @@ public class Logger
     {
         foreach (string message in logMessage.Message.Split(new[] { '\n' }, StringSplitOptions.None))
         {
-            string formattedMessage = getFormattedMessage(logMessage);
+            string formattedMessage = getFormattedMessage(logMessage.Timestamp, logMessage.Level, message);
 
             var writer = getFileWriter(logMessage.Target);
             await writer.WriteLineAsync(formattedMessage);
@@ -330,6 +334,9 @@ public class Logger
 
     private static StreamWriter getFileWriter(LoggingTarget target)
     {
+        if (storage == null)
+            return StreamWriter.Null;
+
         return file_writers.GetOrAdd(target, key =>
         {
             string fileName = $"{startupTimestamp}.{key.ToString().ToLower()}.log";

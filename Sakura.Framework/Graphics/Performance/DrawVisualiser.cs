@@ -12,34 +12,38 @@ using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Text;
+using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.Performance;
 
-public class DrawVisualiser : Container
+public class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisualiser
 {
     private readonly Drawable targetRoot;
     private readonly Box backgroundBox;
     private readonly FlowContainer treeFlow;
-    private readonly FlowContainer propertyFlow;
+    private readonly ScrollableContainer parentTreeFlow;
     private readonly ScrollableContainer parentPropertyFlow;
+    private readonly FlowContainer propertyFlow;
+    private readonly Container leftContainer;
     private readonly Container rightContainer;
     private readonly Box highlightBox;
-    private Drawable selectedDrawable;
+    private Drawable? selectedDrawable;
     private readonly SpriteText currentTimeText;
     private readonly SpriteText runningTimeText;
 
     private Drawable lastSelectedDrawable;
     private PropertyInfo[] cachedProperties;
+    private FieldInfo[] cachedFields;
     private SpriteText loadStateText;
-    private readonly List<(PropertyInfo prop, SpriteText textElement)> propertyTextMap = new();
+    private readonly List<PropertyTracker> propertyTextMap = new();
     private readonly List<(Drawable drawable, int depth)> cachedTreeStructure = new();
     private readonly List<(Drawable drawable, int depth)> currentTreeStructure = new();
 
-    private const float WIDTH_SPLIT = 0.4f;
-    private const float ENTRY_HEIGHT = 20;
+    private const float width_split = 0.4f;
+    private const float entry_height = 20;
 
     public DrawVisualiser(Drawable root)
     {
@@ -49,6 +53,15 @@ public class DrawVisualiser : Container
         Anchor = Anchor.TopLeft;
         Origin = Anchor.TopLeft;
         AlwaysPresent = true;
+
+        Add(highlightBox = new Box
+        {
+            Anchor = Anchor.TopLeft,
+            Origin = Anchor.TopLeft,
+            Color = Color.Red,
+            Alpha = 0,
+            Blending = BlendingMode.Additive
+        });
 
         // Background
         Add(backgroundBox = new Box
@@ -64,7 +77,7 @@ public class DrawVisualiser : Container
         // Header
         Add(new SpriteText
         {
-            Text = "Draw Visualiser (Ctrl + F2)",
+            Text = "Draw Visualiser (Ctrl + F1)",
             Font = FontUsage.Default.With(size: 30, weight: "Bold"),
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
@@ -136,32 +149,59 @@ public class DrawVisualiser : Container
             Height = 30
         });
 
-        // 2. Tree View (Left Side)
-        Add(new Container
+        // Tree view (left)
+        Add(leftContainer = new Container
+        {
+            RelativeSizeAxes = Axes.Both,
+            Anchor = Anchor.CentreLeft,
+            Origin = Anchor.CentreLeft,
+            Size = new Vector2(width_split, 0.75f),
+            RelativePositionAxes = Axes.X,
+            Name = "Left Container"
+        });
+
+        leftContainer.Add(new Box()
+        {
+            Anchor = Anchor.Centre,
+            Origin = Anchor.Centre,
+            RelativeSizeAxes = Axes.Both,
+            Color = Color.Black,
+            Alpha = 0.2f,
+            Size = new Vector2(1)
+        });
+
+        leftContainer.Add(parentTreeFlow = new ScrollableContainer()
         {
             RelativeSizeAxes = Axes.Both,
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
-            Size = new Vector2(WIDTH_SPLIT, 1f),
-            Child = treeFlow = new FlowContainer
-            {
-                Anchor = Anchor.CentreLeft,
-                Origin = Anchor.CentreLeft,
-                RelativeSizeAxes = Axes.X,
-                AutoSizeAxes = Axes.Y,
-                Direction = FlowDirection.Vertical,
-                Width = 1f
-            }
+            Size = new Vector2(1),
+            RelativePositionAxes = Axes.Both,
+            Name = "Tree View Container"
         });
 
+        treeFlow = new FlowContainer
+        {
+            Anchor = Anchor.TopLeft,
+            Origin = Anchor.TopLeft,
+            RelativeSizeAxes = Axes.X,
+            AutoSizeAxes = Axes.Y,
+            Spacing = new Vector2(0, 2),
+            Width = 1f,
+            Name = "Tree Flow"
+        };
+
+        parentTreeFlow.Add(treeFlow);
+
+        // Property (right)
         Add(rightContainer = new Container
         {
             RelativeSizeAxes = Axes.Both,
             Anchor = Anchor.CentreLeft,
             Origin = Anchor.CentreLeft,
-            Size = new Vector2(1f - WIDTH_SPLIT, 0.75f),
+            Size = new Vector2(1f - width_split, 0.75f),
             RelativePositionAxes = Axes.X,
-            Position = new Vector2(WIDTH_SPLIT, 0),
+            Position = new Vector2(width_split, 0),
             Name = "Right Container"
         });
 
@@ -197,36 +237,35 @@ public class DrawVisualiser : Container
         };
 
         parentPropertyFlow.Add(propertyFlow);
-
-        // 4. Highlight Box (Overlay)
-        // We add this to a separate container that doesn't mask, or just on top.
-        // It needs to follow the target drawable's screen position.
-        Add(highlightBox = new Box
-        {
-            Anchor = Anchor.TopLeft,
-            Origin = Anchor.TopLeft,
-            Color = Color.Red,
-            Alpha = 0,
-            Blending = BlendingMode.Additive
-        });
     }
 
-    private double timeUntilNextRefresh;
+    private double timeUntilNextTreeRefresh;
+    private double timeUntilNextPropertyRefresh;
 
     public override void Update()
     {
         base.Update();
 
-        refreshProperties();
+        if (State == Visibility.Hidden) return;
 
-        timeUntilNextRefresh -= Clock.ElapsedFrameTime;
-        if (timeUntilNextRefresh <= 0)
+        timeUntilNextPropertyRefresh -= Clock.ElapsedFrameTime;
+        if (timeUntilNextPropertyRefresh <= 0)
         {
-            refreshTree();
-            timeUntilNextRefresh = 500;
+            refreshProperties();
+
+            currentTimeText.Text = $"{DateTime.Now:dd MMMM yyyy HH:mm:ss tt}";
+            runningTimeText.Text = $"Has been running for {TimeSpan.FromSeconds(targetRoot.Clock.CurrentTime / 1000):hh\\:mm\\:ss}";
+
+            timeUntilNextPropertyRefresh = 20;
         }
 
-        // Update highlight box position
+        timeUntilNextTreeRefresh -= Clock.ElapsedFrameTime;
+        if (timeUntilNextTreeRefresh <= 0)
+        {
+            refreshTree();
+            timeUntilNextTreeRefresh = 500;
+        }
+
         if (selectedDrawable != null && selectedDrawable.IsAlive && selectedDrawable.Parent != null)
         {
             highlightBox.Alpha = 0.4f;
@@ -311,7 +350,7 @@ public class DrawVisualiser : Container
 
         currentTreeStructure.Add((d, depth));
 
-        if (d is DrawVisualiser || d is FpsGraph) return;
+        if (d is IRemoveFromDrawVisualiser) return;
 
         if (d is Container c)
         {
@@ -337,6 +376,7 @@ public class DrawVisualiser : Container
             propertyTextMap.Clear();
             lastSelectedDrawable = null;
             cachedProperties = null;
+            cachedFields = null;
             return;
         }
 
@@ -349,8 +389,44 @@ public class DrawVisualiser : Container
             propertyTextMap.Clear();
             lastSelectedDrawable = selectedDrawable;
 
-            // Cache the reflection call so we aren't doing it every frame
-            cachedProperties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+            var propList = new List<PropertyInfo>();
+            var fieldList = new List<FieldInfo>();
+            Type? currentType = type;
+
+            // Walk up the inheritance tree to capture all private base members
+            while (currentType != null && currentType != typeof(object))
+            {
+                var props = currentType.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly);
+                foreach (var prop in props)
+                {
+                    if (prop.GetIndexParameters().Length > 0) continue;
+
+                    // If it's a container, don't track "child" or "children" properties.
+                    if (selectedDrawable is Container &&
+                        (string.Equals(prop.Name, "Child", StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(prop.Name, "Children", StringComparison.OrdinalIgnoreCase)))
+                        continue;
+
+                    // Prevent duplicate properties (e.g., if derived class uses 'new' keyword)
+                    if (!propList.Exists(p => p.Name == prop.Name))
+                        propList.Add(prop);
+                }
+
+                var fields = currentType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly);
+                foreach (var field in fields)
+                {
+                    // Filter out compiler-generated backing fields for auto-properties
+                    if (field.Name.Contains("k__BackingField")) continue;
+
+                    if (!fieldList.Exists(f => f.Name == field.Name))
+                        fieldList.Add(field);
+                }
+
+                currentType = currentType.BaseType;
+            }
+
+            cachedProperties = propList.ToArray();
+            cachedFields = fieldList.ToArray();
 
             // Header (Static, doesn't need to be tracked)
             addPropertyText($"Type: {type.Name}", Color.Yellow);
@@ -361,11 +437,23 @@ public class DrawVisualiser : Container
             // Properties
             foreach (var prop in cachedProperties)
             {
-                if (prop.GetIndexParameters().Length > 0) continue;
-
-                // Create the UI text once, and save a reference to it in our map
                 var textElement = addPropertyText($"{prop.Name}: loading...", Color.White);
-                propertyTextMap.Add((prop, textElement));
+                propertyTextMap.Add(new PropertyTracker
+                {
+                    Prop = prop,
+                    TextElement = textElement,
+                    LastStringValue = null
+                });
+            }
+
+            foreach (var field in cachedFields)
+            {
+                var textElement = addPropertyText($"{field.Name}: loading...", Color.White);
+                propertyTextMap.Add(new PropertyTracker
+                {
+                    Field = field,
+                    TextElement = textElement
+                });
             }
         }
 
@@ -375,20 +463,31 @@ public class DrawVisualiser : Container
             loadStateText.Text = $"Load State: {selectedDrawable.IsLoaded}";
         }
 
-        foreach (var mapping in propertyTextMap)
+        foreach (var tracker in propertyTextMap)
         {
             try
             {
-                object val = mapping.prop.GetValue(selectedDrawable);
+                object? val = tracker.Prop != null
+                    ? tracker.Prop.GetValue(selectedDrawable)
+                    : tracker.Field?.GetValue(selectedDrawable);
+
                 string valStr = val?.ToString() ?? "null";
+
+                if (valStr == tracker.LastStringValue) continue;
+
+                tracker.LastStringValue = valStr;
 
                 Color textColor = Color.White;
                 if (val is bool b) textColor = b ? Color.Green : Color.Red;
                 else if (val is ValueType) textColor = Color.Cyan;
 
-                string newText = $"{mapping.prop.Name}: {valStr}";
-                mapping.textElement.Text = newText;
-                mapping.textElement.Color = textColor;
+                bool isPrivate = (tracker.Prop?.GetMethod != null && !tracker.Prop.GetMethod.IsPublic) ||
+                                 (tracker.Field != null && tracker.Field.IsPrivate);
+                if (isPrivate) textColor = Color.LightGray;
+
+                string name = tracker.Prop != null ? tracker.Prop.Name : tracker.Field!.Name;
+                tracker.TextElement.Text = $"{name}: {valStr}";
+                tracker.TextElement.Color = textColor;
             }
             catch
             {
@@ -434,6 +533,18 @@ public class DrawVisualiser : Container
         }
 
         return base.OnKeyDown(e);
+    }
+
+    protected override void PopIn() => this.FadeIn(200, Easing.OutQuint);
+
+    protected override void PopOut() => this.FadeOut(200, Easing.OutQuint);
+
+    private class PropertyTracker
+    {
+        public PropertyInfo Prop;
+        public FieldInfo? Field;
+        public SpriteText TextElement;
+        public string? LastStringValue;
     }
 }
 
@@ -492,5 +603,15 @@ public class VisualiserTreeItem : Container
     {
         ClickAction?.Invoke();
         return true;
+    }
+
+    public override bool OnKeyDown(KeyEvent e)
+    {
+        if (e.Key == Key.Escape)
+        {
+            Hide();
+            return true;
+        }
+        return base.OnKeyDown(e);
     }
 }

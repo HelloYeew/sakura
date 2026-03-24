@@ -6,6 +6,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Allocation;
 
@@ -32,6 +33,7 @@ public class DependencyContainer : IReadOnlyDependencyContainer
     public void Cache<T>(T instance) where T : class
     {
         cache[typeof(T)] = instance!;
+        GlobalStatistics.Get<int>("DI", "Cached Dependencies").Value = cache.Count;
     }
 
     /// <summary>
@@ -66,41 +68,52 @@ public class DependencyContainer : IReadOnlyDependencyContainer
 
     private static Action<object, IReadOnlyDependencyContainer> createInjector(Type type)
     {
-        var members = type.GetMembers(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-            .Where(m => m.GetCustomAttribute<ResolvedAttribute>() != null);
-
         var delegates = new List<Action<object, IReadOnlyDependencyContainer>>();
 
         var getMethod = typeof(IReadOnlyDependencyContainer).GetMethod(nameof(Get), BindingFlags.Public | BindingFlags.Instance);
         if (getMethod == null)
             throw new InvalidOperationException($"Could not find the '{nameof(Get)}' method on {nameof(IReadOnlyDependencyContainer)}.");
 
-        foreach (var member in members)
+        Type? currentType = type;
+
+        // Walk up the inheritance hierarchy to find [Resolved] attributes on private base members
+        while (currentType != null && currentType != typeof(object))
         {
-            if (member is PropertyInfo property)
+            // Use DeclaredOnly to accurately capture private members of the current step in the hierarchy
+            var members = currentType.GetMembers(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+                .Where(m => m.GetCustomAttribute<ResolvedAttribute>() != null);
+
+            foreach (var member in members)
             {
-                var setMethod = property.SetMethod;
-                if (setMethod == null)
-                    throw new InvalidOperationException($"Member {type.Name}.{member.Name} is marked with [Resolved] but has no setter.");
-
-                var concreteGetMethod = getMethod.MakeGenericMethod(property.PropertyType);
-
-                delegates.Add((instance, container) =>
+                if (member is PropertyInfo property)
                 {
-                    object? dependency = concreteGetMethod.Invoke(container, null);
-                    setMethod.Invoke(instance, new[] { dependency });
-                });
-            }
-            else if (member is FieldInfo field)
-            {
-                var concreteGetMethod = getMethod.MakeGenericMethod(field.FieldType);
+                    // Pass 'true' to explicitly request non-public setters
+                    var setMethod = property.GetSetMethod(true);
 
-                delegates.Add((instance, container) =>
+                    if (setMethod == null)
+                        throw new InvalidOperationException($"Member {currentType.Name}.{member.Name} is marked with [Resolved] but has no setter.");
+
+                    var concreteGetMethod = getMethod.MakeGenericMethod(property.PropertyType);
+
+                    delegates.Add((instance, container) =>
+                    {
+                        object? dependency = concreteGetMethod.Invoke(container, null);
+                        setMethod.Invoke(instance, new[] { dependency });
+                    });
+                }
+                else if (member is FieldInfo field)
                 {
-                    object? dependency = concreteGetMethod.Invoke(container, null);
-                    field.SetValue(instance, dependency);
-                });
+                    var concreteGetMethod = getMethod.MakeGenericMethod(field.FieldType);
+
+                    delegates.Add((instance, container) =>
+                    {
+                        object? dependency = concreteGetMethod.Invoke(container, null);
+                        field.SetValue(instance, dependency);
+                    });
+                }
             }
+
+            currentType = currentType.BaseType;
         }
 
         return (instance, container) =>

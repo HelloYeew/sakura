@@ -1,20 +1,23 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+#nullable disable
+
+using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using ManagedBass;
 using Sakura.Framework.Logging;
+using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Audio.BassEngine;
 
 internal class BassSample : ISample
 {
     private readonly BassAudioManager manager;
-    private readonly int sampleHandle;
-
+    private readonly IntPtr dataPtr;
+    private readonly long dataLength;
     private GCHandle dataHandle;
-    private System.IntPtr dataPtr;
 
     public double Length { get; }
 
@@ -25,66 +28,87 @@ internal class BassSample : ISample
         using (var ms = new MemoryStream())
         {
             stream.CopyTo(ms);
-            var data = ms.ToArray();
+            byte[] data = ms.ToArray();
+            dataLength = data.Length;
             dataHandle = GCHandle.Alloc(data, GCHandleType.Pinned);
             dataPtr = dataHandle.AddrOfPinnedObject();
-
-            // Load sample data. Max 255 simultaneous plays.
-            sampleHandle = Bass.SampleLoad(dataPtr, 0, data.Length, 255, BassFlags.Default);
         }
 
-        if (sampleHandle == 0)
-        {
-            Logger.Error($"BASS Error: {Bass.LastError} while creating sample from stream.", new BassException(Bass.LastError));
-            return;
-        }
+        GlobalStatistics.Get<int>("Audio", "Loaded Samples").Value++;
 
-        var info = Bass.SampleGetInfo(sampleHandle);
-        Length = (double)info.Length / info.Frequency / info.Channels * 1000.0;
+        Length = calculateLength();
     }
 
     public BassSample(BassAudioManager manager, string path)
     {
         this.manager = manager;
+        byte[] data = File.ReadAllBytes(path);
+        dataLength = data.Length;
+        dataHandle = GCHandle.Alloc(data, GCHandleType.Pinned);
+        dataPtr = dataHandle.AddrOfPinnedObject();
 
-        // Load sample data from file. Max 255 simultaneous plays.
-        sampleHandle = Bass.SampleLoad(path, 0, 0, 255, BassFlags.Default);
+        GlobalStatistics.Get<int>("Audio", "Loaded Samples").Value++;
 
-        if (sampleHandle == 0)
+        Length = calculateLength();
+    }
+
+    private double calculateLength()
+    {
+        int tempStream = Bass.CreateStream(dataPtr, 0, dataLength, BassFlags.Decode);
+        if (tempStream != 0)
         {
-            Logger.Error($"BASS Error: {Bass.LastError} while creating sample from file: {path}", new BassException(Bass.LastError));
-            return;
+            double length = Bass.ChannelBytes2Seconds(tempStream, Bass.ChannelGetLength(tempStream)) * 1000.0;
+            Bass.StreamFree(tempStream);
+            return length;
         }
 
-        var info = Bass.SampleGetInfo(sampleHandle);
-        Length = (double)info.Length / info.Frequency / info.Channels * 1000.0;
+        Logger.Error($"BASS Error: {Bass.LastError} while loading sample.", new BassException(Bass.LastError));
+        return 0;
+    }
+
+    public IAudioChannel GetChannel()
+    {
+        int channelHandle = Bass.CreateStream(dataPtr, 0, dataLength, BassFlags.Decode | BassFlags.Float);
+
+        if (channelHandle == 0)
+            return null!;
+
+        return manager.CreateChannel(channelHandle, true, (BassAudioMixer)manager.SampleMixer);
     }
 
     public IAudioChannel Play()
     {
-        int channelHandle = Bass.SampleGetChannel(sampleHandle);
-        if (channelHandle == 0)
-            return null;
-
-        var channel = manager.CreateChannel(channelHandle, false);
+        var channel = GetChannel();
+        channel.AutoDispose = true;
         channel.Play();
         return channel;
+    }
+
+    private bool isDisposed;
+
+    public void Dispose()
+    {
+        Dispose(true);
+#pragma warning disable CA1816
+        GC.SuppressFinalize(this);
+#pragma warning restore CA1816
+    }
+
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (isDisposed) return;
+
+        if (dataHandle.IsAllocated)
+            dataHandle.Free();
+
+        GlobalStatistics.Get<int>("Audio", "Loaded Samples").Value--;
+
+        isDisposed = true;
     }
 
     ~BassSample()
     {
         Dispose(false);
-    }
-
-    public void Dispose(bool disposing)
-    {
-        if (sampleHandle != 0)
-        {
-            Bass.SampleFree(sampleHandle);
-        }
-        if (dataHandle.IsAllocated)
-        {
-            dataHandle.Free();
-        }
     }
 }

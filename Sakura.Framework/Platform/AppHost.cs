@@ -9,7 +9,6 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Runtime;
 using System.Runtime.ExceptionServices;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetBrains.Annotations;
@@ -17,13 +16,12 @@ using Sakura.Framework.Configurations;
 using Sakura.Framework.Development;
 using Sakura.Framework.Extensions.ExceptionExtensions;
 using Sakura.Framework.Extensions.IEnumerableExtensions;
-using Sakura.Framework.Graphics.Drawables;
-using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Reactive;
+using Sakura.Framework.Statistic;
 using Sakura.Framework.Timing;
 
 namespace Sakura.Framework.Platform;
@@ -330,13 +328,16 @@ public abstract class AppHost : IDisposable
                     }
                 }
             }
-            catch (OutOfMemoryException)
+            catch (OutOfMemoryException ex)
             {
+                Logger.Error("The application has run out of memory and needs to close.", ex);
             }
         }
         catch (Exception ex)
         {
             Logger.Error("An unhandled exception occurred during runtime.", ex);
+            // Rethrow so process will exit with error code
+            throw;
         }
         finally
         {
@@ -364,18 +365,6 @@ public abstract class AppHost : IDisposable
             int currentValue = (int)FrameLimiter.Value;
             int nextValue = (currentValue + 1) % Enum.GetValues(typeof(FrameSync)).Length;
             FrameLimiter.Value = (FrameSync)nextValue;
-        }
-        if (!e.IsRepeat && e.Key == Key.F2 && (e.Modifiers & KeyModifiers.Control) > 0)
-        {
-            app?.ToggleVisualiser();
-        }
-        if (!e.IsRepeat && e.Key == Key.F1)
-        {
-            var builder = new StringBuilder();
-            builder.AppendLine("--- HIERARCHY DUMP ---");
-            PrintHierarchy(app, builder);
-            Logger.Log(builder.ToString());
-            Logger.Log("Hierarchy dumped to console. Press F1 to dump again.");
         }
 
         if (!e.IsRepeat && e.Key == Key.F11 && (e.Modifiers & KeyModifiers.Control) == 0)
@@ -436,31 +425,6 @@ public abstract class AppHost : IDisposable
         Window?.SetVSync(e.NewValue == FrameSync.VSync);
     }
 
-    public void PrintHierarchy(Drawable drawable, StringBuilder builder, string indent = "")
-    {
-        if (drawable is FpsGraph)
-            return;
-
-        builder.AppendLine($"{indent}- {drawable.GetDisplayName()}");
-        if (drawable is Container)
-            builder.AppendLine($"{indent}  AutoSizeAxes: {((Container)drawable).AutoSizeAxes}");
-        builder.AppendLine($"{indent}  Size: {drawable.Size} (DrawSize: {drawable.DrawSize}, RelativeSize: {drawable.RelativeSizeAxes})");
-        builder.AppendLine($"{indent}  Position (Relative): {drawable.Position} (Anchor: {drawable.Anchor}, Origin: {drawable.Origin}, RelativePosition: {drawable.RelativePositionAxes})");
-        builder.AppendLine($"{indent}  DrawRectangle (Absolute): {drawable.DrawRectangle}");
-        builder.AppendLine($"{indent}  Alpha: {drawable.Alpha} (DrawAlpha: {drawable.DrawAlpha})");
-        builder.AppendLine($"{indent}  ModelMatrix: {drawable.ModelMatrix}");
-        builder.AppendLine($"{indent}  Clock: {drawable.Clock}");
-
-        if (drawable is Container container)
-        {
-            builder.AppendLine($"{indent}  Children ({container.Children.Count}):");
-            foreach (var child in container.Children)
-            {
-                PrintHierarchy(child, builder, indent + "  ");
-            }
-        }
-    }
-
     /// <summary>
     /// This method is called at a fixed 1000Hz for precise input handling.
     /// </summary>
@@ -480,6 +444,9 @@ public abstract class AppHost : IDisposable
     /// </summary>
     protected virtual void PerformUpdate()
     {
+        GlobalStatistics.Get<double>("Host", "Uptime (ms)").Value = AppClock.CurrentTime;
+        GlobalStatistics.Get<double>("Host", "Target Update Hz").Value = targetUpdateHz;
+
         if (targetUpdateHz == 0) // Unlimited mode
         {
             // In unlimited mode, we just update once per loop iteration.
@@ -505,6 +472,7 @@ public abstract class AppHost : IDisposable
     /// </summary>
     protected virtual void PerformDraw()
     {
+        GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame").Value = 0;
         Renderer?.Clear();
         Renderer?.StartFrame();
         Renderer?.Draw(AppClock);
@@ -560,15 +528,15 @@ public abstract class AppHost : IDisposable
         // ignore if consumer wishes to handle the exception themselves
         if (ExceptionThrown?.Invoke(exception) == true) return;
 
-        if (isTerminating)
-        {
-            return;
-        }
-
         AppDomain.CurrentDomain.UnhandledException -= unhandledExceptionHandler;
         TaskScheduler.UnobservedTaskException -= unobservedTaskExceptionHandler;
 
         Logger.Shutdown();
+
+        if (isTerminating)
+        {
+            return;
+        }
 
         var captured = ExceptionDispatchInfo.Capture(exception);
 

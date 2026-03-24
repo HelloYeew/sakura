@@ -1,12 +1,14 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
+using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Rendering;
 
 namespace Sakura.Framework.Graphics.Drawables;
 
 /// <summary>
-/// A circle drawable draw using shader-based rendering.
+/// A circle drawable that uses masking to draw a circle shape.
 /// </summary>
 public class Circle : Drawable
 {
@@ -14,7 +16,9 @@ public class Circle : Drawable
     {
         if (DrawAlpha <= 0)
             return;
-
-        renderer.DrawCircle(this);
+        float radius = Math.Min(DrawRectangle.Width, DrawRectangle.Height) / 2f;
+        renderer.PushMask(this, radius);
+        base.Draw(renderer);
+        renderer.PopMask(this, radius, 0f, Color.Transparent);
     }
 }

@@ -5,7 +5,6 @@ using System;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Maths;
-using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Graphics.Containers;
 
@@ -53,43 +52,18 @@ public class FlowContainer : Container
     public override void Update()
     {
         bool layoutWasInvalidated = (Invalidation & InvalidationFlags.DrawInfo) != 0;
-        bool colourWasInvalidated = (Invalidation & InvalidationFlags.Colour) != 0;
 
-        // run base update (from Drawable.Update())
-        base.Update();
-
-        if (!AlwaysPresent && Precision.AlmostEqualZero(Alpha))
-            return;
-
-        // calculate layout if needed
         if (layoutWasInvalidated)
         {
             PerformLayout();
         }
 
-        // propagate after layout, because PerformLayout() might have
-        // set properties on children that invalidate them (like Position).
-        if (layoutWasInvalidated)
-        {
-            foreach (var child in Children)
-            {
-                child.Invalidate(InvalidationFlags.DrawInfo, false);
-            }
-        }
+        base.Update();
+    }
 
-        if (colourWasInvalidated)
-        {
-            foreach (var child in Children)
-            {
-                child.Invalidate(InvalidationFlags.Colour, false);
-            }
-        }
-
-        // Run update on children
-        foreach (var child in Children)
-        {
-            child.Update();
-        }
+    protected override void UpdateAutoSize()
+    {
+        // Do nothing since PerformLayout will handle auto-sizing based on content size.
     }
 
     /// <summary>
@@ -99,6 +73,9 @@ public class FlowContainer : Container
     {
         // use ChildSize, which is correct and respects Padding.
         var maxBounds = ChildSize;
+
+        float limitX = (AutoSizeAxes & Axes.X) != 0 ? float.MaxValue : maxBounds.X;
+        float limitY = (AutoSizeAxes & Axes.Y) != 0 ? float.MaxValue : maxBounds.Y;
 
         float maxRight = 0;
         float maxBottom = 0;
@@ -119,7 +96,7 @@ public class FlowContainer : Container
             if (Direction == FlowDirection.Horizontal)
             {
                 // check for wrap (all in pixels)
-                if ((AutoSizeAxes & Axes.X) == 0 && currentPosPixels.X > 0 && currentPosPixels.X + childTotalSizePixels.X > maxBounds.X)
+                if (currentPosPixels.X > 0 && currentPosPixels.X + childTotalSizePixels.X > limitX)
                 {
                     currentPosPixels.X = 0;
                     currentPosPixels.Y += lineMaxSizePixels + Spacing.Y;
@@ -152,7 +129,7 @@ public class FlowContainer : Container
             else // Vertical
             {
                 // check for wrap (all in pixels)
-                if ((AutoSizeAxes & Axes.Y) == 0 && currentPosPixels.Y > 0 && currentPosPixels.Y + childTotalSizePixels.Y > maxBounds.Y)
+                if (currentPosPixels.Y > 0 && currentPosPixels.Y + childTotalSizePixels.Y > limitY)
                 {
                     currentPosPixels.Y = 0;
                     currentPosPixels.X += lineMaxSizePixels + Spacing.X;
@@ -204,9 +181,9 @@ public class FlowContainer : Container
         if (parentPixelSize.Y <= 0) parentPixelSize.Y = 1;
 
         if ((child.RelativeSizeAxes & Axes.X) != 0)
-            finalDrawSize.X *= parentPixelSize.X;
+            finalDrawSize.X = (AutoSizeAxes & Axes.X) != 0 ? 0 : finalDrawSize.X * parentPixelSize.X;
         if ((child.RelativeSizeAxes & Axes.Y) != 0)
-            finalDrawSize.Y *= parentPixelSize.Y;
+            finalDrawSize.Y = (AutoSizeAxes & Axes.Y) != 0 ? 0 : finalDrawSize.Y * parentPixelSize.Y;
 
         return finalDrawSize;
     }

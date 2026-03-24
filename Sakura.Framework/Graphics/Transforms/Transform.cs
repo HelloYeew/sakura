@@ -149,3 +149,23 @@ public class RotateTransform : Transform
         drawable.Rotation = (float)(StartValue + (EndValue - StartValue) * GetEasedProgress(time));
     }
 }
+
+public class ColorTransform : Transform
+{
+    private bool valueCaptured;
+    public Color StartValue;
+    public Color EndValue;
+
+    public override void Apply(Drawable drawable, double time)
+    {
+        if (!valueCaptured)
+        {
+            StartValue = drawable.Color;
+            valueCaptured = true;
+        }
+
+        double easedProgress = GetEasedProgress(time);
+
+        drawable.Color = ColorExtensions.Lerp(StartValue, EndValue, (float)easedProgress);
+    }
+}

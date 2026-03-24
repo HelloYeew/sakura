@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Generic;
 
 namespace Sakura.Framework.Graphics.Textures;
 
@@ -30,5 +31,17 @@ public interface ITextureManager : IDisposable
     /// <param name="height">Height of the texture in pixels.</param>
     /// <param name="pixelData">Raw pixel data in RGBA format.</param>
     /// <returns>A new <see cref="Texture"/> object.</returns>
-    Texture FromPixelData(int width, int height, ReadOnlySpan<byte> pixelData);
+    Texture FromPixelData(int width, int height, ReadOnlySpan<byte> pixelData, string cacheKey = null);
+
+    /// <summary>
+    /// Removes a texture from the cache and immediately disposes its GPU resources.
+    /// </summary>
+    /// <param name="path">The path of the texture to evict from cache.</param>
+    /// <returns>True if the texture was found and evicted; false if the texture was not in cache.</returns>
+    bool Evict(string path);
+
+    /// <summary>
+    /// Retrieves all currently loaded and cached textures.
+    /// </summary>
+    IEnumerable<Texture> GetAllTextures();
 }

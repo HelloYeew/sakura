@@ -15,6 +15,7 @@ using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
+using Sakura.Framework.Statistic;
 using Sakura.Framework.Timing;
 using Sakura.Framework.Utilities;
 using Silk.NET.OpenGL;
@@ -37,7 +38,7 @@ public abstract class Drawable
     /// </summary>
     public bool IsLoaded { get; private set; }
 
-    private Anchor anchor = Anchor.Centre;
+    private Anchor anchor = Anchor.TopLeft;
     private Anchor origin = Anchor.TopLeft;
     private Vector2 position = Vector2.Zero;
     private Vector2 size = Vector2.Zero;
@@ -313,16 +314,33 @@ public abstract class Drawable
     }
 
     /// <summary>
+    /// The X component of the position of this drawable.
+    /// </summary>
+    public float X
+    {
+        get => Position.X;
+        set => Position = new Vector2(value, Position.Y);
+    }
+
+    /// <summary>
+    /// The Y component of the position of this drawable.
+    /// </summary>
+    public float Y
+    {
+        get => Position.Y;
+        set => Position = new Vector2(Position.X, value);
+    }
+
+    /// <summary>
     /// The blending mode to use when drawing this drawable.
     /// </summary>
     public BlendingMode Blending { get; set; } = BlendingMode.Alpha;
 
-    public void Hide() => Alpha = 0f;
-    public void Show() => Alpha = 1f;
+    public virtual void Hide() => Alpha = 0f;
+    public virtual void Show() => Alpha = 1f;
     public bool IsHidden => Alpha <= 0f;
 
-    // Caches for computed values
-    public RectangleF DrawRectangle { get; private set; }
+    public RectangleF DrawRectangle { get; protected set; }
     public Vector2 DrawSize { get; private set; }
     public Matrix4x4 ModelMatrix = Matrix4x4.Identity;
 
@@ -384,9 +402,9 @@ public abstract class Drawable
             // Calculate scale relative to parent
             finalDrawSize = Size;
             if ((RelativeSizeAxes & Axes.X) != 0)
-                finalDrawSize.X *= parentChildSize.X;
+                finalDrawSize.X = Math.Max(0, parentChildSize.X * Size.X - Margin.Total.X);
             if ((RelativeSizeAxes & Axes.Y) != 0)
-                finalDrawSize.Y *= parentChildSize.Y;
+                finalDrawSize.Y = Math.Max(0, parentChildSize.Y * Size.Y - Margin.Total.Y);
 
             // Calculate position relative to parent
             Vector2 pixelPosition = Position;
@@ -399,8 +417,9 @@ public abstract class Drawable
             pixelPosition.X += anchorOffset.X * parentChildSize.X;
             pixelPosition.Y += anchorOffset.Y * parentChildSize.Y;
 
-            pixelPosition.X += Margin.Left - Margin.Right;
-            pixelPosition.Y += Margin.Top - Margin.Bottom;
+            // Apply margin based on the anchor offset
+            pixelPosition.X += Margin.Left - anchorOffset.X * Margin.Total.X;
+            pixelPosition.Y += Margin.Top - anchorOffset.Y * Margin.Total.Y;
 
             // Shift by Parent's Padding to get position relative to Parent's Top-Left (DrawSize space)
             pixelPosition.X += Parent.Padding.Left;
@@ -440,7 +459,9 @@ public abstract class Drawable
         float gLinear = ColorExtensions.SrgbToLinear(Color.G);
         float bLinear = ColorExtensions.SrgbToLinear(Color.B);
 
-        var calculatedColor = new System.Numerics.Vector4(rLinear, gLinear, bLinear, DrawAlpha);
+        float colorAlpha = Color.A / 255f;
+
+        var calculatedColor = new Vector4(rLinear, gLinear, bLinear, DrawAlpha * colorAlpha);
 
         // Default UVs (0 to 1)
         var uvRect = Texture?.UvRect ?? new RectangleF(0, 0, 1, 1);
@@ -599,6 +620,8 @@ public abstract class Drawable
         if (DrawAlpha <= 0)
             return;
 
+        GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame").Value++;
+
         renderer.SetBlendMode(Blending);
 
         renderer.DrawVertices(Vertices, Texture ?? renderer.WhitePixel);
@@ -613,6 +636,8 @@ public abstract class Drawable
     {
         if ((Invalidation & flags) == flags)
             return; // Already invalidated for these flags.
+
+        GlobalStatistics.Get<int>("Drawables", "Invalidations").Value++;
 
         Invalidation |= flags;
 
@@ -714,6 +739,8 @@ public abstract class Drawable
     {
         if (!IsLoaded) return;
 
+        GlobalStatistics.Get<int>("Drawables", "Updated Last Frame").Value++;
+
         (Clock as FramedClock)?.Update();
         Scheduler.Update();
         applyTransforms();
@@ -741,7 +768,7 @@ public abstract class Drawable
     /// </summary>
     protected virtual void OnClockChanged()
     {
-        // Base do nothing here
+        Scheduler?.SetClock(clock);
     }
 
     #region Transformation Management
@@ -865,6 +892,9 @@ public abstract class Drawable
 
     public virtual bool OnMouseDown(MouseButtonEvent e)
     {
+        if (AcceptsFocus)
+            GetContainingFocusManager()?.ChangeFocus(this);
+
         bool handled = false;
 
         if (e.Clicks >= 3)
@@ -932,6 +962,45 @@ public abstract class Drawable
 
     public virtual bool OnDragDropFile(DragDropFileEvent e) => false;
     public virtual bool OnDragDropText(DragDropTextEvent e) => false;
+
+    #endregion
+
+    #region Focus Management
+
+    /// <summary>
+    /// Whether this drawable can currently accept keyboard focus.
+    /// </summary>
+    public virtual bool AcceptsFocus => false;
+
+    /// <summary>
+    /// Whether this drawable wants to automatically grab focus when possible.
+    /// </summary>
+    public virtual bool RequestsFocus => false;
+
+    /// <summary>
+    /// Whether this drawable currently holds the keyboard focus.
+    /// </summary>
+    public bool HasFocus { get; internal set; }
+
+    /// <summary>
+    /// Walks up the parent hierarchy to find the nearest FocusManager.
+    /// </summary>
+    protected internal IFocusManager? GetContainingFocusManager()
+    {
+        Drawable? p = Parent;
+        while (p != null)
+        {
+            // Check if the parent implements the interface
+            if (p is IFocusManager focusManager)
+                return focusManager;
+
+            p = p.Parent;
+        }
+        return null;
+    }
+
+    public virtual void OnFocus(FocusEvent e) { }
+    public virtual void OnFocusLost(FocusLostEvent e) { }
 
     #endregion
 

@@ -1,6 +1,8 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
+using System.Collections.Generic;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Platform;
 
@@ -9,6 +11,9 @@ namespace Sakura.Framework.Graphics.Text;
 public class HeadlessFontStore : IFontStore
 {
     private readonly Font dummyFont;
+    private int cacheVersion = 0;
+
+    public int CacheVersion => cacheVersion;
 
     public HeadlessFontStore(HeadlessTextureManager textureManager)
     {
@@ -26,6 +31,26 @@ public class HeadlessFontStore : IFontStore
 
     }
 
+    public void AddFallbackFamily(string familyName)
+    {
+
+    }
+
+    public void InsertFallbackFamily(int index, string familyName)
+    {
+
+    }
+
+    public void ClearFallbackFamilies()
+    {
+
+    }
+
+    public IEnumerable<Font> GetFallbacks(FontUsage usage)
+    {
+        return Array.Empty<Font>();
+    }
+
     public Font Get(FontUsage usage)
     {
         return null;
@@ -40,4 +65,11 @@ public class HeadlessFontStore : IFontStore
     {
         throw new System.NotImplementedException();
     }
+
+    public void ClearCaches()
+    {
+        cacheVersion++;
+    }
+
+    public TextureAtlas Atlas => null;
 }

@@ -9,18 +9,13 @@ namespace Sakura.Framework.Audio;
 public interface ITrack
 {
     /// <summary>
-    /// Plays the track and return a dedicated channel
+    /// Creates a new channel to play this track.
     /// </summary>
     /// <returns>A channel to control the playback</returns>
-    IAudioChannel Play();
+    IAudioChannel GetChannel();
 
     /// <summary>
     /// Gets the length of the track in milliseconds
     /// </summary>
     double Length { get; }
-
-    /// <summary>
-    /// Gets or sets the position in milliseconds to loop back to when <see cref="IAudioChannel.Looping"/> is enabled.
-    /// </summary>
-    double RestartPoint { get; set; }
 }

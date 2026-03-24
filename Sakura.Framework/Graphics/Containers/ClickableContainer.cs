@@ -37,4 +37,15 @@ public class ClickableContainer : Container
         Action?.Invoke();
         return true;
     }
+
+    public override bool OnMouseDown(MouseButtonEvent e)
+    {
+        base.OnMouseDown(e);
+        return true;
+    }
+
+    public override bool OnHover(MouseEvent e)
+    {
+        return true;
+    }
 }

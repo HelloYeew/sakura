@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using Sakura.Framework.Graphics.Textures;
+using Sakura.Framework.Statistic;
 using Silk.NET.OpenGL;
 using Texture = Sakura.Framework.Graphics.Textures.Texture;
 
@@ -48,6 +49,7 @@ public class TextureAtlas : IDisposable
             // 2. If it doesn't fit, create a new page
             page = new AtlasPage(gl, width, height);
             pages.Add(page);
+            GlobalStatistics.Get<int>("Fonts", "Atlas Pages").Value = pages.Count;
         }
 
         // if it still doesn't fit (glyph larger than entire texture?), fail.
@@ -65,6 +67,8 @@ public class TextureAtlas : IDisposable
         // Upload data
         page.GlTexture.Bind();
         gl.TexSubImage2D(TextureTarget.Texture2D, 0, page.CurrentX, page.CurrentY, (uint)regionWidth, (uint)regionHeight, PixelFormat.Rgba, PixelType.UnsignedByte, rgbaData);
+
+        gl.GenerateMipmap(TextureTarget.Texture2D);
 
         // Calculate UVs
         float u = (float)page.CurrentX / width;
@@ -107,10 +111,37 @@ public class TextureAtlas : IDisposable
         return (testY + areaHeight + padding <= height);
     }
 
+    public void Clear()
+    {
+        for (int i = 1; i < pages.Count; i++)
+        {
+            pages[i].Dispose();
+        }
+
+        if (pages.Count > 1)
+        {
+            pages.RemoveRange(1, pages.Count - 1);
+        }
+
+        pages[0].CurrentX = 0;
+        pages[0].CurrentY = 0;
+        pages[0].RowHeight = 0;
+
+        GlobalStatistics.Get<int>("Fonts", "Atlas Pages").Value = pages.Count;
+    }
+
     public void Dispose()
     {
         glTexture.Dispose();
         GC.SuppressFinalize(this);
+    }
+
+    public IEnumerable<Texture> GetAllPages()
+    {
+        foreach (var page in pages)
+        {
+            yield return new Texture(page.GlTexture);
+        }
     }
 
     /// <summary>

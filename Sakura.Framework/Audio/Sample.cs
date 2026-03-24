@@ -24,9 +24,16 @@ internal class Sample : ISample
         this.manager = manager;
     }
 
-    public IAudioChannel Play()
+    public IAudioChannel GetChannel()
     {
         var channel = new SampleChannel(this, manager);
+        return channel;
+    }
+
+    public IAudioChannel Play()
+    {
+        var channel = GetChannel();
+        channel.AutoDispose = true;
         channel.Play();
         return channel;
     }

@@ -9,6 +9,7 @@ using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
+using Sakura.Framework.Statistic;
 using Sakura.Framework.Timing;
 using Sakura.Framework.Utilities;
 
@@ -96,7 +97,14 @@ public class Container : Drawable
 
         drawable.Parent = this;
         children.Add(drawable);
-        drawable.Clock = new FramedClock(Clock);
+        if (drawable.Clock is FramedClock framedClock)
+        {
+            framedClock.Source = Clock;
+        }
+        else
+        {
+            drawable.Clock = new FramedClock(Clock, true);
+        }
 
         Invalidate(InvalidationFlags.DrawInfo);
 
@@ -129,17 +137,29 @@ public class Container : Drawable
 
     public override void Update()
     {
-        if (AutoSizeAxes != Axes.None)
-            UpdateAutoSize();
-
         // Check whether our layout was dirty before base.Update() is called, as it will clear our invalidation flags.
         bool layoutWasInvalidated = (Invalidation & InvalidationFlags.DrawInfo) != 0;
         bool colourWasInvalidated = (Invalidation & InvalidationFlags.Colour) != 0;
+
+        if (AutoSizeAxes != Axes.None && layoutWasInvalidated)
+        {
+            UpdateAutoSize();
+        }
 
         base.Update();
 
         if (!AlwaysPresent && Precision.AlmostEqualZero(Alpha))
             return;
+
+        for (int i = children.Count - 1; i >= 0; i--)
+        {
+            var child = children[i];
+
+            if (!child.IsAlive && child.RemoveWhenNotAlive)
+            {
+                Remove(child);
+            }
+        }
 
         if (layoutWasInvalidated)
         {
@@ -153,11 +173,6 @@ public class Container : Drawable
         {
             foreach (var child in children)
             {
-                if (!child.IsAlive && child.RemoveWhenNotAlive)
-                {
-                    Remove(child);
-                    continue;
-                }
                 child.Invalidate(InvalidationFlags.Colour, false);
             }
         }
@@ -241,11 +256,42 @@ public class Container : Drawable
         if (DrawAlpha <= 0)
             return;
 
+        GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame").Value++;
+
         if (Masking)
             renderer.PushMask(this, CornerRadius);
 
+        RectangleF? clipRect = null;
+        for (Container p = this; p != null; p = p.Parent)
+        {
+            if (p.Masking)
+            {
+                clipRect = p.DrawRectangle;
+                break;
+            }
+        }
+
         foreach (var child in children.OrderBy(c => c.Depth))
         {
+            if (clipRect.HasValue)
+            {
+                var cr = clipRect.Value;
+                var dr = child.DrawRectangle;
+
+                // Simple AABB intersection test
+                bool isVisible = dr.X <= cr.X + cr.Width &&
+                                 dr.X + dr.Width >= cr.X &&
+                                 dr.Y <= cr.Y + cr.Height &&
+                                 dr.Y + dr.Height >= cr.Y;
+
+                // If the child is completely outside the masking bounds, skip drawing it entirely
+                if (!isVisible)
+                {
+                    GlobalStatistics.Get<int>("Drawables", "Culled").Value++;
+                    continue;
+                }
+            }
+
             child.Draw(renderer);
         }
 
@@ -277,7 +323,10 @@ public class Container : Drawable
 
         foreach (var child in children)
         {
-            child.Clock = new FramedClock(Clock);
+            if (child.Clock is FramedClock framedClock)
+                framedClock.Source = Clock;
+            else
+                child.Clock = new FramedClock(Clock);
         }
     }
 
@@ -285,25 +334,21 @@ public class Container : Drawable
 
     public override bool OnMouseDown(MouseButtonEvent e)
     {
-        base.OnMouseDown(e);
-
-        // Propagate in reverse draw order to handle top-most drawables first.
         foreach (var c in children.OrderByDescending(d => d.Depth))
         {
-            if (c.Contains(e.ScreenSpaceMousePosition) && c.OnMouseDown(e))
+            if (c.IsLoaded && c.IsAlive && !c.IsHidden && c.Contains(e.ScreenSpaceMousePosition) && c.OnMouseDown(e))
             {
-                // This child handled the event, so it becomes our potential drag target.
                 draggedChild = c;
                 return true;
             }
         }
 
-        return false;
+        return base.OnMouseDown(e);
     }
 
     public override bool OnMouseUp(MouseButtonEvent e)
     {
-        base.OnMouseUp(e);
+        bool handled = false;
 
         // If a drag was in progress, only the dragged child should receive the OnMouseUp event.
         if (draggedChild != null)
@@ -313,41 +358,52 @@ public class Container : Drawable
             return result;
         }
 
-        return children.Any(c => c.OnMouseUp(e));
+        foreach (var c in children.OrderBy(d => d.Depth).Reverse())
+        {
+            if (c.IsLoaded && c.IsAlive && !c.IsHidden && c.Contains(e.ScreenSpaceMousePosition) && c.OnMouseUp(e))
+                return true;
+        }
+
+        return base.OnMouseUp(e);
     }
 
     public override bool OnMouseMove(MouseEvent e)
     {
-        base.OnMouseMove(e);
-
         // If a drag is in progress, route the event exclusively to the dragged child.
         if (draggedChild != null)
         {
             return draggedChild.OnMouseMove(e);
         }
 
-        // Otherwise, propagate to all children for hover updates.
-        // We don't use .Any() because multiple children might need to react
-        // (e.g., one losing hover, another gaining it).
         bool handled = false;
-        foreach (var c in children)
+        foreach (var c in children.OrderBy(d => d.Depth).Reverse())
         {
-            if (c.OnMouseMove(e))
-                handled = true;
+            if (c.IsLoaded && c.IsAlive && !c.IsHidden && (c.IsHovered || c.Contains(e.ScreenSpaceMousePosition)))
+            {
+                if (c.OnMouseMove(e))
+                {
+                    handled = true;
+                    break;
+                }
+            }
         }
 
-        return handled;
+        if (handled)
+            return true;
+
+        return base.OnMouseMove(e);
     }
 
     public override bool OnScroll(ScrollEvent e)
     {
         // Propagate to the first child that contains the mouse position.
-        foreach (var c in children.OrderByDescending(d => d.Depth))
+        foreach (var c in children.OrderBy(d => d.Depth).Reverse())
         {
-            if (c.Contains(e.ScreenSpaceMousePosition) && c.OnScroll(e))
+            if (c.IsLoaded && c.IsAlive && !c.IsHidden && c.Contains(e.ScreenSpaceMousePosition) && c.OnScroll(e))
                 return true;
         }
-        return children.Any(c => c.Contains(e.ScreenSpaceMousePosition) && c.OnScroll(e));
+
+        return base.OnScroll(e);
     }
 
     public override bool OnKeyDown(KeyEvent e)
@@ -362,7 +418,7 @@ public class Container : Drawable
 
     public override bool OnDragDropFile(DragDropFileEvent e)
     {
-        foreach (var c in children.OrderByDescending(d => d.Depth))
+        foreach (var c in children.OrderByDescending(d => d.Depth).Reverse())
         {
             if (c.IsLoaded && !c.IsHidden && c.Contains(e.Position))
             {
@@ -376,7 +432,7 @@ public class Container : Drawable
 
     public override bool OnDragDropText(DragDropTextEvent e)
     {
-        foreach (var c in children.OrderByDescending(d => d.Depth))
+        foreach (var c in children.OrderByDescending(d => d.Depth).Reverse())
         {
             if (c.IsLoaded && !c.IsHidden && c.Contains(e.Position))
             {

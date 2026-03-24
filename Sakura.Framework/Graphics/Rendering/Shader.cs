@@ -8,6 +8,7 @@ using System.Text;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
+using Sakura.Framework.Statistic;
 using Silk.NET.OpenGL;
 
 namespace Sakura.Framework.Graphics.Rendering;
@@ -42,6 +43,8 @@ public class Shader : IDisposable
         this.gl.DetachShader(handle, fragment);
         this.gl.DeleteShader(vertex);
         this.gl.DeleteShader(fragment);
+
+        GlobalStatistics.Get<int>("Graphics", "Loaded Shaders").Value++;
     }
 
     public uint Handle => handle;
@@ -52,6 +55,7 @@ public class Shader : IDisposable
     public void Use()
     {
         gl.UseProgram(handle);
+        GlobalStatistics.Get<int>("Renderer", "Shader Binds").Value++;
     }
 
     /// <summary>
@@ -147,6 +151,24 @@ public class Shader : IDisposable
     }
 
     /// <summary>
+    /// Sets an integer array uniform variable in the shader program (used for Sampler Arrays).
+    /// </summary>
+    public void SetUniformIntArray(string name, int[] values)
+    {
+        int location = gl.GetUniformLocation(handle, name);
+        if (location != -1)
+        {
+            unsafe
+            {
+                fixed (int* ptr = values)
+                {
+                    gl.Uniform1(location, (uint)values.Length, ptr);
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// Loads and compiles a shader from an embedded resource.
     /// </summary>
     /// <param name="type">Type of the shader (OpenGL enum).</param>
@@ -200,6 +222,7 @@ public class Shader : IDisposable
     {
         if (disposed) return;
         gl.DeleteProgram(handle);
+        GlobalStatistics.Get<int>("Graphics", "Loaded Shaders").Value--;
         disposed = true;
         GC.SuppressFinalize(this);
     }

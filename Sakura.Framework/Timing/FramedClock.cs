@@ -9,20 +9,30 @@ namespace Sakura.Framework.Timing;
 /// </summary>
 public class FramedClock : IClock
 {
-    private readonly IClock source;
+    private IClock source;
     private double lastSourceTime;
 
-    public double CurrentTime { get; private set; }
+    public IClock Source
+    {
+        get => source;
+        set
+        {
+            source = value;
+            lastSourceTime = source.CurrentTime;
+        }
+    }
+
+    public double CurrentTime { get; set; }
     public double ElapsedFrameTime { get; private set; }
     public double Rate { get; set; } = 1.0;
     public bool IsRunning { get; private set; } = true;
 
     public double FramesPerSecond => source.FramesPerSecond;
 
-    public FramedClock(IClock source)
+    public FramedClock(IClock source, bool startFromZero = false)
     {
         this.source = source;
-        CurrentTime = source.CurrentTime;
+        CurrentTime = startFromZero ? 0 : source.CurrentTime;
         lastSourceTime = source.CurrentTime;
     }
 

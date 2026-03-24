@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.Textures;
@@ -9,7 +10,7 @@ namespace Sakura.Framework.Graphics.Textures;
 /// A public-facing texture represents that drawable use.
 /// It points to a specifix region (UvRect) within a larger TextureGL (atlas or standalone textures).
 /// </summary>
-public class Texture
+public class Texture : IDisposable
 {
     /// <summary>
     /// The underlying GPU texture.
@@ -53,5 +54,10 @@ public class Texture
         // Calculate pixel size of this specific region
         Width = (int)(glTexture.Width * uvRect.Width);
         Height = (int)(glTexture.Height * uvRect.Height);
+    }
+
+    public void Dispose()
+    {
+        GlTexture.Dispose();
     }
 }

@@ -21,6 +21,8 @@ internal class AudioManager : IAudioManager
     public Reactive<double> MasterVolume { get; } = new Reactive<double>(1.0);
     public Reactive<double> TrackVolume { get; } = new Reactive<double>(1.0);
     public Reactive<double> SampleVolume { get; } = new Reactive<double>(1.0);
+    public IAudioMixer TrackMixer { get; } = new AudioMixer();
+    public IAudioMixer SampleMixer { get; } = new AudioMixer();
 
     public ITrack CreateTrack(Stream stream)
     {

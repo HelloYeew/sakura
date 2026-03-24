@@ -76,4 +76,24 @@ public interface IAudioChannel : IDisposable
     /// Gets or sets whether the audio should loop.
     /// </summary>
     bool Looping { get; set; }
+
+    /// <summary>
+    /// Whether this channel should automatically dispose and clean itself up when playback finished.
+    /// </summary>
+    bool AutoDispose { get; set; }
+
+    /// <summary>
+    /// Gets or sets the position in milliseconds to loop back to when <see cref="Looping"/> is enabled.
+    /// </summary>
+    double RestartPoint { get; set; }
+
+    /// <summary>
+    /// Gets the current real-time playback amplitude of the Left audio channel (0.0 to 1.0).
+    /// </summary>
+    float AmplitudeLeft { get; }
+
+    /// <summary>
+    /// Gets the current real-time playback amplitude of the Right audio channel (0.0 to 1.0).
+    /// </summary>
+    float AmplitudeRight { get; }
 }

@@ -1,8 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
+using System;
 using Sakura.Framework.Allocation;
 using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Graphics.Rendering;
@@ -25,8 +24,10 @@ public class SpriteText : Drawable
     // Tracks if the text content/font has changed, requiring re-measurement.
     private bool layoutInvalidated = true;
 
-    private readonly List<Vertex> textVertices = new List<Vertex>();
+    private Vertex[] textVertices = Array.Empty<Vertex>();
+    private int currentVertexCount = 0;
     private ShapedText? shapedText;
+    private int lastCacheVersion = -1;
 
     private Font? resolvedFont;
 
@@ -71,6 +72,19 @@ public class SpriteText : Drawable
         }
     }
 
+    public override void Update()
+    {
+        if (fontStore != null && lastCacheVersion != fontStore.CacheVersion)
+        {
+            lastCacheVersion = fontStore.CacheVersion;
+            layoutInvalidated = true;
+            shapedText = null;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+
+        base.Update();
+    }
+
     protected override void UpdateTransforms()
     {
         if (layoutInvalidated)
@@ -92,15 +106,17 @@ public class SpriteText : Drawable
 
         if (resolvedFont == null) return;
 
+        var fallbacks = fontStore.GetFallbacks(fontUsage);
+
         window.GetPhysicalSize(out int physW, out int physH);
         float dpiScale = (float)physW / window.Width;
 
         if (dpiScale <= 0) dpiScale = 1.0f;
 
-        shapedText = resolvedFont.ProcessText(Text, fontUsage.Size, dpiScale);
+        shapedText = resolvedFont.ProcessText(Text, fontUsage.Size, dpiScale, fallbacks);
         ContentSize = new Vector2(shapedText.BoundingBox.X, shapedText.BoundingBox.Y);
 
-        if (Size != ContentSize)
+        if (Math.Abs(Size.X - ContentSize.X) > 1.0f || Math.Abs(Size.Y - ContentSize.Y) > 1.0f)
         {
             Size = ContentSize;
         }
@@ -110,8 +126,23 @@ public class SpriteText : Drawable
 
     protected override void GenerateVertices()
     {
-        textVertices.Clear();
-        if (shapedText == null) return;
+        if (shapedText == null || shapedText.Glyphs.Count == 0)
+        {
+            currentVertexCount = 0;
+            DrawRectangle = new RectangleF(0, 0, 0, 0); // Reset bounds if empty
+            return;
+        }
+
+        currentVertexCount = shapedText.Glyphs.Count * 6;
+
+        if (textVertices.Length < currentVertexCount)
+        {
+            int newSize = Math.Max(textVertices.Length * 2, currentVertexCount);
+            Array.Resize(ref textVertices, newSize);
+        }
+
+        Span<Vertex> vertices = textVertices.AsSpan(0, currentVertexCount);
+        int vIndex = 0;
 
         var drawColor = new Vector4(
             ColorExtensions.SrgbToLinear(Color.R),
@@ -120,15 +151,9 @@ public class SpriteText : Drawable
             DrawAlpha
         );
 
-        // We need to normalize pixel coordinates to 0..1 space because Drawable's ModelMatrix
-        // scales (0..1) up to (Size.X..Size.Y).
-
-        // Get the relative origin
         Vector2 originRelative = GetAnchorOriginVector(Origin);
-
         Vector2 availableSpace = DrawSize - ContentSize;
 
-        // The starting position (top-left) of the text block relative to the Drawable's top-left.
         Vector2 textOffset = new Vector2(
             availableSpace.X * originRelative.X,
             availableSpace.Y * originRelative.Y
@@ -140,6 +165,11 @@ public class SpriteText : Drawable
         );
         Vector2 normalizationScale = new Vector2(1.0f / safeDrawSize.X, 1.0f / safeDrawSize.Y);
 
+        float minX = float.MaxValue;
+        float minY = float.MaxValue;
+        float maxX = float.MinValue;
+        float maxY = float.MinValue;
+
         foreach (var glyph in shapedText.Glyphs)
         {
             var texture = glyph.Texture;
@@ -149,38 +179,43 @@ public class SpriteText : Drawable
             float pixelX = pos.X + textOffset.X;
             float pixelY = pos.Y + textOffset.Y;
 
-            // Normalize coordinates to 0..1 relative to the Drawable.Size
             float x = pixelX * normalizationScale.X;
             float y = pixelY * normalizationScale.Y;
             float w = size.X * normalizationScale.X;
             float h = size.Y * normalizationScale.Y;
 
-            // Transform 0..1 local coords to World coords using the matrix
             var vTopLeft = Vector4.Transform(new Vector4(x, y, 0, 1), ModelMatrix);
             var vTopRight = Vector4.Transform(new Vector4(x + w, y, 0, 1), ModelMatrix);
             var vBottomLeft = Vector4.Transform(new Vector4(x, y + h, 0, 1), ModelMatrix);
             var vBottomRight = Vector4.Transform(new Vector4(x + w, y + h, 0, 1), ModelMatrix);
 
+            minX = Math.Min(minX, Math.Min(vTopLeft.X, Math.Min(vTopRight.X, Math.Min(vBottomLeft.X, vBottomRight.X))));
+            minY = Math.Min(minY, Math.Min(vTopLeft.Y, Math.Min(vTopRight.Y, Math.Min(vBottomLeft.Y, vBottomRight.Y))));
+            maxX = Math.Max(maxX, Math.Max(vTopLeft.X, Math.Max(vTopRight.X, Math.Max(vBottomLeft.X, vBottomRight.X))));
+            maxY = Math.Max(maxY, Math.Max(vTopLeft.Y, Math.Max(vTopRight.Y, Math.Max(vBottomLeft.Y, vBottomRight.Y))));
+
             var uv = texture.UvRect;
             var uvTopLeft = new Vector2(uv.X, uv.Y);
             var uvBottomRight = new Vector2(uv.X + uv.Width, uv.Y + uv.Height);
 
-            textVertices.Add(new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = drawColor });
-            textVertices.Add(new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(uvBottomRight.X, uvTopLeft.Y), Color = drawColor });
-            textVertices.Add(new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight, Color = drawColor });
+            vertices[vIndex++] = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = drawColor };
+            vertices[vIndex++] = new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(uvBottomRight.X, uvTopLeft.Y), Color = drawColor };
+            vertices[vIndex++] = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight, Color = drawColor };
 
-            textVertices.Add(new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight, Color = drawColor });
-            textVertices.Add(new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(uvTopLeft.X, uvBottomRight.Y), Color = drawColor });
-            textVertices.Add(new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = drawColor });
+            vertices[vIndex++] = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight, Color = drawColor };
+            vertices[vIndex++] = new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(uvTopLeft.X, uvBottomRight.Y), Color = drawColor };
+            vertices[vIndex++] = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = drawColor };
         }
+
+        DrawRectangle = new RectangleF(minX, minY, maxX - minX, maxY - minY);
     }
 
     public override void Draw(IRenderer renderer)
     {
-        if (DrawAlpha <= 0 || textVertices.Count == 0 || shapedText == null || shapedText.Glyphs.Count == 0)
+        if (DrawAlpha <= 0 || currentVertexCount == 0 || shapedText == null || shapedText.Glyphs.Count == 0)
             return;
 
-        Texture? currentTexture = null;
+        Texture? currentTextureRegion = null;
         int batchStart = 0;
         int batchCount = 0;
 
@@ -191,21 +226,24 @@ public class SpriteText : Drawable
             var glyph = shapedText.Glyphs[i];
 
             // If texture changes (and it's not the start), flush the draw
-            if (currentTexture != null && glyph.Texture != currentTexture)
+            bool isNewAtlasPage = currentTextureRegion != null &&
+                                  glyph.Texture.GlTexture.Handle != currentTextureRegion.GlTexture.Handle;
+
+            if (isNewAtlasPage)
             {
-                flushBatch(renderer, currentTexture, batchStart, batchCount);
+                flushBatch(renderer, currentTextureRegion, batchStart, batchCount);
                 batchStart += batchCount;
                 batchCount = 0;
             }
 
-            currentTexture = glyph.Texture;
+            currentTextureRegion = glyph.Texture;
             batchCount++;
         }
 
         // Flush final batch
-        if (currentTexture != null && batchCount > 0)
+        if (currentTextureRegion != null && batchCount > 0)
         {
-            flushBatch(renderer, currentTexture, batchStart, batchCount);
+            flushBatch(renderer, currentTextureRegion, batchStart, batchCount);
         }
     }
 
@@ -215,7 +253,7 @@ public class SpriteText : Drawable
         int vertexStart = glyphStart * 6;
         int vertexCount = glyphCount * 6;
 
-        var slice = CollectionsMarshal.AsSpan(textVertices).Slice(vertexStart, vertexCount);
+        var slice = textVertices.AsSpan(vertexStart, vertexCount);
         renderer.DrawVertices(slice, texture);
     }
 }

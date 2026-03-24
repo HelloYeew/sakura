@@ -44,8 +44,11 @@ public class HeadlessAudioChannel : IAudioChannel
     public Reactive<double> Balance { get; } = new Reactive<double>(0.0);
     public double Length { get; private set; }
     public bool Looping { get; set; }
+    public bool AutoDispose { get; set; }
 
     public double RestartPoint { get; set; } = 0;
+    public float AmplitudeLeft => 0;
+    public float AmplitudeRight => 0;
 
     private double currentTime;
     public double CurrentTime

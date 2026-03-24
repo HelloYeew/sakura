@@ -9,9 +9,16 @@ namespace Sakura.Framework.Audio;
 public interface ISample
 {
     /// <summary>
-    /// Plays the sample and returns a dedicated channel
+    /// Create a new channel to play this sample.
     /// </summary>
     /// <returns>A channel to control the playback</returns>
+    IAudioChannel GetChannel();
+
+    /// <summary>
+    /// Create a new channel and immediately start playing this sample.
+    /// Ideal for standard fire-and-forget sound effects.
+    /// </summary>
+    /// <returns>>A channel to control the playback</returns>
     IAudioChannel Play();
 
     /// <summary>

@@ -20,7 +20,7 @@ public class HeadlessSample : ISample
         this.manager = manager;
     }
 
-    public IAudioChannel Play()
+    public IAudioChannel GetChannel()
     {
         var channel = new HeadlessAudioChannel(Length)
         {
@@ -29,6 +29,13 @@ public class HeadlessSample : ISample
 
         manager.RegisterChannel(channel);
 
+        channel.Play();
+        return channel;
+    }
+
+    public IAudioChannel Play()
+    {
+        var channel = GetChannel();
         channel.Play();
         return channel;
     }

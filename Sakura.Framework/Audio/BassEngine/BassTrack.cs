@@ -1,10 +1,12 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using ManagedBass;
 using Sakura.Framework.Logging;
+using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Audio.BassEngine;
 
@@ -15,13 +17,12 @@ internal class BassTrack : ITrack
 {
     private readonly BassAudioManager manager;
 
-    // FIX 2: Store the source of the track data
     private readonly string filePath;
     private readonly System.IntPtr dataPtr;
     private readonly long dataLength;
     private GCHandle dataHandle;
 
-    private readonly int decoderStreamHandle; // This is the handle to the *decoder*
+    private readonly int decoderStreamHandle;
 
     public double Length { get; }
     public double RestartPoint { get; set; }
@@ -32,12 +33,12 @@ internal class BassTrack : ITrack
     public BassTrack(BassAudioManager manager, Stream stream)
     {
         this.manager = manager;
-        this.filePath = null; // Mark as stream-based
+        filePath = null;
 
         using (var ms = new MemoryStream())
         {
             stream.CopyTo(ms);
-            var data = ms.ToArray();
+            byte[] data = ms.ToArray();
             dataLength = data.Length;
             dataHandle = GCHandle.Alloc(data, GCHandleType.Pinned);
             dataPtr = dataHandle.AddrOfPinnedObject();
@@ -52,6 +53,8 @@ internal class BassTrack : ITrack
             return;
         }
 
+        GlobalStatistics.Get<int>("Audio", "Loaded Tracks").Value++;
+
         Length = Bass.ChannelBytes2Seconds(decoderStreamHandle, Bass.ChannelGetLength(decoderStreamHandle)) * 1000.0;
     }
 
@@ -61,8 +64,8 @@ internal class BassTrack : ITrack
     public BassTrack(BassAudioManager manager, string path)
     {
         this.manager = manager;
-        this.filePath = path; // Mark as file-based
-        this.dataPtr = System.IntPtr.Zero;
+        filePath = path; // Mark as file-based
+        dataPtr = IntPtr.Zero;
 
         decoderStreamHandle = Bass.CreateStream(path, 0, 0, BassFlags.Decode | BassFlags.Prescan);
 
@@ -73,20 +76,23 @@ internal class BassTrack : ITrack
             return;
         }
 
+        GlobalStatistics.Get<int>("Audio", "Loaded Tracks").Value++;
+
         Length = Bass.ChannelBytes2Seconds(decoderStreamHandle, Bass.ChannelGetLength(decoderStreamHandle)) * 1000.0;
     }
 
-    public IAudioChannel Play()
+    public IAudioChannel GetChannel()
     {
-        // FIX 2: Create a new *playback stream* from the original data source, not from the decoder.
         int channelHandle = 0;
+        var flags = BassFlags.Decode | BassFlags.Float;
+
         if (filePath != null)
         {
-            channelHandle = Bass.CreateStream(filePath, 0, 0, BassFlags.Default);
+            channelHandle = Bass.CreateStream(filePath, 0, 0, flags);
         }
         else if (dataPtr != System.IntPtr.Zero)
         {
-            channelHandle = Bass.CreateStream(dataPtr, 0, dataLength, BassFlags.Default);
+            channelHandle = Bass.CreateStream(dataPtr, 0, dataLength, flags);
         }
 
         if (channelHandle == 0)
@@ -96,12 +102,11 @@ internal class BassTrack : ITrack
             return null;
         }
 
-        var channel = manager.CreateChannel(channelHandle, true);
+        var channel = manager.CreateChannel(channelHandle, true, (BassAudioMixer)manager.TrackMixer);
 
         // Set loop restart point if looping
         channel.Looping = true; // Tracks often loop
 
-        // FIX 3: Use ChannelSetPosition with PositionFlags.Loop to set the loop start point.
         if (RestartPoint > 0)
         {
             long restartPos = Bass.ChannelSeconds2Bytes(channelHandle, RestartPoint / 1000.0);
@@ -112,27 +117,40 @@ internal class BassTrack : ITrack
             });
         }
 
-        channel.Play();
         return channel;
     }
 
-    ~BassTrack()
+    private bool isDisposed;
+
+    public void Dispose()
     {
-        Dispose(false);
+        Dispose(true);
+#pragma warning disable CA1816
+        GC.SuppressFinalize(this);
+#pragma warning restore CA1816
     }
 
-    public void Dispose(bool disposing)
+    protected virtual void Dispose(bool disposing)
     {
-        // Free the decoder stream
+        if (isDisposed) return;
+
         if (decoderStreamHandle != 0)
         {
             Bass.StreamFree(decoderStreamHandle);
         }
 
-        // Free the unmanaged memory handle
         if (dataHandle.IsAllocated)
         {
             dataHandle.Free();
         }
+
+        GlobalStatistics.Get<int>("Audio", "Loaded Tracks").Value--;
+
+        isDisposed = true;
+    }
+
+    ~BassTrack()
+    {
+        Dispose(false);
     }
 }

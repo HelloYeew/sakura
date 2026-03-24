@@ -4,12 +4,14 @@
 #nullable disable
 
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using Sakura.Framework.Audio;
 using Sakura.Framework.Audio.BassEngine;
 using Sakura.Framework.Audio.Headless;
 using Sakura.Framework.Configurations;
 using Sakura.Framework.Extensions.DrawableExtensions;
+using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Graphics.Rendering;
@@ -17,12 +19,14 @@ using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Input;
+using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Reactive;
+using Sakura.Framework.Timing;
 
 namespace Sakura.Framework;
 
-public class App : Container, IDisposable
+public class App : Container, IFocusManager, IDisposable
 {
     public IWindow Window => Host?.Window;
 
@@ -54,10 +58,15 @@ public class App : Container, IDisposable
 
     internal void SetHost(AppHost host) => Host = host;
 
-    private DrawVisualiser visualiser;
+    private DrawVisualiser drawVisualiser;
+    private GlobalStatisticsDisplay globalStatisticsDisplay;
+    private TextureViewerDisplay textureViewerDisplay;
+    private AudioMixerVisualiser audioMixerVisualiser;
 
     public override void Load()
     {
+        Clock = new FramedClock(Host.AppClock, true);
+
         base.Load();
 
         AudioManager = CreateAudioManager();
@@ -108,10 +117,32 @@ public class App : Container, IDisposable
         Cache(Host.FrameworkConfigManager);
 
         showFpsGraph = Host.FrameworkConfigManager.Get(FrameworkSetting.ShowFpsGraph, false);
+
+        Add(drawVisualiser = new DrawVisualiser(this)
+        {
+            Depth = float.MaxValue - 10,
+            Alpha = 0
+        });
+        Add(textureViewerDisplay = new TextureViewerDisplay()
+        {
+            Depth = float.MaxValue - 10,
+            Alpha = 0
+        });
+        Add(globalStatisticsDisplay = new GlobalStatisticsDisplay()
+        {
+            Depth = float.MaxValue - 10,
+            Alpha = 0
+        });
+        Add(audioMixerVisualiser = new AudioMixerVisualiser(AudioManager)
+        {
+            Depth = float.MaxValue - 10,
+            Alpha = 0
+        });
         Add(FpsGraph = new FpsGraph(Host.AppClock)
         {
             Depth = float.MaxValue
         });
+
         if (!showFpsGraph)
             FpsGraph.Hide();
         showFpsGraph.ValueChanged += value =>
@@ -123,21 +154,26 @@ public class App : Container, IDisposable
         };
     }
 
-    public void ToggleVisualiser()
+    private void toggleVisualiser()
     {
-        if (visualiser == null)
-        {
-            visualiser = new DrawVisualiser(this);
-            visualiser.Depth = float.MaxValue;
-            Add(visualiser);
-        }
-        else
-        {
-            if (visualiser.IsHidden)
-                visualiser.FadeIn(200, Easing.OutQuint);
-            else
-                visualiser.FadeOut(200, Easing.OutQuint);
-        }
+        if (textureViewerDisplay.State == Visibility.Visible) textureViewerDisplay.Hide();
+        drawVisualiser.ToggleVisibility();
+    }
+
+    private void toggleStatisticsDisplay()
+    {
+        globalStatisticsDisplay.ToggleVisibility();
+    }
+
+    private void toggleTextureViewerDisplay()
+    {
+        if (globalStatisticsDisplay.State == Visibility.Visible) globalStatisticsDisplay.Hide();
+        textureViewerDisplay.ToggleVisibility();
+    }
+
+    private void toggleAudioMixerVisualiserDisplay()
+    {
+        audioMixerVisualiser.ToggleVisibility();
     }
 
     /// <summary>
@@ -169,14 +205,122 @@ public class App : Container, IDisposable
     {
         base.Update();
         AudioManager?.Update(Clock.ElapsedFrameTime);
+        Scheduler.Update();
     }
 
     public override bool OnKeyDown(KeyEvent e)
     {
+        if (!e.IsRepeat && e.Key == Key.F1 && (e.Modifiers & KeyModifiers.Control) > 0)
+        {
+            toggleVisualiser();
+            return true;
+        }
+        else if (!e.IsRepeat && e.Key == Key.F2 && (e.Modifiers & KeyModifiers.Control) > 0)
+        {
+            toggleStatisticsDisplay();
+            return true;
+        }
+        else if (!e.IsRepeat && e.Key == Key.F3 && (e.Modifiers & KeyModifiers.Control) > 0)
+        {
+            toggleTextureViewerDisplay();
+            return true;
+        }
+        else if (!e.IsRepeat && e.Key == Key.F9 && (e.Modifiers & KeyModifiers.Control) > 0)
+        {
+            toggleAudioMixerVisualiserDisplay();
+            return true;
+        }
         if (!e.IsRepeat && e.Key == Key.F11 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
             showFpsGraph.Value = !showFpsGraph.Value;
+            return true;
         }
+
+        if (focusedDrawable != null && focusedDrawable.IsLoaded && focusedDrawable.IsAlive)
+        {
+            if (focusedDrawable.OnKeyDown(e))
+                return true;
+        }
+
         return base.OnKeyDown(e);
     }
+
+    #region Focus Management
+
+    private readonly List<Drawable> focusStack = new();
+
+    private Drawable focusedDrawable { get; set; }
+
+    public virtual bool ChangeFocus(Drawable potentialFocusTarget)
+    {
+        var focusedBefore = focusedDrawable;
+
+        if (focusedDrawable == potentialFocusTarget)
+            return true;
+
+        if (potentialFocusTarget != null && !potentialFocusTarget.AcceptsFocus)
+            return false;
+
+        if (potentialFocusTarget == null)
+        {
+            if (focusedDrawable != null)
+            {
+                focusedDrawable.HasFocus = false;
+                focusedDrawable.OnFocusLost(new FocusLostEvent());
+                focusStack.Remove(focusedDrawable);
+            }
+
+            focusedDrawable = null;
+
+            while (focusStack.Count > 0)
+            {
+                var previous = focusStack[^1];
+
+                if (previous.IsAlive && previous.IsLoaded && previous.AcceptsFocus)
+                {
+                    focusedDrawable = previous;
+                    focusStack.RemoveAt(focusStack.Count - 1);
+
+                    focusedDrawable.HasFocus = true;
+                    focusedDrawable.OnFocus(new FocusEvent());
+                    break;
+                }
+
+                focusStack.RemoveAt(focusStack.Count - 1);
+            }
+
+            Logger.Verbose($"Focus changed from {focusedBefore?.ToString() ?? "null"} to {focusedDrawable?.ToString() ?? "null"}");
+            return true;
+        }
+
+        if (focusedDrawable != null)
+        {
+            focusedDrawable.HasFocus = false;
+            focusedDrawable.OnFocusLost(new FocusLostEvent());
+
+            if (!focusStack.Contains(focusedDrawable))
+            {
+                focusStack.Add(focusedDrawable);
+            }
+        }
+
+        focusedDrawable = potentialFocusTarget;
+        focusStack.Remove(focusedDrawable);
+
+        focusedDrawable.HasFocus = true;
+        focusedDrawable.OnFocus(new FocusEvent());
+
+        Logger.Verbose($"Focus changed from {focusedBefore?.ToString() ?? "null"} to {focusedDrawable?.ToString() ?? "null"}");
+        return true;
+    }
+
+    public virtual void TriggerFocusContention(Drawable? triggerSource)
+    {
+        if (triggerSource != null && triggerSource.RequestsFocus)
+        {
+            ChangeFocus(triggerSource);
+        }
+    }
+
+    #endregion
 }

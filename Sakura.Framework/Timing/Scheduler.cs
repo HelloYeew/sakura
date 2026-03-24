@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Timing;
 
@@ -98,6 +99,8 @@ public class Scheduler
     public void Update()
     {
         if (clock == null) return;
+
+        GlobalStatistics.Get<int>("Scheduler", "Pending Tasks").Value = tasks.Count + tasksToAdd.Count;
 
         double currentTime = clock.CurrentTime;
 
