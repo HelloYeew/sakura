@@ -1,6 +1,8 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+#nullable disable
+
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -23,8 +25,8 @@ internal class BassAudioManager : IAudioManager, IDisposable
     private readonly List<BassAudioChannel> activeChannels = new List<BassAudioChannel>();
     private readonly ConcurrentQueue<Action> mainThreadActions = new ConcurrentQueue<Action>();
 
-    private BassAudioMixer trackMixer;
-    private BassAudioMixer sampleMixer;
+    private readonly BassAudioMixer trackMixer;
+    private readonly BassAudioMixer sampleMixer;
 
     public Reactive<double> MasterVolume { get; } = new Reactive<double>(1.0);
     public Reactive<double> TrackVolume { get; } = new Reactive<double>(1.0);
@@ -132,9 +134,9 @@ internal class BassAudioManager : IAudioManager, IDisposable
             activeChannels.Add(channel);
         }
 
-        Bass.ChannelGetAttribute(channelHandle, ChannelAttribute.Frequency, out float freq);
+        Bass.ChannelGetAttribute(channelHandle, ChannelAttribute.Frequency, out float _);
 
-        targetMixer.AddChannel(channel);
+        targetMixer?.AddChannel(channel);
 
         return channel;
     }

@@ -1,6 +1,8 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+#nullable disable
+
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -68,7 +70,8 @@ internal class BassSample : ISample
     {
         int channelHandle = Bass.CreateStream(dataPtr, 0, dataLength, BassFlags.Decode | BassFlags.Float);
 
-        if (channelHandle == 0) return null;
+        if (channelHandle == 0)
+            return null!;
 
         return manager.CreateChannel(channelHandle, true, (BassAudioMixer)manager.SampleMixer);
     }

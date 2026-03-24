@@ -49,5 +49,14 @@ internal class BassAudioMixer : BassAudioChannel, IAudioMixer
         }
     }
 
-    public IEnumerable<IAudioChannel> ActiveChannels => activeChannels;
+    public IEnumerable<IAudioChannel> ActiveChannels
+    {
+        get
+        {
+            lock (activeChannels)
+            {
+                return activeChannels;
+            }
+        }
+    }
 }

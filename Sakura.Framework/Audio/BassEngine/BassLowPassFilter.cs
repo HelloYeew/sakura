@@ -10,7 +10,7 @@ using Sakura.Framework.Reactive;
 namespace Sakura.Framework.Audio.BassEngine;
 
 /// <summary>
-/// Apply low-pass filter effect to BASS channel or mixer.
+/// Apply low-pass filter effect to a BASS channel or mixer.
 /// </summary>
 public class BassLowPassFilter : IDisposable
 {

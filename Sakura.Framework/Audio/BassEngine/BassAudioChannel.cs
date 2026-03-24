@@ -1,6 +1,8 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+#nullable disable
+
 using System;
 using ManagedBass;
 using ManagedBass.Mix;
@@ -13,14 +15,13 @@ namespace Sakura.Framework.Audio.BassEngine;
 /// </summary>
 internal class BassAudioChannel : IAudioChannel
 {
-    public event Action OnStart;
-    public event Action OnStop;
-    public event Action OnEnd;
+    public event Action OnStart = () => { };
+    public event Action OnStop = () => { };
+    public event Action OnEnd = () => { };
 
     public ReactiveBool IsRunning { get; } = new ReactiveBool();
 
     public int ChannelHandle { get; }
-    private readonly float originalFrequency;
 
     private readonly BassAudioManager manager;
     private readonly bool isStream;
@@ -32,7 +33,7 @@ internal class BassAudioChannel : IAudioChannel
 
     public BassAudioMixer Mixer { get; internal set; }
 
-    public BassAudioChannel(int channelHandle, BassAudioManager manager, bool isStream, BassAudioMixer mixer = null)
+    public BassAudioChannel(int channelHandle, BassAudioManager manager, bool isStream, BassAudioMixer mixer = null!)
     {
         ChannelHandle = channelHandle;
         this.manager = manager;
@@ -40,10 +41,10 @@ internal class BassAudioChannel : IAudioChannel
         Mixer = mixer;
 
         Bass.ChannelGetAttribute(ChannelHandle, ChannelAttribute.Frequency, out float freq);
-        originalFrequency = freq > 0 ? freq : 44100;
+        float originalFrequency1 = freq > 0 ? freq : 44100;
 
         // Set up a sync to fire the OnEnd event
-        endSyncProcedure = new SyncProcedure(OnChannelEnd);
+        endSyncProcedure = OnChannelEnd;
         Bass.ChannelSetSync(ChannelHandle, SyncFlags.End | SyncFlags.Mixtime, 0, endSyncProcedure);
 
         // Set up reactive property bindings
@@ -60,9 +61,9 @@ internal class BassAudioChannel : IAudioChannel
             if (!isFreqInitialized)
             {
                 isFreqInitialized = true;
-                if (e.NewValue == 1.0) return;
+                if (Math.Abs(e.NewValue - 1.0) < 0.001) return;
             }
-            BassUtils.CheckError(Bass.ChannelSetAttribute(ChannelHandle, ChannelAttribute.Frequency, (float)(e.NewValue * originalFrequency)), "setting frequency");
+            BassUtils.CheckError(Bass.ChannelSetAttribute(ChannelHandle, ChannelAttribute.Frequency, (float)(e.NewValue * originalFrequency1)), "setting frequency");
         };
         Balance.ValueChanged += e => BassUtils.CheckError(Bass.ChannelSetAttribute(ChannelHandle, ChannelAttribute.Pan, (float)e.NewValue), "setting balance");
     }
@@ -175,10 +176,7 @@ internal class BassAudioChannel : IAudioChannel
         set
         {
             isLooping = value;
-            if (isLooping)
-                Bass.ChannelFlags(ChannelHandle, BassFlags.Loop, BassFlags.Loop);
-            else
-                Bass.ChannelFlags(ChannelHandle, BassFlags.Default, BassFlags.Loop);
+            Bass.ChannelFlags(ChannelHandle, isLooping ? BassFlags.Loop : BassFlags.Default, BassFlags.Loop);
         }
     }
 
@@ -202,7 +200,7 @@ internal class BassAudioChannel : IAudioChannel
 
         // Cache the level for 15ms (roughly one frame at 60fps).
         // This ensures left and right properties read the exact same buffer
-        // snapshot without advancing the decode stream twice.
+        // snapshot without advancing the decoded stream twice.
         if (currentTick - lastLevelFetchTick < 15)
         {
             return cachedLevel;
@@ -210,15 +208,8 @@ internal class BassAudioChannel : IAudioChannel
 
         lastLevelFetchTick = currentTick;
 
-        if (Mixer != null)
-        {
-            // Use Mix version of it to prevent consuming the buffer
-            cachedLevel = BassMix.ChannelGetLevel(ChannelHandle);
-        }
-        else
-        {
-            cachedLevel = Bass.ChannelGetLevel(ChannelHandle);
-        }
+        // Use Mix version of it to prevent consuming the buffer
+        cachedLevel = Mixer != null ? BassMix.ChannelGetLevel(ChannelHandle) : Bass.ChannelGetLevel(ChannelHandle);
 
         return cachedLevel;
     }
@@ -260,9 +251,9 @@ internal class BassAudioChannel : IAudioChannel
         manager.RemoveChannel(this);
 
         IsRunning.Value = false;
-        OnStart = null;
-        OnStop = null;
-        OnEnd = null;
+        OnStart = null!;
+        OnStop = null!;
+        OnEnd = null!;
 
         // Unpin the sync procedure
         endSyncProcedure = null;
