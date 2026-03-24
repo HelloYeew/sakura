@@ -334,6 +334,9 @@ public class Logger
 
     private static StreamWriter getFileWriter(LoggingTarget target)
     {
+        if (storage == null)
+            return StreamWriter.Null;
+
         return file_writers.GetOrAdd(target, key =>
         {
             string fileName = $"{startupTimestamp}.{key.ToString().ToLower()}.log";

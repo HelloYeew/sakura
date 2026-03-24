@@ -22,6 +22,7 @@ using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Reactive;
+using Sakura.Framework.Timing;
 
 namespace Sakura.Framework;
 
@@ -60,9 +61,12 @@ public class App : Container, IFocusManager, IDisposable
     private DrawVisualiser drawVisualiser;
     private GlobalStatisticsDisplay globalStatisticsDisplay;
     private TextureViewerDisplay textureViewerDisplay;
+    private AudioMixerVisualiser audioMixerVisualiser;
 
     public override void Load()
     {
+        Clock = new FramedClock(Host.AppClock, true);
+
         base.Load();
 
         AudioManager = CreateAudioManager();
@@ -129,6 +133,11 @@ public class App : Container, IFocusManager, IDisposable
             Depth = float.MaxValue - 10,
             Alpha = 0
         });
+        Add(audioMixerVisualiser = new AudioMixerVisualiser(AudioManager)
+        {
+            Depth = float.MaxValue - 10,
+            Alpha = 0
+        });
         Add(FpsGraph = new FpsGraph(Host.AppClock)
         {
             Depth = float.MaxValue
@@ -162,6 +171,11 @@ public class App : Container, IFocusManager, IDisposable
         textureViewerDisplay.ToggleVisibility();
     }
 
+    private void toggleAudioMixerVisualiserDisplay()
+    {
+        audioMixerVisualiser.ToggleVisibility();
+    }
+
     /// <summary>
     /// Create a default <see cref="Storage"/>
     /// </summary>
@@ -191,6 +205,7 @@ public class App : Container, IFocusManager, IDisposable
     {
         base.Update();
         AudioManager?.Update(Clock.ElapsedFrameTime);
+        Scheduler.Update();
     }
 
     public override bool OnKeyDown(KeyEvent e)
@@ -208,6 +223,11 @@ public class App : Container, IFocusManager, IDisposable
         else if (!e.IsRepeat && e.Key == Key.F3 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
             toggleTextureViewerDisplay();
+            return true;
+        }
+        else if (!e.IsRepeat && e.Key == Key.F9 && (e.Modifiers & KeyModifiers.Control) > 0)
+        {
+            toggleAudioMixerVisualiserDisplay();
             return true;
         }
         if (!e.IsRepeat && e.Key == Key.F11 && (e.Modifiers & KeyModifiers.Control) > 0)

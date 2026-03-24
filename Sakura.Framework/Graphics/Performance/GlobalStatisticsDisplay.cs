@@ -177,7 +177,7 @@ public class GlobalStatisticsDisplay : FocusedOverlayContainer, IRemoveFromDrawV
                     Origin = Anchor.TopLeft,
                     Text = stat.Group,
                     Font = FontUsage.Default.With(size: 20, weight: "Bold"),
-                    Color = Color.Yellow
+                    Color = Color.Cyan
                 });
 
                 groupContainers[stat.Group] = groupFlow;

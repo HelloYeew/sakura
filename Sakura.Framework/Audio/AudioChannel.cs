@@ -37,6 +37,9 @@ internal abstract class AudioChannel : IAudioChannel
         set => restartPoint = Math.Clamp(value, 0, Length);
     }
 
+    public float AmplitudeLeft => 0;
+    public float AmplitudeRight => 0;
+
     public double Length { get; protected set; }
     public bool Looping { get; set; }
 

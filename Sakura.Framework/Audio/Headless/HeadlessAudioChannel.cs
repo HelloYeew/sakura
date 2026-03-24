@@ -47,6 +47,8 @@ public class HeadlessAudioChannel : IAudioChannel
     public bool AutoDispose { get; set; }
 
     public double RestartPoint { get; set; } = 0;
+    public float AmplitudeLeft => 0;
+    public float AmplitudeRight => 0;
 
     private double currentTime;
     public double CurrentTime
