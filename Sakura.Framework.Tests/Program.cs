@@ -3,7 +3,6 @@
 
 using System;
 using Sakura.Framework.Platform;
-using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests;
 
@@ -13,7 +12,7 @@ public class Program
     static void Main(string[] args)
     {
         using (AppHost host = new DesktopAppHost("sakura-framework-tests"))
-        using (App app = new TestBrowserApp(typeof(Program).Assembly))
+        using (App app = new TestApp(typeof(Program).Assembly))
             host.Run(app);
     }
 }
