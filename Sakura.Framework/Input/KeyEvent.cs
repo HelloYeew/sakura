@@ -23,6 +23,8 @@ public readonly struct KeyEvent
     /// </summary>
     public readonly bool IsRepeat;
 
+    public bool ControlPressed => (Modifiers & KeyModifiers.Control) != 0;
+
     public KeyEvent(Key key, KeyModifiers modifiers, bool isRepeat)
     {
         Key = key;

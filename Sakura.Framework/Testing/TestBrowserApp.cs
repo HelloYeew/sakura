@@ -10,6 +10,7 @@ using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Text;
+using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 
@@ -54,7 +55,7 @@ public class TestBrowserApp : App
         // });
 
         // 2. Left Sidebar (List of Tests)
-        var testSidebar = new Container
+        testSidebar = new Container
         {
             Size = new Vector2(sidebar_width, 1),
             RelativeSizeAxes = Axes.Y,
@@ -85,8 +86,8 @@ public class TestBrowserApp : App
             RelativeSizeAxes = Axes.X,
             AutoSizeAxes = Axes.Y,
             Spacing = new Vector2(0, 5),
-            Padding = new MarginPadding(10),
-            Size = new Vector2(1, 0),
+            Padding = new MarginPadding(2),
+            Size = new Vector2(0.98f, 0),
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft
         };
@@ -126,8 +127,8 @@ public class TestBrowserApp : App
             RelativeSizeAxes = Axes.X,
             AutoSizeAxes = Axes.Y,
             Spacing = new Vector2(0, 5),
-            Padding = new MarginPadding(10),
-            Size = new Vector2(1, 0),
+            Padding = new MarginPadding(2),
+            Size = new Vector2(0.98f, 0),
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft
         };
@@ -223,6 +224,37 @@ public class TestBrowserApp : App
         }
     }
 
+    private bool isTestListVisible = true;
+
+    public override bool OnKeyDown(KeyEvent e)
+    {
+        if (e.Key == Key.BackSlash && e.ControlPressed)
+        {
+            toggleTestList();
+            return true;
+        }
+
+        return base.OnKeyDown(e);
+    }
+
+    private void toggleTestList()
+    {
+        isTestListVisible = !isTestListVisible;
+
+        if (isTestListVisible)
+        {
+            testSidebar.Show();
+            stepSidebar.X = sidebar_width;
+            testContentContainer.Margin = new MarginPadding { Left = sidebar_width * 2 };
+        }
+        else
+        {
+            testSidebar.Hide();
+            stepSidebar.X = 0;
+            testContentContainer.Margin = new MarginPadding { Left = sidebar_width };
+        }
+    }
+
     private class BrowserButton : ClickableContainer
     {
         public BrowserButton(string text, Action action, Color bgColor)
@@ -233,6 +265,7 @@ public class TestBrowserApp : App
             Action = action;
             Anchor = Anchor.TopLeft;
             Origin = Anchor.TopLeft;
+            Masking = true;
             Name = text;
 
             Add(new Box
@@ -247,7 +280,7 @@ public class TestBrowserApp : App
             Add(new SpriteText
             {
                 Text = text,
-                Font = FontUsage.Default.With(size: 20),
+                Font = FontUsage.Default.With(size: 15),
                 Anchor = Anchor.CentreLeft,
                 Origin = Anchor.CentreLeft
             });
