@@ -13,6 +13,7 @@ using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
+using Sakura.Framework.Timing;
 
 namespace Sakura.Framework.Testing;
 
@@ -174,15 +175,46 @@ public class TestBrowserApp : App
 
     private void loadTestClasses()
     {
-        var testTypes = testAssembly.GetTypes()
+        var testGroups = testAssembly.GetTypes()
             .Where(t => t.IsSubclassOf(typeof(TestScene)) && !t.IsAbstract)
-            .OrderBy(t => t.Name)
+            .GroupBy(t => t.Namespace ?? "Unknown")
+            .OrderBy(g => g.Key)
             .ToList();
 
-        foreach (var type in testTypes)
+        string assemblyName = testAssembly.GetName().Name ?? string.Empty;
+
+        foreach (var group in testGroups)
         {
-            var btn = new BrowserButton(type.Name, () => loadTest(type), Color.DarkGray);
-            testListFlow.Add(btn);
+            string headerText = group.Key;
+            if (!string.IsNullOrEmpty(assemblyName) && headerText.StartsWith(assemblyName))
+            {
+                headerText = headerText.Substring(assemblyName.Length).TrimStart('.');
+                if (headerText.StartsWith("Visuals"))
+                    headerText = headerText.Substring("Visuals".Length).TrimStart('.');
+            }
+
+            if (string.IsNullOrEmpty(headerText))
+                headerText = "Uncategorized";
+
+            testListFlow.Add(new SpriteText
+            {
+                Anchor = Anchor.CentreLeft,
+                Origin = Anchor.CentreLeft,
+                Text = headerText,
+                Font = FontUsage.Default.With(size: 16),
+                Color = Color.Yellow,
+                Margin = new MarginPadding
+                {
+                    Top = 5,
+                    Bottom = 5
+                }
+            });
+
+            foreach (var type in group.OrderBy(t => t.Name))
+            {
+                var btn = new BrowserButton(type.Name, () => loadTest(type), Color.DarkGray);
+                testListFlow.Add(btn);
+            }
         }
     }
 
@@ -194,6 +226,8 @@ public class TestBrowserApp : App
             testContentContainer.Remove(currentTest);
         }
 
+        AudioManager.StopAll();
+
         foreach (var child in stepsFlow.Children.ToArray())
         {
             stepsFlow.Remove(child);
@@ -202,6 +236,8 @@ public class TestBrowserApp : App
         currentTest = (TestScene)Activator.CreateInstance(testSceneType);
         currentTest.RunSetUpMethods();
         testContentContainer.Add(currentTest);
+
+        currentTest.Clock = new FramedClock(Clock, true);
 
         foreach (var step in currentTest.Steps)
         {
