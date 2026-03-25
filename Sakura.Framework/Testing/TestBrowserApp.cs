@@ -10,6 +10,7 @@ using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Text;
+using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
@@ -26,10 +27,15 @@ public class TestBrowserApp : App
     private FlowContainer stepsFlow;
     private TestScene currentTest;
     private SpriteText hotReloadText;
+    private Container headerContainer;
 
     private readonly Assembly testAssembly;
 
     private const int sidebar_width = 150;
+
+    private bool isAutoRunEnabled;
+    private int currentAutoRunStep;
+    private const int header_height = 40;
 
     public TestBrowserApp(Assembly testAssembly = null!)
     {
@@ -43,25 +49,82 @@ public class TestBrowserApp : App
         testContentContainer = new Container
         {
             Anchor = Anchor.TopRight,
-            Origin = Anchor.TopRight
+            Origin = Anchor.TopRight,
+            Y = header_height
         };
         Add(testContentContainer);
-        // testContentContainer.Add(new Box()
-        // {
-        //     Anchor = Anchor.Centre,
-        //     Origin = Anchor.Centre,
-        //     RelativeSizeAxes = Axes.Both,
-        //     Size = new Vector2(1),
-        //     Color = Color.GreenYellow
-        // });
 
-        // 2. Left Sidebar (List of Tests)
+        // Top header
+        headerContainer = new Container
+        {
+            RelativeSizeAxes = Axes.X,
+            Height = header_height,
+            Anchor = Anchor.TopLeft,
+            Origin = Anchor.TopLeft,
+            Size = new Vector2(1, header_height),
+            Depth = -1
+        };
+
+        headerContainer.Add(new Box
+        {
+            Anchor = Anchor.TopLeft,
+            Origin = Anchor.TopLeft,
+            RelativeSizeAxes = Axes.Both,
+            Size = new Vector2(1),
+            Color = Color.DarkSlateGray,
+        });
+
+        var headerFlow = new FlowContainer
+        {
+            Anchor = Anchor.CentreLeft,
+            Origin = Anchor.CentreLeft,
+            Size = new Vector2(0, 1),
+            Direction = FlowDirection.Horizontal,
+            RelativeSizeAxes = Axes.Y,
+            AutoSizeAxes = Axes.X,
+            Spacing = new Vector2(5, 0),
+            Padding = new MarginPadding(5)
+        };
+
+        headerFlow.Add(new HeaderButton("Restart", () =>
+        {
+            if (currentTest != null)
+                loadTest(currentTest.GetType());
+        }, Color.DarkSlateBlue));
+
+        var autoRunText = new SpriteText
+        {
+            Text = "Auto Run: OFF",
+            Font = FontUsage.Default.With(size: 15),
+            Anchor = Anchor.Centre,
+            Origin = Anchor.Centre
+        };
+
+        headerFlow.Add(new HeaderButton("", () =>
+        {
+            isAutoRunEnabled = !isAutoRunEnabled;
+            autoRunText.Text = $"Auto Run: {(isAutoRunEnabled ? "ON" : "OFF")}";
+            autoRunText.Color = isAutoRunEnabled ? Color.GreenYellow : Color.White;
+
+            if (isAutoRunEnabled && currentTest != null)
+            {
+                currentAutoRunStep = 0;
+                runNextStep();
+            }
+        }, Color.DarkSlateBlue) { Child = autoRunText });
+
+        headerContainer.Add(headerFlow);
+        Add(headerContainer);
+
+        // Left Sidebar (List of Tests)
         testSidebar = new Container
         {
             Size = new Vector2(sidebar_width, 1),
             RelativeSizeAxes = Axes.Y,
             Anchor = Anchor.TopLeft,
-            Origin = Anchor.TopLeft
+            Origin = Anchor.TopLeft,
+            Y = header_height,
+            Padding = new MarginPadding { Bottom = header_height }
         };
 
         testSidebar.Add(new Box
@@ -101,10 +164,12 @@ public class TestBrowserApp : App
         {
             Size = new Vector2(sidebar_width, 1),
             RelativeSizeAxes = Axes.Y,
-            Position = new Vector2(sidebar_width, 0),
+            Position = new Vector2(sidebar_width, header_height),
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
+            Padding = new MarginPadding { Bottom = header_height }
         };
+
         stepSidebar.Add(new Box
         {
             Size = new Vector2(1),
@@ -170,7 +235,7 @@ public class TestBrowserApp : App
         base.LoadComplete();
         Window.GetPhysicalSize(out int physW, out int physH);
         testContentContainer.Size = new Vector2(physW - 2 * sidebar_width, physH);
-        Window.Resized += (w, h) => testContentContainer.Size = new Vector2(w - 2 * sidebar_width, h);
+        Window.Resized += (w, h) => testContentContainer.Size = new Vector2(w - 2 * sidebar_width, h - header_height);
     }
 
     private void loadTestClasses()
@@ -243,10 +308,13 @@ public class TestBrowserApp : App
         {
             Color btnColor = step.IsAssert ? Color.DarkRed : Color.DarkBlue;
 
-            var stepBtn = new BrowserButton(step.Description, () =>
+            BrowserButton stepBtn = null!;
+
+            stepBtn = new BrowserButton(step.Description, () =>
             {
                 try
                 {
+                    stepBtn.Flash();
                     step.Action?.Invoke();
                     Logger.Log($"[Test] Executed step: {step.Description}");
                 }
@@ -257,6 +325,12 @@ public class TestBrowserApp : App
             }, btnColor);
 
             stepsFlow.Add(stepBtn);
+        }
+
+        if (isAutoRunEnabled)
+        {
+            currentAutoRunStep = 0;
+            Scheduler.AddDelayed(runNextStep, 200);
         }
     }
 
@@ -291,8 +365,38 @@ public class TestBrowserApp : App
         }
     }
 
+    private void runNextStep()
+    {
+        if (!isAutoRunEnabled || currentTest == null || currentAutoRunStep >= currentTest.Steps.Count)
+            return;
+
+        var step = currentTest.Steps[currentAutoRunStep];
+
+        if (stepsFlow.Children.Count > currentAutoRunStep && stepsFlow.Children[currentAutoRunStep] is BrowserButton btn)
+        {
+            btn.Flash();
+        }
+
+        try
+        {
+            step.Action?.Invoke();
+            Logger.Log($"[Test] Auto-executed step: {step.Description}");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"[Test] Step failed: {step.Description}", ex);
+        }
+
+        currentAutoRunStep++;
+
+        // Schedule the next step with a 200ms delay so it's visually discernible
+        Scheduler.AddDelayed(runNextStep, 200);
+    }
+
     private class BrowserButton : ClickableContainer
     {
+        private Box backgroundBox;
+
         public BrowserButton(string text, Action action, Color bgColor)
         {
             RelativeSizeAxes = Axes.X;
@@ -304,7 +408,7 @@ public class TestBrowserApp : App
             Masking = true;
             Name = text;
 
-            Add(new Box
+            Add(backgroundBox = new Box
             {
                 RelativeSizeAxes = Axes.Both,
                 Size = new Vector2(1),
@@ -320,6 +424,41 @@ public class TestBrowserApp : App
                 Anchor = Anchor.CentreLeft,
                 Origin = Anchor.CentreLeft
             });
+        }
+
+        public void Flash()
+        {
+            backgroundBox.FlashColour(Color.White, 500, Easing.OutQuint);
+        }
+    }
+
+    private class HeaderButton : ClickableContainer
+    {
+        public HeaderButton(string text, Action action, Color bgColor)
+        {
+            RelativeSizeAxes = Axes.Y;
+            Width = 120;
+            Height = 1;
+            Action = action;
+            Masking = true;
+            CornerRadius = 5;
+
+            Add(new Box
+            {
+                RelativeSizeAxes = Axes.Both,
+                Color = bgColor
+            });
+
+            if (!string.IsNullOrEmpty(text))
+            {
+                Add(new SpriteText
+                {
+                    Text = text,
+                    Font = FontUsage.Default.With(size: 15),
+                    Anchor = Anchor.Centre,
+                    Origin = Anchor.Centre
+                });
+            }
         }
     }
 }
