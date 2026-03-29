@@ -136,19 +136,6 @@ public class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisualiser
             Height = 30
         });
 
-        // Footer
-        Add(new SpriteText
-        {
-            Text = "Note : Use ArrowDown and ArrowUp to dim or brighten the background!",
-            Font = FontUsage.Default.With(size: 16),
-            Anchor = Anchor.BottomLeft,
-            Origin = Anchor.BottomLeft,
-            Position = new Vector2(10, -10),
-            Color = Color.LightPink,
-            RelativeSizeAxes = Axes.X,
-            Height = 30
-        });
-
         // Tree view (left)
         Add(leftContainer = new Container
         {
@@ -517,22 +504,6 @@ public class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisualiser
         });
 
         return spriteText;
-    }
-
-    public override bool OnKeyDown(KeyEvent e)
-    {
-        if (e.Key == Key.Down)
-        {
-            backgroundBox.FadeTo(Math.Clamp(Alpha + 0.05f, 0.1f, 1f), 100);
-            return true;
-        }
-        else if (e.Key == Key.Up)
-        {
-            backgroundBox.FadeTo(Math.Clamp(Alpha - 0.05f, 0.1f, 1f), 100);
-            return true;
-        }
-
-        return base.OnKeyDown(e);
     }
 
     protected override void PopIn() => this.FadeIn(200, Easing.OutQuint);

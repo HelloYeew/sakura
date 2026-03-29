@@ -70,4 +70,9 @@ public interface IAudioManager
     /// </summary>
     /// <param name="frameTime"></param>
     void Update(double frameTime);
+
+    /// <summary>
+    /// Instantly stops all playing tracks and samples.
+    /// </summary>
+    void StopAll();
 }

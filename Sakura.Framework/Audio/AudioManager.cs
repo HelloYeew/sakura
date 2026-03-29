@@ -82,4 +82,12 @@ internal class AudioManager : IAudioManager
             channel.Update(frameTime);
         }
     }
+
+    public void StopAll()
+    {
+        foreach (var channel in activeChannels)
+        {
+            channel.Stop();
+        }
+    }
 }

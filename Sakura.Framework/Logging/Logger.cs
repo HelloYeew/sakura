@@ -21,12 +21,13 @@ public class Logger
     private static readonly ConcurrentQueue<LogMessage> message_queue = new ConcurrentQueue<LogMessage>();
     private static readonly ConcurrentDictionary<LoggingTarget, StreamWriter> file_writers = new ConcurrentDictionary<LoggingTarget, StreamWriter>();
     private static readonly Lock console_lock = new Lock();  // Lock for console output to not mutate concurrently
-    private static readonly ManualResetEventSlim processing_gate = new ManualResetEventSlim(true);
+    private static ManualResetEventSlim processing_gate = new ManualResetEventSlim(true);
 
     private static Task processingTask;
     private static CancellationTokenSource cancellationTokenSource;
     private static long startupTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
     private static Storage storage;
+    private static bool isShutDown = false;
 
     public static Storage Storage
     {
@@ -167,6 +168,9 @@ public class Logger
             return;
         }
 
+        isShutDown = false;
+
+        processing_gate = new ManualResetEventSlim(true);
         processing_gate.Reset();
 
         MinimumLogLevel = minimumLogLevel;
@@ -218,12 +222,16 @@ public class Logger
     /// </summary>
     public static void Shutdown()
     {
+        if (isShutDown) return;
+
         // Ensure that we don't try to shut down before the processing task has even started.
         processing_gate.Wait();
 
         if (cancellationTokenSource == null || processingTask == null) return;
 
         Debug("Logger is shutting down...");
+
+        isShutDown = true;
 
         cancellationTokenSource.Cancel();
 
@@ -254,6 +262,19 @@ public class Logger
 
     private static void log(string message, LogLevel level, LoggingTarget target)
     {
+        if (isShutDown)
+        {
+            // Fallback directly to console if the logger was already shut down.
+            if (LogToConsole)
+            {
+                lock (console_lock)
+                {
+                    Console.WriteLine(getFormattedMessage(DateTime.UtcNow, level, message));
+                }
+            }
+            return;
+        }
+
         // Block until the processing task is fully initialized and running.
         // since maybe the program is really short-lived and the processing task hasn't started yet.
         processing_gate.Wait();
