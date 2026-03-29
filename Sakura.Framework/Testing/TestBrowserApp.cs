@@ -4,6 +4,7 @@
 using System;
 using System.Linq;
 using System.Reflection;
+using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
@@ -266,7 +267,7 @@ public class TestBrowserApp : App
                 Anchor = Anchor.CentreLeft,
                 Origin = Anchor.CentreLeft,
                 Text = headerText,
-                Font = FontUsage.Default.With(size: 16),
+                Font = FontUsage.Default.With(size: 14),
                 Color = Color.Yellow,
                 Margin = new MarginPadding
                 {
@@ -396,8 +397,9 @@ public class TestBrowserApp : App
     private class BrowserButton : ClickableContainer
     {
         private Box backgroundBox;
+        private Color originalBackgroundColor;
 
-        public BrowserButton(string text, Action action, Color bgColor)
+        public BrowserButton(string text, Action action, Color backgroundColor)
         {
             RelativeSizeAxes = Axes.X;
             Height = 30;
@@ -412,7 +414,7 @@ public class TestBrowserApp : App
             {
                 RelativeSizeAxes = Axes.Both,
                 Size = new Vector2(1),
-                Color = bgColor,
+                Color = backgroundColor,
                 Anchor = Anchor.TopLeft,
                 Origin = Anchor.TopLeft
             });
@@ -424,10 +426,26 @@ public class TestBrowserApp : App
                 Anchor = Anchor.CentreLeft,
                 Origin = Anchor.CentreLeft
             });
+
+            originalBackgroundColor = backgroundColor;
+        }
+
+        public override bool OnHover(MouseEvent e)
+        {
+            backgroundBox.Color = originalBackgroundColor;
+            backgroundBox.FadeToColour(originalBackgroundColor.Lighten(0.5f), 50, Easing.OutQuint);
+            return base.OnHover(e);
+        }
+
+        public override bool OnHoverLost(MouseEvent e)
+        {
+            backgroundBox.FadeToColour(originalBackgroundColor, 50, Easing.OutQuint);
+            return base.OnHoverLost(e);
         }
 
         public void Flash()
         {
+            backgroundBox.Color = originalBackgroundColor;
             backgroundBox.FlashColour(Color.White, 500, Easing.OutQuint);
         }
     }
