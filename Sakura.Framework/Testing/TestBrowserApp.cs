@@ -281,7 +281,7 @@ public class TestBrowserApp : App
 
             foreach (var type in group.OrderBy(t => t.Name))
             {
-                var button = new BrowserButton(type.Name, () => loadTest(type), Color.DarkGray);
+                var button = new TestBrowserButton(type.Name, () => loadTest(type), Color.DarkGray);
                 testListFlow.Add(button);
             }
         }
@@ -319,9 +319,9 @@ public class TestBrowserApp : App
             else if (isWait)
                 buttonColor = Color.DarkCyan;
 
-            BrowserButton stepButton = null!;
+            TestStepButton stepButton = null!;
 
-            stepButton = new BrowserButton(step.Description, () =>
+            stepButton = new TestStepButton(step.Description, () =>
             {
                 try
                 {
@@ -395,7 +395,7 @@ public class TestBrowserApp : App
 
         var step = currentTest.Steps[currentAutoRunStep];
 
-        var button = stepsFlow.Children.Count > currentAutoRunStep ? stepsFlow.Children[currentAutoRunStep] as BrowserButton : null;
+        var button = stepsFlow.Children.Count > currentAutoRunStep ? stepsFlow.Children[currentAutoRunStep] as TestStepButton : null;
 
         if (!isWaitingForStep)
         {
@@ -456,13 +456,69 @@ public class TestBrowserApp : App
         Scheduler.AddDelayed(runNextStep, 200);
     }
 
-    private class BrowserButton : ClickableContainer
+    private class TestBrowserButton : ClickableContainer
+    {
+        private Box backgroundBox;
+        private Color originalBackgroundColor;
+
+        public TestBrowserButton(string text, Action action, Color backgroundColor)
+        {
+            RelativeSizeAxes = Axes.X;
+            Height = 30;
+            Width = 1;
+            Action = action;
+            Anchor = Anchor.TopLeft;
+            Origin = Anchor.TopLeft;
+            Masking = true;
+            Name = text;
+
+            Add(backgroundBox = new Box
+            {
+                RelativeSizeAxes = Axes.Both,
+                Size = new Vector2(1),
+                Color = backgroundColor,
+                Anchor = Anchor.TopLeft,
+                Origin = Anchor.TopLeft
+            });
+
+            Add(new SpriteText
+            {
+                Text = text,
+                Font = FontUsage.Default.With(size: 15),
+                Anchor = Anchor.CentreLeft,
+                Origin = Anchor.CentreLeft
+            });
+
+            originalBackgroundColor = backgroundColor;
+        }
+
+        public override bool OnHover(MouseEvent e)
+        {
+            backgroundBox.Color = originalBackgroundColor;
+            backgroundBox.FadeToColour(originalBackgroundColor.Lighten(0.5f), 50, Easing.OutQuint);
+            return base.OnHover(e);
+        }
+
+        public override bool OnHoverLost(MouseEvent e)
+        {
+            backgroundBox.FadeToColour(originalBackgroundColor, 50, Easing.OutQuint);
+            return base.OnHoverLost(e);
+        }
+
+        public void Flash()
+        {
+            backgroundBox.Color = originalBackgroundColor;
+            backgroundBox.FlashColour(Color.White, 500, Easing.OutQuint);
+        }
+    }
+
+    private class TestStepButton : ClickableContainer
     {
         private Box backgroundBox;
         private Box statusBox;
         private Color originalBackgroundColor;
 
-        public BrowserButton(string text, Action action, Color backgroundColor)
+        public TestStepButton(string text, Action action, Color backgroundColor)
         {
             RelativeSizeAxes = Axes.X;
             Height = 30;
@@ -506,6 +562,7 @@ public class TestBrowserApp : App
         public void SetState(bool isSuccess)
         {
             statusBox.Color = isSuccess ? Color.LimeGreen : Color.Red;
+            statusBox.FlashColour(isSuccess ? Color.LimeGreen.Lighten(0.5f) : Color.Red.Lighten(0.5f), 500, Easing.OutQuint);
         }
 
         public override bool OnHover(MouseEvent e)
