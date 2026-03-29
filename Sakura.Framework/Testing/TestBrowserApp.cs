@@ -38,6 +38,9 @@ public class TestBrowserApp : App
     private int currentAutoRunStep;
     private const int header_height = 40;
 
+    private bool isWaitingForStep;
+    private double stepWaitStartTime;
+
     public TestBrowserApp(Assembly testAssembly = null!)
     {
         this.testAssembly = testAssembly ?? Assembly.GetEntryAssembly();
@@ -317,7 +320,7 @@ public class TestBrowserApp : App
                 {
                     stepBtn.Flash();
                     step.Action?.Invoke();
-                    Logger.Log($"[Test] Executed step: {step.Description}");
+                    Logger.Log($"Executed step: {step.Description}");
                 }
                 catch (Exception ex)
                 {
@@ -373,24 +376,56 @@ public class TestBrowserApp : App
 
         var step = currentTest.Steps[currentAutoRunStep];
 
-        if (stepsFlow.Children.Count > currentAutoRunStep && stepsFlow.Children[currentAutoRunStep] is BrowserButton btn)
+        if (!isWaitingForStep)
         {
-            btn.Flash();
+            if (stepsFlow.Children.Count > currentAutoRunStep && stepsFlow.Children[currentAutoRunStep] is BrowserButton btn)
+                btn.Flash();
+
+            try
+            {
+                step.Action?.Invoke();
+                Logger.Log($"[Test] Auto-executed step: {step.Description}");
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"[Test] Step failed: {step.Description}", ex);
+                isAutoRunEnabled = false;
+                return;
+            }
+
+            if (step.WaitTime > 0 || step.WaitCondition != null)
+            {
+                isWaitingForStep = true;
+                stepWaitStartTime = currentTest.Clock.CurrentTime;
+            }
         }
 
-        try
+        if (isWaitingForStep)
         {
-            step.Action?.Invoke();
-            Logger.Log($"[Test] Auto-executed step: {step.Description}");
-        }
-        catch (Exception ex)
-        {
-            Logger.Error($"[Test] Step failed: {step.Description}", ex);
+            double elapsed = currentTest.Clock.CurrentTime - stepWaitStartTime;
+
+            if (step.WaitTime > 0 && elapsed < step.WaitTime)
+            {
+                Scheduler.AddDelayed(runNextStep, 10);
+                return;
+            }
+
+            if (step.WaitCondition != null && !step.WaitCondition())
+            {
+                if (step.HasTimeout && elapsed > step.Timeout)
+                {
+                    Logger.Error($"[Test] Auto-run timed out on step: {step.Description}");
+                    isAutoRunEnabled = false;
+                    return;
+                }
+                Scheduler.AddDelayed(runNextStep, 10);
+                return;
+            }
+
+            isWaitingForStep = false;
         }
 
         currentAutoRunStep++;
-
-        // Schedule the next step with a 200ms delay so it's visually discernible
         Scheduler.AddDelayed(runNextStep, 200);
     }
 

@@ -27,8 +27,10 @@ public class TestBox : TestScene
         AddAssert("Box should be added", () => Children.Count == 1);
         AddAssert("Color should be red", () => box.Color == Color.Red);
         AddStep("Resize box to 200x200", () => box.ResizeTo(new Vector2(200), 500));
+        AddWaitStep("Wait for resize to complete", 500);
         AddAssert("Box should be resized to 200x200", () => box.Size == new Vector2(200));
         AddStep("Fade out box", () => box.FadeOut(500));
+        AddUntilStep("Wait until box is invisible", () => box.Alpha == 0);
         AddAssert("Box should be faded out", () => box.Alpha == 0);
     }
 }
