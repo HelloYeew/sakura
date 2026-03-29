@@ -281,8 +281,8 @@ public class TestBrowserApp : App
 
             foreach (var type in group.OrderBy(t => t.Name))
             {
-                var btn = new BrowserButton(type.Name, () => loadTest(type), Color.DarkGray);
-                testListFlow.Add(btn);
+                var button = new BrowserButton(type.Name, () => loadTest(type), Color.DarkGray);
+                testListFlow.Add(button);
             }
         }
     }
@@ -310,25 +310,44 @@ public class TestBrowserApp : App
 
         foreach (var step in currentTest.Steps)
         {
-            Color btnColor = step.IsAssert ? Color.DarkRed : Color.DarkBlue;
+            bool isWait = step.WaitTime > 0 || step.WaitCondition != null;
 
-            BrowserButton stepBtn = null!;
+            Color buttonColor = Color.DarkBlue;
 
-            stepBtn = new BrowserButton(step.Description, () =>
+            if (step.IsAssert)
+                buttonColor = Color.DarkRed;
+            else if (isWait)
+                buttonColor = Color.DarkCyan;
+
+            BrowserButton stepButton = null!;
+
+            stepButton = new BrowserButton(step.Description, () =>
             {
                 try
                 {
-                    stepBtn.Flash();
-                    step.Action?.Invoke();
+                    stepButton.Flash();
+                    if (isWait)
+                    {
+                        if (step.WaitCondition != null && !step.WaitCondition())
+                        {
+                            throw new Exception("Wait condition not met.");
+                        }
+                    }
+                    else
+                    {
+                        step.Action?.Invoke();
+                    }
+
+                    stepButton.SetState(true);
                     Logger.Log($"Executed step: {step.Description}");
                 }
                 catch (Exception ex)
                 {
                     Logger.Error($"[Test] Step failed: {step.Description}", ex);
                 }
-            }, btnColor);
+            }, buttonColor);
 
-            stepsFlow.Add(stepBtn);
+            stepsFlow.Add(stepButton);
         }
 
         if (isAutoRunEnabled)
@@ -376,10 +395,11 @@ public class TestBrowserApp : App
 
         var step = currentTest.Steps[currentAutoRunStep];
 
+        var button = stepsFlow.Children.Count > currentAutoRunStep ? stepsFlow.Children[currentAutoRunStep] as BrowserButton : null;
+
         if (!isWaitingForStep)
         {
-            if (stepsFlow.Children.Count > currentAutoRunStep && stepsFlow.Children[currentAutoRunStep] is BrowserButton btn)
-                btn.Flash();
+            button.Flash();
 
             try
             {
@@ -389,6 +409,7 @@ public class TestBrowserApp : App
             catch (Exception ex)
             {
                 Logger.Error($"[Test] Step failed: {step.Description}", ex);
+                button?.SetState(false);
                 isAutoRunEnabled = false;
                 return;
             }
@@ -397,6 +418,10 @@ public class TestBrowserApp : App
             {
                 isWaitingForStep = true;
                 stepWaitStartTime = currentTest.Clock.CurrentTime;
+            }
+            else
+            {
+                button.SetState(true);
             }
         }
 
@@ -415,6 +440,7 @@ public class TestBrowserApp : App
                 if (step.HasTimeout && elapsed > step.Timeout)
                 {
                     Logger.Error($"[Test] Auto-run timed out on step: {step.Description}");
+                    button?.SetState(false);
                     isAutoRunEnabled = false;
                     return;
                 }
@@ -423,6 +449,7 @@ public class TestBrowserApp : App
             }
 
             isWaitingForStep = false;
+            button?.SetState(true);
         }
 
         currentAutoRunStep++;
@@ -432,6 +459,7 @@ public class TestBrowserApp : App
     private class BrowserButton : ClickableContainer
     {
         private Box backgroundBox;
+        private Box statusBox;
         private Color originalBackgroundColor;
 
         public BrowserButton(string text, Action action, Color backgroundColor)
@@ -454,15 +482,30 @@ public class TestBrowserApp : App
                 Origin = Anchor.TopLeft
             });
 
+            Add(statusBox = new Box
+            {
+                RelativeSizeAxes = Axes.Y,
+                Size = new Vector2(8, 1),
+                Color = Color.Red,
+                Anchor = Anchor.TopLeft,
+                Origin = Anchor.TopLeft
+            });
+
             Add(new SpriteText
             {
                 Text = text,
                 Font = FontUsage.Default.With(size: 15),
                 Anchor = Anchor.CentreLeft,
-                Origin = Anchor.CentreLeft
+                Origin = Anchor.CentreLeft,
+                Position = new Vector2(10, 0)
             });
 
             originalBackgroundColor = backgroundColor;
+        }
+
+        public void SetState(bool isSuccess)
+        {
+            statusBox.Color = isSuccess ? Color.LimeGreen : Color.Red;
         }
 
         public override bool OnHover(MouseEvent e)
