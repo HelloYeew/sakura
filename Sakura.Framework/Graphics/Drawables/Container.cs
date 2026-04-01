@@ -219,8 +219,8 @@ public class Container : Drawable
             // But since we are determining our size, we treat relative positioning as 0 or ignore it
             // to avoid stability issues, unless we implement a multi-pass layout solver.
             // For simplicity: We use the raw local position.
-            float right = childPos.X + scaledSize.X + child.Margin.Right;
-            float bottom = childPos.Y + scaledSize.Y + child.Margin.Bottom;
+            float right = childPos.X + child.Margin.Left + scaledSize.X + child.Margin.Right;
+            float bottom = childPos.Y + child.Margin.Top + scaledSize.Y + child.Margin.Bottom;
 
             // Also account for origin offsets if necessary, but standard implementation
             // usually assumes TopLeft origin for simple flow calculations.

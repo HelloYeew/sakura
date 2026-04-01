@@ -223,4 +223,20 @@ internal class BassAudioManager : IAudioManager, IDisposable
         activeChannels.Clear();
         Bass.Free();
     }
+
+    public void StopAll()
+    {
+        BassAudioChannel[] channelsToDispose;
+
+        lock (activeChannels)
+        {
+            channelsToDispose = activeChannels.ToArray();
+            activeChannels.Clear();
+        }
+
+        foreach (var channel in channelsToDispose)
+        {
+            channel.Dispose();
+        }
+    }
 }

@@ -53,6 +53,14 @@ public class HeadlessAudioManager : IAudioManager, IDisposable
         activeChannels.Add(channel);
     }
 
+    public void StopAll()
+    {
+        foreach (var channel in activeChannels)
+        {
+            channel.Stop();
+        }
+    }
+
     public void Dispose()
     {
         foreach (var channel in activeChannels)
