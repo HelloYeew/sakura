@@ -9,7 +9,9 @@ public class TestStep
 {
     public string Description { get; set; }
     public Action Action { get; set; }
+
     public bool IsAssert { get; set; }
+    public bool IsLabel { get; set; }
 
     public double WaitTime { get; set; }
     public Func<bool>? WaitCondition { get; set; }

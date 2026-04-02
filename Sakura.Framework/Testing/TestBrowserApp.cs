@@ -4,6 +4,7 @@
 using System;
 using System.Linq;
 using System.Reflection;
+using NUnit.Framework;
 using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Colors;
@@ -48,6 +49,7 @@ public class TestBrowserApp : App
 
     public override void Load()
     {
+        TestScene.IsVisualRunner = true;
         base.Load();
 
         testContentContainer = new Container
@@ -303,13 +305,42 @@ public class TestBrowserApp : App
         }
 
         currentTest = (TestScene)Activator.CreateInstance(testSceneType);
-        currentTest.RunSetUpMethods();
         testContentContainer.Add(currentTest);
 
         currentTest.Clock = new FramedClock(Clock, true);
 
+        var testMethods = testSceneType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .Where(m => m.GetCustomAttribute<TestAttribute>() != null).ToList();
+
+        if (testMethods.Count != 0)
+        {
+            foreach (var method in testMethods)
+            {
+                currentTest.AddLabel(method.Name);
+                currentTest.RunSetUpMethods();
+                method.Invoke(currentTest, null);
+            }
+        }
+
         foreach (var step in currentTest.Steps)
         {
+            if (step.IsLabel)
+            {
+                stepsFlow.Add(new SpriteText
+                {
+                    Text = step.Description,
+                    Font = FontUsage.Default.With(size: 14),
+                    Color = Color.Yellow,
+                    Margin = new MarginPadding
+                    {
+                        Top = 10,
+                        Bottom = 5
+                    },
+                    Name = step.Description
+                });
+                continue;
+            }
+
             bool isWait = step.WaitTime > 0 || step.WaitCondition != null;
 
             Color buttonColor = Color.DarkBlue;
@@ -396,6 +427,13 @@ public class TestBrowserApp : App
         var step = currentTest.Steps[currentAutoRunStep];
 
         var button = stepsFlow.Children.Count > currentAutoRunStep ? stepsFlow.Children[currentAutoRunStep] as TestStepButton : null;
+
+        if (step.IsLabel)
+        {
+            currentAutoRunStep++;
+            Scheduler.AddDelayed(runNextStep, 10);
+            return;
+        }
 
         if (!isWaitingForStep)
         {

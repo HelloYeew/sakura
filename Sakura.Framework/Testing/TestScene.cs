@@ -18,6 +18,11 @@ namespace Sakura.Framework.Testing;
 [TestFixture]
 public abstract class TestScene : Container
 {
+    /// <summary>
+    /// Tells the TestScene to bypass spinning up a headless host because the visual is running it.
+    /// </summary>
+    public static bool IsVisualRunner { get; set; }
+
     public IReadOnlyList<TestStep> Steps => steps;
     private readonly List<TestStep> steps = new();
 
@@ -69,17 +74,68 @@ public abstract class TestScene : Container
         });
     }
 
+    public void AddLabel(string description)
+    {
+        steps.Add(new TestStep
+        {
+            Description = description,
+            IsLabel = true
+        });
+    }
+
+    [SetUp]
+    public virtual void SetupNUnit()
+    {
+        if (!IsVisualRunner)
+        {
+            steps.Clear();
+            Clear();
+        }
+        else
+        {
+            AddStep("Clear test scene", Clear);
+        }
+    }
+
+    [TearDown]
+    public virtual void TeardownNUnit()
+    {
+        if (IsVisualRunner || steps.Count == 0)
+            return;
+
+        using var host = new HeadlessAppHost($"HeadlessTest-{TestContext.CurrentContext.Test.Name}");
+        var runnerApp = new HeadlessTestRunnerApp(this, host);
+        host.Run(runnerApp);
+
+        if (runnerApp.TestException != null)
+        {
+            ExceptionDispatchInfo.Capture(runnerApp.TestException).Throw();
+        }
+    }
+
     /// <summary>
     /// Finds and executes all methods marked with NUnit's [SetUp] attribute.
     /// </summary>
     public void RunSetUpMethods()
     {
-        var setUpMethods = GetType().GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-            .Where(m => m.GetCustomAttribute<SetUpAttribute>() != null);
+        var typeHierarchy = new List<Type>();
+        var currentType = GetType();
 
-        foreach (var method in setUpMethods)
+        while (currentType != null && currentType != typeof(Container))
         {
-            method.Invoke(this, null);
+            typeHierarchy.Insert(0, currentType);
+            currentType = currentType.BaseType;
+        }
+
+        foreach (var type in typeHierarchy)
+        {
+            var setUpMethods = type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+                .Where(m => m.GetCustomAttribute<SetUpAttribute>() != null);
+
+            foreach (var method in setUpMethods)
+            {
+                method.Invoke(this, null);
+            }
         }
     }
 
@@ -94,18 +150,6 @@ public abstract class TestScene : Container
         foreach (var method in tearDownMethods)
         {
             method.Invoke(this, null);
-        }
-    }
-
-    [Test]
-    public virtual void RunTestsHeadless()
-    {
-        using var host = new HeadlessAppHost($"HeadlessTest-{GetType().Name}");
-        var runnerApp = new HeadlessTestRunnerApp(this, host);
-        host.Run(runnerApp);
-        if (runnerApp.TestException != null)
-        {
-            ExceptionDispatchInfo.Capture(runnerApp.TestException).Throw();
         }
     }
 
