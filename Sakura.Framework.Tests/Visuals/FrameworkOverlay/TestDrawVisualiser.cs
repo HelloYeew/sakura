@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using NUnit.Framework;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Performance;
@@ -14,7 +15,8 @@ public class TestDrawVisualiser : TestScene
 {
     private DrawVisualiser visualiser;
 
-    public TestDrawVisualiser()
+    [SetUp]
+    public void SetUp()
     {
         visualiser = new DrawVisualiser(this)
         {
@@ -25,6 +27,11 @@ public class TestDrawVisualiser : TestScene
         };
         AddStep("Add DrawVisualiser", () => Add(visualiser));
         AddStep("Pop in overlay", () => visualiser.ToggleVisibility());
+    }
+
+    [Test]
+    public void TestDrawable()
+    {
         AddStep("Add a box", () => Add(new Box
         {
             Anchor = Anchor.Centre,

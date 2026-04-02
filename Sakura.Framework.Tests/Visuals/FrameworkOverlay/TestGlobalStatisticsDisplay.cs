@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using NUnit.Framework;
 using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Testing;
@@ -11,7 +12,8 @@ public class TestGlobalStatisticsDisplay : TestScene
 {
     private GlobalStatisticsDisplay overlay;
 
-    public TestGlobalStatisticsDisplay()
+    [SetUp]
+    public void SetUp()
     {
         overlay = new GlobalStatisticsDisplay()
         {
@@ -22,5 +24,11 @@ public class TestGlobalStatisticsDisplay : TestScene
         };
         AddStep("Add overlay", () => Add(overlay));
         AddStep("Pop in overlay", () => overlay.ToggleVisibility());
+    }
+
+    [Test]
+    public void TestDisplay()
+    {
+        AddAssert("Overlay is visible", () => overlay.Alpha > 0);
     }
 }
