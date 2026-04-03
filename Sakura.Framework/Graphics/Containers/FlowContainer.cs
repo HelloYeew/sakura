@@ -55,6 +55,7 @@ public class FlowContainer : Container
 
         if (layoutWasInvalidated)
         {
+            UpdateTransforms();
             PerformLayout();
         }
 
@@ -159,11 +160,19 @@ public class FlowContainer : Container
                 lineMaxSizePixels = Math.Max(lineMaxSizePixels, childTotalSizePixels.X);
             }
 
+            Vector2 newSize = Size;
+
             if ((AutoSizeAxes & Axes.X) != 0)
-                Width = maxRight + Padding.Right;
+                newSize.X = maxRight + Padding.Right;
 
             if ((AutoSizeAxes & Axes.Y) != 0)
-                Height = maxBottom + Padding.Bottom;
+                newSize.Y = maxBottom + Padding.Bottom;
+
+            if (Size != newSize)
+            {
+                Size = newSize;
+                Parent?.Invalidate(InvalidationFlags.DrawInfo);
+            }
         }
     }
 

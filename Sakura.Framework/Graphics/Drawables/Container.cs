@@ -248,6 +248,7 @@ public class Container : Drawable
             Size = currentSize;
             // We changed size, so we must invalidate ourselves so `base.Update()` recalculates matrices
             Invalidate(InvalidationFlags.DrawInfo);
+            Parent?.Invalidate(InvalidationFlags.DrawInfo);
         }
     }
 

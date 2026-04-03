@@ -119,6 +119,7 @@ public class SpriteText : Drawable
         if (Math.Abs(Size.X - ContentSize.X) > 1.0f || Math.Abs(Size.Y - ContentSize.Y) > 1.0f)
         {
             Size = ContentSize;
+            Parent?.Invalidate(InvalidationFlags.DrawInfo);
         }
 
         layoutInvalidated = false;
