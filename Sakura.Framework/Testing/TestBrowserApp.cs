@@ -54,9 +54,15 @@ public class TestBrowserApp : App
 
         testContentContainer = new Container
         {
+            RelativeSizeAxes = Axes.Both,
+            Size = new Vector2(1),
             Anchor = Anchor.TopRight,
             Origin = Anchor.TopRight,
-            Y = header_height
+            Margin = new MarginPadding
+            {
+                Top = header_height,
+                Left = sidebar_width * 2
+            }
         };
         Add(testContentContainer);
 
@@ -236,14 +242,6 @@ public class TestBrowserApp : App
         };
     }
 
-    public override void LoadComplete()
-    {
-        base.LoadComplete();
-        Window.GetPhysicalSize(out int physW, out int physH);
-        testContentContainer.Size = new Vector2(physW - 2 * sidebar_width, physH);
-        Window.Resized += (w, h) => testContentContainer.Size = new Vector2(w - 2 * sidebar_width, h - header_height);
-    }
-
     private void loadTestClasses()
     {
         var testGroups = testAssembly.GetTypes()
@@ -409,13 +407,21 @@ public class TestBrowserApp : App
         {
             testSidebar.Show();
             stepSidebar.X = sidebar_width;
-            testContentContainer.Margin = new MarginPadding { Left = sidebar_width * 2 };
+            testContentContainer.Margin = new MarginPadding
+            {
+                Top = header_height,
+                Left = sidebar_width * 2
+            };
         }
         else
         {
             testSidebar.Hide();
             stepSidebar.X = 0;
-            testContentContainer.Margin = new MarginPadding { Left = sidebar_width };
+            testContentContainer.Margin = new MarginPadding
+            {
+                Top = header_height,
+                Left = sidebar_width
+            };
         }
     }
 
