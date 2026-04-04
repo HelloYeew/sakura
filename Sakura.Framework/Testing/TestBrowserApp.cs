@@ -197,7 +197,8 @@ public class TestBrowserApp : App
             Size = new Vector2(1),
             RelativeSizeAxes = Axes.Both,
             Anchor = Anchor.TopRight,
-            Origin = Anchor.TopRight
+            Origin = Anchor.TopRight,
+            AutoHideScrollbars = true
         };
 
         stepsFlow = new FlowContainer
@@ -307,7 +308,7 @@ public class TestBrowserApp : App
         testContentContainer.Add(currentTest);
 
         currentTest.Clock = new FramedClock(Clock, true);
-
+        currentTest.CurrentStepContext = StepContext.OneTimeSetUp;
         currentTest.RunOneTimeSetUpMethods();
 
         var allMethods = testSceneType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
@@ -336,8 +337,11 @@ public class TestBrowserApp : App
             if (testAttr != null && testCases.Length == 0 && testCaseSources.Length == 0)
             {
                 currentTest.AddLabel(method.Name);
+                currentTest.CurrentStepContext = StepContext.SetUp;
                 currentTest.RunSetUpMethods();
+                currentTest.CurrentStepContext = StepContext.Test;
                 method.Invoke(currentTest, null);
+                currentTest.CurrentStepContext = StepContext.TearDown;
                 currentTest.RunTearDownMethods();
             }
 
@@ -349,13 +353,16 @@ public class TestBrowserApp : App
                     string argsString = string.Join(", ", testCase.Arguments.Select(a => a?.ToString() ?? "null"));
                     currentTest.AddLabel($"{method.Name}({argsString})");
 
+                    currentTest.CurrentStepContext = StepContext.SetUp;
                     currentTest.RunSetUpMethods();
+                    currentTest.CurrentStepContext = StepContext.Test;
                     method.Invoke(currentTest, testCase.Arguments);
+                    currentTest.CurrentStepContext = StepContext.TearDown;
                     currentTest.RunTearDownMethods();
                 }
             }
 
-            // 3. [TestCaseSource]
+            // [TestCaseSource]
             if (testCaseSources.Length > 0)
             {
                 foreach (var sourceAttr in testCaseSources)
@@ -371,8 +378,11 @@ public class TestBrowserApp : App
                             string argsString = string.Join(", ", args.Select(a => a?.ToString() ?? "null"));
 
                             currentTest.AddLabel($"{method.Name}({argsString})");
+                            currentTest.CurrentStepContext = StepContext.SetUp;
                             currentTest.RunSetUpMethods();
+                            currentTest.CurrentStepContext = StepContext.Test;
                             method.Invoke(currentTest, args);
+                            currentTest.CurrentStepContext = StepContext.TearDown;
                             currentTest.RunTearDownMethods();
                         }
                     }
@@ -408,6 +418,19 @@ public class TestBrowserApp : App
             else if (isWait)
                 buttonColor = Color.DarkCyan;
 
+            switch (step.Context)
+            {
+                case StepContext.OneTimeSetUp:
+                    buttonColor = buttonColor.Darken(0.3f);
+                    break;
+                case StepContext.SetUp:
+                    buttonColor = buttonColor.Darken(0.3f);
+                    break;
+                case StepContext.TearDown:
+                    buttonColor = buttonColor.Darken(0.3f);
+                    break;
+            }
+
             TestStepButton stepButton = null!;
 
             stepButton = new TestStepButton(step.Description, () =>
@@ -424,7 +447,7 @@ public class TestBrowserApp : App
                     }
                     else
                     {
-                        step.Action?.Invoke();
+                        step.Action.Invoke();
                     }
 
                     stepButton.SetState(true);

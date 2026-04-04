@@ -15,6 +15,21 @@ public class TestBox : TestScene
 {
     private Box box = null!;
 
+    [OneTimeSetUp]
+    public void OneTimeSetUp()
+    {
+        AddStep("One-time setup", () =>
+        {
+            Add(new SpriteText
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Text = "One time setup run!",
+                Color = Color.White
+            });
+        });
+    }
+
     [SetUp]
     public void SetUp()
     {

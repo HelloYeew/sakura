@@ -5,6 +5,8 @@ using System;
 
 namespace Sakura.Framework.Testing;
 
+
+
 public class TestStep
 {
     public string Description { get; set; }
@@ -17,4 +19,15 @@ public class TestStep
     public Func<bool>? WaitCondition { get; set; }
     public bool HasTimeout { get; set; }
     public double Timeout { get; set; } = 10000;
+
+    public StepContext Context { get; set; } = StepContext.Test;
+}
+
+public enum StepContext
+{
+    OneTimeSetUp,
+    SetUp,
+    Test,
+    TearDown,
+    OneTimeTearDown
 }

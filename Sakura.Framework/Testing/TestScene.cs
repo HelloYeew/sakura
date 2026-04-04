@@ -24,7 +24,8 @@ public abstract class TestScene : Container
     public static bool IsVisualRunner { get; set; }
 
     public IReadOnlyList<TestStep> Steps => steps;
-    private readonly List<TestStep> steps = new();
+    private readonly List<TestStep> steps = new List<TestStep>();
+    public StepContext CurrentStepContext { get; set; } = StepContext.Test;
 
     public TestScene()
     {
@@ -40,7 +41,8 @@ public abstract class TestScene : Container
         {
             Description = description,
             Action = stepAction,
-            IsAssert = false
+            IsAssert = false,
+            Context = CurrentStepContext
         });
     }
 
@@ -50,7 +52,8 @@ public abstract class TestScene : Container
         {
             Description = description,
             Action = () => Assert.That(assert(), description),
-            IsAssert = true
+            IsAssert = true,
+            Context = CurrentStepContext
         });
     }
 
@@ -59,7 +62,8 @@ public abstract class TestScene : Container
         steps.Add(new TestStep
         {
             Description = description,
-            WaitTime = milliseconds
+            WaitTime = milliseconds,
+            Context = CurrentStepContext
         });
     }
 
@@ -70,7 +74,8 @@ public abstract class TestScene : Container
             Description = description,
             WaitCondition = condition,
             HasTimeout = true,
-            Timeout = timeout
+            Timeout = timeout,
+            Context = CurrentStepContext
         });
     }
 
@@ -79,7 +84,8 @@ public abstract class TestScene : Container
         steps.Add(new TestStep
         {
             Description = description,
-            IsLabel = true
+            IsLabel = true,
+            Context = CurrentStepContext
         });
     }
 
