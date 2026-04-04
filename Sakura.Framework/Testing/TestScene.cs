@@ -154,6 +154,34 @@ public abstract class TestScene : Container
     }
 
     /// <summary>
+    /// Finds and executes all methods marked with NUnit's [OneTimeSetUp] attribute.
+    /// </summary>
+    public void RunOneTimeSetUpMethods()
+    {
+        var methods = GetType().GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static)
+            .Where(m => m.GetCustomAttribute<OneTimeSetUpAttribute>() != null);
+
+        foreach (var method in methods)
+        {
+            method.Invoke(method.IsStatic ? null : this, null);
+        }
+    }
+
+    /// <summary>
+    /// Finds and executes all methods marked with NUnit's [OneTimeTearDown] attribute.
+    /// </summary>
+    public void RunOneTimeTearDownMethods()
+    {
+        var methods = GetType().GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static)
+            .Where(m => m.GetCustomAttribute<OneTimeTearDownAttribute>() != null);
+
+        foreach (var method in methods)
+        {
+            method.Invoke(method.IsStatic ? null : this, null);
+        }
+    }
+
+    /// <summary>
     /// A localized <see cref="App"/> instance responsible for running the test steps within the headless update loop.
     /// </summary>
     private class HeadlessTestRunnerApp : App

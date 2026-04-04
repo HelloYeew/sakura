@@ -32,14 +32,15 @@ public class TestBox : TestScene
         AddStep("Add a box", () => Add(box));
     }
 
-    [Test]
-    public void TestResize()
+    [TestCase(100, 100)]
+    [TestCase(100, 200)]
+    public void TestResize(int width, int height)
     {
         AddAssert("Box should be added", () => Children.Count == 1);
         AddAssert("Color should be red", () => box.Color == Color.Red);
-        AddStep("Resize box to 200x200", () => box.ResizeTo(new Vector2(200), 500));
+        AddStep($"Resize box to {width}x{height}", () => box.ResizeTo(new Vector2(width, height), 500));
         AddWaitStep("Wait for resize to complete", 500);
-        AddAssert("Box should be resized to 200x200", () => box.Size == new Vector2(200));
+        AddAssert($"Box should be resized to {width}x{height}", () => box.Size == new Vector2(width, height));
     }
 
     [Test]
@@ -48,5 +49,11 @@ public class TestBox : TestScene
         AddStep("Fade out box", () => box.FadeOut(500));
         AddUntilStep("Wait until box is invisible", () => box.Alpha == 0);
         AddAssert("Box should be faded out", () => box.Alpha == 0);
+    }
+
+    [TearDown]
+    public void TearDown()
+    {
+        AddStep("Clear all children", Clear);
     }
 }

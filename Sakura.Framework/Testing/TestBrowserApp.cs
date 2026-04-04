@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections;
 using System.Linq;
 using System.Reflection;
 using NUnit.Framework;
@@ -291,7 +292,7 @@ public class TestBrowserApp : App
     {
         if (currentTest != null)
         {
-            currentTest.RunTearDownMethods();
+            currentTest.RunOneTimeTearDownMethods();
             testContentContainer.Remove(currentTest);
         }
 
@@ -307,29 +308,74 @@ public class TestBrowserApp : App
 
         currentTest.Clock = new FramedClock(Clock, true);
 
+        currentTest.RunOneTimeSetUpMethods();
+
         var allMethods = testSceneType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
 
         foreach (var method in allMethods)
         {
-            var testAttribute = method.GetCustomAttribute<TestAttribute>();
+            // [Ignore] and [Explicit]
+            var ignoreAttr = method.GetCustomAttribute<IgnoreAttribute>();
+            if (ignoreAttr != null)
+            {
+                currentTest.AddLabel($"[Ignored] {method.Name} - {ignoreAttr.Reason}");
+                continue;
+            }
+
+            if (method.GetCustomAttribute<ExplicitAttribute>() != null)
+            {
+                currentTest.AddLabel($"[Explicit] {method.Name} (Skipped)");
+                continue;
+            }
+
+            var testAttr = method.GetCustomAttribute<TestAttribute>();
             var testCases = method.GetCustomAttributes<TestCaseAttribute>().ToArray();
+            var testCaseSources = method.GetCustomAttributes<TestCaseSourceAttribute>().ToArray();
 
             // [Test]
-            if (testAttribute != null && testCases.Length == 0)
+            if (testAttr != null && testCases.Length == 0 && testCaseSources.Length == 0)
             {
                 currentTest.AddLabel(method.Name);
                 currentTest.RunSetUpMethods();
                 method.Invoke(currentTest, null);
+                currentTest.RunTearDownMethods();
             }
+
             // [TestCase]
-            else if (testCases.Length > 0)
+            if (testCases.Length > 0)
             {
                 foreach (var testCase in testCases)
                 {
                     string argsString = string.Join(", ", testCase.Arguments.Select(a => a?.ToString() ?? "null"));
                     currentTest.AddLabel($"{method.Name}({argsString})");
+
                     currentTest.RunSetUpMethods();
                     method.Invoke(currentTest, testCase.Arguments);
+                    currentTest.RunTearDownMethods();
+                }
+            }
+
+            // 3. [TestCaseSource]
+            if (testCaseSources.Length > 0)
+            {
+                foreach (var sourceAttr in testCaseSources)
+                {
+                    var sourceType = sourceAttr.SourceType ?? testSceneType;
+                    IEnumerable sourceData = GetTestCaseSourceData(sourceType, sourceAttr.SourceName, currentTest);
+
+                    if (sourceData != null)
+                    {
+                        foreach (var data in sourceData)
+                        {
+                            object[] args = data as object[] ?? new object[] { data };
+                            string argsString = string.Join(", ", args.Select(a => a?.ToString() ?? "null"));
+
+                            currentTest.AddLabel($"{method.Name}({argsString})");
+                            currentTest.RunSetUpMethods();
+                            method.Invoke(currentTest, args);
+                            currentTest.RunTearDownMethods();
+                        }
+                    }
                 }
             }
         }
@@ -512,6 +558,22 @@ public class TestBrowserApp : App
 
         currentAutoRunStep++;
         Scheduler.AddDelayed(runNextStep, 200);
+    }
+
+    private IEnumerable GetTestCaseSourceData(Type type, string name, object instance)
+    {
+        var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
+
+        var prop = type.GetProperty(name, flags);
+        if (prop != null) return (IEnumerable)prop.GetValue(prop.GetMethod.IsStatic ? null : instance);
+
+        var method = type.GetMethod(name, flags);
+        if (method != null) return (IEnumerable)method.Invoke(method.IsStatic ? null : instance, null);
+
+        var field = type.GetField(name, flags);
+        if (field != null) return (IEnumerable)field.GetValue(field.IsStatic ? null : instance);
+
+        return null;
     }
 
     private class TestBrowserButton : ClickableContainer
