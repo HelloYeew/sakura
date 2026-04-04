@@ -307,16 +307,30 @@ public class TestBrowserApp : App
 
         currentTest.Clock = new FramedClock(Clock, true);
 
-        var testMethods = testSceneType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-            .Where(m => m.GetCustomAttribute<TestAttribute>() != null).ToList();
+        var allMethods = testSceneType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
 
-        if (testMethods.Count != 0)
+        foreach (var method in allMethods)
         {
-            foreach (var method in testMethods)
+            var testAttribute = method.GetCustomAttribute<TestAttribute>();
+            var testCases = method.GetCustomAttributes<TestCaseAttribute>().ToArray();
+
+            // [Test]
+            if (testAttribute != null && testCases.Length == 0)
             {
                 currentTest.AddLabel(method.Name);
                 currentTest.RunSetUpMethods();
                 method.Invoke(currentTest, null);
+            }
+            // [TestCase]
+            else if (testCases.Length > 0)
+            {
+                foreach (var testCase in testCases)
+                {
+                    string argsString = string.Join(", ", testCase.Arguments.Select(a => a?.ToString() ?? "null"));
+                    currentTest.AddLabel($"{method.Name}({argsString})");
+                    currentTest.RunSetUpMethods();
+                    method.Invoke(currentTest, testCase.Arguments);
+                }
             }
         }
 
