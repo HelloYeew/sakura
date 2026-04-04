@@ -31,6 +31,7 @@ public class TestBrowserApp : App
     private TestScene currentTest;
     private SpriteText hotReloadText;
     private Container headerContainer;
+    private ScrollableContainer stepScrollContainer;
 
     private readonly Assembly testAssembly;
 
@@ -192,7 +193,7 @@ public class TestBrowserApp : App
             Origin = Anchor.TopRight
         });
 
-        var rightScroll = new ScrollableContainer
+        stepScrollContainer = new ScrollableContainer // <-- Changed
         {
             Size = new Vector2(1),
             RelativeSizeAxes = Axes.Both,
@@ -213,8 +214,8 @@ public class TestBrowserApp : App
             Origin = Anchor.TopLeft
         };
 
-        rightScroll.Add(stepsFlow);
-        stepSidebar.Add(rightScroll);
+        stepScrollContainer.Add(stepsFlow);
+        stepSidebar.Add(stepScrollContainer);
         Add(stepSidebar);
 
         hotReloadText = new SpriteText
@@ -516,6 +517,12 @@ public class TestBrowserApp : App
         var step = currentTest.Steps[currentAutoRunStep];
 
         var button = stepsFlow.Children.Count > currentAutoRunStep ? stepsFlow.Children[currentAutoRunStep] as TestStepButton : null;
+
+        var currentItem = stepsFlow.Children.Count > currentAutoRunStep ? stepsFlow.Children[currentAutoRunStep] : null;
+        if (currentItem != null)
+        {
+            stepScrollContainer.ScrollIntoView(currentItem);
+        }
 
         if (step.IsLabel)
         {
