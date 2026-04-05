@@ -2,8 +2,10 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections;
 using System.Linq;
 using System.Reflection;
+using NUnit.Framework;
 using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Colors;
@@ -29,6 +31,7 @@ public class TestBrowserApp : App
     private TestScene currentTest;
     private SpriteText hotReloadText;
     private Container headerContainer;
+    private ScrollableContainer stepScrollContainer;
 
     private readonly Assembly testAssembly;
 
@@ -48,13 +51,20 @@ public class TestBrowserApp : App
 
     public override void Load()
     {
+        TestScene.IsVisualRunner = true;
         base.Load();
 
         testContentContainer = new Container
         {
+            RelativeSizeAxes = Axes.Both,
+            Size = new Vector2(1),
             Anchor = Anchor.TopRight,
             Origin = Anchor.TopRight,
-            Y = header_height
+            Margin = new MarginPadding
+            {
+                Top = header_height,
+                Left = sidebar_width * 2
+            }
         };
         Add(testContentContainer);
 
@@ -183,12 +193,13 @@ public class TestBrowserApp : App
             Origin = Anchor.TopRight
         });
 
-        var rightScroll = new ScrollableContainer
+        stepScrollContainer = new ScrollableContainer // <-- Changed
         {
             Size = new Vector2(1),
             RelativeSizeAxes = Axes.Both,
             Anchor = Anchor.TopRight,
-            Origin = Anchor.TopRight
+            Origin = Anchor.TopRight,
+            AutoHideScrollbars = true
         };
 
         stepsFlow = new FlowContainer
@@ -203,8 +214,8 @@ public class TestBrowserApp : App
             Origin = Anchor.TopLeft
         };
 
-        rightScroll.Add(stepsFlow);
-        stepSidebar.Add(rightScroll);
+        stepScrollContainer.Add(stepsFlow);
+        stepSidebar.Add(stepScrollContainer);
         Add(stepSidebar);
 
         hotReloadText = new SpriteText
@@ -232,14 +243,6 @@ public class TestBrowserApp : App
                 hotReloadText.FadeIn(200).Wait(1000).FadeOut(200);
             });
         };
-    }
-
-    public override void LoadComplete()
-    {
-        base.LoadComplete();
-        Window.GetPhysicalSize(out int physW, out int physH);
-        testContentContainer.Size = new Vector2(physW - 2 * sidebar_width, physH);
-        Window.Resized += (w, h) => testContentContainer.Size = new Vector2(w - 2 * sidebar_width, h - header_height);
     }
 
     private void loadTestClasses()
@@ -291,7 +294,7 @@ public class TestBrowserApp : App
     {
         if (currentTest != null)
         {
-            currentTest.RunTearDownMethods();
+            currentTest.RunOneTimeTearDownMethods();
             testContentContainer.Remove(currentTest);
         }
 
@@ -303,13 +306,110 @@ public class TestBrowserApp : App
         }
 
         currentTest = (TestScene)Activator.CreateInstance(testSceneType);
-        currentTest.RunSetUpMethods();
         testContentContainer.Add(currentTest);
 
         currentTest.Clock = new FramedClock(Clock, true);
+        currentTest.CurrentStepContext = StepContext.OneTimeSetUp;
+        currentTest.RunOneTimeSetUpMethods();
+
+        var allMethods = testSceneType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+        foreach (var method in allMethods)
+        {
+            // [Ignore] and [Explicit]
+            var ignoreAttr = method.GetCustomAttribute<IgnoreAttribute>();
+            if (ignoreAttr != null)
+            {
+                currentTest.AddLabel($"[Ignored] {method.Name} - {ignoreAttr.Reason}");
+                continue;
+            }
+
+            if (method.GetCustomAttribute<ExplicitAttribute>() != null)
+            {
+                currentTest.AddLabel($"[Explicit] {method.Name} (Skipped)");
+                continue;
+            }
+
+            var testAttr = method.GetCustomAttribute<TestAttribute>();
+            var testCases = method.GetCustomAttributes<TestCaseAttribute>().ToArray();
+            var testCaseSources = method.GetCustomAttributes<TestCaseSourceAttribute>().ToArray();
+
+            // [Test]
+            if (testAttr != null && testCases.Length == 0 && testCaseSources.Length == 0)
+            {
+                currentTest.AddLabel(method.Name);
+                currentTest.CurrentStepContext = StepContext.SetUp;
+                currentTest.RunSetUpMethods();
+                currentTest.CurrentStepContext = StepContext.Test;
+                method.Invoke(currentTest, null);
+                currentTest.CurrentStepContext = StepContext.TearDown;
+                currentTest.RunTearDownMethods();
+            }
+
+            // [TestCase]
+            if (testCases.Length > 0)
+            {
+                foreach (var testCase in testCases)
+                {
+                    string argsString = string.Join(", ", testCase.Arguments.Select(a => a?.ToString() ?? "null"));
+                    currentTest.AddLabel($"{method.Name}({argsString})");
+
+                    currentTest.CurrentStepContext = StepContext.SetUp;
+                    currentTest.RunSetUpMethods();
+                    currentTest.CurrentStepContext = StepContext.Test;
+                    method.Invoke(currentTest, testCase.Arguments);
+                    currentTest.CurrentStepContext = StepContext.TearDown;
+                    currentTest.RunTearDownMethods();
+                }
+            }
+
+            // [TestCaseSource]
+            if (testCaseSources.Length > 0)
+            {
+                foreach (var sourceAttr in testCaseSources)
+                {
+                    var sourceType = sourceAttr.SourceType ?? testSceneType;
+                    IEnumerable sourceData = GetTestCaseSourceData(sourceType, sourceAttr.SourceName, currentTest);
+
+                    if (sourceData != null)
+                    {
+                        foreach (var data in sourceData)
+                        {
+                            object[] args = data as object[] ?? new object[] { data };
+                            string argsString = string.Join(", ", args.Select(a => a?.ToString() ?? "null"));
+
+                            currentTest.AddLabel($"{method.Name}({argsString})");
+                            currentTest.CurrentStepContext = StepContext.SetUp;
+                            currentTest.RunSetUpMethods();
+                            currentTest.CurrentStepContext = StepContext.Test;
+                            method.Invoke(currentTest, args);
+                            currentTest.CurrentStepContext = StepContext.TearDown;
+                            currentTest.RunTearDownMethods();
+                        }
+                    }
+                }
+            }
+        }
 
         foreach (var step in currentTest.Steps)
         {
+            if (step.IsLabel)
+            {
+                stepsFlow.Add(new SpriteText
+                {
+                    Text = step.Description,
+                    Font = FontUsage.Default.With(size: 14),
+                    Color = Color.Yellow,
+                    Margin = new MarginPadding
+                    {
+                        Top = 10,
+                        Bottom = 5
+                    },
+                    Name = step.Description
+                });
+                continue;
+            }
+
             bool isWait = step.WaitTime > 0 || step.WaitCondition != null;
 
             Color buttonColor = Color.DarkBlue;
@@ -318,6 +418,19 @@ public class TestBrowserApp : App
                 buttonColor = Color.DarkRed;
             else if (isWait)
                 buttonColor = Color.DarkCyan;
+
+            switch (step.Context)
+            {
+                case StepContext.OneTimeSetUp:
+                    buttonColor = buttonColor.Darken(0.3f);
+                    break;
+                case StepContext.SetUp:
+                    buttonColor = buttonColor.Darken(0.3f);
+                    break;
+                case StepContext.TearDown:
+                    buttonColor = buttonColor.Darken(0.3f);
+                    break;
+            }
 
             TestStepButton stepButton = null!;
 
@@ -335,7 +448,7 @@ public class TestBrowserApp : App
                     }
                     else
                     {
-                        step.Action?.Invoke();
+                        step.Action.Invoke();
                     }
 
                     stepButton.SetState(true);
@@ -378,13 +491,21 @@ public class TestBrowserApp : App
         {
             testSidebar.Show();
             stepSidebar.X = sidebar_width;
-            testContentContainer.Margin = new MarginPadding { Left = sidebar_width * 2 };
+            testContentContainer.Margin = new MarginPadding
+            {
+                Top = header_height,
+                Left = sidebar_width * 2
+            };
         }
         else
         {
             testSidebar.Hide();
             stepSidebar.X = 0;
-            testContentContainer.Margin = new MarginPadding { Left = sidebar_width };
+            testContentContainer.Margin = new MarginPadding
+            {
+                Top = header_height,
+                Left = sidebar_width
+            };
         }
     }
 
@@ -396,6 +517,19 @@ public class TestBrowserApp : App
         var step = currentTest.Steps[currentAutoRunStep];
 
         var button = stepsFlow.Children.Count > currentAutoRunStep ? stepsFlow.Children[currentAutoRunStep] as TestStepButton : null;
+
+        var currentItem = stepsFlow.Children.Count > currentAutoRunStep ? stepsFlow.Children[currentAutoRunStep] : null;
+        if (currentItem != null)
+        {
+            stepScrollContainer.ScrollIntoView(currentItem);
+        }
+
+        if (step.IsLabel)
+        {
+            currentAutoRunStep++;
+            Scheduler.AddDelayed(runNextStep, 10);
+            return;
+        }
 
         if (!isWaitingForStep)
         {
@@ -454,6 +588,22 @@ public class TestBrowserApp : App
 
         currentAutoRunStep++;
         Scheduler.AddDelayed(runNextStep, 200);
+    }
+
+    private IEnumerable GetTestCaseSourceData(Type type, string name, object instance)
+    {
+        var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
+
+        var prop = type.GetProperty(name, flags);
+        if (prop != null) return (IEnumerable)prop.GetValue(prop.GetMethod.IsStatic ? null : instance);
+
+        var method = type.GetMethod(name, flags);
+        if (method != null) return (IEnumerable)method.Invoke(method.IsStatic ? null : instance, null);
+
+        var field = type.GetField(name, flags);
+        if (field != null) return (IEnumerable)field.GetValue(field.IsStatic ? null : instance);
+
+        return null;
     }
 
     private class TestBrowserButton : ClickableContainer

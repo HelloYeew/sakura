@@ -18,8 +18,14 @@ namespace Sakura.Framework.Testing;
 [TestFixture]
 public abstract class TestScene : Container
 {
+    /// <summary>
+    /// Tells the TestScene to bypass spinning up a headless host because the visual is running it.
+    /// </summary>
+    public static bool IsVisualRunner { get; set; }
+
     public IReadOnlyList<TestStep> Steps => steps;
-    private readonly List<TestStep> steps = new();
+    private readonly List<TestStep> steps = new List<TestStep>();
+    public StepContext CurrentStepContext { get; set; } = StepContext.Test;
 
     public TestScene()
     {
@@ -35,7 +41,8 @@ public abstract class TestScene : Container
         {
             Description = description,
             Action = stepAction,
-            IsAssert = false
+            IsAssert = false,
+            Context = CurrentStepContext
         });
     }
 
@@ -45,7 +52,8 @@ public abstract class TestScene : Container
         {
             Description = description,
             Action = () => Assert.That(assert(), description),
-            IsAssert = true
+            IsAssert = true,
+            Context = CurrentStepContext
         });
     }
 
@@ -54,7 +62,8 @@ public abstract class TestScene : Container
         steps.Add(new TestStep
         {
             Description = description,
-            WaitTime = milliseconds
+            WaitTime = milliseconds,
+            Context = CurrentStepContext
         });
     }
 
@@ -65,8 +74,49 @@ public abstract class TestScene : Container
             Description = description,
             WaitCondition = condition,
             HasTimeout = true,
-            Timeout = timeout
+            Timeout = timeout,
+            Context = CurrentStepContext
         });
+    }
+
+    public void AddLabel(string description)
+    {
+        steps.Add(new TestStep
+        {
+            Description = description,
+            IsLabel = true,
+            Context = CurrentStepContext
+        });
+    }
+
+    [SetUp]
+    public virtual void SetupNUnit()
+    {
+        if (!IsVisualRunner)
+        {
+            steps.Clear();
+            Clear();
+        }
+        else
+        {
+            AddStep("Clear test scene", Clear);
+        }
+    }
+
+    [TearDown]
+    public virtual void TeardownNUnit()
+    {
+        if (IsVisualRunner || steps.Count == 0)
+            return;
+
+        using var host = new HeadlessAppHost($"HeadlessTest-{TestContext.CurrentContext.Test.Name}");
+        var runnerApp = new HeadlessTestRunnerApp(this, host);
+        host.Run(runnerApp);
+
+        if (runnerApp.TestException != null)
+        {
+            ExceptionDispatchInfo.Capture(runnerApp.TestException).Throw();
+        }
     }
 
     /// <summary>
@@ -74,12 +124,24 @@ public abstract class TestScene : Container
     /// </summary>
     public void RunSetUpMethods()
     {
-        var setUpMethods = GetType().GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-            .Where(m => m.GetCustomAttribute<SetUpAttribute>() != null);
+        var typeHierarchy = new List<Type>();
+        var currentType = GetType();
 
-        foreach (var method in setUpMethods)
+        while (currentType != null && currentType != typeof(Container))
         {
-            method.Invoke(this, null);
+            typeHierarchy.Insert(0, currentType);
+            currentType = currentType.BaseType;
+        }
+
+        foreach (var type in typeHierarchy)
+        {
+            var setUpMethods = type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+                .Where(m => m.GetCustomAttribute<SetUpAttribute>() != null);
+
+            foreach (var method in setUpMethods)
+            {
+                method.Invoke(this, null);
+            }
         }
     }
 
@@ -97,15 +159,31 @@ public abstract class TestScene : Container
         }
     }
 
-    [Test]
-    public virtual void RunTestsHeadless()
+    /// <summary>
+    /// Finds and executes all methods marked with NUnit's [OneTimeSetUp] attribute.
+    /// </summary>
+    public void RunOneTimeSetUpMethods()
     {
-        using var host = new HeadlessAppHost($"HeadlessTest-{GetType().Name}");
-        var runnerApp = new HeadlessTestRunnerApp(this, host);
-        host.Run(runnerApp);
-        if (runnerApp.TestException != null)
+        var methods = GetType().GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static)
+            .Where(m => m.GetCustomAttribute<OneTimeSetUpAttribute>() != null);
+
+        foreach (var method in methods)
         {
-            ExceptionDispatchInfo.Capture(runnerApp.TestException).Throw();
+            method.Invoke(method.IsStatic ? null : this, null);
+        }
+    }
+
+    /// <summary>
+    /// Finds and executes all methods marked with NUnit's [OneTimeTearDown] attribute.
+    /// </summary>
+    public void RunOneTimeTearDownMethods()
+    {
+        var methods = GetType().GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static)
+            .Where(m => m.GetCustomAttribute<OneTimeTearDownAttribute>() != null);
+
+        foreach (var method in methods)
+        {
+            method.Invoke(method.IsStatic ? null : this, null);
         }
     }
 
