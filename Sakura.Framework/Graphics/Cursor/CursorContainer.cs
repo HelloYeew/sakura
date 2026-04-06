@@ -52,19 +52,19 @@ public class CursorContainer : Container
 
     private class DefaultCursor : Container
     {
-        private IconSprite iconSprite;
+        private readonly IconSprite iconSprite;
 
         public DefaultCursor()
         {
-            Size = new Vector2(100);
+            Size = new Vector2(25);
 
             Add(iconSprite = new IconSprite()
             {
-                Size = new Vector2(100),
                 Origin = Anchor.TopLeft,
                 Anchor = Anchor.TopLeft,
                 Color = Color.DeepPink,
                 Icon = IconUsage.ArrowSelectorTool,
+                IconSize = 25f,
                 Position = new Vector2(-6, -5) // Just adjust position to make left-top corner the "tip" of the cursor
             });
         }
