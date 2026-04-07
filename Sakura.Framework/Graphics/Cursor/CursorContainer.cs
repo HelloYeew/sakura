@@ -13,7 +13,18 @@ namespace Sakura.Framework.Graphics.Cursor;
 
 public class CursorContainer : Container
 {
+    private Color cursorColor = Color.DeepPink;
+
     public Drawable ActiveCursor { get; protected set; }
+
+    public Color CursorColor
+    {
+        get => cursorColor;
+        set {
+            cursorColor = value;
+            ActiveCursor.Color = cursorColor;
+        }
+    }
 
     public CursorContainer()
     {
