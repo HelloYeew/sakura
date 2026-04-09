@@ -78,6 +78,14 @@ public class Path : Drawable
         Invalidate(InvalidationFlags.DrawInfo);
     }
 
+    public void UpdateLastVertex(Vector2 position)
+    {
+        if (vertices.Count == 0) return;
+
+        vertices[^1] = position;
+        updateBounds();
+    }
+
     protected override void GenerateVertices()
     {
         if (vertices.Count < 2)
