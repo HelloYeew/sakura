@@ -77,7 +77,7 @@ public interface IWindow : IDisposable
     /// The current state/type of the OS hardware cursor.
     /// </summary>
     /// <returns></returns>
-    CursorState CursorState { get; set; }
+    Reactive<CursorState> CursorState { get; }
 
     /// <summary>
     /// The graphic surface associated with this window to render graphics to.

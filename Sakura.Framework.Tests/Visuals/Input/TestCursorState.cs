@@ -19,6 +19,8 @@ public class TestCursorState : ManualInputManagerTestScene
     private CursorZone pointerZone;
     private CursorZone textZone;
     private CursorZone waitZone;
+    private CursorZone crosshairZone;
+    private CursorZone notAllowedZone;
 
     [Resolved]
     private IWindow window { get; set; }
@@ -50,6 +52,14 @@ public class TestCursorState : ManualInputManagerTestScene
                     waitZone = new CursorZone("Wait (Spinner)", CursorState.Wait)
                     {
                         BoxColor = Color.IndianRed
+                    },
+                    crosshairZone = new CursorZone("Crosshair", CursorState.Crosshair)
+                    {
+                        BoxColor = Color.Goldenrod
+                    },
+                    notAllowedZone = new CursorZone("Not Allowed", CursorState.NotAllowed)
+                    {
+                        BoxColor = Color.MediumPurple
                     }
                 }
             });
@@ -72,6 +82,16 @@ public class TestCursorState : ManualInputManagerTestScene
         AddStep("Move to Wait zone", () => InputManager.MoveMouseTo(waitZone));
         AddWaitStep("Wait to observe Wait", 800);
         AddAssert("Cursor is Wait", () => window.CursorState == CursorState.Wait);
+        AddStep("Reset mouse position", () => InputManager.MoveMouseTo(InitialMousePosition));
+        AddWaitStep("Wait for event processing", 100);
+        AddStep("Move to Crosshair zone", () => InputManager.MoveMouseTo(crosshairZone));
+        AddWaitStep("Wait to observe Crosshair", 800);
+        AddAssert("Cursor is Crosshair", () => window.CursorState == CursorState.Crosshair);
+        AddStep("Reset mouse position", () => InputManager.MoveMouseTo(InitialMousePosition));
+        AddWaitStep("Wait for event processing", 100);
+        AddStep("Move to Not Allowed zone", () => InputManager.MoveMouseTo(notAllowedZone));
+        AddWaitStep("Wait to observe Not Allowed", 800);
+        AddAssert("Cursor is Not Allowed", () => window.CursorState == CursorState.NotAllowed);
         AddStep("Return to empty space", () => InputManager.MoveMouseTo(InitialMousePosition));
         AddWaitStep("Wait to observe Default again", 500);
         AddAssert("Cursor is Default again", () => window.CursorState == CursorState.Default);
@@ -121,13 +141,13 @@ public class TestCursorState : ManualInputManagerTestScene
 
         public override bool OnHover(MouseEvent e)
         {
-            window.CursorState = targetState;
+            window.CursorState.Value = targetState;
             return base.OnHover(e);
         }
 
         public override bool OnHoverLost(MouseEvent e)
         {
-            window.CursorState = CursorState.Default;
+            window.CursorState.Value = CursorState.Default;
             return base.OnHoverLost(e);
         }
     }

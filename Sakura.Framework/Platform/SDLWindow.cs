@@ -14,6 +14,7 @@ using Sakura.Framework.Maths;
 using Sakura.Framework.Reactive;
 using Silk.NET.OpenGL;
 using SilkMouseButtonEvent = Silk.NET.SDL.MouseButtonEvent;
+using SakuraCursorState = Sakura.Framework.Input.CursorState;
 using SakuraMouseButtonEvent = Sakura.Framework.Input.MouseButtonEvent;
 using Version = Silk.NET.SDL.Version;
 
@@ -125,6 +126,8 @@ public class SDLWindow : IWindow
         Logger.Verbose($"SDL Version: {sdlVersion.Major}.{sdlVersion.Minor}.{sdlVersion.Patch}");
         Logger.Verbose($"SDL Revision: {new string((sbyte*)sdlRevision)}");
         Logger.Verbose($"SDL Video Driver: {new string((sbyte*)videoDriver)}");
+
+        CursorState.ValueChanged += _ => updateSdlCursor();
 
         initialized = true;
     }
@@ -565,7 +568,6 @@ public class SDLWindow : IWindow
     #region Cursor
 
     private bool cursorVisible = true;
-    private CursorState cursorState = CursorState.Default;
     private readonly Dictionary<CursorState, IntPtr> sdlCursors = new Dictionary<CursorState, IntPtr>();
 
     public bool CursorVisible
@@ -581,44 +583,36 @@ public class SDLWindow : IWindow
         }
     }
 
-    public CursorState CursorState
-    {
-        get => cursorState;
-        set
-        {
-            if (cursorState == value)
-                return;
-            cursorState = value;
-            updateSdlCursor();
-        }
-    }
+    public Reactive<SakuraCursorState> CursorState { get; } = new Reactive<SakuraCursorState>(SakuraCursorState.Default);
 
     private unsafe void updateSdlCursor()
     {
         if (window == null)
             return;
 
+        var cursorState = CursorState.Value;
+
         if (!sdlCursors.TryGetValue(cursorState, out IntPtr cursorPtr))
         {
-            SystemCursor sysCursor = SystemCursor.SystemCursorArrow;
+            SystemCursor sysCursor;
             switch (cursorState)
             {
-                case CursorState.Pointer:
+                case SakuraCursorState.Pointer:
                     sysCursor = SystemCursor.SystemCursorHand;
                     break;
 
-                case CursorState.Text:
+                case SakuraCursorState.Text:
                     sysCursor = SystemCursor.SystemCursorIbeam;
                     break;
 
-                case CursorState.Wait:
+                case SakuraCursorState.Wait:
                     sysCursor = SystemCursor.SystemCursorWait;
                     break;
 
-                case CursorState.Crosshair:
+                case SakuraCursorState.Crosshair:
                     sysCursor = SystemCursor.SystemCursorCrosshair;
                     break;
-                case CursorState.NotAllowed:
+                case SakuraCursorState.NotAllowed:
                     sysCursor = SystemCursor.SystemCursorNo;
                     break;
 
