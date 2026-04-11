@@ -59,19 +59,22 @@ public class TestCursorState : ManualInputManagerTestScene
     [Test]
     public void TestAutomatedCursorChanges()
     {
-        AddStep("Move to empty space", () => InputManager.MoveMouseTo(Vector2.Zero));
-        AddWaitStep("Wait to observe Default", 500);
-
         AddStep("Move to Pointer zone", () => InputManager.MoveMouseTo(pointerZone));
         AddWaitStep("Wait to observe Pointer", 800);
-
+        AddAssert("Cursor is Pointer", () => window.CursorState == CursorState.Pointer);
+        AddStep("Reset mouse position", () => InputManager.MoveMouseTo(InitialMousePosition));
+        AddWaitStep("Wait for event processing", 100);
         AddStep("Move to Text zone", () => InputManager.MoveMouseTo(textZone));
         AddWaitStep("Wait to observe Text", 800);
-
+        AddAssert("Cursor is Text", () => window.CursorState == CursorState.Text);
+        AddStep("Reset mouse position", () => InputManager.MoveMouseTo(InitialMousePosition));
+        AddWaitStep("Wait for event processing", 100);
         AddStep("Move to Wait zone", () => InputManager.MoveMouseTo(waitZone));
         AddWaitStep("Wait to observe Wait", 800);
-
-        AddStep("Return to empty space", () => InputManager.MoveMouseTo(Vector2.Zero));
+        AddAssert("Cursor is Wait", () => window.CursorState == CursorState.Wait);
+        AddStep("Return to empty space", () => InputManager.MoveMouseTo(InitialMousePosition));
+        AddWaitStep("Wait to observe Default again", 500);
+        AddAssert("Cursor is Default again", () => window.CursorState == CursorState.Default);
     }
 
     /// <summary>
