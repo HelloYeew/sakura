@@ -69,6 +69,7 @@ public class TestCursorState : ManualInputManagerTestScene
     [Test]
     public void TestAutomatedCursorChanges()
     {
+        AddStep("Hide hardware cursor", () => window.CursorVisible = false);
         AddStep("Move to Pointer zone", () => InputManager.MoveMouseTo(pointerZone));
         AddWaitStep("Wait to observe Pointer", 800);
         AddAssert("Cursor is Pointer", () => window.CursorState == CursorState.Pointer);
@@ -95,6 +96,7 @@ public class TestCursorState : ManualInputManagerTestScene
         AddStep("Return to empty space", () => InputManager.MoveMouseTo(InitialMousePosition));
         AddWaitStep("Wait to observe Default again", 500);
         AddAssert("Cursor is Default again", () => window.CursorState == CursorState.Default);
+        AddStep("Show hardware cursor again", () => window.CursorVisible = true);
     }
 
     /// <summary>
