@@ -17,6 +17,7 @@ public class TestApp : TestBrowserApp
     {
         base.Load();
         Add(new CursorContainer());
+        Window.CursorVisible = true;
     }
 
     protected override Assembly ResourceAssembly => typeof(TestApp).Assembly;

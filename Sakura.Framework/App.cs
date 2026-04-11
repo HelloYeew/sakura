@@ -69,6 +69,8 @@ public class App : Container, IFocusManager, IDisposable
 
         base.Load();
 
+        Cache(Host.Window);
+
         AudioManager = CreateAudioManager();
         var masterVolume = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.MasterVolume);
         var trackVolume = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.TrackVolume);

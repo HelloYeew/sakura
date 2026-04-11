@@ -4,6 +4,7 @@
 #nullable disable
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using Sakura.Framework.Input;
@@ -212,21 +213,6 @@ public class SDLWindow : IWindow
     public void Close()
     {
         IsExiting = true;
-    }
-
-    public unsafe void Dispose()
-    {
-        if (glContext != null)
-        {
-            sdl.GLDeleteContext(glContext);
-            glContext = null;
-        }
-
-        if (window != null)
-        {
-            sdl.DestroyWindow(window);
-            window = null;
-        }
     }
 
     public unsafe void GetDrawableSize(out int width, out int height)
@@ -574,5 +560,101 @@ public class SDLWindow : IWindow
 
         if (window != null)
             sdl.SetWindowResizable(window, (SdlBool)(isResizable ? 1 : 0));
+    }
+
+    #region Cursor
+
+    private bool cursorVisible = true;
+    private CursorState cursorState = CursorState.Default;
+    private readonly Dictionary<CursorState, IntPtr> sdlCursors = new Dictionary<CursorState, IntPtr>();
+
+    public bool CursorVisible
+    {
+        get => cursorVisible;
+        set
+        {
+            cursorVisible = value;
+            if (initialized)
+            {
+                sdl.ShowCursor(value ? 1 : 0);
+            }
+        }
+    }
+
+    public CursorState CursorState
+    {
+        get => cursorState;
+        set
+        {
+            if (cursorState == value)
+                return;
+            cursorState = value;
+            updateSdlCursor();
+        }
+    }
+
+    private unsafe void updateSdlCursor()
+    {
+        if (window == null)
+            return;
+
+        if (!sdlCursors.TryGetValue(cursorState, out IntPtr cursorPtr))
+        {
+            SystemCursor sysCursor = SystemCursor.SystemCursorArrow;
+            switch (cursorState)
+            {
+                case CursorState.Pointer:
+                    sysCursor = SystemCursor.SystemCursorHand;
+                    break;
+
+                case CursorState.Text:
+                    sysCursor = SystemCursor.SystemCursorIbeam;
+                    break;
+
+                case CursorState.Wait:
+                    sysCursor = SystemCursor.SystemCursorWait;
+                    break;
+
+                case CursorState.Crosshair:
+                    sysCursor = SystemCursor.SystemCursorCrosshair;
+                    break;
+                case CursorState.NotAllowed:
+                    sysCursor = SystemCursor.SystemCursorNo;
+                    break;
+
+                default:
+                    sysCursor = SystemCursor.SystemCursorArrow;
+                    break;
+            }
+
+            Cursor* newCursor = sdl.CreateSystemCursor(sysCursor);
+            cursorPtr = (IntPtr)newCursor;
+            sdlCursors[cursorState] = cursorPtr;
+        }
+
+        sdl.SetCursor((Cursor*)cursorPtr);
+    }
+
+    #endregion
+
+    public unsafe void Dispose()
+    {
+        foreach (IntPtr cursorPtr in sdlCursors.Values)
+        {
+            sdl.FreeCursor((Cursor*)cursorPtr);
+        }
+        sdlCursors.Clear();
+
+        if (glContext != null)
+        {
+            sdl.GLDeleteContext(glContext);
+            glContext = null;
+        }
+
+        if (window != null)
+        {
+            sdl.DestroyWindow(window);
+            window = null;
+        }
     }
 }

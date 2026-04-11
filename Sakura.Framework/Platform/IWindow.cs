@@ -69,6 +69,17 @@ public interface IWindow : IDisposable
     Reactive<WindowMode> WindowModeReactive { get; }
 
     /// <summary>
+    /// Whether the OS hardware cursor is visible
+    /// </summary>
+    bool CursorVisible { get; set; }
+
+    /// <summary>
+    /// The current state/type of the OS hardware cursor.
+    /// </summary>
+    /// <returns></returns>
+    CursorState CursorState { get; set; }
+
+    /// <summary>
     /// The graphic surface associated with this window to render graphics to.
     /// This is a value that the graphic API will use to render graphics to the window.
     /// </summary>

@@ -20,6 +20,8 @@ public class HeadlessWindow : IWindow
     public int Height => 600;
     public WindowMode WindowMode { get; set; } = WindowMode.Windowed;
     public Reactive<WindowMode> WindowModeReactive { get; } = new Reactive<WindowMode>(WindowMode.Windowed);
+    public bool CursorVisible { get; set; } = true;
+    public CursorState CursorState { get; set; } = CursorState.Default;
     public IGraphicsSurface GraphicsSurface { get; } = new HeadlessGraphicsSurface();
     public void Initialize()
     {

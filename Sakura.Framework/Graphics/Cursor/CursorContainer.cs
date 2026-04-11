@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using Sakura.Framework.Allocation;
 using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
@@ -8,6 +9,7 @@ using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
+using Sakura.Framework.Platform;
 
 namespace Sakura.Framework.Graphics.Cursor;
 
@@ -16,6 +18,9 @@ public class CursorContainer : Container
     private Color cursorColor = Color.DeepPink;
 
     public Drawable ActiveCursor { get; protected set; }
+
+    [Resolved]
+    private IWindow window { get; set; } = null!;
 
     public Color CursorColor
     {
