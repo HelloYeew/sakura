@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Rendering.Vertex;
@@ -23,7 +24,7 @@ public class Line : Drawable
         {
             if (startPoint == value) return;
             startPoint = value;
-            Invalidate(InvalidationFlags.DrawInfo);
+            updateBounds();
         }
     }
 
@@ -35,12 +36,11 @@ public class Line : Drawable
         {
             if (endPoint == value) return;
             endPoint = value;
-            Invalidate(InvalidationFlags.DrawInfo);
+            updateBounds();
         }
     }
 
     private float thickness = 1f;
-
     public float Thickness
     {
         get => thickness;
@@ -52,47 +52,54 @@ public class Line : Drawable
         }
     }
 
+    public Line()
+    {
+        updateBounds();
+    }
+
+    private void updateBounds()
+    {
+        Size = new Vector2(Math.Max(startPoint.X, endPoint.X), Math.Max(startPoint.Y, endPoint.Y));
+        Invalidate(InvalidationFlags.DrawInfo);
+    }
+
     protected override void GenerateVertices()
     {
         float rLinear = ColorExtensions.SrgbToLinear(Color.R);
         float gLinear = ColorExtensions.SrgbToLinear(Color.G);
         float bLinear = ColorExtensions.SrgbToLinear(Color.B);
 
-        var calculatedColor = new System.Numerics.Vector4(rLinear, gLinear, bLinear, DrawAlpha);
+        var calculatedColor = new System.Numerics.Vector4(rLinear, gLinear, bLinear, DrawAlpha * (Color.A / 255f));
 
-        // Transform start and end points into the parent's coordinate space.
-        // Do this by creating a matrix that scales by our size, then multiplying by the main model matrix.
-        var sizeMatrix = Matrix4x4.CreateScale(new Vector3(DrawSize.X, DrawSize.Y, 1));
-        var finalMatrix = sizeMatrix * ModelMatrix;
+        var finalMatrix = ModelMatrix;
 
-        var p1 = Vector2.Transform(startPoint, finalMatrix);
-        var p2 = Vector2.Transform(endPoint, finalMatrix);
+        float w = DrawSize.X > 0 ? DrawSize.X : 1;
+        float h = DrawSize.Y > 0 ? DrawSize.Y : 1;
 
-        // Calculate the direction and a perpendicular normal for the line's thickness
+        // Map pixel coordinates to the 0.0 -> 1.0 space, then transform
+        var p1 = Vector2.Transform(new Vector2(startPoint.X / w, startPoint.Y / h), finalMatrix);
+        var p2 = Vector2.Transform(new Vector2(endPoint.X / w, endPoint.Y / h), finalMatrix);
+
         Vector2 dir = p2 - p1;
-        if (dir == Vector2.Zero) return; // Cannot draw a zero-length line
+        if (dir == Vector2.Zero) return;
 
         Vector2 normal = Vector2.Normalize(new Vector2(-dir.Y, dir.X));
         Vector2 offset = normal * (Thickness / 2f);
 
-        // Calculate the four corners of the quad
         var v1 = p1 - offset;
         var v2 = p2 - offset;
         var v3 = p2 + offset;
         var v4 = p1 + offset;
 
-        // Create the vertex objects
         var topLeft = new Vertex { Position = v4, TexCoords = new Vector2(0, 0), Color = calculatedColor };
         var topRight = new Vertex { Position = v3, TexCoords = new Vector2(1, 0), Color = calculatedColor };
         var bottomLeft = new Vertex { Position = v1, TexCoords = new Vector2(0, 1), Color = calculatedColor };
         var bottomRight = new Vertex { Position = v2, TexCoords = new Vector2(1, 1), Color = calculatedColor };
 
-        // Triangle 1
         Vertices[0] = topLeft;
         Vertices[1] = topRight;
         Vertices[2] = bottomRight;
 
-        // Triangle 2
         Vertices[3] = bottomRight;
         Vertices[4] = bottomLeft;
         Vertices[5] = topLeft;

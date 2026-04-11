@@ -370,15 +370,20 @@ public class Container : Drawable
 
     public override bool OnMouseMove(MouseEvent e)
     {
-        // If a drag is in progress, route the event exclusively to the dragged child.
+        bool handled = false;
+
+        // If a drag is in progress, the dragged child must get the event first.
         if (draggedChild != null)
         {
-            return draggedChild.OnMouseMove(e);
+            handled = draggedChild.OnMouseMove(e);
         }
 
-        bool handled = false;
+        // Continue routing to other children
         foreach (var c in children.OrderBy(d => d.Depth).Reverse())
         {
+            if (c == draggedChild)
+                continue;
+
             if (c.IsLoaded && c.IsAlive && !c.IsHidden && (c.IsHovered || c.Contains(e.ScreenSpaceMousePosition)))
             {
                 if (c.OnMouseMove(e))

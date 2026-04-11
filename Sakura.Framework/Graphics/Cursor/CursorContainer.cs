@@ -58,7 +58,7 @@ public class CursorContainer : Container
         }
 
         ActiveCursor.Position = localPosition;
-        return false;
+        return base.OnMouseMove(e);
     }
 
     private class DefaultCursor : Container
