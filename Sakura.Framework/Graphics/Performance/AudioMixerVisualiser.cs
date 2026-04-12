@@ -36,7 +36,6 @@ public class AudioMixerVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisu
         Size = new Vector2(1);
         Anchor = Anchor.TopLeft;
         Origin = Anchor.TopLeft;
-        AlwaysPresent = true;
 
         Add(new Box
         {

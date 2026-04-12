@@ -39,7 +39,6 @@ public class GlobalStatisticsDisplay : FocusedOverlayContainer, IRemoveFromDrawV
         Anchor = Anchor.TopLeft;
         Origin = Anchor.TopLeft;
         Size = new Vector2(1);
-        AlwaysPresent = true;
 
         Add(new Box
         {

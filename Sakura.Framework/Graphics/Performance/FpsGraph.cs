@@ -12,7 +12,6 @@ using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Timing;
-using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Graphics.Performance;
 
@@ -230,9 +229,6 @@ public class FpsGraph : Container, IRemoveFromDrawVisualiser
     {
         base.Update();
 
-        if (Precision.AlmostEqualZero(Alpha))
-            return;
-
         if (clock != null)
         {
             frameHistory[currentIndex] = clock.ElapsedFrameTime;
@@ -241,6 +237,9 @@ public class FpsGraph : Container, IRemoveFromDrawVisualiser
             if (currentCount < max_history)
                 currentCount++;
         }
+
+        if (DrawAlpha <= 0)
+            return;
 
         updateGraph();
         updateFpsText();
