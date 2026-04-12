@@ -2,7 +2,6 @@
 // See the LICENSE file for full license text.
 
 using Sakura.Framework.Extensions.ColorExtensions;
-using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Rendering.Vertex;
 using Sakura.Framework.Maths;
 
@@ -34,7 +33,7 @@ public class Triangle : Drawable
         Vertices[0] = new Vertex
         {
             Position = new Vector2(screenP1.X, screenP1.Y),
-            TexCoords = new Vector2(0.5f, 0), // TexCoords can be mapped however you like
+            TexCoords = new Vector2(0.5f, 0),
             Color = calculatedColor
         };
         Vertices[1] = new Vertex
@@ -49,10 +48,5 @@ public class Triangle : Drawable
             TexCoords = new Vector2(1, 1),
             Color = calculatedColor
         };
-    }
-
-    public override void Draw(IRenderer renderer)
-    {
-        renderer.DrawVertices(Vertices, Texture ?? renderer.WhitePixel);
     }
 }

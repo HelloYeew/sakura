@@ -3,8 +3,8 @@
 
 using System;
 using Sakura.Framework.Graphics.Colors;
-using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Textures;
+using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Timing;
 
@@ -26,7 +26,7 @@ public interface IRenderer
 
     void StartFrame();
 
-    void SetRoot(Drawable root);
+    void SetRoot(DrawNode rootNode);
 
     void Resize(int physicalWidth, int physicalHeight, int logicalWidth, int logicalHeight);
 
@@ -34,9 +34,9 @@ public interface IRenderer
 
     void DrawVertices(ReadOnlySpan<Vertex.Vertex> vertices, Texture textureGl);
 
-    void PushMask(Drawable maskDrawable, float cornerRadius);
+    void PushMask(RectangleF rect, float cornerRadius);
 
-    void PopMask(Drawable maskDrawable, float cornerRadius, float borderThickness, Color borderColor);
+    void PopMask(RectangleF rect, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<Vertex.Vertex> maskVertices = default);
 
     /// <summary>
     /// Sets the blend mode for subsequent draw calls. This will affect how colors are blended when drawing.

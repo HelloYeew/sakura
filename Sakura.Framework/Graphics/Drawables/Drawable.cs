@@ -91,7 +91,7 @@ public abstract class Drawable
     /// </summary>
     protected InvalidationFlags Invalidation = InvalidationFlags.All;
 
-    protected internal readonly Vertex[] Vertices = new Vertex[6];
+    protected internal Vertex[] Vertices = new Vertex[6];
 
     public Anchor Anchor
     {
@@ -227,6 +227,7 @@ public abstract class Drawable
             if (Math.Abs(depth - value) < 0.0001f) return;
             depth = value;
             // Re-sort children in parent required
+            Parent?.InvalidateTopology();
             Parent?.Invalidate(InvalidationFlags.DrawInfo);
         }
     }
@@ -615,16 +616,30 @@ public abstract class Drawable
         OnLoadComplete(this);
     }
 
-    public virtual void Draw(IRenderer renderer)
+    protected internal long DrawNodeInvalidationID { get; private set; } = 1;
+    private DrawNode? drawNode;
+
+    protected virtual DrawNode CreateDrawNode() => new DrawNode();
+
+    public DrawNode GenerateDrawNode()
     {
-        if (DrawAlpha <= 0)
-            return;
+        drawNode ??= CreateDrawNode();
+        drawNode.ApplyState(this);
+        return drawNode;
+    }
 
-        GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame").Value++;
+    public virtual DrawNode GenerateDrawNodeSubtree()
+    {
+        drawNode ??= CreateDrawNode();
 
-        renderer.SetBlendMode(Blending);
+        // Only apply state if the drawable has been invalidated since last generation
+        if (drawNode.InvalidationID != DrawNodeInvalidationID)
+        {
+            drawNode.ApplyState(this);
+            drawNode.InvalidationID = DrawNodeInvalidationID;
+        }
 
-        renderer.DrawVertices(Vertices, Texture ?? renderer.WhitePixel);
+        return drawNode;
     }
 
     /// <summary>
@@ -639,7 +654,14 @@ public abstract class Drawable
 
         GlobalStatistics.Get<int>("Drawables", "Invalidations").Value++;
 
+        // Logger.Debug($"Invalidating {GetType().Name} (Parent: {Parent?.GetType().Name ?? "null"}, Flags: {flags})");
+
         Invalidation |= flags;
+
+        if ((flags & (InvalidationFlags.DrawInfo | InvalidationFlags.Colour)) != 0)
+        {
+            DrawNodeInvalidationID++;
+        }
 
         if (propagateToParent && (flags & InvalidationFlags.DrawInfo) != 0)
             Parent?.Invalidate(InvalidationFlags.DrawInfo);

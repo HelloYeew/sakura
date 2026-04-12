@@ -211,43 +211,6 @@ public class SpriteText : Drawable
         DrawRectangle = new RectangleF(minX, minY, maxX - minX, maxY - minY);
     }
 
-    public override void Draw(IRenderer renderer)
-    {
-        if (DrawAlpha <= 0 || currentVertexCount == 0 || shapedText == null || shapedText.Glyphs.Count == 0)
-            return;
-
-        Texture? currentTextureRegion = null;
-        int batchStart = 0;
-        int batchCount = 0;
-
-        // Glyphs aligns 1:1 with the Quads in textVertices
-        // (Each glyph = 6 vertices)
-        for (int i = 0; i < shapedText.Glyphs.Count; i++)
-        {
-            var glyph = shapedText.Glyphs[i];
-
-            // If texture changes (and it's not the start), flush the draw
-            bool isNewAtlasPage = currentTextureRegion != null &&
-                                  glyph.Texture.GlTexture.Handle != currentTextureRegion.GlTexture.Handle;
-
-            if (isNewAtlasPage)
-            {
-                flushBatch(renderer, currentTextureRegion, batchStart, batchCount);
-                batchStart += batchCount;
-                batchCount = 0;
-            }
-
-            currentTextureRegion = glyph.Texture;
-            batchCount++;
-        }
-
-        // Flush final batch
-        if (currentTextureRegion != null && batchCount > 0)
-        {
-            flushBatch(renderer, currentTextureRegion, batchStart, batchCount);
-        }
-    }
-
     private void flushBatch(IRenderer renderer, Texture texture, int glyphStart, int glyphCount)
     {
         // 6 vertices per glyph (2 triangles)
@@ -256,5 +219,93 @@ public class SpriteText : Drawable
 
         var slice = textVertices.AsSpan(vertexStart, vertexCount);
         renderer.DrawVertices(slice, texture);
+    }
+
+    protected override DrawNode CreateDrawNode() => new SpriteTextDrawNode();
+
+    public class SpriteTextDrawNode : DrawNode
+    {
+        private struct GlyphBatch
+        {
+            public Texture Texture;
+            public int VertexStart;
+            public int VertexCount;
+        }
+
+        private GlyphBatch[] batches = Array.Empty<GlyphBatch>();
+        private int batchCount;
+
+        public override void ApplyState(Drawable source)
+        {
+            base.ApplyState(source);
+            var text = (SpriteText)source;
+
+            // Copy the custom text vertices (not the default 6-length base.Vertices)
+            if (Vertices.Length < text.currentVertexCount)
+            {
+                Vertices = new Vertex[text.currentVertexCount];
+            }
+            Array.Copy(text.textVertices, Vertices, text.currentVertexCount);
+
+            // Generate Texture Batches
+            batchCount = 0;
+
+            if (text.shapedText == null || text.shapedText.Glyphs.Count == 0)
+                return;
+
+            if (batches.Length < text.shapedText.Glyphs.Count)
+                batches = new GlyphBatch[text.shapedText.Glyphs.Count];
+
+            Texture? currentTexture = null;
+            int currentVertexStart = 0;
+            int currentVertexCount = 0;
+
+            for (int i = 0; i < text.shapedText.Glyphs.Count; i++)
+            {
+                var glyph = text.shapedText.Glyphs[i];
+
+                // If texture changes, flush the current batch
+                if (currentTexture != null && currentTexture.GlTexture.Handle != glyph.Texture.GlTexture.Handle)
+                {
+                    batches[batchCount++] = new GlyphBatch
+                    {
+                        Texture = currentTexture,
+                        VertexStart = currentVertexStart,
+                        VertexCount = currentVertexCount
+                    };
+                    currentVertexStart += currentVertexCount;
+                    currentVertexCount = 0;
+                }
+
+                currentTexture = glyph.Texture;
+                currentVertexCount += 6;
+            }
+
+            // Push the final batch
+            if (currentTexture != null && currentVertexCount > 0)
+            {
+                batches[batchCount++] = new GlyphBatch
+                {
+                    Texture = currentTexture,
+                    VertexStart = currentVertexStart,
+                    VertexCount = currentVertexCount
+                };
+            }
+        }
+
+        public override void Draw(IRenderer renderer)
+        {
+            if (DrawAlpha <= 0 || Vertices.Length == 0) return;
+
+            renderer.SetBlendMode(Blending);
+
+            // Loop over the pre-calculated batches and draw them
+            for (int i = 0; i < batchCount; i++)
+            {
+                var batch = batches[i];
+                var slice = Vertices.AsSpan(batch.VertexStart, batch.VertexCount);
+                renderer.DrawVertices(slice, batch.Texture);
+            }
+        }
     }
 }

@@ -3,8 +3,8 @@
 
 using System;
 using Sakura.Framework.Graphics.Colors;
-using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Textures;
+using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Timing;
 
@@ -36,7 +36,7 @@ public class HeadlessRenderer : IRenderer
 
     }
 
-    public void SetRoot(Drawable root)
+    public void SetRoot(DrawNode rootNode)
     {
 
     }
@@ -56,12 +56,12 @@ public class HeadlessRenderer : IRenderer
 
     }
 
-    public void PushMask(Drawable maskDrawable, float cornerRadius)
+    public void PushMask(RectangleF rect, float cornerRadius)
     {
 
     }
 
-    public void PopMask(Drawable maskDrawable, float cornerRadius, float borderThickness, Color borderColor)
+    public void PopMask(RectangleF rect, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<Vertex.Vertex> maskVertices = default)
     {
 
     }

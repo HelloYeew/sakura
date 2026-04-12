@@ -3,7 +3,6 @@
 
 using System;
 using Sakura.Framework.Extensions.ColorExtensions;
-using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Rendering.Vertex;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Utilities;
@@ -19,8 +18,6 @@ public class BezierCurve : Drawable
 
     private float thickness = 3f;
     private const int segments = 25;
-
-    protected new Vertex[] Vertices = Array.Empty<Vertex>();
 
     public Vector2 P0
     {
@@ -195,12 +192,5 @@ public class BezierCurve : Drawable
         float y = uuu * point0.Y + 3 * uu * t * point1.Y + 3 * u * tt * point2.Y + ttt * point3.Y;
 
         return new Vector2(x, y);
-    }
-
-    public override void Draw(IRenderer renderer)
-    {
-        if (DrawAlpha <= 0 || Vertices.Length == 0)
-            return;
-        renderer.DrawVertices(Vertices, Texture ?? renderer.WhitePixel);
     }
 }
