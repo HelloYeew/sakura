@@ -74,7 +74,7 @@ public abstract class Drawable
     /// <summary>
     /// The scheduler for this drawable, used for delaying and scheduling tasks.
     /// </summary>
-    public Scheduler Scheduler { get; }
+    public Scheduler? Scheduler { get; }
 
     private readonly List<ITransform> transforms = new();
 
@@ -486,16 +486,16 @@ public abstract class Drawable
                     if (textureAspect > drawAspect)
                     {
                         // Texture is wider: Fit width, center height
-                        float scale = drawAspect / textureAspect;
-                        float offset = (1.0f - scale) / 2.0f;
+                        float localScale = drawAspect / textureAspect;
+                        float offset = (1.0f - localScale) / 2.0f;
                         drawTopLeft.Y = offset;
                         drawBottomRight.Y = 1.0f - offset;
                     }
                     else
                     {
                         // Texture is taller: Fit height, center width
-                        float scale = textureAspect / drawAspect;
-                        float offset = (1.0f - scale) / 2.0f;
+                        float localScale = textureAspect / drawAspect;
+                        float offset = (1.0f - localScale) / 2.0f;
                         drawTopLeft.X = offset;
                         drawBottomRight.X = 1.0f - offset;
                     }
@@ -616,7 +616,7 @@ public abstract class Drawable
         OnLoadComplete(this);
     }
 
-    protected internal long DrawNodeInvalidationID { get; private set; } = 1;
+    protected internal long DrawNodeInvalidationId { get; private set; } = 1;
     private DrawNode? drawNode;
 
     protected virtual DrawNode CreateDrawNode() => new DrawNode();
@@ -633,10 +633,10 @@ public abstract class Drawable
         drawNode ??= CreateDrawNode();
 
         // Only apply state if the drawable has been invalidated since last generation
-        if (drawNode.InvalidationID != DrawNodeInvalidationID)
+        if (drawNode.InvalidationID != DrawNodeInvalidationId)
         {
             drawNode.ApplyState(this);
-            drawNode.InvalidationID = DrawNodeInvalidationID;
+            drawNode.InvalidationID = DrawNodeInvalidationId;
         }
 
         return drawNode;
@@ -660,7 +660,7 @@ public abstract class Drawable
 
         if ((flags & (InvalidationFlags.DrawInfo | InvalidationFlags.Colour)) != 0)
         {
-            DrawNodeInvalidationID++;
+            DrawNodeInvalidationId++;
         }
 
         if (propagateToParent && (flags & InvalidationFlags.DrawInfo) != 0)
@@ -764,7 +764,7 @@ public abstract class Drawable
         GlobalStatistics.Get<int>("Drawables", "Updated Last Frame").Value++;
 
         (Clock as FramedClock)?.Update();
-        Scheduler.Update();
+        Scheduler?.Update();
         applyTransforms();
 
         if (Invalidation == InvalidationFlags.None)
@@ -858,7 +858,7 @@ public abstract class Drawable
 
         foreach (var t in transforms)
         {
-            if (t.EndTime == latestEndTime)
+            if (Precision.AlmostEquals(t.EndTime, latestEndTime))
                 t.IsLooping = true;
         }
     }

@@ -172,7 +172,7 @@ public class BezierCurve : Drawable
     }
 
     /// <summary>
-    /// Calculates a point on a cubic bezier curve defined by four control points and a parameter t (0 <= t <= 1).
+    /// Calculates a point on a cubic bezier curve defined by four control points and a parameter t (0 &lt;= t &lt;= 1).
     /// </summary>
     /// <param name="point0">First control point (start of the curve)</param>
     /// <param name="point1">Second control point</param>
