@@ -9,6 +9,7 @@ using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
+using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Graphics.Containers;
 
@@ -282,8 +283,8 @@ public class ScrollableContainer : Container
     public override void Update()
     {
         updateScrollPosition();
-        base.Update();
         updateScrollbars();
+        base.Update();
     }
 
     private void updateScrollPosition()
@@ -344,8 +345,11 @@ public class ScrollableContainer : Container
             }
             else
             {
-                verticalScrollbar.Height = barHeight;
-                verticalScrollbar.Position = new Vector2(0, availableTrack * currentRatio);
+                if (!Precision.AlmostEquals(verticalScrollbar.Height, barHeight))
+                    verticalScrollbar.Height = barHeight;
+                float newY = availableTrack * currentRatio;
+                if (!Precision.AlmostEquals(verticalScrollbar.Position.Y, newY))
+                    verticalScrollbar.Position = new Vector2(0, newY);
             }
         }
 
