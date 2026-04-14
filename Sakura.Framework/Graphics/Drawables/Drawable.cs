@@ -74,7 +74,7 @@ public abstract class Drawable
     /// <summary>
     /// The scheduler for this drawable, used for delaying and scheduling tasks.
     /// </summary>
-    public Scheduler Scheduler { get; }
+    public Scheduler? Scheduler { get; }
 
     private readonly List<ITransform> transforms = new();
 
@@ -91,7 +91,7 @@ public abstract class Drawable
     /// </summary>
     protected InvalidationFlags Invalidation = InvalidationFlags.All;
 
-    protected internal readonly Vertex[] Vertices = new Vertex[6];
+    protected internal Vertex[] Vertices = new Vertex[6];
 
     public Anchor Anchor
     {
@@ -227,6 +227,7 @@ public abstract class Drawable
             if (Math.Abs(depth - value) < 0.0001f) return;
             depth = value;
             // Re-sort children in parent required
+            Parent?.InvalidateTopology();
             Parent?.Invalidate(InvalidationFlags.DrawInfo);
         }
     }
@@ -485,16 +486,16 @@ public abstract class Drawable
                     if (textureAspect > drawAspect)
                     {
                         // Texture is wider: Fit width, center height
-                        float scale = drawAspect / textureAspect;
-                        float offset = (1.0f - scale) / 2.0f;
+                        float localScale = drawAspect / textureAspect;
+                        float offset = (1.0f - localScale) / 2.0f;
                         drawTopLeft.Y = offset;
                         drawBottomRight.Y = 1.0f - offset;
                     }
                     else
                     {
                         // Texture is taller: Fit height, center width
-                        float scale = textureAspect / drawAspect;
-                        float offset = (1.0f - scale) / 2.0f;
+                        float localScale = textureAspect / drawAspect;
+                        float offset = (1.0f - localScale) / 2.0f;
                         drawTopLeft.X = offset;
                         drawBottomRight.X = 1.0f - offset;
                     }
@@ -615,16 +616,30 @@ public abstract class Drawable
         OnLoadComplete(this);
     }
 
-    public virtual void Draw(IRenderer renderer)
+    protected internal long DrawNodeInvalidationId { get; private set; } = 1;
+    private DrawNode? drawNode;
+
+    protected virtual DrawNode CreateDrawNode() => new DrawNode();
+
+    public DrawNode GenerateDrawNode()
     {
-        if (DrawAlpha <= 0)
-            return;
+        drawNode ??= CreateDrawNode();
+        drawNode.ApplyState(this);
+        return drawNode;
+    }
 
-        GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame").Value++;
+    public virtual DrawNode GenerateDrawNodeSubtree()
+    {
+        drawNode ??= CreateDrawNode();
 
-        renderer.SetBlendMode(Blending);
+        // Only apply state if the drawable has been invalidated since last generation
+        if (drawNode.InvalidationID != DrawNodeInvalidationId)
+        {
+            drawNode.ApplyState(this);
+            drawNode.InvalidationID = DrawNodeInvalidationId;
+        }
 
-        renderer.DrawVertices(Vertices, Texture ?? renderer.WhitePixel);
+        return drawNode;
     }
 
     /// <summary>
@@ -639,7 +654,14 @@ public abstract class Drawable
 
         GlobalStatistics.Get<int>("Drawables", "Invalidations").Value++;
 
+        // Logger.Debug($"Invalidating {GetType().Name} (Parent: {Parent?.GetType().Name ?? "null"}, Flags: {flags})");
+
         Invalidation |= flags;
+
+        if ((flags & (InvalidationFlags.DrawInfo | InvalidationFlags.Colour)) != 0)
+        {
+            DrawNodeInvalidationId++;
+        }
 
         if (propagateToParent && (flags & InvalidationFlags.DrawInfo) != 0)
             Parent?.Invalidate(InvalidationFlags.DrawInfo);
@@ -742,7 +764,7 @@ public abstract class Drawable
         GlobalStatistics.Get<int>("Drawables", "Updated Last Frame").Value++;
 
         (Clock as FramedClock)?.Update();
-        Scheduler.Update();
+        Scheduler?.Update();
         applyTransforms();
 
         if (Invalidation == InvalidationFlags.None)
@@ -836,7 +858,7 @@ public abstract class Drawable
 
         foreach (var t in transforms)
         {
-            if (t.EndTime == latestEndTime)
+            if (Precision.AlmostEquals(t.EndTime, latestEndTime))
                 t.IsLooping = true;
         }
     }

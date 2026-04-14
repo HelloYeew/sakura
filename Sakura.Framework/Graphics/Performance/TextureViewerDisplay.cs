@@ -49,7 +49,6 @@ public class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFromDrawVisu
         Anchor = Anchor.TopLeft;
         Origin = Anchor.TopLeft;
         Size = new Vector2(1);
-        AlwaysPresent = true;
 
         Add(new Box
         {

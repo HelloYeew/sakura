@@ -3,7 +3,6 @@
 
 using System;
 using Sakura.Framework.Extensions.ColorExtensions;
-using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Rendering.Vertex;
 using Sakura.Framework.Maths;
 
@@ -103,10 +102,5 @@ public class Line : Drawable
         Vertices[3] = bottomRight;
         Vertices[4] = bottomLeft;
         Vertices[5] = topLeft;
-    }
-
-    public override void Draw(IRenderer renderer)
-    {
-        renderer.DrawVertices(Vertices, Texture ?? renderer.WhitePixel);
     }
 }

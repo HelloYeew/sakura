@@ -40,6 +40,8 @@ public abstract class AppHost : IDisposable
     private double lastUpdateTime;
     private readonly Stopwatch gameLoopStopwatch = new Stopwatch();
 
+    private DrawNode currentFrameDrawNode;
+
     // TODO: This "should" not be accessible from outside the framework.
     public Storage FrameworkStorage { get; private set; } = new EmbeddedResourceStorage(typeof(AppHost).Assembly, "Sakura.Framework.Resources");
 
@@ -261,6 +263,7 @@ public abstract class AppHost : IDisposable
                     // Force an update and draw when requested
                     // during the resize operation since the loop is blocked.
                     app?.Update();
+                    currentFrameDrawNode = app?.GenerateDrawNodeSubtree();
                     if (!IsHeadless)
                         PerformDraw();
                 }
@@ -272,8 +275,6 @@ public abstract class AppHost : IDisposable
             onFrameLimiterChanged(new ValueChangedEvent<FrameSync>(default, FrameLimiter.Value));
 
             SetupRenderer();
-
-            Renderer?.SetRoot(this.app);
 
             onResize(Window.Width, Window.Height);
 
@@ -452,6 +453,7 @@ public abstract class AppHost : IDisposable
             // In unlimited mode, we just update once per loop iteration.
             app?.Update();
             lastUpdateTime = AppClock.CurrentTime;
+            currentFrameDrawNode = app?.GenerateDrawNodeSubtree();
             return;
         }
 
@@ -463,6 +465,7 @@ public abstract class AppHost : IDisposable
             // The update that happened in the drawable need to be aware of the timeStep.
             app?.Update();
             lastUpdateTime += timeStep;
+            currentFrameDrawNode = app?.GenerateDrawNodeSubtree();
         }
     }
 
@@ -475,6 +478,8 @@ public abstract class AppHost : IDisposable
         GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame").Value = 0;
         Renderer?.Clear();
         Renderer?.StartFrame();
+        if (currentFrameDrawNode != null)
+            Renderer?.SetRoot(currentFrameDrawNode);
         Renderer?.Draw(AppClock);
         Window?.SwapBuffers();
     }

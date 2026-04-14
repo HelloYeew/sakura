@@ -52,7 +52,6 @@ public class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisualiser
         Size = new Vector2(1);
         Anchor = Anchor.TopLeft;
         Origin = Anchor.TopLeft;
-        AlwaysPresent = true;
 
         Add(highlightBox = new Box
         {

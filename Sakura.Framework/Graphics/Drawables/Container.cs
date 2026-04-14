@@ -9,7 +9,6 @@ using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
-using Sakura.Framework.Statistic;
 using Sakura.Framework.Timing;
 using Sakura.Framework.Utilities;
 
@@ -17,6 +16,12 @@ namespace Sakura.Framework.Graphics.Drawables;
 
 public class Container : Drawable
 {
+    /// <summary>
+    /// A version number that is incremented whenever the topology of the container changes
+    /// (i.e., when children are added or removed).
+    /// </summary>
+    internal long TopologyVersion { get; private set; } = 1;
+
     private readonly List<Drawable> children = new();
     private Drawable? draggedChild;
 
@@ -97,6 +102,7 @@ public class Container : Drawable
 
         drawable.Parent = this;
         children.Add(drawable);
+        InvalidateTopology();
         if (drawable.Clock is FramedClock framedClock)
         {
             framedClock.Source = Clock;
@@ -122,6 +128,7 @@ public class Container : Drawable
         {
             drawable.Parent = null;
             Invalidate(InvalidationFlags.DrawInfo);
+            InvalidateTopology();
         }
     }
 
@@ -133,7 +140,10 @@ public class Container : Drawable
         }
         children.Clear();
         Invalidate(InvalidationFlags.DrawInfo);
+        InvalidateTopology();
     }
+
+    internal void InvalidateTopology() => TopologyVersion++;
 
     public override void Update()
     {
@@ -252,52 +262,30 @@ public class Container : Drawable
         }
     }
 
-    public override void Draw(IRenderer renderer)
+    protected override DrawNode CreateDrawNode() => new ContainerDrawNode();
+
+    public override DrawNode GenerateDrawNodeSubtree()
     {
-        if (DrawAlpha <= 0)
-            return;
+        var node = (ContainerDrawNode)base.GenerateDrawNodeSubtree();
 
-        GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame").Value++;
-
-        if (Masking)
-            renderer.PushMask(this, CornerRadius);
-
-        RectangleF? clipRect = null;
-        for (Container p = this; p != null; p = p.Parent)
+        if (node.TopologyInvalidationID != TopologyVersion)
         {
-            if (p.Masking)
+            node.Children.Clear();
+            foreach (var child in Children.OrderBy(c => c.Depth))
             {
-                clipRect = p.DrawRectangle;
-                break;
+                node.Children.Add(child.GenerateDrawNodeSubtree());
+            }
+            node.TopologyInvalidationID = TopologyVersion;
+        }
+        else
+        {
+            foreach (var child in Children)
+            {
+                child.GenerateDrawNodeSubtree();
             }
         }
 
-        foreach (var child in children.OrderBy(c => c.Depth))
-        {
-            if (clipRect.HasValue)
-            {
-                var cr = clipRect.Value;
-                var dr = child.DrawRectangle;
-
-                // Simple AABB intersection test
-                bool isVisible = dr.X <= cr.X + cr.Width &&
-                                 dr.X + dr.Width >= cr.X &&
-                                 dr.Y <= cr.Y + cr.Height &&
-                                 dr.Y + dr.Height >= cr.Y;
-
-                // If the child is completely outside the masking bounds, skip drawing it entirely
-                if (!isVisible)
-                {
-                    GlobalStatistics.Get<int>("Drawables", "Culled").Value++;
-                    continue;
-                }
-            }
-
-            child.Draw(renderer);
-        }
-
-        if (Masking)
-            renderer.PopMask(this, CornerRadius, BorderThickness, BorderColor);
+        return node;
     }
 
     public override void Load()

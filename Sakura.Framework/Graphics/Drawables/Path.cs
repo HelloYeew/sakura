@@ -2,7 +2,6 @@
 // See the LICENSE file for full license text.
 
 using Sakura.Framework.Extensions.ColorExtensions;
-using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Rendering.Vertex;
 using Sakura.Framework.Maths;
 using System;
@@ -15,8 +14,6 @@ public class Path : Drawable
 {
     private readonly List<Vector2> vertices = new();
     public IReadOnlyList<Vector2> PathVertices => vertices;
-
-    protected new Vertex[] Vertices = Array.Empty<Vertex>();
 
     private float thickness = 3f;
     public float Thickness
@@ -211,12 +208,6 @@ public class Path : Drawable
             Vertices[offset + 4] = bottomLeft;
             Vertices[offset + 5] = topLeft;
         }
-    }
-
-    public override void Draw(IRenderer renderer)
-    {
-        if (DrawAlpha <= 0 || Vertices.Length == 0) return;
-        renderer.DrawVertices(Vertices, Texture ?? renderer.WhitePixel);
     }
 }
 

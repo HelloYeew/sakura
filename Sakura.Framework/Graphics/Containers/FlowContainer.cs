@@ -5,6 +5,7 @@ using System;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Maths;
+using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Graphics.Containers;
 
@@ -106,15 +107,20 @@ public class FlowContainer : Container
 
                 // set child's position.
                 // must control these properties for layout to work.
-                child.RelativePositionAxes = Axes.None; // reset to absolute positioning
-                child.Anchor = Anchor.TopLeft; // Reset anchor to top-left
-                child.Origin = Anchor.TopLeft; // Reset origin to top-left
+                if (child.RelativePositionAxes != Axes.None)
+                    child.RelativePositionAxes = Axes.None; // reset to absolute positioning
+                if (child.Anchor != Anchor.TopLeft)
+                    child.Anchor = Anchor.TopLeft; // Reset anchor to top-left
+                if (child.Origin != Anchor.TopLeft)
+                    child.Origin = Anchor.TopLeft; // Reset origin to top-left
 
                 // calculate final pixel position for the child (including its margin)
                 var childPosPixels = new Vector2(currentPosPixels.X + child.Margin.Left, currentPosPixels.Y + child.Margin.Top);
+                var finalPos = new Vector2(childPosPixels.X + Padding.Left, childPosPixels.Y + Padding.Top);
 
-                // Apply position (offset by Padding)
-                child.Position = new Vector2(childPosPixels.X + Padding.Left, childPosPixels.Y + Padding.Top);
+                if (!Precision.AlmostEquals(child.Position, finalPos))
+                    // Apply position (offset by Padding)
+                    child.Position = finalPos;
 
                 // Track content size
                 float childRight = childPosPixels.X + childDrawSizePixels.X + child.Margin.Right;
@@ -138,15 +144,20 @@ public class FlowContainer : Container
                 }
 
                 // set child's position
-                child.RelativePositionAxes = Axes.None;
-                child.Anchor = Anchor.TopLeft;
-                child.Origin = Anchor.TopLeft;
+                if (child.RelativePositionAxes != Axes.None)
+                    child.RelativePositionAxes = Axes.None;
+                if (child.Anchor != Anchor.TopLeft)
+                    child.Anchor = Anchor.TopLeft;
+                if (child.Origin != Anchor.TopLeft)
+                    child.Origin = Anchor.TopLeft;
 
                 // calculate final pixel position for the child (including its margin)
                 var childPosPixels = new Vector2(currentPosPixels.X + child.Margin.Left, currentPosPixels.Y + child.Margin.Top);
+                var finalPos = new Vector2(childPosPixels.X + Padding.Left, childPosPixels.Y + Padding.Top);
 
-                // Apply position
-                child.Position = new Vector2(childPosPixels.X + Padding.Left, childPosPixels.Y + Padding.Top);
+                if (!Precision.AlmostEquals(child.Position, finalPos))
+                    // Apply position (offset by Padding)
+                    child.Position = finalPos;
 
                 // Track content size
                 float childRight = childPosPixels.X + childDrawSizePixels.X + child.Margin.Right;
@@ -168,10 +179,10 @@ public class FlowContainer : Container
             if ((AutoSizeAxes & Axes.Y) != 0)
                 newSize.Y = maxBottom + Padding.Bottom;
 
-            if (Size != newSize)
+            if (!Precision.AlmostEquals(Size, newSize))
             {
                 Size = newSize;
-                Parent?.Invalidate(InvalidationFlags.DrawInfo);
+                // Parent?.Invalidate(InvalidationFlags.DrawInfo);
             }
         }
     }

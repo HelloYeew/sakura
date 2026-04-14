@@ -37,8 +37,6 @@ public class GLRenderer : IRenderer
 
     private TriangleBatch triangleBatch;
 
-    private Drawable root;
-
     private int stencilLevel;
 
     private uint lastBoundTextureHandle = uint.MaxValue;
@@ -56,6 +54,8 @@ public class GLRenderer : IRenderer
 
     private readonly Stack<ClipState> clipStack = new Stack<ClipState>();
     private ClipState currentClip;
+
+    private DrawNode rootNode;
 
     private struct ClipState
     {
@@ -111,9 +111,9 @@ public class GLRenderer : IRenderer
         lastBoundTextureHandle = uint.MaxValue;
     }
 
-    public void SetRoot(Drawable drawableRoot)
+    public void SetRoot(DrawNode node)
     {
-        root = drawableRoot;
+        rootNode = node;
     }
 
     public void Resize(int physicalWidth, int physicalHeight, int logicalWidth, int logicalHeight)
@@ -141,7 +141,7 @@ public class GLRenderer : IRenderer
 
     public void Draw(IClock clock)
     {
-        if (root == null) return;
+        if (rootNode == null) return;
 
         resetTextureSlots();
 
@@ -178,7 +178,7 @@ public class GLRenderer : IRenderer
         lastBoundTextureHandle = uint.MaxValue;
         SetBlendMode(BlendingMode.Alpha);
 
-        root.Draw(this);
+        rootNode.Draw(this);
         triangleBatch.Draw();
     }
 
@@ -242,14 +242,14 @@ public class GLRenderer : IRenderer
         triangleBatch.Draw(); // Flush *just* the mask
     }
 
-    private void drawBorder(Drawable maskDrawable, float cornerRadius, float borderThickness, Color borderColor)
+    private void drawBorder(RectangleF rect, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<SakuraVertex> vertices)
     {
-        if (borderThickness <= 0) return;
+        if (borderThickness <= 0 || vertices.Length == 0)
+            return;
 
         triangleBatch.Draw();
 
         shader.SetUniform("u_IsBorder", true);
-        var rect = maskDrawable.DrawRectangle;
         shader.SetUniform("u_MaskRect", new Vector4(rect.X, rect.Y, rect.Width, rect.Height));
         shader.SetUniform("u_CornerRadius", cornerRadius);
         shader.SetUniform("u_BorderThickness", borderThickness);
@@ -261,19 +261,19 @@ public class GLRenderer : IRenderer
             gl.ActiveTexture(TextureUnit.Texture0);
             GLTexture.WhitePixel.Bind();
             boundTextureHandles[0] = GLTexture.WhitePixel.Handle;
-            if (boundTextureCount == 0) boundTextureCount = 1;
+            if (boundTextureCount == 0)
+                boundTextureCount = 1;
         }
 
-        triangleBatch.AddRange(maskDrawable.Vertices, 0f, currentClip.Rect, currentClip.Radius);
+        triangleBatch.AddRange(vertices, 0f, currentClip.Rect, currentClip.Radius);
         triangleBatch.Draw();
 
         shader.SetUniform("u_IsBorder", false);
         lastBoundTextureHandle = uint.MaxValue;
     }
 
-    public void PushMask(Drawable maskDrawable, float cornerRadius)
+    public void PushMask(RectangleF rect, float cornerRadius)
     {
-        var rect = maskDrawable.DrawRectangle;
         float left = rect.X;
         float top = rect.Y;
         float right = rect.X + rect.Width;
@@ -292,11 +292,10 @@ public class GLRenderer : IRenderer
         currentClip = new ClipState { Rect = new Vector4(left, top, right, bottom), Radius = cornerRadius };
     }
 
-    public void PopMask(Drawable maskDrawable, float cornerRadius, float borderThickness, Color borderColor)
+    public void PopMask(RectangleF rect, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<SakuraVertex> maskVertices = default)
     {
         currentClip = clipStack.Pop();
-
-        drawBorder(maskDrawable, cornerRadius, borderThickness, borderColor);
+        drawBorder(rect, cornerRadius, borderThickness, borderColor, maskVertices);
     }
 
     public void SetBlendMode(BlendingMode blendingMode)
