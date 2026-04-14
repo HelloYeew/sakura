@@ -617,29 +617,37 @@ public abstract class Drawable
     }
 
     protected internal long DrawNodeInvalidationId { get; private set; } = 1;
+    private readonly DrawNode?[] drawNodes = new DrawNode?[3];
     private DrawNode? drawNode;
 
     protected virtual DrawNode CreateDrawNode() => new DrawNode();
 
-    public DrawNode GenerateDrawNode()
+    public DrawNode GenerateDrawNode(int frameIndex)
     {
-        drawNode ??= CreateDrawNode();
-        drawNode.ApplyState(this);
-        return drawNode;
+        drawNodes[frameIndex] ??= CreateDrawNode();
+        var node = drawNodes[frameIndex]!;
+        node.ApplyState(this);
+        return node;
     }
 
-    public virtual DrawNode GenerateDrawNodeSubtree()
+    public virtual DrawNode GenerateDrawNodeSubtree(int frameIndex)
     {
-        drawNode ??= CreateDrawNode();
+        drawNodes[frameIndex] ??= CreateDrawNode();
+        var node = drawNodes[frameIndex]!;
 
         // Only apply state if the drawable has been invalidated since last generation
-        if (drawNode.InvalidationID != DrawNodeInvalidationId)
+        if (node.InvalidationID != DrawNodeInvalidationId)
         {
-            drawNode.ApplyState(this);
-            drawNode.InvalidationID = DrawNodeInvalidationId;
+            node.ApplyState(this);
+            node.InvalidationID = DrawNodeInvalidationId;
+            GlobalStatistics.Get<int>("DrawNodes", "State Applied").Value++;
+        }
+        else
+        {
+            GlobalStatistics.Get<int>("DrawNodes", "State Reused (Clean)").Value++;
         }
 
-        return drawNode;
+        return node;
     }
 
     /// <summary>

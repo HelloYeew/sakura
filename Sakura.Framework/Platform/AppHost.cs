@@ -40,6 +40,8 @@ public abstract class AppHost : IDisposable
     private double lastUpdateTime;
     private readonly Stopwatch gameLoopStopwatch = new Stopwatch();
 
+    private readonly FrameBufferManager frameBufferManager = new FrameBufferManager();
+    private readonly DrawNode[] rootDrawNodes = new DrawNode[3];
     private DrawNode currentFrameDrawNode;
 
     // TODO: This "should" not be accessible from outside the framework.
@@ -262,8 +264,10 @@ public abstract class AppHost : IDisposable
                 {
                     // Force an update and draw when requested
                     // during the resize operation since the loop is blocked.
-                    app?.Update();
-                    currentFrameDrawNode = app?.GenerateDrawNodeSubtree();
+                    app.Update();
+                    int updateIndex = frameBufferManager.GetUpdateIndex();
+                    rootDrawNodes[updateIndex] = app.GenerateDrawNodeSubtree(updateIndex);
+                    frameBufferManager.FinishUpdate();
                     if (!IsHeadless)
                         PerformDraw();
                 }
@@ -453,7 +457,9 @@ public abstract class AppHost : IDisposable
             // In unlimited mode, we just update once per loop iteration.
             app?.Update();
             lastUpdateTime = AppClock.CurrentTime;
-            currentFrameDrawNode = app?.GenerateDrawNodeSubtree();
+            int updateIndex = frameBufferManager.GetUpdateIndex();
+            rootDrawNodes[updateIndex] = app?.GenerateDrawNodeSubtree(updateIndex);
+            frameBufferManager.FinishUpdate();
             return;
         }
 
@@ -465,7 +471,9 @@ public abstract class AppHost : IDisposable
             // The update that happened in the drawable need to be aware of the timeStep.
             app?.Update();
             lastUpdateTime += timeStep;
-            currentFrameDrawNode = app?.GenerateDrawNodeSubtree();
+            int updateIndex = frameBufferManager.GetUpdateIndex();
+            rootDrawNodes[updateIndex] = app?.GenerateDrawNodeSubtree(updateIndex);
+            frameBufferManager.FinishUpdate();
         }
     }
 
@@ -478,8 +486,10 @@ public abstract class AppHost : IDisposable
         GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame").Value = 0;
         Renderer?.Clear();
         Renderer?.StartFrame();
-        if (currentFrameDrawNode != null)
-            Renderer?.SetRoot(currentFrameDrawNode);
+        int drawIndex = frameBufferManager.GetDrawIndex();
+        var currentFrameNode = rootDrawNodes[drawIndex];
+        if (currentFrameNode != null)
+            Renderer?.SetRoot(currentFrameNode);
         Renderer?.Draw(AppClock);
         Window?.SwapBuffers();
     }
