@@ -264,16 +264,16 @@ public class Container : Drawable
 
     protected override DrawNode CreateDrawNode() => new ContainerDrawNode();
 
-    public override DrawNode GenerateDrawNodeSubtree()
+    public override DrawNode GenerateDrawNodeSubtree(int frameIndex)
     {
-        var node = (ContainerDrawNode)base.GenerateDrawNodeSubtree();
+        var node = (ContainerDrawNode)base.GenerateDrawNodeSubtree(frameIndex);
 
         if (node.TopologyInvalidationID != TopologyVersion)
         {
             node.Children.Clear();
             foreach (var child in Children.OrderBy(c => c.Depth))
             {
-                node.Children.Add(child.GenerateDrawNodeSubtree());
+                node.Children.Add(child.GenerateDrawNodeSubtree(frameIndex));
             }
             node.TopologyInvalidationID = TopologyVersion;
         }
@@ -281,7 +281,7 @@ public class Container : Drawable
         {
             foreach (var child in Children)
             {
-                child.GenerateDrawNodeSubtree();
+                child.GenerateDrawNodeSubtree(frameIndex);
             }
         }
 
