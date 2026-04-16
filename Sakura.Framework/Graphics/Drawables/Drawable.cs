@@ -182,6 +182,10 @@ public abstract class Drawable
         {
             if (relativeSizeAxes == value) return;
             relativeSizeAxes = value;
+            if ((relativeSizeAxes & Axes.X) != 0 && size.X == 0)
+                size.X = 1;
+            if ((relativeSizeAxes & Axes.Y) != 0 && size.Y == 0)
+                size.Y = 1;
             Invalidate(InvalidationFlags.DrawInfo);
         }
     }
