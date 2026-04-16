@@ -104,7 +104,7 @@ public class TestBrowserApp : App
         {
             if (currentTest != null)
                 loadTest(currentTest.GetType());
-        }, Color.DarkSlateBlue));
+        }, Color.Transparent));
 
         var autoRunText = new SpriteText
         {
@@ -125,7 +125,10 @@ public class TestBrowserApp : App
                 currentAutoRunStep = 0;
                 runNextStep();
             }
-        }, Color.DarkSlateBlue) { Child = autoRunText });
+        }, Color.DarkSlateBlue)
+        {
+            Child = autoRunText
+        });
 
         headerContainer.Add(headerFlow);
         Add(headerContainer);
@@ -138,7 +141,10 @@ public class TestBrowserApp : App
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
             Y = header_height,
-            Padding = new MarginPadding { Bottom = header_height }
+            Padding = new MarginPadding
+            {
+                Bottom = header_height
+            }
         };
 
         testSidebar.Add(new Box
@@ -181,7 +187,10 @@ public class TestBrowserApp : App
             Position = new Vector2(sidebar_width, header_height),
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
-            Padding = new MarginPadding { Bottom = header_height }
+            Padding = new MarginPadding
+            {
+                Bottom = header_height
+            }
         };
 
         stepSidebar.Add(new Box
@@ -193,7 +202,7 @@ public class TestBrowserApp : App
             Origin = Anchor.TopRight
         });
 
-        stepScrollContainer = new ScrollableContainer // <-- Changed
+        stepScrollContainer = new ScrollableContainer
         {
             Size = new Vector2(1),
             RelativeSizeAxes = Axes.Both,
@@ -369,7 +378,7 @@ public class TestBrowserApp : App
                 foreach (var sourceAttr in testCaseSources)
                 {
                     var sourceType = sourceAttr.SourceType ?? testSceneType;
-                    IEnumerable sourceData = GetTestCaseSourceData(sourceType, sourceAttr.SourceName, currentTest);
+                    IEnumerable sourceData = getTestCaseSourceData(sourceType, sourceAttr.SourceName, currentTest);
 
                     if (sourceData != null)
                     {
@@ -590,7 +599,7 @@ public class TestBrowserApp : App
         Scheduler.AddDelayed(runNextStep, 200);
     }
 
-    private IEnumerable GetTestCaseSourceData(Type type, string name, object instance)
+    private IEnumerable getTestCaseSourceData(Type type, string name, object instance)
     {
         var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
 
