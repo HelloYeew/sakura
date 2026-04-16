@@ -15,11 +15,16 @@ public class GlobalStatistic<T> : IGlobalStatistic
         {
             if (Value == null)
                 return "null";
-            if (Value is float f)
-                return f.ToString("0.##");
-            if (Value is double d)
-                return d.ToString("0.##");
-            return Value.ToString() ?? string.Empty;
+
+            return Value switch
+            {
+                int i => i.ToString("N0"),
+                long l => l.ToString("N0"),
+                float f => f.ToString("N2"),
+                double d => d.ToString("N2"),
+                decimal dec => dec.ToString("N2"),
+                _ => Value.ToString() ?? string.Empty
+            };
         }
     }
 

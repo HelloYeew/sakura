@@ -25,8 +25,8 @@ public class GlobalStatisticsDisplay : FocusedOverlayContainer, IRemoveFromDrawV
     private readonly FlowContainer groupsFlow;
     private readonly ScrollableContainer scrollContainer;
     private readonly Container contentContainer;
-    private readonly Dictionary<string, FlowContainer> groupContainers = new();
-    private readonly Dictionary<IGlobalStatistic, SpriteText> statTexts = new();
+    private readonly Dictionary<string, FlowContainer> groupContainers = new Dictionary<string, FlowContainer>();
+    private readonly Dictionary<IGlobalStatistic, SpriteText> statValueTexts = new Dictionary<IGlobalStatistic, SpriteText>();
     private readonly SpriteText currentTimeText;
     private readonly SpriteText runningTimeText;
 
@@ -88,8 +88,7 @@ public class GlobalStatisticsDisplay : FocusedOverlayContainer, IRemoveFromDrawV
 
         Add(new SpriteText()
         {
-            Text =
-                $"Sakura Framework v{DebugUtils.GetFrameworkVersion()}",
+            Text = $"Sakura Framework v{DebugUtils.GetFrameworkVersion()}",
             Font = FontUsage.Default.With(size: 16),
             Anchor = Anchor.TopRight,
             Origin = Anchor.TopRight,
@@ -163,7 +162,9 @@ public class GlobalStatisticsDisplay : FocusedOverlayContainer, IRemoveFromDrawV
                 groupFlow = new FlowContainer
                 {
                     Direction = FlowDirection.Vertical,
-                    AutoSizeAxes = Axes.Both,
+                    RelativeSizeAxes = Axes.None,
+                    AutoSizeAxes = Axes.Y,
+                    Width = 350,
                     Spacing = new Vector2(0, 2),
                     Anchor = Anchor.TopLeft,
                     Origin = Anchor.TopLeft,
@@ -183,21 +184,41 @@ public class GlobalStatisticsDisplay : FocusedOverlayContainer, IRemoveFromDrawV
                 groupsFlow.Add(groupFlow);
             }
 
-            if (!statTexts.TryGetValue(stat, out var textElement))
+            if (!statValueTexts.TryGetValue(stat, out var valueTextElement))
             {
-                textElement = new SpriteText
+                var rowContainer = new Container
                 {
+                    RelativeSizeAxes = Axes.X,
+                    AutoSizeAxes = Axes.Y,
+                    Size = new Vector2(1, 0)
+                };
+
+                rowContainer.Add(new SpriteText
+                {
+                    Anchor = Anchor.TopLeft,
+                    Origin = Anchor.TopLeft,
+                    Text = stat.Name,
+                    Font = FontUsage.Default.With(size: 14),
+                    Color = Color.LightGray
+                });
+
+                valueTextElement = new SpriteText
+                {
+                    Anchor = Anchor.TopRight,
+                    Origin = Anchor.TopRight,
                     Font = FontUsage.Default.With(size: 14),
                     Color = Color.White
                 };
-                statTexts[stat] = textElement;
-                groupFlow.Add(textElement);
+
+                rowContainer.Add(valueTextElement);
+                statValueTexts[stat] = valueTextElement;
+                groupFlow.Add(rowContainer);
             }
 
-            string newText = $"{stat.Name}: {stat.DisplayValue}";
-            if (textElement.Text != newText)
+            string newDisplayValue = stat.DisplayValue;
+            if (valueTextElement.Text != newDisplayValue)
             {
-                textElement.Text = newText;
+                valueTextElement.Text = newDisplayValue;
             }
         }
 
