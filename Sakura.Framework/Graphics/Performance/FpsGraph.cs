@@ -3,11 +3,13 @@
 
 using System;
 using Sakura.Framework.Allocation;
+using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
+using Sakura.Framework.Graphics.Rendering.Vertex;
 using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
@@ -27,7 +29,7 @@ public class FpsGraph : Container, IRemoveFromDrawVisualiser
     private int currentIndex;
     private int currentCount;
 
-    private readonly Drawable[] graphBars = new Drawable[max_history];
+    private FpsBarGraph barGraph;
     private readonly IClock clock;
     private SpriteText fpsText;
     private SpriteText limiterText;
@@ -66,21 +68,12 @@ public class FpsGraph : Container, IRemoveFromDrawVisualiser
     {
         base.Load();
 
-        for (int i = 0; i < max_history; i++)
+        barGraph = new FpsBarGraph(this)
         {
-            var bar = new Box
-            {
-                RelativeSizeAxes = Axes.Y,
-                Size = new Vector2(bar_width, 1),
-                Anchor = Anchor.BottomLeft,
-                Origin = Anchor.BottomLeft,
-                Position = new Vector2(i * bar_width, 0), // Position each bar next to the previous one
-                Color = Color.Green,
-                Blending = BlendingMode.Additive
-            };
-            graphBars[i] = bar;
-            Add(bar);
-        }
+            RelativeSizeAxes = Axes.Both,
+            Size = new Vector2(1)
+        };
+        Add(barGraph);
 
         Add(new Container()
         {
@@ -236,45 +229,11 @@ public class FpsGraph : Container, IRemoveFromDrawVisualiser
 
             if (currentCount < max_history)
                 currentCount++;
-        }
 
-        if (DrawAlpha <= 0)
-            return;
-
-        updateGraph();
-        updateFpsText();
-    }
-
-    private void updateGraph()
-    {
-        int startIndex = currentCount == max_history ? currentIndex : 0;
-
-        for (int i = 0; i < max_history; i++)
-        {
-            var bar = graphBars[i];
-
-            if (i < currentCount)
+            if (DrawAlpha > 0)
             {
-                int bufferIndex = (startIndex + i) % max_history;
-                double frameTime = frameHistory[bufferIndex];
-
-                double fps = frameTime > 0 ? 1000.0 / frameTime : 0;
-
-                bar.Alpha = 1;
-                float barHeight = (float)(fps / 120.0);
-                barHeight = Math.Clamp(barHeight, 0, 1);
-                bar.Size = new Vector2(bar_width, barHeight);
-
-                if (fps < 30)
-                    bar.Color = Color.Red;
-                else if (fps < 58)
-                    bar.Color = Color.Yellow;
-                else
-                    bar.Color = Color.Green;
-            }
-            else
-            {
-                bar.Alpha = 0;
+                barGraph.Invalidate(InvalidationFlags.DrawInfo);
+                updateFpsText();
             }
         }
     }
@@ -300,5 +259,112 @@ public class FpsGraph : Container, IRemoveFromDrawVisualiser
         else
             fpsText.Color = Color.LightGreen;
     }
-}
 
+    private class FpsBarGraph : Drawable
+    {
+        private readonly FpsGraph graph;
+
+        public FpsBarGraph(FpsGraph graph)
+        {
+            this.graph = graph;
+            Blending = BlendingMode.Additive;
+            Vertices = new Vertex[max_history * 6];
+        }
+
+        protected override void GenerateVertices()
+        {
+            var finalMatrix = ModelMatrix;
+            float w = DrawSize.X > 0 ? DrawSize.X : 1;
+            float h = DrawSize.Y > 0 ? DrawSize.Y : 1;
+
+            int startIndex = graph.currentCount == max_history ? graph.currentIndex : 0;
+
+            float minX = float.MaxValue, minY = float.MaxValue;
+            float maxX = float.MinValue, maxY = float.MinValue;
+
+            for (int i = 0; i < max_history; i++)
+            {
+                int offset = i * 6;
+
+                if (i >= graph.currentCount)
+                {
+                    for (int v = 0; v < 6; v++)
+                        Vertices[offset + v] = default;
+                    continue;
+                }
+
+                int bufferIndex = (startIndex + i) % max_history;
+                double frameTime = graph.frameHistory[bufferIndex];
+                double fps = frameTime > 0 ? 1000.0 / frameTime : 0;
+
+                float barHeightRatio = (float)(fps / 120.0);
+                barHeightRatio = Math.Clamp(barHeightRatio, 0f, 1f);
+                float barHeight = barHeightRatio * h;
+
+                Color color = fps < 30 ? Color.Red : fps < 58 ? Color.Yellow : Color.Green;
+
+                float rLinear = ColorExtensions.SrgbToLinear(color.R);
+                float gLinear = ColorExtensions.SrgbToLinear(color.G);
+                float bLinear = ColorExtensions.SrgbToLinear(color.B);
+                var calculatedColor = new Vector4(rLinear, gLinear, bLinear, DrawAlpha * (color.A / 255f));
+
+                float left = i * bar_width;
+                float right = left + bar_width;
+                float top = h - barHeight;
+
+                var pTopLeft = Vector2.Transform(new Vector2(left / w, top / h), finalMatrix);
+                var pTopRight = Vector2.Transform(new Vector2(right / w, top / h), finalMatrix);
+                var pBottomLeft = Vector2.Transform(new Vector2(left / w, h / h), finalMatrix);
+                var pBottomRight = Vector2.Transform(new Vector2(right / w, h / h), finalMatrix);
+
+                minX = Math.Min(minX, Math.Min(pTopLeft.X, pBottomRight.X));
+                minY = Math.Min(minY, Math.Min(pTopLeft.Y, pBottomRight.Y));
+                maxX = Math.Max(maxX, Math.Max(pTopLeft.X, pBottomRight.X));
+                maxY = Math.Max(maxY, Math.Max(pTopLeft.Y, pBottomRight.Y));
+
+                Vertices[offset + 0] = new Vertex
+                {
+                    Position = pTopLeft,
+                    TexCoords = new Vector2(0, 0),
+                    Color = calculatedColor
+                };
+                Vertices[offset + 1] = new Vertex
+                {
+                    Position = pTopRight,
+                    TexCoords = new Vector2(1, 0),
+                    Color = calculatedColor
+                };
+                Vertices[offset + 2] = new Vertex
+                {
+                    Position = pBottomRight,
+                    TexCoords = new Vector2(1, 1),
+                    Color = calculatedColor
+                };
+
+                Vertices[offset + 3] = new Vertex
+                {
+                    Position = pBottomRight,
+                    TexCoords = new Vector2(1, 1),
+                    Color = calculatedColor
+                };
+                Vertices[offset + 4] = new Vertex
+                {
+                    Position = pBottomLeft,
+                    TexCoords = new Vector2(0, 1),
+                    Color = calculatedColor
+                };
+                Vertices[offset + 5] = new Vertex
+                {
+                    Position = pTopLeft,
+                    TexCoords = new Vector2(0, 0),
+                    Color = calculatedColor
+                };
+            }
+
+            if (minX <= maxX && minY <= maxY)
+                DrawRectangle = new RectangleF(minX, minY, maxX - minX, maxY - minY);
+            else
+                DrawRectangle = new RectangleF();
+        }
+    }
+}
