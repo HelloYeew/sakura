@@ -2,10 +2,10 @@
 // See the LICENSE file for full license text.
 
 using System;
-using System.Numerics;
 using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
+using Sakura.Framework.Maths;
 using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Graphics.Transforms;
