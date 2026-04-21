@@ -264,7 +264,7 @@ public abstract class AppHost : IDisposable
                 {
                     // Force an update and draw when requested
                     // during the resize operation since the loop is blocked.
-                    app.Update();
+                    app.UpdateSubTree();
                     int updateIndex = frameBufferManager.GetUpdateIndex();
                     rootDrawNodes[updateIndex] = app.GenerateDrawNodeSubtree(updateIndex);
                     frameBufferManager.FinishUpdate();
@@ -455,7 +455,7 @@ public abstract class AppHost : IDisposable
         if (targetUpdateHz == 0) // Unlimited mode
         {
             // In unlimited mode, we just update once per loop iteration.
-            app?.Update();
+            app?.UpdateSubTree();
             lastUpdateTime = AppClock.CurrentTime;
             int updateIndex = frameBufferManager.GetUpdateIndex();
             rootDrawNodes[updateIndex] = app?.GenerateDrawNodeSubtree(updateIndex);
@@ -469,7 +469,7 @@ public abstract class AppHost : IDisposable
         while (AppClock.CurrentTime - lastUpdateTime >= timeStep)
         {
             // The update that happened in the drawable need to be aware of the timeStep.
-            app?.Update();
+            app?.UpdateSubTree();
             lastUpdateTime += timeStep;
             int updateIndex = frameBufferManager.GetUpdateIndex();
             rootDrawNodes[updateIndex] = app?.GenerateDrawNodeSubtree(updateIndex);

@@ -186,10 +186,55 @@ public class Container : Drawable
                 child.Invalidate(InvalidationFlags.Colour, false);
             }
         }
+    }
+
+    public override void UpdateSubTree()
+    {
+        if (IsMaskedAway && !AlwaysPresent)
+            return;
+
+        // Resolve our own Update() first so our ModelMatrix and DrawRectangle are accurate
+        base.UpdateSubTree();
+
+        // Compute which children are off-screen
+        UpdateSubTreeMasking();
 
         foreach (var child in children)
         {
-            child.Update();
+            child.UpdateSubTree();
+        }
+    }
+
+    protected virtual void UpdateSubTreeMasking()
+    {
+        RectangleF? maskToApply = Masking ? DrawRectangle : CurrentMaskingBounds;
+
+        foreach (var child in children)
+        {
+            child.CurrentMaskingBounds = maskToApply;
+
+            if (maskToApply.HasValue)
+            {
+                if ((child.Invalidation & InvalidationFlags.DrawInfo) != 0)
+                {
+                    child.UpdateTransforms();
+                }
+
+                RectangleF childRect = child.DrawRectangle;
+
+                float leniency = 1.0f;
+
+                bool intersects = childRect.X <= maskToApply.Value.X + maskToApply.Value.Width + leniency &&
+                                  childRect.X + childRect.Width >= maskToApply.Value.X - leniency &&
+                                  childRect.Y <= maskToApply.Value.Y + maskToApply.Value.Height + leniency &&
+                                  childRect.Y + childRect.Height >= maskToApply.Value.Y - leniency;
+
+                child.IsMaskedAway = !intersects;
+            }
+            else
+            {
+                child.IsMaskedAway = false;
+            }
         }
     }
 
@@ -267,21 +312,12 @@ public class Container : Drawable
     public override DrawNode GenerateDrawNodeSubtree(int frameIndex)
     {
         var node = (ContainerDrawNode)base.GenerateDrawNodeSubtree(frameIndex);
-
-        if (node.TopologyInvalidationID != TopologyVersion)
+        node.Children.Clear();
+        foreach (var child in Children.OrderBy(c => c.Depth))
         {
-            node.Children.Clear();
-            foreach (var child in Children.OrderBy(c => c.Depth))
+            if (!child.IsMaskedAway || child.AlwaysPresent)
             {
                 node.Children.Add(child.GenerateDrawNodeSubtree(frameIndex));
-            }
-            node.TopologyInvalidationID = TopologyVersion;
-        }
-        else
-        {
-            foreach (var child in Children)
-            {
-                child.GenerateDrawNodeSubtree(frameIndex);
             }
         }
 
