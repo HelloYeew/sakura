@@ -2,34 +2,33 @@
 // See the LICENSE file for full license text.
 
 using NUnit.Framework;
+using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Graphics.Primitives;
+using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests.Visuals.FrameworkOverlay;
 
-public class TestGlobalStatisticsDisplay : TestScene
+public class TestFpsGraph : TestScene
 {
-    private GlobalStatisticsDisplay overlay;
+    private FpsGraph fpsGraph;
 
     [SetUp]
     public void SetUp()
     {
-        overlay = new GlobalStatisticsDisplay()
+        fpsGraph = new FpsGraph(Clock)
         {
             Anchor = Anchor.Centre,
             Origin = Anchor.Centre,
-            RelativeSizeAxes = Axes.Both,
-            Depth = float.MaxValue - 20
         };
-        AddStep("Add overlay", () => Add(overlay));
-        AddStep("Pop in overlay", () => overlay.ToggleVisibility());
+        AddStep("Add graph", () => Add(fpsGraph));
+        AddStep("Pop in overlay", () => fpsGraph.FadeIn(100, Easing.OutQuint));
     }
 
     [Test]
-    public void TestDisplay()
+    public void TestOverlay()
     {
-        AddWaitStep("Wait for overlay to be visible", 100);
-        AddAssert("Overlay is visible", () => overlay.Alpha > 0);
+        AddAssert("Graph is visible", () => fpsGraph.IsAlive);
     }
 }
