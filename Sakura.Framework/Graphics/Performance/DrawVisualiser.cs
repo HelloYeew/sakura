@@ -168,6 +168,7 @@ public class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisualiser
         headerButtonsFlow.Add(new BasicButton
         {
             Text = "Up (Parent)",
+            TextSize = 12,
             Action = () =>
             {
                 if (targetRoot.Parent != null)
@@ -181,6 +182,8 @@ public class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisualiser
         headerButtonsFlow.Add(new BasicButton
         {
             Text = "Down (First Child)",
+            TextSize = 12,
+            Size = new Vector2(120, 30),
             Action = () =>
             {
                 if (targetRoot is Container c && c.Children.Count > 0)

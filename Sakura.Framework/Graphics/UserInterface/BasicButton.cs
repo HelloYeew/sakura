@@ -7,6 +7,7 @@ using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
+using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
@@ -17,14 +18,31 @@ public class BasicButton : ClickableContainer
 {
     private readonly Box background;
     private readonly SpriteText spriteText;
+    private readonly float textSize = 16;
+    private Color defaultColor = Color.DarkGreen;
 
-    public Color DefaultColor { get; set; } = Color.DarkGreen;
+    public Color DefaultColor
+    {
+        get => defaultColor;
+        set
+        {
+            background.Color = value;
+            defaultColor = value;
+        }
+    }
+
     public Color HoverColor { get; set; } = Color.Green;
 
     public string Text
     {
         get => spriteText.Text;
         set => spriteText.Text = value;
+    }
+
+    public float TextSize
+    {
+        get => textSize;
+        set => spriteText.Font = spriteText.Font.With(size: value);
     }
 
     public BasicButton()
@@ -43,7 +61,8 @@ public class BasicButton : ClickableContainer
             {
                 Anchor = Anchor.Centre,
                 Origin = Anchor.Centre,
-                Text = "Button"
+                Text = "",
+                Font = FontUsage.Default.With(size: TextSize)
             }
         };
 
