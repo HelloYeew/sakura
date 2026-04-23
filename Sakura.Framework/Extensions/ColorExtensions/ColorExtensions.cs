@@ -380,4 +380,19 @@ public static class ColorExtensions
         else
             return MathF.Pow((srgb + 0.055f) / 1.055f, 2.4f);
     }
+
+    /// <summary>
+    /// Return a random color, optionally randomize the alpha channel as well.
+    /// </summary>
+    /// <param name="randomAlpha">Whether to randomize the alpha channel.</param>
+    /// <returns>A random <see cref="Color"/>.</returns>
+    public static Color GetRandomColor(bool randomAlpha = false)
+    {
+        return Color.FromArgb(
+            randomAlpha ? (byte)Random.Shared.Next(256) : 255,
+            (byte)Random.Shared.Next(256),
+            (byte)Random.Shared.Next(256),
+            (byte)Random.Shared.Next(256)
+        );
+    }
 }
