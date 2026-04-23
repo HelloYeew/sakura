@@ -16,6 +16,7 @@ public class TestAudioMixerVisualiser : TestScene
 
     private ITrack testTrack;
     private ISample testSample;
+    private ISample testLongSample;
 
     [Resolved]
     private IAudioManager audioManager { get; set; }
@@ -46,6 +47,11 @@ public class TestAudioMixerVisualiser : TestScene
             var sampleChannel = testSample.GetChannel();
             sampleChannel.Play();
         });
+        AddStep("Play long sample", () =>
+        {
+            var longSampleChannel = testLongSample.GetChannel();
+            longSampleChannel.Play();
+        });
     }
 
     public override void Load()
@@ -60,5 +66,6 @@ public class TestAudioMixerVisualiser : TestScene
         };
         testTrack = trackStore.Get("test.mp3");
         testSample = sampleStore.Get("test.wav");
+        testLongSample = sampleStore.Get("long.mp3");
     }
 }
