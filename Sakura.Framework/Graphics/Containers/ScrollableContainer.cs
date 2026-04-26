@@ -527,6 +527,8 @@ public class ScrollableContainer : Container
     {
         public Action<Vector2>? OnDragged;
 
+        public override bool OnClick(MouseButtonEvent e) => true;
+
         public override bool OnDragStart(MouseButtonEvent e) => true;
 
         public override bool OnDrag(MouseEvent e)

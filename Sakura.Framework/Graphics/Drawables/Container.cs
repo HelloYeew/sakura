@@ -398,7 +398,7 @@ public class Container : Drawable
 
     public override bool OnMouseDown(MouseButtonEvent e)
     {
-        foreach (var c in children.OrderByDescending(d => d.Depth))
+        foreach (var c in children.OrderBy(d => d.Depth).Reverse())
         {
             if (c.IsLoaded && c.IsAlive && !c.IsHidden && c.Contains(e.ScreenSpaceMousePosition) && c.OnMouseDown(e))
             {
@@ -487,7 +487,7 @@ public class Container : Drawable
 
     public override bool OnDragDropFile(DragDropFileEvent e)
     {
-        foreach (var c in children.OrderByDescending(d => d.Depth).Reverse())
+        foreach (var c in children.OrderBy(d => d.Depth).Reverse())
         {
             if (c.IsLoaded && !c.IsHidden && c.Contains(e.Position))
             {
@@ -501,7 +501,7 @@ public class Container : Drawable
 
     public override bool OnDragDropText(DragDropTextEvent e)
     {
-        foreach (var c in children.OrderByDescending(d => d.Depth).Reverse())
+        foreach (var c in children.OrderBy(d => d.Depth).Reverse())
         {
             if (c.IsLoaded && !c.IsHidden && c.Contains(e.Position))
             {
