@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Sakura.Framework.Graphics.Colors;
+using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Input;
@@ -23,6 +24,13 @@ public class Container : Drawable
     internal long TopologyVersion { get; private set; } = 1;
 
     private readonly List<Drawable> children = new();
+
+    /// <summary>
+    /// The container that actually holds the children. By default, it is this container.
+    /// Derived classes (like <see cref="ScrollableContainer"/>) can override this to route children to an internal container.
+    /// </summary>
+    protected virtual Container Content => this;
+
     private Drawable? draggedChild;
 
     /// <summary>
@@ -52,10 +60,10 @@ public class Container : Drawable
 
     public IReadOnlyList<Drawable> Children
     {
-        get => children;
+        get => Content == this ? children : Content.Children;
         set
         {
-            children.Clear();
+            Clear();
             foreach (var child in value)
             {
                 Add(child);
@@ -84,17 +92,46 @@ public class Container : Drawable
 
     public virtual void Add(Drawable drawable)
     {
-        // A drawable cannot be its own parent.
+        if (Content != this)
+        {
+            Content.Add(drawable);
+            return;
+        }
+
+        AddInternal(drawable);
+    }
+
+    public virtual void Remove(Drawable drawable)
+    {
+        if (Content != this)
+        {
+            Content.Remove(drawable);
+            return;
+        }
+
+        RemoveInternal(drawable);
+    }
+
+    public virtual void Clear()
+    {
+        if (Content != this)
+        {
+            Content.Clear();
+            return;
+        }
+
+        ClearInternal();
+    }
+
+    protected void AddInternal(Drawable drawable)
+    {
         if (drawable == this)
             throw new InvalidOperationException("A container cannot be added to itself.");
 
-        // A drawable cannot be added to one of its own children, as this would create a circular dependency.
-        // To check, we walk up the hierarchy from the potential parent ('this'). If we find the `drawable`
-        // we're trying to add, it means 'this' is a descendant of `drawable`.
         for (var p = Parent; p != null; p = p.Parent)
         {
             if (p == drawable)
-                throw new InvalidOperationException("Cannot add an ancestor drawable as a child. This would create a circular dependency.");
+                throw new InvalidOperationException("Cannot add an ancestor drawable as a child.");
         }
 
         if (drawable.Parent != null)
@@ -103,14 +140,11 @@ public class Container : Drawable
         drawable.Parent = this;
         children.Add(drawable);
         InvalidateTopology();
+
         if (drawable.Clock is FramedClock framedClock)
-        {
             framedClock.Source = Clock;
-        }
         else
-        {
             drawable.Clock = new FramedClock(Clock, true);
-        }
 
         Invalidate(InvalidationFlags.DrawInfo);
 
@@ -122,7 +156,7 @@ public class Container : Drawable
         }
     }
 
-    public virtual void Remove(Drawable drawable)
+    protected void RemoveInternal(Drawable drawable)
     {
         if (children.Remove(drawable))
         {
@@ -132,7 +166,7 @@ public class Container : Drawable
         }
     }
 
-    public virtual void Clear()
+    protected void ClearInternal()
     {
         foreach (var child in children)
         {
@@ -318,7 +352,7 @@ public class Container : Drawable
     {
         var node = (ContainerDrawNode)base.GenerateDrawNodeSubtree(frameIndex);
         node.Children.Clear();
-        foreach (var child in Children.OrderBy(c => c.Depth))
+        foreach (var child in children.OrderBy(c => c.Depth))
         {
             if (!child.IsMaskedAway || child.AlwaysPresent)
             {

@@ -15,6 +15,8 @@ namespace Sakura.Framework.Graphics.Containers;
 
 public class ScrollableContainer : Container
 {
+    protected override Container Content => ScrollContent;
+
     /// <summary>
     /// The container that holds the scrolling content.
     /// Children added to the ScrollableContainer are actually added here.
@@ -127,9 +129,9 @@ public class ScrollableContainer : Container
         };
         horizontalScrollbar.OnDragged = delta => handleScrollbarDrag(delta.X, false);
 
-        base.Add(ScrollContent);
-        base.Add(verticalScrollbar);
-        base.Add(horizontalScrollbar);
+        AddInternal(ScrollContent);
+        AddInternal(verticalScrollbar);
+        AddInternal(horizontalScrollbar);
     }
 
     private void updateContentAxes()
