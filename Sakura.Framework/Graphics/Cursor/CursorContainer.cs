@@ -5,6 +5,7 @@ using Sakura.Framework.Allocation;
 using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
+using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Input;
@@ -13,7 +14,9 @@ using Sakura.Framework.Platform;
 
 namespace Sakura.Framework.Graphics.Cursor;
 
-public class CursorContainer : Container
+// TODO: Add IRemoveFromDrawVisualiser to make inspect mode not catch the cursor drawable.
+// The cursor container should also show in the draw visualiser too.
+public class CursorContainer : Container, IRemoveFromDrawVisualiser
 {
     public Drawable ActiveCursor { get; protected set; }
 

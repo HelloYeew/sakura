@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using Sakura.Framework.Development;
 using Sakura.Framework.Extensions.DrawableExtensions;
@@ -13,6 +14,7 @@ using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Graphics.Transforms;
+using Sakura.Framework.Graphics.UserInterface;
 using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
@@ -21,7 +23,8 @@ namespace Sakura.Framework.Graphics.Performance;
 
 public class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisualiser
 {
-    private readonly Drawable targetRoot;
+    private Drawable targetRoot;
+    private readonly Drawable absoluteRoot;
     private readonly Box backgroundBox;
     private readonly FlowContainer treeFlow;
     private readonly ScrollableContainer parentTreeFlow;
@@ -33,6 +36,12 @@ public class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisualiser
     private Drawable? selectedDrawable;
     private readonly SpriteText currentTimeText;
     private readonly SpriteText runningTimeText;
+
+    private bool isInspecting;
+    private Drawable? hoveredDrawable;
+    private readonly Box inspectHighlightBox;
+    private readonly FlowContainer headerButtonsFlow;
+    private Drawable lastHoveredDrawable;
 
     private Drawable lastSelectedDrawable;
     private PropertyInfo[] cachedProperties;
@@ -47,6 +56,7 @@ public class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisualiser
 
     public DrawVisualiser(Drawable root)
     {
+        absoluteRoot = root;
         targetRoot = root;
         RelativeSizeAxes = Axes.Both;
         Size = new Vector2(1);
@@ -71,6 +81,16 @@ public class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisualiser
             Origin = Anchor.TopLeft,
             Size = new Vector2(1),
             Alpha = 0.75f
+        });
+
+        Add(inspectHighlightBox = new Box
+        {
+            Anchor = Anchor.TopLeft,
+            Origin = Anchor.TopLeft,
+            Color = Color.LimeGreen,
+            Alpha = 0,
+            Blending = BlendingMode.Additive,
+            Depth = float.MinValue
         });
 
         // Header
@@ -133,6 +153,53 @@ public class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisualiser
             Color = Color.LightPink,
             RelativeSizeAxes = Axes.X,
             Height = 30
+        });
+
+        Add(headerButtonsFlow = new FlowContainer
+        {
+            Anchor = Anchor.TopRight,
+            Origin = Anchor.TopRight,
+            Position = new Vector2(-10, 10),
+            AutoSizeAxes = Axes.Both,
+            Direction = FlowDirection.Horizontal,
+            Spacing = new Vector2(10, 0)
+        });
+
+        headerButtonsFlow.Add(new BasicButton
+        {
+            Text = "Up (Parent)",
+            TextSize = 12,
+            Action = () =>
+            {
+                if (targetRoot.Parent != null)
+                {
+                    targetRoot = targetRoot.Parent;
+                    timeUntilNextTreeRefresh = 0; // Force immediate refresh
+                }
+            }
+        });
+
+        headerButtonsFlow.Add(new BasicButton
+        {
+            Text = "Down (First Child)",
+            TextSize = 12,
+            Size = new Vector2(120, 30),
+            Action = () =>
+            {
+                if (targetRoot is Container c && c.Children.Count > 0)
+                {
+                    targetRoot = c.Children[0];
+                    timeUntilNextTreeRefresh = 0; // Force immediate refresh
+                }
+            }
+        });
+
+        headerButtonsFlow.Add(new BasicButton
+        {
+            Text = "Inspect",
+            DefaultColor = Color.DarkMagenta,
+            HoverColor = Color.Magenta,
+            Action = toggleInspectMode
         });
 
         // Tree view (left)
@@ -269,6 +336,109 @@ public class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisualiser
 
         currentTimeText.Text = $"{DateTime.Now:dd MMMM yyyy HH:mm:ss tt}";
         runningTimeText.Text = $"Has been running for {TimeSpan.FromSeconds(targetRoot.Clock.CurrentTime / 1000):hh\\:mm\\:ss}";
+    }
+
+    private void toggleInspectMode()
+    {
+        isInspecting = !isInspecting;
+
+        if (isInspecting)
+        {
+            highlightBox.Alpha = 0;
+            leftContainer.FadeOut(200, Easing.OutQuint);
+            rightContainer.FadeOut(200, Easing.OutQuint);
+            backgroundBox.FadeTo(0.1f, 200, Easing.OutQuint);
+            headerButtonsFlow.FadeOut(200, Easing.OutQuint);
+            inspectHighlightBox.Alpha = 0.5f;
+            hoveredDrawable = null;
+        }
+        else
+        {
+            leftContainer.FadeIn(200, Easing.OutQuint);
+            rightContainer.FadeIn(200, Easing.OutQuint);
+            backgroundBox.FadeTo(0.75f, 200, Easing.OutQuint);
+            headerButtonsFlow.FadeIn(200, Easing.OutQuint);
+            inspectHighlightBox.Alpha = 0;
+        }
+    }
+
+    public override bool OnMouseMove(MouseEvent e)
+    {
+        if (isInspecting)
+        {
+            hoveredDrawable = findDrawableUnderMouse(absoluteRoot, e.ScreenSpaceMousePosition);
+
+            if (hoveredDrawable != null)
+            {
+                var rect = hoveredDrawable.DrawRectangle;
+                inspectHighlightBox.Position = new Vector2(rect.X, rect.Y);
+                inspectHighlightBox.Size = new Vector2(rect.Width, rect.Height);
+                if (hoveredDrawable != lastHoveredDrawable)
+                {
+                    inspectHighlightBox.Color = Color.LimeGreen;
+                    inspectHighlightBox.FlashColour(Color.White, 300, Easing.OutQuint);
+                }
+                lastHoveredDrawable = hoveredDrawable;
+            }
+            return true;
+        }
+
+        return base.OnMouseMove(e);
+    }
+
+    public override bool OnMouseDown(MouseButtonEvent e)
+    {
+        if (isInspecting)
+        {
+            if (hoveredDrawable != null)
+            {
+                targetRoot = hoveredDrawable;
+                timeUntilNextTreeRefresh = 0;
+            }
+
+            toggleInspectMode();
+            return true;
+        }
+
+        return base.OnMouseDown(e);
+    }
+
+    public override bool OnKeyDown(KeyEvent e)
+    {
+        if (isInspecting && e.Key == Key.Escape)
+        {
+            toggleInspectMode();
+            return true;
+        }
+
+        return base.OnKeyDown(e);
+    }
+
+    private Drawable? findDrawableUnderMouse(Drawable root, Vector2 mousePos)
+    {
+        // skip the visualiser itself to prevent infinite loops / selecting the debugger
+        if (root == this || root is IRemoveFromDrawVisualiser)
+            return null;
+
+        // skip dead, hidden, or culled items
+        if (!root.IsAlive || !root.IsLoaded || root.IsHidden || root.IsMaskedAway && !root.AlwaysPresent || root.Alpha <= 0)
+            return null;
+
+        if (!root.Contains(mousePos))
+            return null;
+
+        if (root is Container c)
+        {
+            // Search children from front to back (reverse depth order) to catch the topmost UI element first
+            foreach (var child in c.Children.OrderBy(d => d.Depth).Reverse())
+            {
+                var found = findDrawableUnderMouse(child, mousePos);
+                if (found != null)
+                    return found;
+            }
+        }
+
+        return root;
     }
 
     private void refreshTree()
@@ -566,7 +736,29 @@ public class VisualiserTreeItem : Container
 
         background.Color = bgColor;
         background.Alpha = isSelected ? 0.5f : 0.2f;
-        label.Color = isSelected ? Color.Yellow : Color.White;
+
+        bool isUpdating = trackedDrawable.IsLoaded &&
+                          trackedDrawable.IsAlive &&
+                          trackedDrawable.Size != Vector2.Zero &&
+                          (!trackedDrawable.IsMaskedAway || trackedDrawable.AlwaysPresent);
+
+        bool isDrawing = isUpdating && trackedDrawable.DrawAlpha > 0;
+
+        if (isSelected)
+        {
+            label.Color = Color.Yellow;
+            label.Alpha = 1.0f;
+        }
+        else
+        {
+            label.Color = Color.White;
+            label.Alpha = isUpdating && isDrawing ? 1.0f : 0.4f;
+        }
+    }
+
+    public override bool OnDrag(MouseEvent e)
+    {
+        return false;
     }
 
     public override bool OnClick(MouseButtonEvent e)

@@ -89,7 +89,7 @@ public abstract class Drawable
     /// <summary>
     /// An invalidation flag representing which aspects of the drawable need to be recomputed.
     /// </summary>
-    protected InvalidationFlags Invalidation = InvalidationFlags.All;
+    protected internal InvalidationFlags Invalidation = InvalidationFlags.All;
 
     protected internal Vertex[] Vertices = new Vertex[6];
 
@@ -351,7 +351,7 @@ public abstract class Drawable
 
     #region Calculation of Draw Info
 
-    protected virtual void UpdateTransforms()
+    protected internal virtual void UpdateTransforms()
     {
         DrawAlpha = (Parent?.DrawAlpha ?? 1f) * Alpha;
 
@@ -767,6 +767,27 @@ public abstract class Drawable
     {
         Clock = new Clock(true);
         Scheduler = new Scheduler(Clock);
+    }
+
+    /// <summary>
+    /// Whether this drawable is currently fully outside the masking bounds of its parents.
+    /// </summary>
+    public bool IsMaskedAway { get; internal set; }
+
+    /// <summary>
+    /// The inherited masking bounds from parent containers.
+    /// </summary>
+    protected internal RectangleF? CurrentMaskingBounds { get; set; }
+
+    /// <summary>
+    /// The entry point for the update recursion.
+    /// </summary>
+    public virtual void UpdateSubTree()
+    {
+        if (IsMaskedAway && !AlwaysPresent)
+            return;
+
+        Update();
     }
 
     public virtual void Update()

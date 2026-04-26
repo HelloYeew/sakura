@@ -85,7 +85,7 @@ public class SpriteText : Drawable
         base.Update();
     }
 
-    protected override void UpdateTransforms()
+    protected internal override void UpdateTransforms()
     {
         if (layoutInvalidated)
         {
