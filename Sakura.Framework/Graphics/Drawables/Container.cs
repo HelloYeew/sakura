@@ -199,9 +199,14 @@ public class Container : Drawable
         // Compute which children are off-screen
         UpdateSubTreeMasking();
 
-        foreach (var child in children)
+        // Iterate backwards to safely allow children to remove themselves during their update cycles
+        for (int i = children.Count - 1; i >= 0; i--)
         {
-            child.UpdateSubTree();
+            // Optional sanity check if multiple children got removed during updates
+            if (i < children.Count)
+            {
+                children[i].UpdateSubTree();
+            }
         }
     }
 
