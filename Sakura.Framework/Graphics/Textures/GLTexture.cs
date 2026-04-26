@@ -48,6 +48,8 @@ public class GLTexture : IDisposable
     /// <param name="mode">The wrap mode to set.</param>
     public void SetWrapMode(TextureWrapMode mode)
     {
+        if (gl == null || disposed) return;
+
         Bind();
         gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)mode);
         gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)mode);
@@ -64,6 +66,8 @@ public class GLTexture : IDisposable
 
     public void Bind(TextureUnit unit = TextureUnit.Texture0)
     {
+        if (gl == null || disposed) return;
+
         gl.ActiveTexture(unit);
         gl.BindTexture(TextureTarget.Texture2D, Handle);
     }
