@@ -293,17 +293,32 @@ public class ScrollableContainer : Container
     {
         Vector2 clampedTarget = getClampedScroll(targetScroll);
 
+        float elapsedSeconds = (float)Clock.ElapsedFrameTime / 1000f;
+
+        // Kinetic momentum scrolling
+        float scrollBlend = 1f - MathF.Exp(-(1f / ScrollDrags) * elapsedSeconds);
+
+        // Bounce factor for over-scrolling
+        float bounceBlend = 1f - MathF.Exp(-10f * elapsedSeconds);
+
+        // Rubber-band bounce back when scrolled past the absolute edge
         if (!isDraggingContent && targetScroll != clampedTarget)
         {
-            targetScroll += (clampedTarget - targetScroll) * 0.15f;
+            targetScroll += (clampedTarget - targetScroll) * bounceBlend;
         }
 
         Vector2 dist = targetScroll - currentScroll;
 
+        // Snap to target if very close to prevent infinite micro-stutters
         if (dist.LengthSquared() < 0.1f && targetScroll == clampedTarget)
+        {
             currentScroll = targetScroll;
+        }
         else
-            currentScroll += dist * (1f - MathF.Pow(ScrollDrags, 0.5f));
+        {
+            // smooth momentum glide
+            currentScroll += dist * scrollBlend;
+        }
 
         ScrollContent.Position = -currentScroll;
     }
@@ -444,20 +459,31 @@ public class ScrollableContainer : Container
         Vector2 delta = Vector2.Zero;
 
         if (Direction == ScrollDirection.Vertical)
-        {
             delta.Y -= e.ScrollDelta.Y * ScrollDistance;
-        }
         else if (Direction == ScrollDirection.Horizontal)
-        {
-            delta.X -= e.ScrollDelta.Y * ScrollDistance;
-        }
+            delta.X -= e.ScrollDelta.X * ScrollDistance;
         else
         {
             delta.Y -= e.ScrollDelta.Y * ScrollDistance;
             delta.X -= e.ScrollDelta.X * ScrollDistance;
         }
 
+        // If the user scrolls in the opposite direction of the momentum, brake immediately
+        if (Direction == ScrollDirection.Vertical && Math.Sign(delta.Y) != Math.Sign(targetScroll.Y - currentScroll.Y))
+            targetScroll.Y = currentScroll.Y;
+
+        if (Direction == ScrollDirection.Horizontal && Math.Sign(delta.X) != Math.Sign(targetScroll.X - currentScroll.X))
+            targetScroll.X = currentScroll.X;
+
         targetScroll += delta;
+
+        // Prevent infinite tension when aggressively scrolling against a wall
+        Vector2 maxScroll = getMaxScroll();
+        float tensionLimit = 100f; // The maximum pixels the wheel can stretch past the edge
+
+        targetScroll.X = Math.Clamp(targetScroll.X, -tensionLimit, maxScroll.X + tensionLimit);
+        targetScroll.Y = Math.Clamp(targetScroll.Y, -tensionLimit, maxScroll.Y + tensionLimit);
+
         return true;
     }
 
