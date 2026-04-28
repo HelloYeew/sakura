@@ -1,7 +1,6 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
-using Sakura.Framework.Graphics.Cursor;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Input;
@@ -18,18 +17,15 @@ public class ManualInputManager : Container
     public bool UseParentInput { get; set; } = true;
 
     private readonly MouseState currentMouseState = new MouseState();
-    private CursorContainer cursorContainer;
 
     public ManualInputManager()
     {
         RelativeSizeAxes = Axes.Both;
         Size = new Vector2(1);
-        Add(cursorContainer = new CursorContainer());
     }
 
     public override bool OnMouseMove(MouseEvent e)
     {
-        cursorContainer.OnMouseMove(e);
         if (!UseParentInput)
             return true;
 
@@ -85,7 +81,6 @@ public class ManualInputManager : Container
         Vector2 delta = position - currentMouseState.Position;
         currentMouseState.Position = position;
         var syntheticEvent = new MouseEvent(currentMouseState, delta);
-        cursorContainer.OnMouseMove(syntheticEvent);
         base.OnMouseMove(syntheticEvent);
     }
 
