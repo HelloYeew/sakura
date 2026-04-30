@@ -230,21 +230,18 @@ public class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisualiser
             Origin = Anchor.TopLeft,
             Size = new Vector2(1),
             RelativePositionAxes = Axes.Both,
-            Name = "Tree View Container"
+            Name = "Tree View Container",
+            Child = treeFlow = new FlowContainer
+            {
+                Anchor = Anchor.TopLeft,
+                Origin = Anchor.TopLeft,
+                RelativeSizeAxes = Axes.X,
+                AutoSizeAxes = Axes.Y,
+                Spacing = new Vector2(0, 2),
+                Width = 1f,
+                Name = "Tree Flow"
+            }
         });
-
-        treeFlow = new FlowContainer
-        {
-            Anchor = Anchor.TopLeft,
-            Origin = Anchor.TopLeft,
-            RelativeSizeAxes = Axes.X,
-            AutoSizeAxes = Axes.Y,
-            Spacing = new Vector2(0, 2),
-            Width = 1f,
-            Name = "Tree Flow"
-        };
-
-        parentTreeFlow.Add(treeFlow);
 
         // Property (right)
         Add(rightContainer = new Container
@@ -275,21 +272,18 @@ public class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisualiser
             Origin = Anchor.TopLeft,
             Size = new Vector2(1),
             RelativePositionAxes = Axes.Both,
-            Name = "Property View Container"
+            Name = "Property View Container",
+            Child = propertyFlow = new FlowContainer()
+            {
+                Anchor = Anchor.TopLeft,
+                Origin = Anchor.TopLeft,
+                RelativeSizeAxes = Axes.X,
+                AutoSizeAxes = Axes.Y,
+                Spacing = new Vector2(0, 5),
+                Width = 1f,
+                Name = "Property Flow"
+            }
         });
-
-        propertyFlow = new FlowContainer()
-        {
-            Anchor = Anchor.TopLeft,
-            Origin = Anchor.TopLeft,
-            RelativeSizeAxes = Axes.X,
-            AutoSizeAxes = Axes.Y,
-            Spacing = new Vector2(0, 5),
-            Width = 1f,
-            Name = "Property Flow"
-        };
-
-        parentPropertyFlow.Add(propertyFlow);
     }
 
     private double timeUntilNextTreeRefresh;

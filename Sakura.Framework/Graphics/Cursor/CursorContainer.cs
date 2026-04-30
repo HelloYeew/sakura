@@ -51,7 +51,7 @@ public class CursorContainer : Container, IRemoveFromDrawVisualiser
         if (Matrix4x4.Invert(ModelMatrix, out var inverse))
         {
             var localNormalized = Vector4.Transform(
-                new Vector4(e.MouseState.Position.X, e.MouseState.Position.Y, 0, 1),
+                new Vector4(e.ScreenSpaceMousePosition.X, e.ScreenSpaceMousePosition.Y, 0, 1),
                 inverse
             );
 
@@ -60,8 +60,7 @@ public class CursorContainer : Container, IRemoveFromDrawVisualiser
         }
         else
         {
-            // Fallback for non-invertible matrices
-            localPosition = e.MouseState.Position - new Vector2(DrawRectangle.X, DrawRectangle.Y);
+            localPosition = e.ScreenSpaceMousePosition - new Vector2(DrawRectangle.X, DrawRectangle.Y);
         }
 
         ActiveCursor.Position = localPosition;

@@ -4,6 +4,7 @@
 using NUnit.Framework;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
+using Sakura.Framework.Graphics.Cursor;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.UserInterface;
@@ -43,6 +44,11 @@ public abstract class ManualInputManagerTestScene : TestScene
         };
 
         InputManager.Add(TestContent);
+
+        InputManager.Add(new CursorContainer
+        {
+            Depth = float.MaxValue
+        });
 
         var inputToggleOverlay = new Container
         {
