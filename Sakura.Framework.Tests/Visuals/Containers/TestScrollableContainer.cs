@@ -3,6 +3,7 @@
 
 using System.Collections.Generic;
 using NUnit.Framework;
+using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
@@ -31,7 +32,6 @@ public class TestScrollableContainer : ManualInputManagerTestScene
         {
             TestContent.Clear();
 
-            // 1. Add the background to the TestContent instead!
             TestContent.Add(new Box
             {
                 Anchor = Anchor.Centre,
@@ -40,7 +40,6 @@ public class TestScrollableContainer : ManualInputManagerTestScene
                 Color = Color.DarkSlateGray,
             });
 
-            // 2. Create the scroll container normally
             scrollContainer = new ScrollableContainer
             {
                 Anchor = Anchor.Centre,
@@ -71,6 +70,19 @@ public class TestScrollableContainer : ManualInputManagerTestScene
             }
 
             TestContent.Add(scrollContainer);
+
+            scrollContainer.Add(new Box()
+            {
+                Anchor = Anchor.BottomCentre,
+                Origin = Anchor.BottomCentre,
+                Size = new Vector2(300, 30),
+                Color = Color.Red
+            }.RotateTo(90, 1000)
+                .Then()
+                .RotateTo(0, 1000)
+                .Then()
+                .RotateTo(-90, 1000)
+                .Loop());
         });
     }
 
