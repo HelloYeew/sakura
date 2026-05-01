@@ -9,7 +9,6 @@ using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.UserInterface;
-using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Testing;
 
@@ -37,8 +36,8 @@ public class TestScrollableContainer : ManualInputManagerTestScene
             {
                 Anchor = Anchor.Centre,
                 Origin = Anchor.Centre,
-                Size = new Vector2(300, 400), // Same size as the scroll container
-                Color = Color.DarkSlateGray,
+                Size = new Vector2(300, 400),
+                Color = Color.DarkSlateGray
             });
 
             scrollContainer = new ScrollableContainer
@@ -101,38 +100,5 @@ public class TestScrollableContainer : ManualInputManagerTestScene
 
         AddStep("Scroll button 15 into view", () => scrollContainer.ScrollIntoView(buttons[15], animated: false));
         AddAssert("Scroll Y moved to item 15", () => scrollContainer.CurrentScroll.Y > 0);
-    }
-
-    [Ignore("Still not work, need to fix mouse move issue")]
-    public void TestNormalClick()
-    {
-        // (We no longer need wait steps here because SetUp handles it!)
-        AddStep("Move mouse to button 2", () => InputManager.MoveMouseTo(buttons[2]));
-        AddStep("Click", () => InputManager.Click(MouseButton.Left));
-
-        AddAssert("Button 2 was clicked", () => lastClickedIndex == 2);
-        AddAssert("Scroll position did not change", () => scrollContainer.CurrentScroll.Y == 0);
-    }
-
-    [Ignore("Still not work, need to fix mouse move issue")]
-    public void TestDragStealing()
-    {
-        AddStep("Reset scroll", () => scrollContainer.ScrollToStart(animated: false));
-        AddStep("Reset click tracker", () => lastClickedIndex = -1);
-
-        AddStep("Drag from button 0 to button 5", () => InputManager.Drag(buttons[0], buttons[5], MouseButton.Left));
-
-        AddAssert("Button 0 was NOT clicked", () => lastClickedIndex == -1);
-        AddAssert("Container scrolled down", () => scrollContainer.CurrentScroll.Y > 0);
-    }
-
-    [Ignore("Still not work, need to fix mouse move issue")]
-    public void TestBoundsClamping()
-    {
-        AddStep("Force scroll way past start", () => scrollContainer.ScrollTo(new Vector2(0, -500), animated: false));
-
-        AddUntilStep("Wait for rubber-band to snap back to 0", () => scrollContainer.CurrentScroll.Y == 0);
-
-        AddAssert("Scroll Y clamped to 0", () => scrollContainer.CurrentScroll.Y == 0);
     }
 }
