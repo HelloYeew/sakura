@@ -9,6 +9,7 @@ using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.UserInterface;
+using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Testing;
 
@@ -84,6 +85,8 @@ public class TestScrollableContainer : ManualInputManagerTestScene
                 .RotateTo(-90, 1000)
                 .Loop());
         });
+
+        AddWaitStep("Wait for UI to fully load and layout", 1000);
     }
 
     [Test]
@@ -100,5 +103,36 @@ public class TestScrollableContainer : ManualInputManagerTestScene
         AddAssert("Scroll Y moved to item 15", () => scrollContainer.CurrentScroll.Y > 0);
     }
 
-    // TODO: Manual input test for user interaction
+    [Ignore("Still not work, need to fix mouse move issue")]
+    public void TestNormalClick()
+    {
+        // (We no longer need wait steps here because SetUp handles it!)
+        AddStep("Move mouse to button 2", () => InputManager.MoveMouseTo(buttons[2]));
+        AddStep("Click", () => InputManager.Click(MouseButton.Left));
+
+        AddAssert("Button 2 was clicked", () => lastClickedIndex == 2);
+        AddAssert("Scroll position did not change", () => scrollContainer.CurrentScroll.Y == 0);
+    }
+
+    [Ignore("Still not work, need to fix mouse move issue")]
+    public void TestDragStealing()
+    {
+        AddStep("Reset scroll", () => scrollContainer.ScrollToStart(animated: false));
+        AddStep("Reset click tracker", () => lastClickedIndex = -1);
+
+        AddStep("Drag from button 0 to button 5", () => InputManager.Drag(buttons[0], buttons[5], MouseButton.Left));
+
+        AddAssert("Button 0 was NOT clicked", () => lastClickedIndex == -1);
+        AddAssert("Container scrolled down", () => scrollContainer.CurrentScroll.Y > 0);
+    }
+
+    [Ignore("Still not work, need to fix mouse move issue")]
+    public void TestBoundsClamping()
+    {
+        AddStep("Force scroll way past start", () => scrollContainer.ScrollTo(new Vector2(0, -500), animated: false));
+
+        AddUntilStep("Wait for rubber-band to snap back to 0", () => scrollContainer.CurrentScroll.Y == 0);
+
+        AddAssert("Scroll Y clamped to 0", () => scrollContainer.CurrentScroll.Y == 0);
+    }
 }
