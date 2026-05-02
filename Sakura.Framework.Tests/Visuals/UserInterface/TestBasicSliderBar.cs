@@ -1,7 +1,6 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
-using System;
 using NUnit.Framework;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
@@ -10,6 +9,7 @@ using Sakura.Framework.Graphics.UserInterface;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Testing;
+using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Tests.Visuals.UserInterface;
 
@@ -50,7 +50,7 @@ public class TestBasicSliderBar : ManualInputManagerTestScene
     {
         AddStep("Move mouse to center of slider", () => InputManager.MoveMouseTo(slider));
         AddStep("Click center", () => InputManager.Click(MouseButton.Left));
-        AddAssert("Value is roughly 50", () => Math.Abs(slider.Current.Value - 50f) < 2f);
+        AddAssert("Value is roughly 50", () => Precision.AlmostEquals(slider.Current.Value, 50f, 2f));
 
         AddStep("Move mouse to start of slider", () =>
             InputManager.MoveMouseTo(new Vector2(slider.DrawRectangle.X, slider.DrawRectangle.Y + 10)));
@@ -68,6 +68,32 @@ public class TestBasicSliderBar : ManualInputManagerTestScene
         AddStep("Drag to middle", () => InputManager.MoveMouseTo(slider));
         AddStep("Release mouse", () => InputManager.ReleaseButton(MouseButton.Left));
 
-        AddAssert("Value is roughly 50", () => Math.Abs(slider.Current.Value - 50f) < 2f);
+        AddAssert("Value is roughly 50", () => Precision.AlmostEquals(slider.Current.Value, 50f, 2f));
+    }
+
+    [Test]
+    public void TestOutOfBoundsDragging()
+    {
+        AddStep("Move mouse to center of slider", () => InputManager.MoveMouseTo(slider));
+        AddStep("Press mouse", () => InputManager.PressButton(MouseButton.Left));
+        AddStep("Drag far right", () =>
+            InputManager.MoveMouseTo(new Vector2(slider.DrawRectangle.X + slider.DrawRectangle.Width + 50, slider.DrawRectangle.Y + 10)));
+        AddStep("Release mouse", () => InputManager.ReleaseButton(MouseButton.Left));
+
+        AddAssert("Value is max", () => slider.Current.Value == slider.MaxValue);
+
+        AddStep("Move mouse to right of slider", () => InputManager.MoveMouseTo(new Vector2(slider.DrawRectangle.X + slider.DrawRectangle.Width, slider.DrawRectangle.Y + 10)));
+        AddStep("Press mouse again", () => InputManager.PressButton(MouseButton.Left));
+        AddStep("Drag far left", () =>
+            InputManager.MoveMouseTo(new Vector2(slider.DrawRectangle.X - 50, slider.DrawRectangle.Y + 10)));
+        AddStep("Release mouse", () => InputManager.ReleaseButton(MouseButton.Left));
+
+        AddAssert("Value is min", () => slider.Current.Value == slider.MinValue);
+    }
+
+    [Test]
+    public void TestSetSliderReactive()
+    {
+        AddStep("Set slider value to 75", () => slider.Current.Value = 75f);
     }
 }
