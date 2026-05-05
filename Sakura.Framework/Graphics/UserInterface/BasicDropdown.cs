@@ -85,7 +85,8 @@ public class BasicDropdown<T> : Container
                 {
                     Current.Value = capturedItem;
                     menu.Hide();
-                }
+                },
+                TextAnchor = Anchor.CentreLeft
             };
 
             menu.Add(dropdownItem);
