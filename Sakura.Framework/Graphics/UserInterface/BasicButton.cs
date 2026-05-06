@@ -74,7 +74,8 @@ public class BasicButton : ClickableContainer
                 Anchor = textAnchor,
                 Origin = textAnchor,
                 Text = "",
-                Font = FontUsage.Default.With(size: TextSize)
+                Font = FontUsage.Default.With(size: TextSize),
+                Margin = new MarginPadding(5)
             }
         };
 
