@@ -20,6 +20,7 @@ public class BasicButton : ClickableContainer
     private readonly SpriteText spriteText;
     private readonly float textSize = 16;
     private Color defaultColor = Color.DarkGreen;
+    private Anchor textAnchor = Anchor.Centre;
 
     public Color DefaultColor
     {
@@ -45,6 +46,17 @@ public class BasicButton : ClickableContainer
         set => spriteText.Font = spriteText.Font.With(size: value);
     }
 
+    public Anchor TextAnchor
+    {
+        get => textAnchor;
+        set
+        {
+            spriteText.Anchor = value;
+            spriteText.Origin = value;
+            textAnchor = value;
+        }
+    }
+
     public BasicButton()
     {
         Size = new Vector2(100, 30);
@@ -59,10 +71,11 @@ public class BasicButton : ClickableContainer
             },
             spriteText = new SpriteText
             {
-                Anchor = Anchor.Centre,
-                Origin = Anchor.Centre,
+                Anchor = textAnchor,
+                Origin = textAnchor,
                 Text = "",
-                Font = FontUsage.Default.With(size: TextSize)
+                Font = FontUsage.Default.With(size: TextSize),
+                Margin = new MarginPadding(5)
             }
         };
 
