@@ -111,7 +111,15 @@ public abstract class TestScene : Container
 
         using var host = new HeadlessAppHost($"HeadlessTest-{TestContext.CurrentContext.Test.Name}");
         var runnerApp = new HeadlessTestRunnerApp(this, host);
-        host.Run(runnerApp);
+
+        try
+        {
+            host.Run(runnerApp);
+        }
+        finally
+        {
+            runnerApp.Remove(this);
+        }
 
         if (runnerApp.TestException != null)
         {
