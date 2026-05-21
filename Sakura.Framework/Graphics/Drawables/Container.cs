@@ -125,20 +125,28 @@ public class Container : Drawable
 
     protected void AddInternal(Drawable drawable)
     {
+        ArgumentNullException.ThrowIfNull(drawable);
+
         if (drawable == this)
             throw new InvalidOperationException("A container cannot be added to itself.");
+
+        if (drawable.Parent != null)
+        {
+            if (drawable.Parent == this)
+                throw new InvalidOperationException($"The drawable {drawable.GetDisplayName()} is already a child of this container.");
+
+            throw new InvalidOperationException($"May not add a drawable to multiple containers. {drawable.GetDisplayName()} is already a child of {drawable.Parent.GetDisplayName()}.");
+        }
 
         for (var p = Parent; p != null; p = p.Parent)
         {
             if (p == drawable)
-                throw new InvalidOperationException("Cannot add an ancestor drawable as a child.");
+                throw new InvalidOperationException("Cannot add an ancestor drawable as a child to prevent cyclic dependencies.");
         }
-
-        if (drawable.Parent != null)
-            drawable.Parent.Remove(drawable);
 
         drawable.Parent = this;
         children.Add(drawable);
+
         InvalidateTopology();
 
         if (drawable.Clock is FramedClock framedClock)
@@ -158,6 +166,12 @@ public class Container : Drawable
 
     protected void RemoveInternal(Drawable drawable)
     {
+        if (drawable == null)
+            return;
+
+        if (drawable.Parent != this)
+            throw new InvalidOperationException($"Cannot remove {drawable.GetDisplayName()} because it is not a child of this container.");
+
         if (children.Remove(drawable))
         {
             drawable.Parent = null;
