@@ -33,8 +33,8 @@ public class TestActiveState : TestScene
         RelativeSizeAxes = Axes.Both
     };
 
-    [OneTimeSetUp]
-    public void SetUp()
+    [Test]
+    public void TestWindowActiveState()
     {
         AddStep("Add active box", () =>
         {
