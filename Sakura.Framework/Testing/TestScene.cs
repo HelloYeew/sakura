@@ -4,14 +4,15 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
 using NUnit.Framework;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Logging;
-using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
+using Vector2 = Sakura.Framework.Maths.Vector2;
 
 namespace Sakura.Framework.Testing;
 
@@ -37,7 +38,7 @@ public abstract class TestScene : Container
 
     public void AddStep(string description, Action stepAction)
     {
-        steps.Add(new TestStep
+        steps.Add(new ActionStep
         {
             Description = description,
             Action = stepAction,
@@ -48,7 +49,7 @@ public abstract class TestScene : Container
 
     public void AddAssert(string description, Func<bool> assert)
     {
-        steps.Add(new TestStep
+        steps.Add(new ActionStep
         {
             Description = description,
             Action = () => Assert.That(assert(), description),
@@ -59,7 +60,7 @@ public abstract class TestScene : Container
 
     public void AddWaitStep(string description, double milliseconds)
     {
-        steps.Add(new TestStep
+        steps.Add(new WaitStep
         {
             Description = description,
             WaitTime = milliseconds,
@@ -69,7 +70,7 @@ public abstract class TestScene : Container
 
     public void AddUntilStep(string description, Func<bool> condition, double timeout = 10000)
     {
-        steps.Add(new TestStep
+        steps.Add(new WaitStep
         {
             Description = description,
             WaitCondition = condition,
@@ -81,10 +82,23 @@ public abstract class TestScene : Container
 
     public void AddLabel(string description)
     {
-        steps.Add(new TestStep
+        steps.Add(new ActionStep
         {
             Description = description,
             IsLabel = true,
+            Context = CurrentStepContext
+        });
+    }
+
+    public void AddSliderStep<T>(string description, T min, T max, T start, Action<T> valueChanged) where T : struct, INumber<T>
+    {
+        steps.Add(new SliderStep<T>
+        {
+            Description = description,
+            MinValue = min,
+            MaxValue = max,
+            StartValue = start,
+            ValueChanged = valueChanged,
             Context = CurrentStepContext
         });
     }
@@ -251,7 +265,10 @@ public abstract class TestScene : Container
 
                 try
                 {
-                    step.Action?.Invoke();
+                    if (step is ActionStep actionStep)
+                    {
+                        actionStep.Action?.Invoke();
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -263,29 +280,32 @@ public abstract class TestScene : Container
 
             double elapsed = Clock.CurrentTime - currentStepStartTime;
 
-            if (step.WaitTime > 0)
+            if (step is WaitStep waitStep)
             {
-                if (elapsed < step.WaitTime)
-                    return;
-            }
-            else if (step.WaitCondition != null)
-            {
-                try
+                if (waitStep.WaitTime > 0)
                 {
-                    if (!step.WaitCondition())
+                    if (elapsed < waitStep.WaitTime)
+                        return;
+                }
+                else if (waitStep.WaitCondition != null)
+                {
+                    try
                     {
-                        if (step.HasTimeout && elapsed > step.Timeout)
+                        if (!waitStep.WaitCondition())
                         {
-                            throw new TimeoutException($"Test step '{step.Description}' timed out after {step.Timeout}ms.");
+                            if (waitStep.HasTimeout && elapsed > waitStep.Timeout)
+                            {
+                                throw new TimeoutException($"Test step '{step.Description}' timed out after {waitStep.Timeout}ms.");
+                            }
+                            return;
                         }
+                    }
+                    catch (Exception ex)
+                    {
+                        TestException = ex;
+                        host.Exit();
                         return;
                     }
-                }
-                catch (Exception ex)
-                {
-                    TestException = ex;
-                    host.Exit();
-                    return;
                 }
             }
 

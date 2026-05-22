@@ -4,8 +4,10 @@
 using System;
 using System.Collections;
 using System.Linq;
+using System.Numerics;
 using System.Reflection;
 using NUnit.Framework;
+using Sakura.Framework.Configurations;
 using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Colors;
@@ -14,10 +16,11 @@ using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Graphics.Transforms;
+using Sakura.Framework.Graphics.UserInterface;
 using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
-using Sakura.Framework.Maths;
 using Sakura.Framework.Timing;
+using Vector2 = Sakura.Framework.Maths.Vector2;
 
 namespace Sakura.Framework.Testing;
 
@@ -32,6 +35,7 @@ public class TestBrowserApp : App
     private SpriteText hotReloadText;
     private Container headerContainer;
     private ScrollableContainer stepScrollContainer;
+    private BasicSliderBar<double> volumeSlider;
 
     private readonly Assembly testAssembly;
 
@@ -129,6 +133,28 @@ public class TestBrowserApp : App
         {
             Child = autoRunText
         });
+
+        headerFlow.Add(new SpriteText()
+        {
+            Anchor = Anchor.CentreLeft,
+            Origin = Anchor.CentreLeft,
+            Text = "Volume",
+            Font = FontUsage.Default.With(size: 15)
+        });
+
+        headerFlow.Add(volumeSlider = new BasicSliderBar<double>()
+        {
+            Anchor = Anchor.CentreLeft,
+            Origin = Anchor.CentreLeft,
+            Size = new Vector2(150, 20),
+            MinValue = 0,
+            MaxValue = 1
+        });
+
+        var volumeReactive = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.MasterVolume);
+        volumeSlider.Current.Value = volumeReactive.Value;
+
+        volumeReactive.BindTo(volumeSlider.Current);
 
         headerContainer.Add(headerFlow);
         Add(headerContainer);
@@ -293,7 +319,8 @@ public class TestBrowserApp : App
 
             foreach (var type in group.OrderBy(t => t.Name))
             {
-                var button = new TestBrowserButton(type.Name, () => loadTest(type), Color.DarkGray);
+                string displayName = type.Name.StartsWith("Test") ? type.Name.Substring(4) : type.Name;
+                var button = new TestBrowserButton(displayName, () => loadTest(type), Color.DarkGray);
                 testListFlow.Add(button);
             }
         }
@@ -402,74 +429,7 @@ public class TestBrowserApp : App
 
         foreach (var step in currentTest.Steps)
         {
-            if (step.IsLabel)
-            {
-                stepsFlow.Add(new SpriteText
-                {
-                    Text = step.Description,
-                    Font = FontUsage.Default.With(size: 14),
-                    Color = Color.Yellow,
-                    Margin = new MarginPadding
-                    {
-                        Top = 10,
-                        Bottom = 5
-                    },
-                    Name = step.Description
-                });
-                continue;
-            }
-
-            bool isWait = step.WaitTime > 0 || step.WaitCondition != null;
-
-            Color buttonColor = Color.DarkBlue;
-
-            if (step.IsAssert)
-                buttonColor = Color.DarkRed;
-            else if (isWait)
-                buttonColor = Color.DarkCyan;
-
-            switch (step.Context)
-            {
-                case StepContext.OneTimeSetUp:
-                    buttonColor = buttonColor.Darken(0.3f);
-                    break;
-                case StepContext.SetUp:
-                    buttonColor = buttonColor.Darken(0.3f);
-                    break;
-                case StepContext.TearDown:
-                    buttonColor = buttonColor.Darken(0.3f);
-                    break;
-            }
-
-            TestStepButton stepButton = null!;
-
-            stepButton = new TestStepButton(step.Description, () =>
-            {
-                try
-                {
-                    stepButton.Flash();
-                    if (isWait)
-                    {
-                        if (step.WaitCondition != null && !step.WaitCondition())
-                        {
-                            throw new Exception("Wait condition not met.");
-                        }
-                    }
-                    else
-                    {
-                        step.Action.Invoke();
-                    }
-
-                    stepButton.SetState(true);
-                    Logger.Log($"Executed step: {step.Description}");
-                }
-                catch (Exception ex)
-                {
-                    Logger.Error($"[Test] Step failed: {step.Description}", ex);
-                }
-            }, buttonColor);
-
-            stepsFlow.Add(stepButton);
+            generateStepVisual((dynamic)step);
         }
 
         if (isAutoRunEnabled)
@@ -524,10 +484,9 @@ public class TestBrowserApp : App
             return;
 
         var step = currentTest.Steps[currentAutoRunStep];
-
         var button = stepsFlow.Children.Count > currentAutoRunStep ? stepsFlow.Children[currentAutoRunStep] as TestStepButton : null;
-
         var currentItem = stepsFlow.Children.Count > currentAutoRunStep ? stepsFlow.Children[currentAutoRunStep] : null;
+
         if (currentItem != null)
         {
             stepScrollContainer.ScrollIntoView(currentItem);
@@ -540,14 +499,25 @@ public class TestBrowserApp : App
             return;
         }
 
+        if (step.GetType().IsGenericType && step.GetType().GetGenericTypeDefinition() == typeof(SliderStep<>))
+        {
+            currentAutoRunStep++;
+            Scheduler.AddDelayed(runNextStep, 10);
+            return;
+        }
+
         if (!isWaitingForStep)
         {
-            button.Flash();
+            button?.Flash();
 
             try
             {
-                step.Action?.Invoke();
-                Logger.Log($"[Test] Auto-executed step: {step.Description}");
+                // We must cast to ActionStep to invoke the Action
+                if (step is ActionStep actionStep)
+                {
+                    actionStep.Action?.Invoke();
+                    Logger.Log($"[Test] Auto-executed step: {step.Description}");
+                }
             }
             catch (Exception ex)
             {
@@ -557,37 +527,38 @@ public class TestBrowserApp : App
                 return;
             }
 
-            if (step.WaitTime > 0 || step.WaitCondition != null)
+            // Check if we need to start waiting
+            if (step is WaitStep waitStep)
             {
                 isWaitingForStep = true;
                 stepWaitStartTime = currentTest.Clock.CurrentTime;
             }
             else
             {
-                button.SetState(true);
+                button?.SetState(true);
             }
         }
 
-        if (isWaitingForStep)
+        if (isWaitingForStep && step is WaitStep currentWaitStep)
         {
             double elapsed = currentTest.Clock.CurrentTime - stepWaitStartTime;
 
-            if (step.WaitTime > 0 && elapsed < step.WaitTime)
+            if (currentWaitStep.WaitTime > 0 && elapsed < currentWaitStep.WaitTime)
             {
-                Scheduler.AddDelayed(runNextStep, 10);
+                Scheduler?.AddDelayed(runNextStep, 10);
                 return;
             }
 
-            if (step.WaitCondition != null && !step.WaitCondition())
+            if (currentWaitStep.WaitCondition != null && !currentWaitStep.WaitCondition())
             {
-                if (step.HasTimeout && elapsed > step.Timeout)
+                if (currentWaitStep.HasTimeout && elapsed > currentWaitStep.Timeout)
                 {
                     Logger.Error($"[Test] Auto-run timed out on step: {step.Description}");
                     button?.SetState(false);
                     isAutoRunEnabled = false;
                     return;
                 }
-                Scheduler.AddDelayed(runNextStep, 10);
+                Scheduler?.AddDelayed(runNextStep, 10);
                 return;
             }
 
@@ -596,7 +567,97 @@ public class TestBrowserApp : App
         }
 
         currentAutoRunStep++;
-        Scheduler.AddDelayed(runNextStep, 200);
+        Scheduler?.AddDelayed(runNextStep, 200);
+    }
+
+    private void generateStepVisual(ActionStep step)
+    {
+        if (step.IsLabel)
+        {
+            stepsFlow.Add(new SpriteText
+            {
+                Text = step.Description,
+                Font = FontUsage.Default.With(size: 14),
+                Color = Color.Yellow,
+                Margin = new MarginPadding
+                {
+                    Top = 10,
+                    Bottom = 5
+                },
+                Name = step.Description
+            });
+            return;
+        }
+
+        Color buttonColor = step.IsAssert ? Color.DarkRed : Color.DarkBlue;
+
+        switch (step.Context)
+        {
+            case StepContext.OneTimeSetUp:
+            case StepContext.SetUp:
+            case StepContext.TearDown:
+                buttonColor = buttonColor.Darken(0.3f);
+                break;
+        }
+
+        TestStepButton stepButton = null!;
+        stepButton = new TestStepButton(step.Description, () =>
+        {
+            try
+            {
+                stepButton.Flash();
+                step.Action?.Invoke();
+                stepButton.SetState(true);
+                Logger.Log($"Executed step: {step.Description}");
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"[Test] Step failed: {step.Description}", ex);
+            }
+        }, buttonColor);
+
+        stepsFlow.Add(stepButton);
+    }
+
+    private void generateStepVisual(WaitStep step)
+    {
+        Color buttonColor = Color.DarkCyan;
+
+        switch (step.Context)
+        {
+            case StepContext.OneTimeSetUp:
+            case StepContext.SetUp:
+            case StepContext.TearDown:
+                buttonColor = buttonColor.Darken(0.3f);
+                break;
+        }
+
+        TestStepButton stepButton = null!;
+        stepButton = new TestStepButton(step.Description, () =>
+        {
+            try
+            {
+                stepButton.Flash();
+                if (step.WaitCondition != null && !step.WaitCondition())
+                {
+                    throw new Exception("Wait condition not met.");
+                }
+
+                stepButton.SetState(true);
+                Logger.Log($"Executed wait step: {step.Description}");
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"[Test] Step failed: {step.Description}", ex);
+            }
+        }, buttonColor);
+
+        stepsFlow.Add(stepButton);
+    }
+
+    private void generateStepVisual<T>(SliderStep<T> step) where T : struct, System.Numerics.INumber<T>
+    {
+        stepsFlow.Add(new TestSliderStepControl<T>(step));
     }
 
     private IEnumerable getTestCaseSourceData(Type type, string name, object instance)
@@ -741,6 +802,54 @@ public class TestBrowserApp : App
         {
             backgroundBox.Color = originalBackgroundColor;
             backgroundBox.FlashColour(Color.White, 500, Easing.OutQuint);
+        }
+    }
+
+    private class TestSliderStepControl<T> : Container where T : struct, INumber<T>
+    {
+        public TestSliderStepControl(SliderStep<T> step)
+        {
+            RelativeSizeAxes = Axes.X;
+            AutoSizeAxes = Axes.Y;
+
+            var currentValueText = new SpriteText
+            {
+                Text = step.StartValue.ToString(),
+                Font = FontUsage.Default.With(size: 14),
+                Anchor = Anchor.TopRight,
+                Origin = Anchor.TopRight
+            };
+
+            var slider = new BasicSliderBar<T>
+            {
+                RelativeSizeAxes = Axes.X,
+                Width = 1,
+                Height = 15,
+                MinValue = step.MinValue,
+                MaxValue = step.MaxValue,
+                Margin = new MarginPadding { Top = 20 }
+            };
+
+            slider.Current.Value = step.StartValue;
+
+            slider.Current.ValueChanged += e =>
+            {
+                currentValueText.Text = e.NewValue.ToString();
+                step.ValueChanged?.Invoke(e.NewValue);
+            };
+
+            Children = new Drawable[]
+            {
+                new SpriteText
+                {
+                    Text = step.Description,
+                    Font = FontUsage.Default.With(size: 14),
+                    Anchor = Anchor.TopLeft,
+                    Origin = Anchor.TopLeft
+                },
+                currentValueText,
+                slider
+            };
         }
     }
 
