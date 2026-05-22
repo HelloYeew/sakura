@@ -70,4 +70,8 @@ public class HeadlessRenderer : IRenderer
     {
 
     }
+    public void ScheduleToDrawThread(Action action)
+    {
+
+    }
 }

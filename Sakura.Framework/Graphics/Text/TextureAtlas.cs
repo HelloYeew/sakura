@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Statistic;
 using Silk.NET.OpenGL;
@@ -15,25 +16,23 @@ namespace Sakura.Framework.Graphics.Text;
 /// </summary>
 public class TextureAtlas : IDisposable
 {
+    private readonly IRenderer renderer;
     private readonly GL gl;
     private readonly int width;
     private readonly int height;
-    private readonly GLTexture glTexture;
 
-    // TODO: Just basic implementation, maybe change to bin-packing later
     private readonly List<AtlasPage> pages = new List<AtlasPage>();
 
     private const int padding = 1;
 
-    public Texture Texture { get; }
-
-    public TextureAtlas(GL gl, int width, int height)
+    public TextureAtlas(IRenderer renderer, GL gl, int width, int height)
     {
+        this.renderer = renderer;
         this.gl = gl;
         this.width = width;
         this.height = height;
 
-        pages.Add(new AtlasPage(gl, width, height));
+        pages.Add(new AtlasPage(renderer, gl, width, height));
     }
 
     /// <summary>
@@ -41,18 +40,15 @@ public class TextureAtlas : IDisposable
     /// </summary>
     public Texture? AddRegion(int regionWidth, int regionHeight, ReadOnlySpan<byte> rgbaData)
     {
-        // Try to add to existing pages (usually the last one is enough, but we check specifically the last active one)
         var page = pages[^1]; // Get last page
 
         if (!canFitInPage(page, regionWidth, regionHeight))
         {
-            // 2. If it doesn't fit, create a new page
-            page = new AtlasPage(gl, width, height);
+            page = new AtlasPage(renderer, gl, width, height);
             pages.Add(page);
             GlobalStatistics.Get<int>("Fonts", "Atlas Pages").Value = pages.Count;
         }
 
-        // if it still doesn't fit (glyph larger than entire texture?), fail.
         if (!canFitInPage(page, regionWidth, regionHeight))
             return null;
 
@@ -64,11 +60,19 @@ public class TextureAtlas : IDisposable
             page.RowHeight = 0;
         }
 
-        // Upload data
-        page.GlTexture.Bind();
-        gl.TexSubImage2D(TextureTarget.Texture2D, 0, page.CurrentX, page.CurrentY, (uint)regionWidth, (uint)regionHeight, PixelFormat.Rgba, PixelType.UnsignedByte, rgbaData);
+        byte[] pixelDataCopy = rgbaData.ToArray();
 
-        gl.GenerateMipmap(TextureTarget.Texture2D);
+        int destX = page.CurrentX;
+        int destY = page.CurrentY;
+        var targetGlTexture = page.GlTexture;
+
+        renderer.ScheduleToDrawThread(() =>
+        {
+            targetGlTexture.Bind();
+            ReadOnlySpan<byte> span = pixelDataCopy;
+            gl.TexSubImage2D(TextureTarget.Texture2D, 0, destX, destY, (uint)regionWidth, (uint)regionHeight, PixelFormat.Rgba, PixelType.UnsignedByte, span);
+            gl.GenerateMipmap(TextureTarget.Texture2D);
+        });
 
         // Calculate UVs
         float u = (float)page.CurrentX / width;
@@ -76,7 +80,6 @@ public class TextureAtlas : IDisposable
         float uw = (float)regionWidth / width;
         float vh = (float)regionHeight / height;
 
-        // Create the texture wrapper pointing to THIS specific page's GL ID
         var region = new Texture(page.GlTexture, new Maths.RectangleF(u, v, uw, vh));
 
         // Advance cursor
@@ -86,28 +89,17 @@ public class TextureAtlas : IDisposable
         return region;
     }
 
-    /// <summary>
-    /// Check if a region can fit in the current page
-    /// </summary>
-    /// <param name="page">The <see cref="AtlasPage"/> to test against</param>
-    /// <param name="areaWidth">Width of the region to fit</param>
-    /// <param name="areaHeight">Height of the region to fit</param>
-    /// <returns>True if it can fit, false otherwise</returns>
     private bool canFitInPage(AtlasPage page, int areaWidth, int areaHeight)
     {
-        // Simulate where it would go
         int testX = page.CurrentX;
         int testY = page.CurrentY;
 
-        // Does it fit on current line?
         if (testX + areaWidth + padding > width)
         {
-            // No, move to next line
             testX = 0;
             testY += page.RowHeight + padding;
         }
 
-        // Does it fit vertically?
         return (testY + areaHeight + padding <= height);
     }
 
@@ -132,7 +124,10 @@ public class TextureAtlas : IDisposable
 
     public void Dispose()
     {
-        glTexture.Dispose();
+        foreach (var page in pages)
+        {
+            page.Dispose();
+        }
         GC.SuppressFinalize(this);
     }
 
@@ -144,9 +139,6 @@ public class TextureAtlas : IDisposable
         }
     }
 
-    /// <summary>
-    /// A single page of the texture atlas
-    /// </summary>
     private class AtlasPage : IDisposable
     {
         public GLTexture GlTexture { get; }
@@ -154,10 +146,16 @@ public class TextureAtlas : IDisposable
         public int CurrentY { get; set; } = 0;
         public int RowHeight { get; set; } = 0;
 
-        public AtlasPage(GL gl, int width, int height)
+        public AtlasPage(IRenderer renderer, GL gl, int width, int height)
         {
+            GlTexture = new GLTexture(gl, width, height);
+
+            // Queue the initial blank texture allocation to the Draw thread
             byte[] emptyData = new byte[width * height * 4];
-            GlTexture = new GLTexture(gl, width, height, emptyData);
+            renderer.ScheduleToDrawThread(() =>
+            {
+                GlTexture.Upload(emptyData);
+            });
         }
 
         public void Dispose()

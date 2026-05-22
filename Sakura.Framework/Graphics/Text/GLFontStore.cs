@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Statistic;
@@ -24,9 +25,9 @@ public class GLFontStore : IFontStore
 
     private Font defaultFont;
 
-    public GLFontStore(GL gl)
+    public GLFontStore(IRenderer renderer, GL gl)
     {
-        atlas = new TextureAtlas(gl, 1024, 1024);
+        atlas = new TextureAtlas(renderer, gl, 1024, 1024);
     }
 
     private void loadFrameworkFonts(Storage resourceStorage)
