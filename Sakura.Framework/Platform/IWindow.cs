@@ -80,6 +80,11 @@ public interface IWindow : IDisposable
     Reactive<CursorState> CursorState { get; }
 
     /// <summary>
+    /// Whether the cursor is currently within the window's bounds.
+    /// </summary>
+    bool CursorInWindow { get; }
+
+    /// <summary>
     /// The graphic surface associated with this window to render graphics to.
     /// This is a value that the graphic API will use to render graphics to the window.
     /// </summary>

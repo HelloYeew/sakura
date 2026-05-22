@@ -74,6 +74,7 @@ public class SDLWindow : IWindow
     public int Width => logicalWidth;
     public int Height => logicalHeight;
 
+    public bool CursorInWindow { get; private set; }
     public IGraphicsSurface GraphicsSurface => graphicsSurface;
 
     public bool IsActive { get; private set; } = true;
@@ -425,6 +426,14 @@ public class SDLWindow : IWindow
                 logicalHeight = windowHeight;
                 Logger.Verbose($"Window resized to {drawableWidth}x{drawableHeight} (logical size: {windowWidth}x{windowHeight})");
                 Resized.Invoke(logicalWidth, logicalHeight);
+                break;
+
+            case WindowEventID.Enter:
+                CursorInWindow = true;
+                break;
+
+            case WindowEventID.Leave:
+                CursorInWindow = false;
                 break;
         }
     }

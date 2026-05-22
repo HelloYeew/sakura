@@ -22,6 +22,7 @@ public class HeadlessWindow : IWindow
     public Reactive<WindowMode> WindowModeReactive { get; } = new Reactive<WindowMode>(WindowMode.Windowed);
     public bool CursorVisible { get; set; } = true;
     public Reactive<CursorState> CursorState { get; } = new Reactive<CursorState>(Input.CursorState.Default);
+    public bool CursorInWindow { get; } = true;
     public IGraphicsSurface GraphicsSurface { get; } = new HeadlessGraphicsSurface();
     public void Initialize()
     {
