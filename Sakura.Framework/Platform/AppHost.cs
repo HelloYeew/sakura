@@ -4,6 +4,7 @@
 #nullable disable
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Reflection;
@@ -39,6 +40,7 @@ public abstract class AppHost : IDisposable
     private readonly ThrottledFrameClock soundClock = new ThrottledFrameClock(1000);
     private double lastUpdateTime;
     private readonly Stopwatch gameLoopStopwatch = new Stopwatch();
+    private readonly ConcurrentQueue<Action> inputQueue = new ConcurrentQueue<Action>();
 
     private readonly FrameBufferManager frameBufferManager = new FrameBufferManager();
     private readonly DrawNode[] rootDrawNodes = new DrawNode[3];
@@ -244,15 +246,19 @@ public abstract class AppHost : IDisposable
             Window.Title = Options.FriendlyAppName;
             Window.ApplicationName = Name;
 
-            Window.OnKeyDown += OnKeyDown;
-            Window.OnKeyUp += OnKeyUp;
-            Window.OnMouseDown += OnMouseDown;
-            Window.OnMouseUp += OnMouseUp;
-            Window.OnMouseMove += OnMouseMove;
-            Window.OnScroll += OnScroll;
-            Window.OnDragDropFile += onDragDropFile;
-            Window.OnDragDropText += onDragDropText;
-            Window.Resized += onResize;
+            Window.OnKeyDown += e => inputQueue.Enqueue(() => OnKeyDown(e));
+            Window.OnKeyUp += e => inputQueue.Enqueue(() => OnKeyUp(e));
+            Window.OnMouseDown += e => inputQueue.Enqueue(() => OnMouseDown(e));
+            Window.OnMouseUp += e => inputQueue.Enqueue(() => OnMouseUp(e));
+            Window.OnMouseMove += e => inputQueue.Enqueue(() => OnMouseMove(e));
+            Window.OnScroll += e => inputQueue.Enqueue(() => OnScroll(e));
+            Window.OnDragDropFile += e => inputQueue.Enqueue(() => onDragDropFile(e));
+            Window.OnDragDropText += e => inputQueue.Enqueue(() => onDragDropText(e));
+            Window.Resized += (w, h) =>
+            {
+                Window.GetPhysicalSize(out int pw, out int ph);
+                inputQueue.Enqueue(() => onResize(pw, ph, w, h));
+            };
             Window.FocusLost += updateTargetUpdateHz;
             Window.FocusGained += updateTargetUpdateHz;
             Window.Minimized += updateTargetUpdateHz;
@@ -262,12 +268,19 @@ public abstract class AppHost : IDisposable
             {
                 if (executionState == ExecutionState.Running)
                 {
-                    // Force an update and draw when requested
-                    // during the resize operation since the loop is blocked.
+                    AppClock.Update();
+
+                    while (inputQueue.TryDequeue(out var inputAction))
+                    {
+                        inputAction.Invoke();
+                    }
+
                     app.UpdateSubTree();
+
                     int updateIndex = frameBufferManager.GetUpdateIndex();
-                    rootDrawNodes[updateIndex] = app.GenerateDrawNodeSubtree(updateIndex);
+                    rootDrawNodes[updateIndex] = app?.GenerateDrawNodeSubtree(updateIndex);
                     frameBufferManager.FinishUpdate();
+
                     if (!IsHeadless)
                         PerformDraw();
                 }
@@ -280,7 +293,8 @@ public abstract class AppHost : IDisposable
 
             SetupRenderer();
 
-            onResize(Window.Width, Window.Height);
+            Window.GetPhysicalSize(out int initialPhysicalWidth, out int initialPhysicalHeight);
+            onResize(initialPhysicalWidth, initialPhysicalHeight, Window.Width, Window.Height);
 
             AppClock = new Clock(true);
 
@@ -401,12 +415,8 @@ public abstract class AppHost : IDisposable
         app?.OnKeyUp(e);
     }
 
-    private void onResize(int logicalWidth, int logicalHeight)
+    private void onResize(int physicalWidth, int physicalHeight, int logicalWidth, int logicalHeight)
     {
-        int physicalWidth = logicalWidth;
-        int physicalHeight = logicalHeight;
-        if (Window is SDLWindow sdlWindow)
-            sdlWindow.GetPhysicalSize(out physicalWidth, out physicalHeight);
         Renderer?.Resize(physicalWidth, physicalHeight, logicalWidth, logicalHeight);
         if (app != null) app.Size = new Vector2(logicalWidth, logicalHeight);
     }
@@ -449,6 +459,11 @@ public abstract class AppHost : IDisposable
     /// </summary>
     protected virtual void PerformUpdate()
     {
+        while (inputQueue.TryDequeue(out var inputAction))
+        {
+            inputAction.Invoke();
+        }
+
         GlobalStatistics.Get<double>("Host", "Uptime (ms)").Value = AppClock.CurrentTime;
         GlobalStatistics.Get<double>("Host", "Target Update Hz").Value = targetUpdateHz;
 

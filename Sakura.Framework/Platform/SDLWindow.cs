@@ -462,14 +462,14 @@ public class SDLWindow : IWindow
         if (button == MouseButton.Unknown) return;
         mouseState.Position = new Vector2(buttonEvent.X, buttonEvent.Y);
         mouseState.SetPressed(button, buttonEvent.State == 1);
-        action.Invoke(new Input.MouseButtonEvent(mouseState, button, buttonEvent.Clicks));
+        action.Invoke(new Input.MouseButtonEvent(mouseState.Clone(), button, buttonEvent.Clicks));
     }
 
     private void handleMouseMotionEvent(MouseMotionEvent motionEvent)
     {
         mouseState.Position = new Vector2(motionEvent.X, motionEvent.Y);
         var delta = new Vector2(motionEvent.Xrel, motionEvent.Yrel);
-        OnMouseMove.Invoke(new MouseEvent(mouseState, delta));
+        OnMouseMove.Invoke(new MouseEvent(mouseState.Clone(), delta));
     }
 
     private unsafe void handleMouseWheelEvent(MouseWheelEvent wheelEvent)
