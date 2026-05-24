@@ -33,8 +33,7 @@ public class TestBasicCheckbox : ManualInputManagerTestScene
             checkbox = new BasicCheckbox()
             {
                 Anchor = Anchor.Centre,
-                Origin = Anchor.Centre,
-                Text = "Enable setting"
+                Origin = Anchor.Centre
             };
 
             // Bind the reactive property to our text display for visual verification

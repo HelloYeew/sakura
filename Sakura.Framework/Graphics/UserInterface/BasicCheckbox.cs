@@ -6,7 +6,6 @@ using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
-using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
@@ -18,7 +17,6 @@ public class BasicCheckbox : ClickableContainer
 {
     private readonly Box background;
     private readonly Box fill;
-    private readonly SpriteText spriteText;
 
     private Color checkedColor = Color.LimeGreen;
     private Color uncheckedColor = Color.DarkGreen;
@@ -57,25 +55,13 @@ public class BasicCheckbox : ClickableContainer
         set => hoverColor = value;
     }
 
-    public string Text
-    {
-        get => spriteText.Text;
-        set => spriteText.Text = value;
-    }
-
-    public float TextSize
-    {
-        get => spriteText.Font.Size;
-        set => spriteText.Font = spriteText.Font.With(size: value);
-    }
-
     public BasicCheckbox()
     {
-        Size = new Vector2(200, 30);
+        Size = new Vector2(20);
 
-        var checkboxVisual = new Container
+        Child = new Container
         {
-            Size = new Vector2(20),
+            RelativeSizeAxes = Axes.Both,
             Anchor = Anchor.CentreLeft,
             Origin = Anchor.CentreLeft,
             Children = new Drawable[]
@@ -94,21 +80,6 @@ public class BasicCheckbox : ClickableContainer
                     Alpha = 0
                 }
             }
-        };
-
-        spriteText = new SpriteText
-        {
-            Anchor = Anchor.CentreLeft,
-            Origin = Anchor.CentreLeft,
-            Position = new Vector2(30, 0),
-            Text = "",
-            Font = FontUsage.Default.With(size: 16)
-        };
-
-        Children = new Drawable[]
-        {
-            checkboxVisual,
-            spriteText
         };
 
         Action = () => Current.Value = !Current.Value;
