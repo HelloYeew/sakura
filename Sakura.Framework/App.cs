@@ -65,7 +65,7 @@ public class App : Container, IFocusManager, IDisposable
 
     public override void Load()
     {
-        Clock = new FramedClock(Host.AppClock, true);
+        Clock = new FramedClock(Host.UpdateClock, true);
 
         base.Load();
 
@@ -140,7 +140,7 @@ public class App : Container, IFocusManager, IDisposable
             Depth = float.MaxValue - 10,
             Alpha = 0
         });
-        Add(FpsGraph = new FpsGraph(Host.AppClock)
+        Add(FpsGraph = new FpsGraph(Host.UpdateClock)
         {
             Depth = float.MaxValue
         });

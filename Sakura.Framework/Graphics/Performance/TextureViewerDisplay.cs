@@ -184,15 +184,15 @@ public class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFromDrawVisu
         if (State == Visibility.Hidden) return;
 
         currentTimeText.Text = $"{DateTime.Now:dd MMMM yyyy HH:mm:ss tt}";
-        runningTimeText.Text = $"Has been running for {TimeSpan.FromSeconds(host.AppClock.CurrentTime / 1000):hh\\:mm\\:ss}";
+        runningTimeText.Text = $"Has been running for {TimeSpan.FromSeconds(host.UpdateClock.CurrentTime / 1000):hh\\:mm\\:ss}";
 
         int textureBinds = GlobalStatistics.Get<int>("Renderer", "Texture Binds").Value;
         bindsText.Text = $"Texture Binds (Last Frame): {textureBinds}";
 
-        if (host.AppClock.CurrentTime - lastUpdateTime < 100)
+        if (host.UpdateClock.CurrentTime - lastUpdateTime < 100)
             return;
 
-        lastUpdateTime = host.AppClock.CurrentTime;
+        lastUpdateTime = host.UpdateClock.CurrentTime;
 
         int currentTextureUpdates = GlobalStatistics.Get<int>("Textures", "Texture Updates").Value;
         int currentAtlasPageCount = fontStore.Atlas != null ? fontStore.Atlas.GetAllPages().Count() : 0;

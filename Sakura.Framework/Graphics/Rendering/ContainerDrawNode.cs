@@ -4,7 +4,6 @@
 using System.Collections.Generic;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
-using Sakura.Framework.Maths;
 using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Graphics.Rendering;
@@ -19,8 +18,6 @@ public class ContainerDrawNode : DrawNode
     public float BorderThickness { get; private set; }
     public Color BorderColor { get; private set; }
 
-    public RectangleF DrawRectangle { get; private set; }
-
     public override void ApplyState(Drawable source)
     {
         base.ApplyState(source);
@@ -29,7 +26,16 @@ public class ContainerDrawNode : DrawNode
         CornerRadius = container.CornerRadius;
         BorderThickness = container.BorderThickness;
         BorderColor = container.BorderColor;
-        DrawRectangle = container.DrawRectangle;
+    }
+
+    public override void PrepareForDraw(double lastUpdateTime, double currentUpdateTime, double drawTime)
+    {
+        base.PrepareForDraw(lastUpdateTime, currentUpdateTime, drawTime);
+
+        foreach (var child in Children)
+        {
+            child.PrepareForDraw(lastUpdateTime, currentUpdateTime, drawTime);
+        }
     }
 
     public override void Draw(IRenderer renderer)

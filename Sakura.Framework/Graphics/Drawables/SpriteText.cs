@@ -235,19 +235,34 @@ public class SpriteText : Drawable
         private GlyphBatch[] batches = Array.Empty<GlyphBatch>();
         private int batchCount;
 
+        private int textVertexCount;
+        private bool hasPreviousTextState;
+
         public override void ApplyState(Drawable source)
         {
             base.ApplyState(source);
             var text = (SpriteText)source;
 
-            // Copy the custom text vertices (not the default 6-length base.Vertices)
-            if (Vertices.Length < text.currentVertexCount)
-            {
-                Vertices = new Vertex[text.currentVertexCount];
-            }
-            Array.Copy(text.textVertices, Vertices, text.currentVertexCount);
+            textVertexCount = text.currentVertexCount;
 
-            // Generate Texture Batches
+            if (CurrentVertices.Length < textVertexCount)
+            {
+                PreviousVertices = new Vertex[textVertexCount];
+                CurrentVertices = new Vertex[textVertexCount];
+                Vertices = new Vertex[textVertexCount];
+                hasPreviousTextState = false; // reset to snap on resize
+            }
+
+            Array.Copy(CurrentVertices, PreviousVertices, textVertexCount);
+            Array.Copy(text.textVertices, CurrentVertices, textVertexCount);
+
+            // prevent the text from flying in from (0,0) on the very first frame
+            if (!hasPreviousTextState)
+            {
+                Array.Copy(CurrentVertices, PreviousVertices, textVertexCount);
+                hasPreviousTextState = true;
+            }
+
             batchCount = 0;
 
             if (text.shapedText == null || text.shapedText.Glyphs.Count == 0)
@@ -258,48 +273,64 @@ public class SpriteText : Drawable
 
             Texture? currentTexture = null;
             int currentVertexStart = 0;
-            int currentVertexCount = 0;
+            int currentBatchVertexCount = 0;
 
             for (int i = 0; i < text.shapedText.Glyphs.Count; i++)
             {
                 var glyph = text.shapedText.Glyphs[i];
 
-                // If texture changes, flush the current batch
                 if (currentTexture != null && currentTexture.GlTexture.Handle != glyph.Texture.GlTexture.Handle)
                 {
                     batches[batchCount++] = new GlyphBatch
                     {
                         Texture = currentTexture,
                         VertexStart = currentVertexStart,
-                        VertexCount = currentVertexCount
+                        VertexCount = currentBatchVertexCount
                     };
-                    currentVertexStart += currentVertexCount;
-                    currentVertexCount = 0;
+                    currentVertexStart += currentBatchVertexCount;
+                    currentBatchVertexCount = 0;
                 }
 
                 currentTexture = glyph.Texture;
-                currentVertexCount += 6;
+                currentBatchVertexCount += 6;
             }
 
-            // Push the final batch
-            if (currentTexture != null && currentVertexCount > 0)
+            if (currentTexture != null && currentBatchVertexCount > 0)
             {
                 batches[batchCount++] = new GlyphBatch
                 {
                     Texture = currentTexture,
                     VertexStart = currentVertexStart,
-                    VertexCount = currentVertexCount
+                    VertexCount = currentBatchVertexCount
                 };
+            }
+        }
+
+        public override void PrepareForDraw(double lastUpdateTime, double currentUpdateTime, double drawTime)
+        {
+            float interpolationFactor = 1.0f;
+            if (currentUpdateTime > lastUpdateTime)
+            {
+                interpolationFactor = (float)((drawTime - lastUpdateTime) / (currentUpdateTime - lastUpdateTime));
+                interpolationFactor = Math.Clamp(interpolationFactor, 0f, 1f);
+            }
+
+            DrawAlpha = PreviousDrawAlpha + (CurrentDrawAlpha - PreviousDrawAlpha) * interpolationFactor;
+
+            for (int i = 0; i < textVertexCount; i++)
+            {
+                Vertices[i] = CurrentVertices[i];
+                Vertices[i].Position.X = PreviousVertices[i].Position.X + (CurrentVertices[i].Position.X - PreviousVertices[i].Position.X) * interpolationFactor;
+                Vertices[i].Position.Y = PreviousVertices[i].Position.Y + (CurrentVertices[i].Position.Y - PreviousVertices[i].Position.Y) * interpolationFactor;
             }
         }
 
         public override void Draw(IRenderer renderer)
         {
-            if (DrawAlpha <= 0 || Vertices.Length == 0) return;
+            if (DrawAlpha <= 0 || textVertexCount == 0) return;
 
             renderer.SetBlendMode(Blending);
 
-            // Loop over the pre-calculated batches and draw them
             for (int i = 0; i < batchCount; i++)
             {
                 var batch = batches[i];
