@@ -23,6 +23,7 @@ using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Reactive;
 using Sakura.Framework.Statistic;
+using Sakura.Framework.Threading;
 using Sakura.Framework.Timing;
 
 namespace Sakura.Framework.Platform;
@@ -35,13 +36,16 @@ public abstract class AppHost : IDisposable
     private App app;
 
     public Reactive<FrameSync> FrameLimiter { get; set; }
+    public Reactive<ExecutionMode> ExecutionMode { get; set; }
     protected internal IClock UpdateClock { get; private set; }
     protected internal IClock DrawClock { get; private set; }
-    private readonly ThrottledFrameClock inputClock = new ThrottledFrameClock(1000);
+    protected internal IClock AudioClock { get; private set; }
+    public IClock InputClock { get; private set; }
     private readonly ThrottledFrameClock soundClock = new ThrottledFrameClock(1000);
     private double lastUpdateTime;
     private readonly Stopwatch gameLoopStopwatch = new Stopwatch();
     private readonly ConcurrentQueue<Action> inputQueue = new ConcurrentQueue<Action>();
+    private readonly ConcurrentQueue<Action> mainThreadActions = new ConcurrentQueue<Action>();
 
     private double lastUpdateProcessTime;
     private double currentUpdateProcessTime;
@@ -49,6 +53,11 @@ public abstract class AppHost : IDisposable
     private readonly FrameBufferManager frameBufferManager = new FrameBufferManager();
     private readonly DrawNode[] rootDrawNodes = new DrawNode[3];
     private DrawNode currentFrameDrawNode;
+
+    private ThreadRunner threadRunner;
+    private GameThread updateThread;
+    private GameThread drawThread;
+    private GameThread audioThread;
 
     // TODO: This "should" not be accessible from outside the framework.
     public Storage FrameworkStorage { get; private set; } = new EmbeddedResourceStorage(typeof(AppHost).Assembly, "Sakura.Framework.Resources");
@@ -269,6 +278,15 @@ public abstract class AppHost : IDisposable
             Window.Restored += updateTargetUpdateHz;
             Window.DisplayChanged += _ => updateTargetUpdateHz();
 
+            Window.RenderRequested += () =>
+            {
+                // make renderer still resize itself in single thread mode
+                if (executionState == ExecutionState.Running && ExecutionMode.Value == Threading.ExecutionMode.SingleThread)
+                {
+                    threadRunner.RunSingleThreadedFrame();
+                }
+            };
+
             Window.Initialize();
             Window.Create();
 
@@ -279,8 +297,45 @@ public abstract class AppHost : IDisposable
             Window.GetPhysicalSize(out int initialPhysicalWidth, out int initialPhysicalHeight);
             onResize(initialPhysicalWidth, initialPhysicalHeight, Window.Width, Window.Height);
 
-            UpdateClock = new Clock(true);
-            DrawClock = new Clock(true);
+            updateThread = new GameThread("UpdateThread", PerformUpdate, () => targetUpdateHz);
+            drawThread = new GameThread("DrawThread", PerformDraw, getTargetUpdateHz);
+            audioThread = new GameThread("AudioThread", PerformSoundUpdate, () => 1000);
+
+            drawThread.OnInitialize = () => Window.GraphicsSurface.MakeCurrent();
+
+            UpdateClock = updateThread.Clock;
+            DrawClock = drawThread.Clock;
+            AudioClock = audioThread.Clock;
+            InputClock = new Clock(true);
+
+            threadRunner = new ThreadRunner(updateThread, drawThread, audioThread);
+
+            ExecutionMode = FrameworkConfigManager.Get<ExecutionMode>(FrameworkSetting.ExecutionMode);
+
+            ExecutionMode.ValueChanged += e =>
+            {
+                mainThreadActions.Enqueue(() =>
+                {
+                    if (e.NewValue == Threading.ExecutionMode.MultiThread)
+                    {
+                        Window.GraphicsSurface.ClearCurrent();
+                        threadRunner.SetExecutionMode(Threading.ExecutionMode.MultiThread);
+                    }
+                    else
+                    {
+                        threadRunner.SetExecutionMode(Threading.ExecutionMode.SingleThread);
+                        Window.GraphicsSurface.MakeCurrent();
+                    }
+
+                    Logger.Verbose($"Execution mode changed from {e.OldValue} to {e.NewValue}");
+                });
+            };
+
+            if (ExecutionMode.Value == Threading.ExecutionMode.MultiThread)
+            {
+                Window.GraphicsSurface.ClearCurrent();
+                threadRunner.SetExecutionMode(Threading.ExecutionMode.MultiThread);
+            }
 
             this.app.Clock = UpdateClock;
 
@@ -291,42 +346,41 @@ public abstract class AppHost : IDisposable
             gameLoopStopwatch.Start();
 
             var spinWait = new SpinWait();
+            double lastMainFrameTime = gameLoopStopwatch.Elapsed.TotalMilliseconds;
+            const double target_main_frame_time = 1000.0 / 1000.0;
 
             try
             {
                 while (executionState == ExecutionState.Running)
                 {
-                    double frameStartTime = gameLoopStopwatch.Elapsed.TotalMilliseconds;
-                    UpdateClock.Update();
+                    while (mainThreadActions.TryDequeue(out var action))
+                    {
+                        action.Invoke();
+                    }
+
                     Window?.PollEvents();
 
                     if (Window?.IsExiting == true)
                         Exit();
 
-                    if (inputClock.Process(UpdateClock.CurrentTime))
-                        PerformInput();
+                    PerformInput();
 
-                    // 20251029: PerformSoundUpdate is removed since the AudioManager is updated in App.Update().
-                    // Will introduce it again when want multi-threaded audio update.
-
-                    PerformUpdate();
-                    PerformDraw();
-
-                    if (FrameLimiter.Value != FrameSync.VSync && FrameLimiter.Value != FrameSync.Unlimited)
+                    if (ExecutionMode.Value == Threading.ExecutionMode.SingleThread)
                     {
-                        // In non-VSync or unlimited modes, we need to limit the loop ourselves to the target frame rate.
-                        if (targetUpdateHz > 0)
+                        threadRunner.RunSingleThreadedFrame();
+                    }
+                    else
+                    {
+                        while (gameLoopStopwatch.Elapsed.TotalMilliseconds - lastMainFrameTime < target_main_frame_time)
                         {
-                            double targetFrameTime = 1000.0 / targetUpdateHz;
+                            spinWait.SpinOnce();
+                        }
 
-                            // A simple, busy-wait loop for precision.
-                            // For better CPU usage, a hybrid Thread.Sleep/SpinWait would be better,
-                            // but this is the most straightforward fix to ensure accuracy.
-                            // Logger.LogPrint($"Spinning... (elapsed: {gameLoopStopwatch.Elapsed.TotalMilliseconds - frameStartTime:F2}ms, target: {targetFrameTime:F2}ms)");
-                            while (gameLoopStopwatch.Elapsed.TotalMilliseconds - frameStartTime < targetFrameTime)
-                            {
-                                spinWait.SpinOnce();
-                            }
+                        lastMainFrameTime += target_main_frame_time;
+
+                        if (gameLoopStopwatch.Elapsed.TotalMilliseconds - lastMainFrameTime > target_main_frame_time * 5)
+                        {
+                            lastMainFrameTime = gameLoopStopwatch.Elapsed.TotalMilliseconds;
                         }
                     }
                 }
@@ -344,6 +398,7 @@ public abstract class AppHost : IDisposable
         }
         finally
         {
+            threadRunner?.Dispose();
             Dispose(true);
             host_running_mutex.Release();
         }
@@ -401,7 +456,7 @@ public abstract class AppHost : IDisposable
 
     private void onResize(int physicalWidth, int physicalHeight, int logicalWidth, int logicalHeight)
     {
-        Renderer?.Resize(physicalWidth, physicalHeight, logicalWidth, logicalHeight);
+        Renderer?.ScheduleToDrawThread(() => Renderer.Resize(physicalWidth, physicalHeight, logicalWidth, logicalHeight));
         if (app != null) app.Size = new Vector2(logicalWidth, logicalHeight);
     }
 
@@ -429,7 +484,7 @@ public abstract class AppHost : IDisposable
     /// </summary>
     protected virtual void PerformInput()
     {
-        // Logger.LogPrint($"Input tick. Time: {UpdateClock.CurrentTime:F2}ms (delta: {UpdateClock.ElapsedFrameTime:F2}ms, frame: {UpdateClock.FramesPerSecond})");
+        InputClock.Update();
     }
 
     /// <summary>
@@ -486,8 +541,6 @@ public abstract class AppHost : IDisposable
     /// </summary>
     protected virtual void PerformDraw()
     {
-        DrawClock.Update();
-
         GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame").Value = 0;
         Renderer?.Clear();
         Renderer?.StartFrame();

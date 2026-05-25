@@ -210,6 +210,8 @@ public class SDLWindow : IWindow
         Logger.Verbose("SDL window created successfully");
 
         graphicsSurface.GetFunctionAddress = proc => (nint)sdl.GLGetProcAddress(proc);
+        graphicsSurface.MakeCurrent = () => sdl.GLMakeCurrent(window, glContext);
+        graphicsSurface.ClearCurrent = () => sdl.GLMakeCurrent(window, null);
 
         Resized.Invoke(logicalWidth, logicalHeight);
     }

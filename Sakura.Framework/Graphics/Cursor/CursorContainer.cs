@@ -23,6 +23,15 @@ public class CursorContainer : Container, IRemoveFromDrawVisualiser
     [Resolved]
     private IWindow window { get; set; } = null!;
 
+    /// <summary>
+    /// Whether the cursor should automatically hide when the physical mouse cursor leaves the OS window bounds.
+    /// Defaults to true. Set to false for simulated cursors (e.g. using in test scene that need to always show)
+    /// </summary>
+    public bool HideWhenOutsideWindow { get; set; } = true;
+
+    private Vector2 lastScreenSpaceMousePosition;
+    private bool isCursorVisible = true;
+
     public CursorContainer()
     {
         Depth = float.MaxValue;
@@ -45,26 +54,49 @@ public class CursorContainer : Container, IRemoveFromDrawVisualiser
 
     public override bool OnMouseMove(MouseEvent e)
     {
+        lastScreenSpaceMousePosition = e.ScreenSpaceMousePosition;
+        return base.OnMouseMove(e);
+    }
+
+    public override void Update()
+    {
+        base.Update();
+        if (!IsLoaded) return;
+
+        bool shouldBeVisible = !HideWhenOutsideWindow || window.CursorInWindow;
+
+        if (isCursorVisible != shouldBeVisible)
+        {
+            isCursorVisible = shouldBeVisible;
+
+            ActiveCursor.ClearTransforms();
+
+            if (shouldBeVisible)
+                ActiveCursor.ScaleTo(1, 200, Easing.OutQuint).FadeIn(200, Easing.OutQuint);
+            else
+                ActiveCursor.ScaleTo(0f, 200, Easing.OutQuint).FadeOut(200, Easing.OutQuint);
+        }
+
+        if (ActiveCursor.IsHidden)
+            return;
+
         Vector2 localPosition;
 
-        // Invert the ModelMatrix to map screen space back to normalized local space (0..1)
         if (Matrix4x4.Invert(ModelMatrix, out var inverse))
         {
             var localNormalized = Vector4.Transform(
-                new Vector4(e.ScreenSpaceMousePosition.X, e.ScreenSpaceMousePosition.Y, 0, 1),
+                new Vector4(lastScreenSpaceMousePosition.X, lastScreenSpaceMousePosition.Y, 0, 1),
                 inverse
             );
 
-            // Multiply by DrawSize to convert the 0..1 ratio into actual local pixels
             localPosition = new Vector2(localNormalized.X * DrawSize.X, localNormalized.Y * DrawSize.Y);
         }
         else
         {
-            localPosition = e.ScreenSpaceMousePosition - new Vector2(DrawRectangle.X, DrawRectangle.Y);
+            localPosition = lastScreenSpaceMousePosition - new Vector2(DrawRectangle.X, DrawRectangle.Y);
         }
 
         ActiveCursor.Position = localPosition;
-        return base.OnMouseMove(e);
     }
 
     private class DefaultCursor : Container
