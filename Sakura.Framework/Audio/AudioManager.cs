@@ -1,6 +1,8 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using Sakura.Framework.Logging;
@@ -15,8 +17,7 @@ namespace Sakura.Framework.Audio;
 internal class AudioManager : IAudioManager
 {
     private readonly List<AudioChannel> activeChannels = new List<AudioChannel>();
-    private readonly List<AudioChannel> channelsToAdd = new List<AudioChannel>();
-    private readonly List<AudioChannel> channelsToRemove = new List<AudioChannel>();
+    private readonly ConcurrentQueue<Action> audioThreadActions = new ConcurrentQueue<Action>();
 
     public Reactive<double> MasterVolume { get; } = new Reactive<double>(1.0);
     public Reactive<double> TrackVolume { get; } = new Reactive<double>(1.0);
@@ -41,6 +42,13 @@ internal class AudioManager : IAudioManager
         Logger.Debug($"[AudioManager] Creating dummy Track from file: {path}");
         return new Track(this, path);
     }
+    public void EnqueueAction(Action action)
+    {
+        if (action != null)
+        {
+            audioThreadActions.Enqueue(action);
+        }
+    }
 
     public ISample CreateSampleFromFile(string path)
     {
@@ -50,30 +58,23 @@ internal class AudioManager : IAudioManager
 
     internal void AddChannel(AudioChannel channel)
     {
-        channelsToAdd.Add(channel);
+        EnqueueAction(() =>
+        {
+            if (!activeChannels.Contains(channel))
+                activeChannels.Add(channel);
+        });
     }
 
     internal void RemoveChannel(AudioChannel channel)
     {
-        channelsToRemove.Add(channel);
+        EnqueueAction(() => activeChannels.Remove(channel));
     }
 
     public void Update(double frameTime)
     {
-        // Add pending channels
-        if (channelsToAdd.Count > 0)
+        while (audioThreadActions.TryDequeue(out var action))
         {
-            foreach (var channel in channelsToAdd)
-                activeChannels.Add(channel);
-            channelsToAdd.Clear();
-        }
-
-        // Remove pending channels
-        if (channelsToRemove.Count > 0)
-        {
-            foreach (var channel in channelsToRemove)
-                activeChannels.Remove(channel);
-            channelsToRemove.Clear();
+            action.Invoke();
         }
 
         // Update active channels

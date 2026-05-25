@@ -23,7 +23,7 @@ namespace Sakura.Framework.Audio.BassEngine;
 internal class BassAudioManager : IAudioManager, IDisposable
 {
     private readonly List<BassAudioChannel> activeChannels = new List<BassAudioChannel>();
-    private readonly ConcurrentQueue<Action> mainThreadActions = new ConcurrentQueue<Action>();
+    private readonly ConcurrentQueue<Action> audioThreadActions = new ConcurrentQueue<Action>();
 
     private readonly BassAudioMixer trackMixer;
     private readonly BassAudioMixer sampleMixer;
@@ -150,20 +150,20 @@ internal class BassAudioManager : IAudioManager, IDisposable
     }
 
     /// <summary>
-    /// Schedules an action to be run on the main audio update thread.
+    /// Enqueues an action to be executed safely on audio thread
     /// </summary>
-    internal void ScheduleMainThreadAction(Action action)
+    public void EnqueueAction(Action action)
     {
         if (action != null)
         {
-            mainThreadActions.Enqueue(action);
+            audioThreadActions.Enqueue(action);
         }
     }
 
     public void Update(double frameTime)
     {
         // Run actions scheduled from other threads (e.g., BASS SYNCPROC)
-        while (mainThreadActions.TryDequeue(out var action))
+        while (audioThreadActions.TryDequeue(out var action))
         {
             action.Invoke();
         }

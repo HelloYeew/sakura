@@ -54,18 +54,21 @@ internal class BassAudioChannel : IAudioChannel
             else OnStop?.Invoke();
         };
 
-        Volume.ValueChanged += e => BassUtils.CheckError(Bass.ChannelSetAttribute(ChannelHandle, ChannelAttribute.Volume, (float)e.NewValue), "setting volume");
+        Volume.ValueChanged += e => manager.EnqueueAction(() => BassUtils.CheckError(Bass.ChannelSetAttribute(ChannelHandle, ChannelAttribute.Volume, (float)e.NewValue), "setting volume"));
         bool isFreqInitialized = false;
         Frequency.ValueChanged += e =>
         {
-            if (!isFreqInitialized)
+            manager.EnqueueAction(() =>
             {
-                isFreqInitialized = true;
-                if (Math.Abs(e.NewValue - 1.0) < 0.001) return;
-            }
-            BassUtils.CheckError(Bass.ChannelSetAttribute(ChannelHandle, ChannelAttribute.Frequency, (float)(e.NewValue * originalFrequency1)), "setting frequency");
+                if (!isFreqInitialized)
+                {
+                    isFreqInitialized = true;
+                    if (Math.Abs(e.NewValue - 1.0) < 0.001) return;
+                }
+                BassUtils.CheckError(Bass.ChannelSetAttribute(ChannelHandle, ChannelAttribute.Frequency, (float)(e.NewValue * originalFrequency1)), "setting frequency");
+            });
         };
-        Balance.ValueChanged += e => BassUtils.CheckError(Bass.ChannelSetAttribute(ChannelHandle, ChannelAttribute.Pan, (float)e.NewValue), "setting balance");
+        Balance.ValueChanged += e => manager.EnqueueAction(() => BassUtils.CheckError(Bass.ChannelSetAttribute(ChannelHandle, ChannelAttribute.Pan, (float)e.NewValue), "setting balance"));
     }
 
     private void OnChannelEnd(int handle, int channel, int data, IntPtr user)
@@ -79,7 +82,7 @@ internal class BassAudioChannel : IAudioChannel
         }
 
         // Schedule the event to run on the main audio thread (via manager update).
-        manager.ScheduleMainThreadAction(() =>
+        manager.EnqueueAction(() =>
         {
             OnEnd?.Invoke();
             if (!isLooping)
@@ -93,30 +96,36 @@ internal class BassAudioChannel : IAudioChannel
 
     public void Play()
     {
-        if (Mixer != null)
+        manager.EnqueueAction(() =>
         {
-            BassUtils.CheckError(BassMix.ChannelRemoveFlag(ChannelHandle, BassFlags.MixerChanPause), "resuming mixer channel");
-            IsRunning.Value = true;
-        }
-        else if (BassUtils.CheckError(Bass.ChannelPlay(ChannelHandle, false), "playing channel"))
-        {
-            IsRunning.Value = true;
-        }
+            if (Mixer != null)
+            {
+                BassUtils.CheckError(BassMix.ChannelRemoveFlag(ChannelHandle, BassFlags.MixerChanPause), "resuming mixer channel");
+                IsRunning.Value = true;
+            }
+            else if (BassUtils.CheckError(Bass.ChannelPlay(ChannelHandle, false), "playing channel"))
+            {
+                IsRunning.Value = true;
+            }
+        });
     }
 
     public void Stop()
     {
-        if (Mixer != null)
+        manager.EnqueueAction(() =>
         {
-            BassUtils.CheckError(BassMix.ChannelAddFlag(ChannelHandle, BassFlags.MixerChanPause), "stopping mixer channel");
-            Bass.ChannelSetPosition(ChannelHandle, 0);
-            IsRunning.Value = false;
-        }
-        else if (BassUtils.CheckError(Bass.ChannelStop(ChannelHandle), "stopping channel"))
-        {
-            Bass.ChannelSetPosition(ChannelHandle, 0);
-            IsRunning.Value = false;
-        }
+            if (Mixer != null)
+            {
+                BassUtils.CheckError(BassMix.ChannelAddFlag(ChannelHandle, BassFlags.MixerChanPause), "stopping mixer channel");
+                Bass.ChannelSetPosition(ChannelHandle, 0);
+                IsRunning.Value = false;
+            }
+            else if (BassUtils.CheckError(Bass.ChannelStop(ChannelHandle), "stopping channel"))
+            {
+                Bass.ChannelSetPosition(ChannelHandle, 0);
+                IsRunning.Value = false;
+            }
+        });
     }
 
     public void Pause()
