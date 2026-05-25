@@ -43,4 +43,10 @@ public interface IRenderer
     /// </summary>
     /// <param name="blendingMode">The blend mode to set.</param>
     void SetBlendMode(BlendingMode blendingMode);
+
+    /// <summary>
+    /// Schedules an action to be executed on the Draw thread at the start of the next frame.
+    /// This is vital for OpenGL resource creation from other threads.
+    /// </summary>
+    void ScheduleToDrawThread(Action action);
 }

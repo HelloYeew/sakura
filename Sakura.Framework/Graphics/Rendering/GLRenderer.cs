@@ -4,6 +4,7 @@
 #nullable disable
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
@@ -56,6 +57,8 @@ public class GLRenderer : IRenderer
     private ClipState currentClip;
 
     private DrawNode rootNode;
+
+    private readonly ConcurrentQueue<Action> drawThreadQueue = new ConcurrentQueue<Action>();
 
     private struct ClipState
     {
@@ -136,7 +139,17 @@ public class GLRenderer : IRenderer
 
     public void StartFrame()
     {
-        // TODO: Implement frame start logic if needed.
+        while (drawThreadQueue.TryDequeue(out var action))
+        {
+            action.Invoke();
+        }
+
+        // TODO: Any other StartFrame logic...
+    }
+
+    public void ScheduleToDrawThread(Action action)
+    {
+        drawThreadQueue.Enqueue(action);
     }
 
     public void Draw(IClock clock)
