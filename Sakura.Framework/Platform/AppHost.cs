@@ -35,12 +35,16 @@ public abstract class AppHost : IDisposable
     private App app;
 
     public Reactive<FrameSync> FrameLimiter { get; set; }
-    protected internal IClock AppClock { get; private set; }
+    protected internal IClock UpdateClock { get; private set; }
+    protected internal IClock DrawClock { get; private set; }
     private readonly ThrottledFrameClock inputClock = new ThrottledFrameClock(1000);
     private readonly ThrottledFrameClock soundClock = new ThrottledFrameClock(1000);
     private double lastUpdateTime;
     private readonly Stopwatch gameLoopStopwatch = new Stopwatch();
     private readonly ConcurrentQueue<Action> inputQueue = new ConcurrentQueue<Action>();
+
+    private double lastUpdateProcessTime;
+    private double currentUpdateProcessTime;
 
     private readonly FrameBufferManager frameBufferManager = new FrameBufferManager();
     private readonly DrawNode[] rootDrawNodes = new DrawNode[3];
@@ -264,27 +268,6 @@ public abstract class AppHost : IDisposable
             Window.Minimized += updateTargetUpdateHz;
             Window.Restored += updateTargetUpdateHz;
             Window.DisplayChanged += _ => updateTargetUpdateHz();
-            Window.RenderRequested += () =>
-            {
-                if (executionState == ExecutionState.Running)
-                {
-                    AppClock.Update();
-
-                    while (inputQueue.TryDequeue(out var inputAction))
-                    {
-                        inputAction.Invoke();
-                    }
-
-                    app.UpdateSubTree();
-
-                    int updateIndex = frameBufferManager.GetUpdateIndex();
-                    rootDrawNodes[updateIndex] = app?.GenerateDrawNodeSubtree(updateIndex);
-                    frameBufferManager.FinishUpdate();
-
-                    if (!IsHeadless)
-                        PerformDraw();
-                }
-            };
 
             Window.Initialize();
             Window.Create();
@@ -296,14 +279,15 @@ public abstract class AppHost : IDisposable
             Window.GetPhysicalSize(out int initialPhysicalWidth, out int initialPhysicalHeight);
             onResize(initialPhysicalWidth, initialPhysicalHeight, Window.Width, Window.Height);
 
-            AppClock = new Clock(true);
+            UpdateClock = new Clock(true);
+            DrawClock = new Clock(true);
 
-            this.app.Clock = AppClock;
+            this.app.Clock = UpdateClock;
 
             this.app.Load();
             this.app.LoadComplete();
 
-            lastUpdateTime = AppClock.CurrentTime;
+            lastUpdateTime = UpdateClock.CurrentTime;
             gameLoopStopwatch.Start();
 
             var spinWait = new SpinWait();
@@ -313,13 +297,13 @@ public abstract class AppHost : IDisposable
                 while (executionState == ExecutionState.Running)
                 {
                     double frameStartTime = gameLoopStopwatch.Elapsed.TotalMilliseconds;
-                    AppClock.Update();
+                    UpdateClock.Update();
                     Window?.PollEvents();
 
                     if (Window?.IsExiting == true)
                         Exit();
 
-                    if (inputClock.Process(AppClock.CurrentTime))
+                    if (inputClock.Process(UpdateClock.CurrentTime))
                         PerformInput();
 
                     // 20251029: PerformSoundUpdate is removed since the AudioManager is updated in App.Update().
@@ -445,7 +429,7 @@ public abstract class AppHost : IDisposable
     /// </summary>
     protected virtual void PerformInput()
     {
-        // Logger.LogPrint($"Input tick. Time: {AppClock.CurrentTime:F2}ms (delta: {AppClock.ElapsedFrameTime:F2}ms, frame: {AppClock.FramesPerSecond})");
+        // Logger.LogPrint($"Input tick. Time: {UpdateClock.CurrentTime:F2}ms (delta: {UpdateClock.ElapsedFrameTime:F2}ms, frame: {UpdateClock.FramesPerSecond})");
     }
 
     /// <summary>
@@ -459,21 +443,24 @@ public abstract class AppHost : IDisposable
     /// </summary>
     protected virtual void PerformUpdate()
     {
+        lastUpdateProcessTime = currentUpdateProcessTime;
+        currentUpdateProcessTime = UpdateClock.CurrentTime;
+
         while (inputQueue.TryDequeue(out var inputAction))
         {
             inputAction.Invoke();
         }
 
-        GlobalStatistics.Get<double>("Host", "Uptime (ms)").Value = AppClock.CurrentTime;
+        GlobalStatistics.Get<double>("Host", "Uptime (ms)").Value = UpdateClock.CurrentTime;
         GlobalStatistics.Get<double>("Host", "Target Update Hz").Value = targetUpdateHz;
 
         if (targetUpdateHz == 0) // Unlimited mode
         {
             // In unlimited mode, we just update once per loop iteration.
             app?.UpdateSubTree();
-            lastUpdateTime = AppClock.CurrentTime;
-            int updateIndex = frameBufferManager.GetUpdateIndex();
-            rootDrawNodes[updateIndex] = app?.GenerateDrawNodeSubtree(updateIndex);
+            lastUpdateTime = UpdateClock.CurrentTime;
+            int unlimitedUpdateIndex = frameBufferManager.GetUpdateIndex();
+            rootDrawNodes[unlimitedUpdateIndex] = app?.GenerateDrawNodeSubtree(unlimitedUpdateIndex);
             frameBufferManager.FinishUpdate();
             return;
         }
@@ -481,15 +468,16 @@ public abstract class AppHost : IDisposable
         double timeStep = 1000.0 / targetUpdateHz;
 
         // Run as many updates as needed to catch up with the current time.
-        while (AppClock.CurrentTime - lastUpdateTime >= timeStep)
+        while (UpdateClock.CurrentTime - lastUpdateTime >= timeStep)
         {
             // The update that happened in the drawable need to be aware of the timeStep.
             app?.UpdateSubTree();
             lastUpdateTime += timeStep;
-            int updateIndex = frameBufferManager.GetUpdateIndex();
-            rootDrawNodes[updateIndex] = app?.GenerateDrawNodeSubtree(updateIndex);
-            frameBufferManager.FinishUpdate();
         }
+
+        int updateIndex = frameBufferManager.GetUpdateIndex();
+        rootDrawNodes[updateIndex] = app?.GenerateDrawNodeSubtree(updateIndex);
+        frameBufferManager.FinishUpdate();
     }
 
     /// <summary>
@@ -498,14 +486,22 @@ public abstract class AppHost : IDisposable
     /// </summary>
     protected virtual void PerformDraw()
     {
+        DrawClock.Update();
+
         GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame").Value = 0;
         Renderer?.Clear();
         Renderer?.StartFrame();
+
         int drawIndex = frameBufferManager.GetDrawIndex();
         var currentFrameNode = rootDrawNodes[drawIndex];
+
         if (currentFrameNode != null)
+        {
+            currentFrameNode.PrepareForDraw(lastUpdateProcessTime, currentUpdateProcessTime, DrawClock.CurrentTime);
             Renderer?.SetRoot(currentFrameNode);
-        Renderer?.Draw(AppClock);
+        }
+
+        Renderer?.Draw(DrawClock);
         Window?.SwapBuffers();
     }
 
