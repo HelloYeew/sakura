@@ -14,6 +14,21 @@ public class MouseState
 
     public bool IsPressed(MouseButton button) => pressedButtons.Contains(button);
 
+    public MouseState Clone()
+    {
+        var clone = new MouseState
+        {
+            Position = Position
+        };
+
+        foreach (var button in pressedButtons)
+        {
+            clone.pressedButtons.Add(button);
+        }
+
+        return clone;
+    }
+
     public void SetPressed(MouseButton button, bool pressed)
     {
         if (pressed)
