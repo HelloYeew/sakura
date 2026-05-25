@@ -151,7 +151,7 @@ public class TestScreenStack : TestScene
             {
                 Anchor = Anchor.Centre,
                 Origin = Anchor.Centre,
-                Text = Name,
+                Text = GetDisplayName(),
                 Font = FontUsage.Default.With(size: 32),
                 Color = Color.White
             });
@@ -308,7 +308,7 @@ public class TestScreenStack : TestScene
             {
                 Anchor = Anchor.Centre,
                 Origin = Anchor.Centre,
-                Text = Name,
+                Text = GetDisplayName(),
                 Font = FontUsage.Default.With(size: 32),
                 Color = Color.White
             });

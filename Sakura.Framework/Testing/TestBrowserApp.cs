@@ -19,6 +19,7 @@ using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Graphics.UserInterface;
 using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
+using Sakura.Framework.Reactive;
 using Sakura.Framework.Timing;
 using Vector2 = Sakura.Framework.Maths.Vector2;
 
@@ -36,12 +37,13 @@ public class TestBrowserApp : App
     private Container headerContainer;
     private ScrollableContainer stepScrollContainer;
     private BasicSliderBar<double> volumeSlider;
+    private BasicCheckbox autoRunCheckbox;
 
     private readonly Assembly testAssembly;
 
     private const int sidebar_width = 150;
 
-    private bool isAutoRunEnabled;
+    private ReactiveBool autoRunEnabled = new ReactiveBool(false);
     private int currentAutoRunStep;
     private const int header_height = 40;
 
@@ -110,28 +112,32 @@ public class TestBrowserApp : App
                 loadTest(currentTest.GetType());
         }, Color.Transparent));
 
-        var autoRunText = new SpriteText
+        headerFlow.Add(autoRunCheckbox = new BasicCheckbox()
         {
-            Text = "Auto Run: OFF",
-            Font = FontUsage.Default.With(size: 15),
-            Anchor = Anchor.Centre,
-            Origin = Anchor.Centre
-        };
+            Anchor = Anchor.CentreLeft,
+            Origin = Anchor.CentreLeft
+        });
 
-        headerFlow.Add(new HeaderButton("", () =>
+        autoRunCheckbox.Current.BindTo(autoRunEnabled);
+
+        autoRunCheckbox.Current.ValueChanged += e =>
         {
-            isAutoRunEnabled = !isAutoRunEnabled;
-            autoRunText.Text = $"Auto Run: {(isAutoRunEnabled ? "ON" : "OFF")}";
-            autoRunText.Color = isAutoRunEnabled ? Color.GreenYellow : Color.White;
+            autoRunEnabled.Value = e.NewValue;
 
-            if (isAutoRunEnabled && currentTest != null)
+            if (e.NewValue)
             {
                 currentAutoRunStep = 0;
                 runNextStep();
             }
-        }, Color.DarkSlateBlue)
+        };
+
+        headerFlow.Add(new SpriteText()
         {
-            Child = autoRunText
+            Anchor = Anchor.CentreLeft,
+            Origin = Anchor.CentreLeft,
+            Text = "Auto Run",
+            Margin = new MarginPadding { Right = 20 },
+            Font = FontUsage.Default.With(size: 15)
         });
 
         headerFlow.Add(new SpriteText()
@@ -432,7 +438,7 @@ public class TestBrowserApp : App
             generateStepVisual((dynamic)step);
         }
 
-        if (isAutoRunEnabled)
+        if (autoRunEnabled)
         {
             currentAutoRunStep = 0;
             Scheduler.AddDelayed(runNextStep, 200);
@@ -480,7 +486,7 @@ public class TestBrowserApp : App
 
     private void runNextStep()
     {
-        if (!isAutoRunEnabled || currentTest == null || currentAutoRunStep >= currentTest.Steps.Count)
+        if (!autoRunEnabled || currentTest == null || currentAutoRunStep >= currentTest.Steps.Count)
             return;
 
         var step = currentTest.Steps[currentAutoRunStep];
@@ -523,7 +529,7 @@ public class TestBrowserApp : App
             {
                 Logger.Error($"[Test] Step failed: {step.Description}", ex);
                 button?.SetState(false);
-                isAutoRunEnabled = false;
+                autoRunEnabled.Value = false;
                 return;
             }
 
@@ -555,7 +561,7 @@ public class TestBrowserApp : App
                 {
                     Logger.Error($"[Test] Auto-run timed out on step: {step.Description}");
                     button?.SetState(false);
-                    isAutoRunEnabled = false;
+                    autoRunEnabled.Value = false;
                     return;
                 }
                 Scheduler?.AddDelayed(runNextStep, 10);
