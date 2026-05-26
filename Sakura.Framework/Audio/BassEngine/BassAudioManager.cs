@@ -24,7 +24,6 @@ internal class BassAudioManager : IAudioManager, IDisposable
 {
     private readonly List<BassAudioChannel> activeChannels = new List<BassAudioChannel>();
     private readonly ConcurrentQueue<Action> audioThreadActions = new ConcurrentQueue<Action>();
-    private readonly SyncProcedure channelEndSync;
 
     private readonly BassAudioMixer trackMixer;
     private readonly BassAudioMixer sampleMixer;
@@ -98,7 +97,6 @@ internal class BassAudioManager : IAudioManager, IDisposable
             Logger.Verbose($"Device buffer length: {deviceBuffer} ms");
             Logger.Verbose($"Playback buffer length: {playbackBuffer} ms");
         }
-        channelEndSync = OnChannelEnded;
     }
 
     public IAudioMixer TrackMixer => trackMixer;
@@ -137,9 +135,8 @@ internal class BassAudioManager : IAudioManager, IDisposable
         }
 
         Bass.ChannelGetAttribute(channelHandle, ChannelAttribute.Frequency, out float _);
-        targetMixer?.AddChannel(channel);
 
-        Bass.ChannelSetSync(channelHandle, SyncFlags.End, 0, channelEndSync, IntPtr.Zero);
+        targetMixer?.AddChannel(channel);
 
         return channel;
     }
@@ -150,31 +147,6 @@ internal class BassAudioManager : IAudioManager, IDisposable
         {
             activeChannels.Remove(channel);
         }
-    }
-
-    private void OnChannelEnded(int handle, int channel, int data, IntPtr user)
-    {
-        EnqueueAction(() =>
-        {
-            lock (activeChannels)
-            {
-                // Find the channel and clean it up
-                for (int i = activeChannels.Count - 1; i >= 0; i--)
-                {
-                    var bassChannel = activeChannels[i];
-                    if (bassChannel.ChannelHandle == handle)
-                    {
-                        bassChannel.IsRunning.Value = false;
-                        if (bassChannel.AutoDispose)
-                        {
-                            bassChannel.Dispose();
-                            activeChannels.RemoveAt(i);
-                        }
-                        break;
-                    }
-                }
-            }
-        });
     }
 
     /// <summary>
@@ -190,12 +162,51 @@ internal class BassAudioManager : IAudioManager, IDisposable
 
     public void Update(double frameTime)
     {
+        // Run actions scheduled from other threads (e.g., BASS SYNCPROC)
         while (audioThreadActions.TryDequeue(out var action))
         {
             action.Invoke();
         }
 
+        int playingCount = 0;
+
+        // Clean up disposed or stopped channels
+        lock (activeChannels)
+        {
+            for (int i = activeChannels.Count - 1; i >= 0; i--)
+            {
+                var channel = activeChannels[i];
+                var state = Bass.ChannelIsActive(channel.ChannelHandle);
+                switch (state)
+                {
+                    case PlaybackState.Stopped:
+                    {
+                        if (channel.IsRunning.Value)
+                        {
+                            channel.IsRunning.Value = false;
+                        }
+
+                        if (channel.AutoDispose && !channel.IsRunning.Value)
+                        {
+                            channel.Dispose();
+                        }
+
+                        break;
+                    }
+                    case PlaybackState.Playing:
+                    {
+                        playingCount++;
+                        break;
+                    }
+                }
+            }
+            GlobalStatistics.Get<int>("Audio", "Allocated Channels").Value = activeChannels.Count;
+            GlobalStatistics.Get<int>("Audio", "Playing Channels").Value = playingCount;
+        }
+
         GlobalStatistics.Get<double>("Audio", "BASS CPU Usage (%)").Value = Bass.CPUUsage;
+
+        // Bass.Update((int)Math.Max(1, frameTime));
     }
 
     public void Dispose()

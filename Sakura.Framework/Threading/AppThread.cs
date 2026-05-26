@@ -106,13 +106,13 @@ public class AppThread
 
                     double timeRemainingMs = remainingTicks * msPerTick;
 
-                    if (timeRemainingMs >= 1.0)
+                    if (timeRemainingMs > 2.0)
                     {
-                        Thread.Sleep(TimeSpan.FromMilliseconds(timeRemainingMs - 0.2));
+                        Thread.Sleep(1);
                     }
                     else if (timeRemainingMs > 0.1)
                     {
-                        Thread.Sleep(0);
+                        Thread.Yield();
                     }
                     else
                     {
@@ -122,10 +122,9 @@ public class AppThread
 
                 lastFrameTime += targetTicks;
 
-                double thresholdLimitMs = Math.Max(targetFrameTimeMs * 5, 50.0);
-
+                // if fall more than 5 frames behind, reset the anchor
                 long currentAfterWait = System.Diagnostics.Stopwatch.GetTimestamp();
-                if ((currentAfterWait - lastFrameTime) * msPerTick > thresholdLimitMs)
+                if ((currentAfterWait - lastFrameTime) * msPerTick > targetFrameTimeMs * 5)
                 {
                     lastFrameTime = currentAfterWait;
                 }
