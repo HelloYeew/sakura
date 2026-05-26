@@ -527,6 +527,17 @@ public abstract class AppHost : IDisposable
     }
 
     /// <summary>
+    /// Schedules an action to be safely executed on the OS Main User Interface Thread.
+    /// </summary>
+    public void ScheduleToMainThread(Action action)
+    {
+        if (action != null)
+        {
+            mainThreadActions.Enqueue(action);
+        }
+    }
+
+    /// <summary>
     /// This method is called at a fixed 1000Hz for precise audio processing.
     /// </summary>
     protected virtual void PerformSoundUpdate() { }

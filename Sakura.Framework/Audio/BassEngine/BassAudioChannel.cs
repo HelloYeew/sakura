@@ -54,12 +54,19 @@ internal class BassAudioChannel : IAudioChannel
             else OnStop?.Invoke();
         };
 
+        Volume.ValueChanged += e => manager.EnqueueAction(() =>
+        {
+            if (isDisposed) return;
+            BassUtils.CheckError(Bass.ChannelSetAttribute(ChannelHandle, ChannelAttribute.Volume, (float)e.NewValue), "setting volume");
+        });
+
         Volume.ValueChanged += e => manager.EnqueueAction(() => BassUtils.CheckError(Bass.ChannelSetAttribute(ChannelHandle, ChannelAttribute.Volume, (float)e.NewValue), "setting volume"));
         bool isFreqInitialized = false;
         Frequency.ValueChanged += e =>
         {
             manager.EnqueueAction(() =>
             {
+                if (isDisposed) return;
                 if (!isFreqInitialized)
                 {
                     isFreqInitialized = true;
@@ -68,7 +75,12 @@ internal class BassAudioChannel : IAudioChannel
                 BassUtils.CheckError(Bass.ChannelSetAttribute(ChannelHandle, ChannelAttribute.Frequency, (float)(e.NewValue * originalFrequency1)), "setting frequency");
             });
         };
-        Balance.ValueChanged += e => manager.EnqueueAction(() => BassUtils.CheckError(Bass.ChannelSetAttribute(ChannelHandle, ChannelAttribute.Pan, (float)e.NewValue), "setting balance"));
+
+        Balance.ValueChanged += e => manager.EnqueueAction(() =>
+        {
+            if (isDisposed) return;
+            BassUtils.CheckError(Bass.ChannelSetAttribute(ChannelHandle, ChannelAttribute.Pan, (float)e.NewValue), "setting balance");
+        });
     }
 
     private void OnChannelEnd(int handle, int channel, int data, IntPtr user)
@@ -98,6 +110,7 @@ internal class BassAudioChannel : IAudioChannel
     {
         manager.EnqueueAction(() =>
         {
+            if (isDisposed) return;
             if (Mixer != null)
             {
                 BassUtils.CheckError(BassMix.ChannelRemoveFlag(ChannelHandle, BassFlags.MixerChanPause), "resuming mixer channel");
@@ -114,6 +127,7 @@ internal class BassAudioChannel : IAudioChannel
     {
         manager.EnqueueAction(() =>
         {
+            if (isDisposed) return;
             if (Mixer != null)
             {
                 BassUtils.CheckError(BassMix.ChannelAddFlag(ChannelHandle, BassFlags.MixerChanPause), "stopping mixer channel");
@@ -130,15 +144,19 @@ internal class BassAudioChannel : IAudioChannel
 
     public void Pause()
     {
-        if (Mixer != null)
+        manager.EnqueueAction(() =>
         {
-            BassUtils.CheckError(BassMix.ChannelAddFlag(ChannelHandle, BassFlags.MixerChanPause), "pausing mixer channel");
-            IsRunning.Value = false;
-        }
-        else if (BassUtils.CheckError(Bass.ChannelPause(ChannelHandle), "pausing channel"))
-        {
-            IsRunning.Value = false;
-        }
+            if (isDisposed) return; // Guard clause
+            if (Mixer != null)
+            {
+                BassUtils.CheckError(BassMix.ChannelAddFlag(ChannelHandle, BassFlags.MixerChanPause), "pausing mixer channel");
+                IsRunning.Value = false;
+            }
+            else if (BassUtils.CheckError(Bass.ChannelPause(ChannelHandle), "pausing channel"))
+            {
+                IsRunning.Value = false;
+            }
+        });
     }
 
     public Reactive<double> Volume { get; } = new Reactive<double>(1.0);
@@ -150,13 +168,20 @@ internal class BassAudioChannel : IAudioChannel
     {
         get
         {
+            if (isDisposed)
+                return 0;
             long pos = Bass.ChannelGetPosition(ChannelHandle);
             return Bass.ChannelBytes2Seconds(ChannelHandle, pos) * 1000.0;
         }
         set
         {
-            long pos = Bass.ChannelSeconds2Bytes(ChannelHandle, value / 1000.0);
-            Bass.ChannelSetPosition(ChannelHandle, pos);
+            if (isDisposed) return;
+            manager.EnqueueAction(() =>
+            {
+                if (isDisposed) return;
+                long pos = Bass.ChannelSeconds2Bytes(ChannelHandle, value / 1000.0);
+                Bass.ChannelSetPosition(ChannelHandle, pos);
+            });
         }
     }
 
@@ -164,6 +189,8 @@ internal class BassAudioChannel : IAudioChannel
     {
         get
         {
+            if (isDisposed)
+                return 0;
             long len = Bass.ChannelGetLength(ChannelHandle);
             return Bass.ChannelBytes2Seconds(ChannelHandle, len) * 1000.0;
         }
@@ -248,23 +275,26 @@ internal class BassAudioChannel : IAudioChannel
         if (isDisposed) return;
         isDisposed = true;
 
-        Mixer?.RemoveChannel(this);
-
-        // If it's a stream, we free the stream.
-        // If it's a sample channel, BASS manages it, and it's freed when the sample is freed.
-        if (isStream)
+        manager.EnqueueAction(() =>
         {
-            Bass.StreamFree(ChannelHandle);
-        }
+            Mixer?.RemoveChannel(this);
 
-        manager.RemoveChannel(this);
+            // If it's a stream, we free the stream.
+            // If it's a sample channel, BASS manages it, and it's freed when the sample is freed.
+            if (isStream)
+            {
+                Bass.StreamFree(ChannelHandle);
+            }
 
-        IsRunning.Value = false;
-        OnStart = null!;
-        OnStop = null!;
-        OnEnd = null!;
+            manager.RemoveChannel(this);
 
-        // Unpin the sync procedure
-        endSyncProcedure = null;
+            IsRunning.Value = false;
+            OnStart = null!;
+            OnStop = null!;
+            OnEnd = null!;
+
+            // Unpin the sync procedure
+            endSyncProcedure = null;
+        });
     }
 }
