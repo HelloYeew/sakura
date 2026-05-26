@@ -269,6 +269,7 @@ public class FpsGraph : Container
 
         private SpriteText statsText;
         private ThreadBarGraph barGraph;
+        private Box textBackground;
 
         private PerformanceOverlayState currentState;
 
@@ -281,10 +282,7 @@ public class FpsGraph : Container
 
             for (int i = 0; i < max_history; i++)
             {
-                frameHistory[i] = new FrameData
-                {
-                    GcGeneration = -1
-                };
+                frameHistory[i] = new FrameData { GcGeneration = -1 };
             }
 
             for (int i = 0; i < 3; i++)
@@ -292,8 +290,14 @@ public class FpsGraph : Container
 
             Anchor = Anchor.TopRight;
             Origin = Anchor.TopRight;
+            Size = new Vector2(extended_width - 5, 20);
 
-            Size = new Vector2(extended_width-5, 20);
+            Add(textBackground = new Box
+            {
+                RelativeSizeAxes = Axes.Both,
+                Color = Color.Black,
+                Alpha = 0.75f
+            });
 
             Add(barGraph = new ThreadBarGraph(this)
             {
@@ -301,28 +305,43 @@ public class FpsGraph : Container
                 Alpha = 0.8f
             });
 
-            Add(new FlowContainer
+            Add(new Container
             {
-                Direction = FlowDirection.Horizontal,
-                AutoSizeAxes = Axes.Both,
-                Spacing = new Vector2(10, 0),
+                RelativeSizeAxes = Axes.X,
+                AutoSizeAxes = Axes.Y,
                 Anchor = Anchor.TopRight,
                 Origin = Anchor.TopRight,
+                Padding = new MarginPadding
+                {
+                    Left = 5,
+                    Right = 5,
+                },
                 Children = new Drawable[]
                 {
-                    new SpriteText
+                    new FlowContainer
                     {
-                        Text = name,
-                        Font = FontUsage.Default.With(size: 16, weight: "Bold"),
-                        Color = baseColor,
-                        Margin = new MarginPadding { Top = 2 }
-                    },
-                    statsText = new SpriteText
-                    {
-                        Text = "Waiting...",
-                        Font = FontUsage.Default.With(size: 16),
-                        Color = Color.White,
-                        Margin = new MarginPadding { Top = 2 }
+                        Direction = FlowDirection.Horizontal,
+                        AutoSizeAxes = Axes.Both,
+                        Anchor = Anchor.TopRight,
+                        Origin = Anchor.TopRight,
+                        Spacing = new Vector2(10, 0),
+                        Children = new Drawable[]
+                        {
+                            new SpriteText
+                            {
+                                Text = name,
+                                Font = FontUsage.Default.With(size: 16, weight: "Bold"),
+                                Color = baseColor,
+                                Margin = new MarginPadding { Top = 2 }
+                            },
+                            statsText = new SpriteText
+                            {
+                                Text = "Waiting...",
+                                Font = FontUsage.Default.With(size: 16),
+                                Color = Color.White,
+                                Margin = new MarginPadding { Top = 2 }
+                            }
+                        }
                     }
                 }
             });
@@ -335,8 +354,8 @@ public class FpsGraph : Container
             if (state == PerformanceOverlayState.Compact)
             {
                 barGraph.Hide();
-                AutoSizeAxes = Axes.Both;
-                Size = Vector2.Zero;
+                AutoSizeAxes = Axes.Y;
+                Width = compact_width - 5;
             }
             else
             {
