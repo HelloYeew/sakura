@@ -206,10 +206,11 @@ public class FpsGraph : Container
     public override void LoadComplete()
     {
         base.LoadComplete();
-        windowModeText.Text = $"{host.Window.WindowModeReactive.Value} ({host.Window.Width}x{host.Window.Height})";
-        executionModeText.Text = $"{host.ExecutionMode.Value}";
 
+        windowModeText.Text = $"{host.Window?.WindowModeReactive.Value} ({host.Window?.Width}x{host.Window?.Height})";
+        executionModeText.Text = $"{host.ExecutionMode.Value}";
         limiterText.Text = $"{host.FrameLimiter.Value}";
+
         host.FrameLimiter.ValueChanged += value =>
         {
             limiterText.Text = $"{value.NewValue}";

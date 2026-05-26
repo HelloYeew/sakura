@@ -85,6 +85,7 @@ public class TestDrawSizePreservingFillContainer : TestScene
         // min(3.0, 2.0) = 2.0
         // scale = (2.0, 2.0)
         // size = (1 / 2.0, 1 / 2.0) = (0.5, 0.5)
+        addWaitStep();
         AddAssert("Scale is 2.0", () => Precision.AlmostEquals(fillContainer.Scale, new Vector2(2f)));
         AddAssert("Size is 0.5", () => Precision.AlmostEquals(fillContainer.Size, new Vector2(0.5f)));
     }
@@ -101,6 +102,7 @@ public class TestDrawSizePreservingFillContainer : TestScene
         // max(3.0, 2.0) = 3.0
         // scale = (3.0, 3.0)
         // size = (1 / 3.0, 1 / 3.0) -> (0.333, 0.333)
+        addWaitStep();
         AddAssert("Scale is 3.0", () => Precision.AlmostEquals(fillContainer.Scale, new Vector2(3f)));
         AddAssert("Size is ~0.333", () => Precision.AlmostEquals(fillContainer.Size, new Vector2(1f / 3f)));
     }
@@ -117,6 +119,7 @@ public class TestDrawSizePreservingFillContainer : TestScene
         // (3.0 + 2.0) / 2 = 2.5
         // scale = (2.5, 2.5)
         // size = (1 / 2.5, 1 / 2.5) = (0.4, 0.4)
+        addWaitStep();
         AddAssert("Scale is 2.5", () => Precision.AlmostEquals(fillContainer.Scale, new Vector2(2.5f)));
         AddAssert("Size is 0.4", () => Precision.AlmostEquals(fillContainer.Size, new Vector2(0.4f)));
     }
@@ -132,7 +135,13 @@ public class TestDrawSizePreservingFillContainer : TestScene
 
         // scale = (3.0, 2.0)
         // size = (1 / 3.0, 1 / 2.0) ≈ (0.333, 0.5)
+        addWaitStep();
         AddAssert("Scale is (3, 2)", () => Precision.AlmostEquals(fillContainer.Scale, new Vector2(3f, 2f)));
         AddAssert("Size is (~0.333, 0.5)", () => Precision.AlmostEquals(fillContainer.Size, new Vector2(1f / 3f, 0.5f)));
+    }
+
+    private void addWaitStep()
+    {
+        AddWaitStep("Wait for layout to compute", 50);
     }
 }
