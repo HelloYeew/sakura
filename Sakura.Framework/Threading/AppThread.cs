@@ -71,7 +71,7 @@ public class GameThread
 
     private void runLoop()
     {
-        OnInitialize?.Invoke();
+        OnInitialize.Invoke();
 
         var spinWait = new SpinWait();
 
