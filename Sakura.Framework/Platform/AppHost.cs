@@ -43,7 +43,7 @@ public abstract class AppHost : IDisposable
     public IClock InputClock { get; private set; }
     private readonly ThrottledFrameClock soundClock = new ThrottledFrameClock(1000);
     private double lastUpdateTime;
-    private readonly Stopwatch gameLoopStopwatch = new Stopwatch();
+    private readonly Stopwatch appLoopStopwatch = new Stopwatch();
     private readonly ConcurrentQueue<Action> inputQueue = new ConcurrentQueue<Action>();
     private readonly ConcurrentQueue<Action> mainThreadActions = new ConcurrentQueue<Action>();
 
@@ -352,13 +352,11 @@ public abstract class AppHost : IDisposable
             this.app.LoadComplete();
 
             lastUpdateTime = UpdateClock.CurrentTime;
-            gameLoopStopwatch.Start();
+            appLoopStopwatch.Start();
 
             long timestampFrequency = Stopwatch.Frequency;
             double msPerTick = 1000.0 / timestampFrequency;
             long lastMainFrameTime = Stopwatch.GetTimestamp();
-            const double target_main_frame_time_ms = 1000.0 / 1000.0;
-            long targetMainTicks = (long)(target_main_frame_time_ms / msPerTick);
 
             try
             {
@@ -384,8 +382,15 @@ public abstract class AppHost : IDisposable
                     {
                         threadRunner.RunSingleThreadedFrame();
                     }
-                    else
+
+                    double currentHz = ExecutionMode.Value == Threading.ExecutionMode.SingleThread
+                        ? targetUpdateHz
+                        : 1000.0;
+
+                    if (currentHz > 0)
                     {
+                        double targetMainFrameTimeMs = 1000.0 / currentHz;
+                        long targetMainTicks = (long)(targetMainFrameTimeMs / msPerTick);
                         long targetFrameTimeTimestamp = lastMainFrameTime + targetMainTicks;
 
                         while (true)
@@ -397,10 +402,10 @@ public abstract class AppHost : IDisposable
                                 break;
 
                             double timeRemainingMs = remainingTicks * msPerTick;
-                            if (timeRemainingMs > 2.0)
-                                Thread.Sleep(1);
+                            if (timeRemainingMs >= 1.0)
+                                Thread.Sleep(TimeSpan.FromMilliseconds(timeRemainingMs - 0.2));
                             else if (timeRemainingMs > 0.1)
-                                Thread.Yield();
+                                Thread.Sleep(0);
                             else
                                 Thread.SpinWait(10);
                         }
@@ -408,10 +413,14 @@ public abstract class AppHost : IDisposable
                         lastMainFrameTime += targetMainTicks;
 
                         long currentAfterWait = Stopwatch.GetTimestamp();
-                        if ((currentAfterWait - lastMainFrameTime) * msPerTick > target_main_frame_time_ms * 5)
+                        if ((currentAfterWait - lastMainFrameTime) * msPerTick > targetMainFrameTimeMs * 5)
                         {
                             lastMainFrameTime = currentAfterWait;
                         }
+                    }
+                    else
+                    {
+                        lastMainFrameTime = Stopwatch.GetTimestamp();
                     }
                 }
             }
