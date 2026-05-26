@@ -7,11 +7,12 @@ using Sakura.Framework.Timing;
 
 namespace Sakura.Framework.Threading;
 
-public class GameThread
+public class AppThread
 {
     public string Name { get; }
     public Clock Clock { get; }
-    public Action OnInitialize { get; set; }
+    public ThreadPriority Priority { get; set; } = ThreadPriority.Normal;
+    public Action? OnInitialize { get; set; }
     public Action FrameAction { get; }
     public Func<double> GetTargetHz { get; }
 
@@ -20,7 +21,7 @@ public class GameThread
     private bool isRunning;
     private bool isPaused;
 
-    public GameThread(string name, Action frameAction, Func<double> getTargetHz)
+    public AppThread(string name, Action frameAction, Func<double> getTargetHz)
     {
         Name = name;
         FrameAction = frameAction;
@@ -38,7 +39,8 @@ public class GameThread
         internalThread = new Thread(runLoop)
         {
             Name = Name,
-            IsBackground = true
+            IsBackground = true,
+            Priority = Priority
         };
         internalThread.Start();
     }
@@ -71,12 +73,12 @@ public class GameThread
 
     private void runLoop()
     {
-        OnInitialize.Invoke();
+        OnInitialize?.Invoke();
 
-        var spinWait = new SpinWait();
+        long timestampFrequency = System.Diagnostics.Stopwatch.Frequency;
+        double msPerTick = 1000.0 / timestampFrequency;
 
-        var threadTimer = System.Diagnostics.Stopwatch.StartNew();
-        double lastFrameTime = threadTimer.Elapsed.TotalMilliseconds;
+        long lastFrameTime = System.Diagnostics.Stopwatch.GetTimestamp();
 
         while (isRunning)
         {
@@ -90,23 +92,46 @@ public class GameThread
 
             if (currentHz > 0)
             {
-                double targetFrameTime = 1000.0 / currentHz;
+                double targetFrameTimeMs = 1000.0 / currentHz;
+                long targetTicks = (long)(targetFrameTimeMs / msPerTick);
+                long targetFrameTimeTimestamp = lastFrameTime + targetTicks;
 
-                while (threadTimer.Elapsed.TotalMilliseconds - lastFrameTime < targetFrameTime)
+                while (true)
                 {
-                    spinWait.SpinOnce();
+                    long currentTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
+                    long remainingTicks = targetFrameTimeTimestamp - currentTimestamp;
+
+                    if (remainingTicks <= 0)
+                        break;
+
+                    double timeRemainingMs = remainingTicks * msPerTick;
+
+                    if (timeRemainingMs > 2.0)
+                    {
+                        Thread.Sleep(1);
+                    }
+                    else if (timeRemainingMs > 0.1)
+                    {
+                        Thread.Yield();
+                    }
+                    else
+                    {
+                        Thread.SpinWait(10);
+                    }
                 }
 
-                lastFrameTime += targetFrameTime;
+                lastFrameTime += targetTicks;
 
-                if (threadTimer.Elapsed.TotalMilliseconds - lastFrameTime > targetFrameTime * 5)
+                // if fall more than 5 frames behind, reset the anchor
+                long currentAfterWait = System.Diagnostics.Stopwatch.GetTimestamp();
+                if ((currentAfterWait - lastFrameTime) * msPerTick > targetFrameTimeMs * 5)
                 {
-                    lastFrameTime = threadTimer.Elapsed.TotalMilliseconds;
+                    lastFrameTime = currentAfterWait;
                 }
             }
             else
             {
-                lastFrameTime = threadTimer.Elapsed.TotalMilliseconds;
+                lastFrameTime = System.Diagnostics.Stopwatch.GetTimestamp();
             }
         }
     }

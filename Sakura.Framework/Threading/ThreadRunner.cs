@@ -7,13 +7,13 @@ namespace Sakura.Framework.Threading;
 
 public class ThreadRunner : IDisposable
 {
-    private readonly GameThread updateThread;
-    private readonly GameThread drawThread;
-    private readonly GameThread audioThread;
+    private readonly AppThread updateThread;
+    private readonly AppThread drawThread;
+    private readonly AppThread audioThread;
 
     public ExecutionMode CurrentMode { get; private set; }
 
-    public ThreadRunner(GameThread updateThread, GameThread drawThread, GameThread audioThread)
+    public ThreadRunner(AppThread updateThread, AppThread drawThread, AppThread audioThread)
     {
         this.updateThread = updateThread;
         this.drawThread = drawThread;

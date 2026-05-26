@@ -55,9 +55,9 @@ public abstract class AppHost : IDisposable
     private DrawNode currentFrameDrawNode;
 
     private ThreadRunner threadRunner;
-    private GameThread updateThread;
-    private GameThread drawThread;
-    private GameThread audioThread;
+    private AppThread updateThread;
+    private AppThread drawThread;
+    private AppThread audioThread;
 
     // TODO: This "should" not be accessible from outside the framework.
     public Storage FrameworkStorage { get; private set; } = new EmbeddedResourceStorage(typeof(AppHost).Assembly, "Sakura.Framework.Resources");
@@ -297,9 +297,18 @@ public abstract class AppHost : IDisposable
             Window.GetPhysicalSize(out int initialPhysicalWidth, out int initialPhysicalHeight);
             onResize(initialPhysicalWidth, initialPhysicalHeight, Window.Width, Window.Height);
 
-            updateThread = new GameThread("UpdateThread", PerformUpdate, () => targetUpdateHz);
-            drawThread = new GameThread("DrawThread", PerformDraw, getTargetUpdateHz);
-            audioThread = new GameThread("AudioThread", PerformSoundUpdate, () => 1000);
+            updateThread = new AppThread("UpdateThread", PerformUpdate, () => targetUpdateHz)
+            {
+                Priority = ThreadPriority.AboveNormal
+            };
+            drawThread = new AppThread("DrawThread", PerformDraw, getTargetUpdateHz)
+            {
+                Priority = ThreadPriority.Normal
+            };
+            audioThread = new AppThread("AudioThread", PerformSoundUpdate, () => 1000)
+            {
+                Priority = ThreadPriority.Highest
+            };
 
             drawThread.OnInitialize = () => Window.GraphicsSurface.MakeCurrent();
 
@@ -345,14 +354,20 @@ public abstract class AppHost : IDisposable
             lastUpdateTime = UpdateClock.CurrentTime;
             gameLoopStopwatch.Start();
 
-            var spinWait = new SpinWait();
-            double lastMainFrameTime = gameLoopStopwatch.Elapsed.TotalMilliseconds;
-            const double target_main_frame_time = 1000.0 / 1000.0;
+            long timestampFrequency = Stopwatch.Frequency;
+            double msPerTick = 1000.0 / timestampFrequency;
+            long lastMainFrameTime = Stopwatch.GetTimestamp();
+            const double target_main_frame_time_ms = 1000.0 / 1000.0;
+            long targetMainTicks = (long)(target_main_frame_time_ms / msPerTick);
 
             try
             {
                 while (executionState == ExecutionState.Running)
                 {
+                    GlobalStatistics.Get<int>("GC", "Gen 0 Collections").Value = GC.CollectionCount(0);
+                    GlobalStatistics.Get<int>("GC", "Gen 1 Collections").Value = GC.CollectionCount(1);
+                    GlobalStatistics.Get<int>("GC", "Gen 2 Collections").Value = GC.CollectionCount(2);
+
                     while (mainThreadActions.TryDequeue(out var action))
                     {
                         action.Invoke();
@@ -371,16 +386,31 @@ public abstract class AppHost : IDisposable
                     }
                     else
                     {
-                        while (gameLoopStopwatch.Elapsed.TotalMilliseconds - lastMainFrameTime < target_main_frame_time)
+                        long targetFrameTimeTimestamp = lastMainFrameTime + targetMainTicks;
+
+                        while (true)
                         {
-                            spinWait.SpinOnce();
+                            long currentTimestamp = Stopwatch.GetTimestamp();
+                            long remainingTicks = targetFrameTimeTimestamp - currentTimestamp;
+
+                            if (remainingTicks <= 0)
+                                break;
+
+                            double timeRemainingMs = remainingTicks * msPerTick;
+                            if (timeRemainingMs > 2.0)
+                                Thread.Sleep(1);
+                            else if (timeRemainingMs > 0.1)
+                                Thread.Yield();
+                            else
+                                Thread.SpinWait(10);
                         }
 
-                        lastMainFrameTime += target_main_frame_time;
+                        lastMainFrameTime += targetMainTicks;
 
-                        if (gameLoopStopwatch.Elapsed.TotalMilliseconds - lastMainFrameTime > target_main_frame_time * 5)
+                        long currentAfterWait = Stopwatch.GetTimestamp();
+                        if ((currentAfterWait - lastMainFrameTime) * msPerTick > target_main_frame_time_ms * 5)
                         {
-                            lastMainFrameTime = gameLoopStopwatch.Elapsed.TotalMilliseconds;
+                            lastMainFrameTime = currentAfterWait;
                         }
                     }
                 }
