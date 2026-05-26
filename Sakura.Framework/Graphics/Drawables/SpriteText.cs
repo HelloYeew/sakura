@@ -238,6 +238,9 @@ public class SpriteText : Drawable
         private int textVertexCount;
         private bool hasPreviousTextState;
 
+        private Vertex[] textPreviousVertices = Array.Empty<Vertex>();
+        private Vertex[] textCurrentVertices = Array.Empty<Vertex>();
+
         public override void ApplyState(Drawable source)
         {
             base.ApplyState(source);
@@ -245,21 +248,22 @@ public class SpriteText : Drawable
 
             textVertexCount = text.currentVertexCount;
 
-            if (CurrentVertices.Length < textVertexCount)
+            // check our isolated array instead of the base class's CurrentVertices
+            if (textCurrentVertices.Length < textVertexCount)
             {
-                PreviousVertices = new Vertex[textVertexCount];
-                CurrentVertices = new Vertex[textVertexCount];
+                textPreviousVertices = new Vertex[textVertexCount];
+                textCurrentVertices = new Vertex[textVertexCount];
                 Vertices = new Vertex[textVertexCount];
                 hasPreviousTextState = false; // reset to snap on resize
             }
 
-            Array.Copy(CurrentVertices, PreviousVertices, textVertexCount);
-            Array.Copy(text.textVertices, CurrentVertices, textVertexCount);
+            Array.Copy(textCurrentVertices, textPreviousVertices, textVertexCount);
+            Array.Copy(text.textVertices, textCurrentVertices, textVertexCount);
 
             // prevent the text from flying in from (0,0) on the very first frame
             if (!hasPreviousTextState)
             {
-                Array.Copy(CurrentVertices, PreviousVertices, textVertexCount);
+                Array.Copy(textCurrentVertices, textPreviousVertices, textVertexCount);
                 hasPreviousTextState = true;
             }
 
@@ -319,9 +323,9 @@ public class SpriteText : Drawable
 
             for (int i = 0; i < textVertexCount; i++)
             {
-                Vertices[i] = CurrentVertices[i];
-                Vertices[i].Position.X = PreviousVertices[i].Position.X + (CurrentVertices[i].Position.X - PreviousVertices[i].Position.X) * interpolationFactor;
-                Vertices[i].Position.Y = PreviousVertices[i].Position.Y + (CurrentVertices[i].Position.Y - PreviousVertices[i].Position.Y) * interpolationFactor;
+                Vertices[i] = textCurrentVertices[i];
+                Vertices[i].Position.X = textPreviousVertices[i].Position.X + (textCurrentVertices[i].Position.X - textPreviousVertices[i].Position.X) * interpolationFactor;
+                Vertices[i].Position.Y = textPreviousVertices[i].Position.Y + (textCurrentVertices[i].Position.Y - textPreviousVertices[i].Position.Y) * interpolationFactor;
             }
         }
 
