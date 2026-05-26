@@ -28,7 +28,7 @@ public enum PerformanceOverlayState
     Expanded
 }
 
-public class FpsGraph : Container
+public class FpsGraph : Container, IRemoveFromDrawVisualiser
 {
     private Reactive<PerformanceOverlayState> state;
 
@@ -191,9 +191,9 @@ public class FpsGraph : Container
 
         displaysFlow.Add(currentContextFlow);
 
-        displaysFlow.Add(new ThreadStatisticsDisplay("Input", host.InputClock, Color.Gray, window));
+        displaysFlow.Add(new ThreadStatisticsDisplay("Input", host.InputClock, Color.LimeGreen, window));
         displaysFlow.Add(new ThreadStatisticsDisplay("Audio", host.AudioClock, Color.Yellow, window));
-        displaysFlow.Add(new ThreadStatisticsDisplay("Update", host.UpdateClock, Color.MediumPurple, window));
+        displaysFlow.Add(new ThreadStatisticsDisplay("Update", host.UpdateClock, Color.Purple, window));
         displaysFlow.Add(new ThreadStatisticsDisplay("Draw", host.DrawClock, Color.Cyan, window));
 
         state = host.FrameworkConfigManager.Get(FrameworkSetting.ShowFpsGraph, PerformanceOverlayState.Hidden);
