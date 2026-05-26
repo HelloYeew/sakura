@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Linq;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
@@ -56,14 +57,20 @@ public class GLTextureManager : ITextureManager
             using var stream = storage.GetStream(path);
             if (stream == null) throw new FileNotFoundException($"Texture not found: {path}");
 
-            using var rawImage = imageLoader.Load(stream);
+            var rawImage = imageLoader.Load(stream);
+
+            // force a copy of the pooled memory immediately on the update thread
+            byte[] pixelDataCopy = rawImage.Data.ToArray();
+
             var glTexture = new GLTexture(gl, rawImage.Width, rawImage.Height);
             var texture = new Texture(glTexture);
 
+            // dispose the native image on the thread that created it
+            rawImage.Dispose();
+
             renderer.ScheduleToDrawThread(() =>
             {
-                glTexture.Upload(rawImage.Data);
-                rawImage.Dispose();
+                glTexture.Upload(pixelDataCopy);
             });
 
             textureCache[path] = texture;

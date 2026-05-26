@@ -6,6 +6,7 @@ using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Statistic;
+using Texture = Sakura.Framework.Graphics.Textures.Texture;
 
 namespace Sakura.Framework.Graphics.Rendering;
 
@@ -21,6 +22,7 @@ public class DrawNode
     public float PreviousDrawAlpha { get; protected set; }
     public float CurrentDrawAlpha { get; protected set; }
     public float DrawAlpha { get; protected set; }
+    public TextureFillMode FillMode { get; protected set; }
     public RectangleF DrawRectangle { get; protected set; }
     private bool hasPreviousState;
 
@@ -36,6 +38,7 @@ public class DrawNode
         Texture = source.Texture;
         Blending = source.Blending;
         DrawRectangle = source.DrawRectangle;
+        FillMode = source.FillMode;
 
         if (CurrentVertices.Length != source.Vertices.Length)
         {
@@ -93,6 +96,7 @@ public class DrawNode
     {
         if (DrawAlpha <= 0 || Vertices.Length == 0)
             return;
+
         GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame").Value++;
         renderer.SetBlendMode(Blending);
         renderer.DrawVertices(Vertices, Texture ?? renderer.WhitePixel);

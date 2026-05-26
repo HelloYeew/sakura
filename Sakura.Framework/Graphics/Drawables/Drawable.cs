@@ -18,7 +18,6 @@ using Sakura.Framework.Maths;
 using Sakura.Framework.Statistic;
 using Sakura.Framework.Timing;
 using Sakura.Framework.Utilities;
-using Silk.NET.OpenGL;
 using Texture = Sakura.Framework.Graphics.Textures.Texture;
 
 namespace Sakura.Framework.Graphics.Drawables;
@@ -529,11 +528,6 @@ public abstract class Drawable
 
                 case TextureFillMode.Tile:
                     // Expand UVs > 1.0 to repeat
-
-                    // Note: This changes the GL state for this texture handle globally.
-                    // If this texture is used elsewhere with Clamp, it will affect it.
-                    Texture.GlTexture.SetWrapMode(TextureWrapMode.Repeat);
-
                     float repeatX = DrawSize.X / Texture.Width;
                     float repeatY = DrawSize.Y / Texture.Height;
 
