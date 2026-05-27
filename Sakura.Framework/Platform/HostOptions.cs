@@ -17,4 +17,10 @@ public class HostOptions
     /// Whether this is a portable installation. Will cause all application files to be placed alongside the executable, rather than in the standard data directory.
     /// </summary>
     public bool PortableInstallation { get; set; }
+
+    /// <summary>
+    /// Whether to limit the update thread FPS to maximum at 1000 FPS in order to prevent excessive CPU usage
+    /// when the game is running with an unlimited update rate.
+    /// </summary>
+    public bool LimitUnlimitedUpdateRate { get; set; } = true;
 }

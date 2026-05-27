@@ -656,7 +656,7 @@ public abstract class AppHost : IDisposable
         double drawHz = getDrawTargetHz();
 
         if (drawHz == 0)
-            return 0;
+            return Options.LimitUnlimitedUpdateRate ? 1000 : 0;
 
         if (Window != null && !Window.IsActive)
             return 60;
