@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
+using System.Threading;
 using Sakura.Framework.Input;
 using Silk.NET.SDL;
 using Sakura.Framework.Logging;
@@ -44,7 +45,7 @@ public class SDLWindow : IWindow
     private int logicalHeight;
     private bool? pendingTextInputState;
     private RectangleF? pendingTextInputRect;
-    private readonly object textInputLock = new object();
+    private readonly Lock textInputLock = new Lock();
 
     private WindowMode windowMode = WindowMode.Windowed;
 
