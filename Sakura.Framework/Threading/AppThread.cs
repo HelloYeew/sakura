@@ -18,8 +18,8 @@ public class AppThread
 
     private Thread? internalThread;
     private readonly ManualResetEventSlim pauseEvent = new ManualResetEventSlim(true);
-    private bool isRunning;
-    private bool isPaused;
+    private volatile bool isRunning;
+    private volatile bool isPaused;
 
     public AppThread(string name, Action frameAction, Func<double> getTargetHz)
     {
