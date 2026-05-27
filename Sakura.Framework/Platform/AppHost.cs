@@ -201,7 +201,18 @@ public abstract class AppHost : IDisposable
 
     private void updateTargetUpdateHz()
     {
-        targetUpdateHz = getTargetUpdateHz();
+        // if the ExecutionMode hasn't been initialized yet, default to single-thread safety
+        if (ExecutionMode != null && ExecutionMode.Value == Threading.ExecutionMode.MultiThread)
+        {
+            // multi-thread: update runs faster for better input/physics precision
+            targetUpdateHz = getUpdateTargetHz();
+        }
+        else
+        {
+            // single-thread: lock Update strictly to 1:1 with draw to prevent the death spiral
+            targetUpdateHz = getDrawTargetHz();
+        }
+
         Logger.Debug($"Target update rate is now {targetUpdateHz} Hz");
     }
 
@@ -297,11 +308,11 @@ public abstract class AppHost : IDisposable
             Window.GetPhysicalSize(out int initialPhysicalWidth, out int initialPhysicalHeight);
             onResize(initialPhysicalWidth, initialPhysicalHeight, Window.Width, Window.Height);
 
-            updateThread = new AppThread("UpdateThread", PerformUpdate, () => targetUpdateHz)
+            updateThread = new AppThread("UpdateThread", PerformUpdate, getUpdateTargetHz)
             {
                 Priority = ThreadPriority.AboveNormal
             };
-            drawThread = new AppThread("DrawThread", PerformDraw, getTargetUpdateHz)
+            drawThread = new AppThread("DrawThread", PerformDraw, getDrawTargetHz)
             {
                 Priority = ThreadPriority.Normal
             };
@@ -335,6 +346,8 @@ public abstract class AppHost : IDisposable
                         threadRunner.SetExecutionMode(Threading.ExecutionMode.SingleThread);
                         Window.GraphicsSurface.MakeCurrent();
                     }
+
+                    updateTargetUpdateHz();
 
                     Logger.Verbose($"Execution mode changed from {e.OldValue} to {e.NewValue}");
                 });
@@ -613,7 +626,7 @@ public abstract class AppHost : IDisposable
     /// Get the target update rate in Hz based on the current frame limiter setting.
     /// </summary>
     /// <returns>The target update rate in Hz, or 0 for unlimited.</returns>
-    private double getTargetUpdateHz()
+    private double getDrawTargetHz()
     {
         // In headless mode, default to a sensible refresh rate for update calculations.
         double refreshRate = Window?.DisplayHz > 0 ? Window.DisplayHz : 60;
@@ -636,6 +649,19 @@ public abstract class AppHost : IDisposable
             default:
                 return refreshRate;
         }
+    }
+
+    private double getUpdateTargetHz()
+    {
+        double drawHz = getDrawTargetHz();
+
+        if (drawHz == 0)
+            return 0;
+
+        if (Window != null && !Window.IsActive)
+            return 60;
+
+        return drawHz * 2;
     }
 
     private void unhandledExceptionHandler(object sender, UnhandledExceptionEventArgs args)

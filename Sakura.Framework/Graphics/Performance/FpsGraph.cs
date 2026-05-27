@@ -191,10 +191,10 @@ public class FpsGraph : Container, IRemoveFromDrawVisualiser
 
         displaysFlow.Add(currentContextFlow);
 
-        displaysFlow.Add(new ThreadStatisticsDisplay("Input", host.InputClock, Color.LimeGreen, window));
-        displaysFlow.Add(new ThreadStatisticsDisplay("Audio", host.AudioClock, Color.Yellow, window));
-        displaysFlow.Add(new ThreadStatisticsDisplay("Update", host.UpdateClock, Color.Purple, window));
-        displaysFlow.Add(new ThreadStatisticsDisplay("Draw", host.DrawClock, Color.Cyan, window));
+        displaysFlow.Add(new ThreadStatisticsDisplay("Input", host.InputClock, Color.LimeGreen, host));
+        displaysFlow.Add(new ThreadStatisticsDisplay("Audio", host.AudioClock, Color.Yellow, host));
+        displaysFlow.Add(new ThreadStatisticsDisplay("Update", host.UpdateClock, Color.Purple, host));
+        displaysFlow.Add(new ThreadStatisticsDisplay("Draw", host.DrawClock, Color.Cyan, host));
 
         state = host.FrameworkConfigManager.Get(FrameworkSetting.ShowFpsGraph, PerformanceOverlayState.Hidden);
         state.ValueChanged += e => updateState(e.NewValue);
@@ -267,18 +267,26 @@ public class FpsGraph : Container, IRemoveFromDrawVisualiser
         private readonly IClock clock;
         private readonly Color baseColor;
 
+        private readonly AppHost host;
+        private double lastRecordedTime;
+        private double lastVisualUpdateTime;
+        private double bucketMaxTime;
+        private double bucketSumTime;
+        private int bucketFrameCount;
+        private int bucketHighestGc = -1;
+
         private SpriteText statsText;
         private ThreadBarGraph barGraph;
         private Box textBackground;
 
         private PerformanceOverlayState currentState;
 
-        public ThreadStatisticsDisplay(string name, IClock clock, Color baseColor, IWindow window)
+        public ThreadStatisticsDisplay(string name, IClock clock, Color baseColor, AppHost host)
         {
             this.name = name;
             this.clock = clock;
             this.baseColor = baseColor;
-            this.window = window;
+            this.host = host;
 
             for (int i = 0; i < max_history; i++)
             {
@@ -371,29 +379,74 @@ public class FpsGraph : Container, IRemoveFromDrawVisualiser
 
             if (clock != null && clock.IsRunning)
             {
-                int highestGcGen = -1;
-                for (int i = 0; i < 3; i++)
+                if (clock.CurrentTime > lastRecordedTime)
                 {
-                    int currentCount = GC.CollectionCount(i);
-                    if (currentCount > lastGcCounts[i])
+                    int highestGcGen = -1;
+                    for (int i = 0; i < 3; i++)
                     {
-                        highestGcGen = i;
-                        lastGcCounts[i] = currentCount;
+                        int currentCount = GC.CollectionCount(i);
+                        if (currentCount > lastGcCounts[i])
+                        {
+                            highestGcGen = i;
+                            lastGcCounts[i] = currentCount;
+                        }
+                    }
+
+                    bucketHighestGc = Math.Max(bucketHighestGc, highestGcGen);
+                    bucketMaxTime = Math.Max(bucketMaxTime, clock.ElapsedFrameTime);
+                    bucketSumTime += clock.ElapsedFrameTime;
+                    bucketFrameCount++;
+
+                    lastRecordedTime = clock.CurrentTime;
+
+                    double bucketThreshold = 0;
+                    switch (host.FrameLimiter.Value)
+                    {
+                        case FrameSync.VSync:
+                        case FrameSync.Limit2x:
+                            bucketThreshold = 0;
+                            break;
+                        case FrameSync.Limit4x:
+                            bucketThreshold = 0.5;
+                            break;
+                        case FrameSync.Limit8x:
+                        case FrameSync.Unlimited:
+                            bucketThreshold = 1.0;
+                            break;
+                    }
+
+                    if (bucketSumTime >= bucketThreshold && bucketFrameCount > 0)
+                    {
+                        frameHistory[currentIndex] = new FrameData
+                        {
+                            ElapsedTime = bucketSumTime / bucketFrameCount,
+                            MaxElapsedTime = bucketMaxTime,
+                            IsActive = host.Window?.IsActive ?? true,
+                            GcGeneration = bucketHighestGc
+                        };
+
+                        currentIndex = (currentIndex + 1) % max_history;
+                        if (currentCount < max_history) currentCount++;
+
+                        bucketMaxTime = 0;
+                        bucketSumTime = 0;
+                        bucketFrameCount = 0;
+                        bucketHighestGc = -1;
                     }
                 }
 
-                frameHistory[currentIndex] = new FrameData
+                // throttle the heavy vertex rendering to ~60Hz to protect the CPU
+                if (Clock.CurrentTime - lastVisualUpdateTime >= 16.6)
                 {
-                    ElapsedTime = clock.ElapsedFrameTime,
-                    IsActive = window.IsActive,
-                    GcGeneration = highestGcGen
-                };
+                    updateStats();
 
-                currentIndex = (currentIndex + 1) % max_history;
-                if (currentCount < max_history) currentCount++;
+                    if (currentState == PerformanceOverlayState.Expanded)
+                    {
+                        barGraph.Invalidate(InvalidationFlags.DrawInfo);
+                    }
 
-                updateStats();
-                barGraph.Invalidate(InvalidationFlags.DrawInfo);
+                    lastVisualUpdateTime = Clock.CurrentTime;
+                }
             }
         }
 
@@ -485,7 +538,7 @@ public class FpsGraph : Container, IRemoveFromDrawVisualiser
                     }
 
                     // performance bar
-                    float barHeightRatio = (float)(frame.ElapsedTime / 33.3);
+                    float barHeightRatio = (float)(frame.MaxElapsedTime / 33.3);
                     barHeightRatio = Math.Clamp(barHeightRatio, 0.02f, 1f);
                     float barHeight = barHeightRatio * h;
                     float top = h - barHeight;
@@ -556,6 +609,7 @@ public class FpsGraph : Container, IRemoveFromDrawVisualiser
     private struct FrameData
     {
         public double ElapsedTime;
+        public double MaxElapsedTime;
         public bool IsActive;
         public int GcGeneration;
     }
