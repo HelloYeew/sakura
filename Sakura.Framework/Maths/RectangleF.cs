@@ -52,6 +52,8 @@ public struct RectangleF
         Height = size.Y;
     }
 
+    public Vector2 Center => new Vector2(X + Width / 2, Y + Height / 2);
+
     public override string ToString()
     {
         return $"[X={X}, Y={Y}, Width={Width}, Height={Height}]";

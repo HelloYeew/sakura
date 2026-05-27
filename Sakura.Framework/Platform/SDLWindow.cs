@@ -16,6 +16,8 @@ using Silk.NET.OpenGL;
 using SilkMouseButtonEvent = Silk.NET.SDL.MouseButtonEvent;
 using SakuraCursorState = Sakura.Framework.Input.CursorState;
 using SakuraMouseButtonEvent = Sakura.Framework.Input.MouseButtonEvent;
+using TextEditingEvent = Sakura.Framework.Input.TextEditingEvent;
+using TextInputEvent = Sakura.Framework.Input.TextInputEvent;
 using Version = Silk.NET.SDL.Version;
 
 namespace Sakura.Framework.Platform;
@@ -40,6 +42,9 @@ public class SDLWindow : IWindow
     private int currentHeight;
     private int logicalWidth;
     private int logicalHeight;
+    private bool? pendingTextInputState;
+    private RectangleF? pendingTextInputRect;
+    private readonly object textInputLock = new object();
 
     private WindowMode windowMode = WindowMode.Windowed;
 
@@ -101,8 +106,34 @@ public class SDLWindow : IWindow
     public event Action<ScrollEvent> OnScroll = delegate { };
     public event Action<DragDropFileEvent> OnDragDropFile = delegate { };
     public event Action<DragDropTextEvent> OnDragDropText = delegate { };
+    public event Action<TextInputEvent> OnTextInput = delegate { };
+    public event Action<TextEditingEvent> OnTextEditing = delegate { };
 
     public event Action RenderRequested = delegate { };
+
+    public void StartTextInput()
+    {
+        lock (textInputLock)
+        {
+            pendingTextInputState = true;
+        }
+    }
+
+    public void StopTextInput()
+    {
+        lock (textInputLock)
+        {
+            pendingTextInputState = false;
+        }
+    }
+
+    public void SetTextInputRect(RectangleF rect)
+    {
+        lock (textInputLock)
+        {
+            pendingTextInputRect = rect;
+        }
+    }
 
     public unsafe void Initialize()
     {
@@ -370,6 +401,14 @@ public class SDLWindow : IWindow
                 case EventType.Droptext:
                     handleDropTextEvent(sdlEvent.Drop);
                     break;
+
+                case EventType.Textinput:
+                    handleTextInputEvent(sdlEvent.Text);
+                    break;
+
+                case EventType.Textediting:
+                    handleTextEditingEvent(sdlEvent.Edit);
+                    break;
             }
         }
     }
@@ -507,6 +546,43 @@ public class SDLWindow : IWindow
         OnDragDropText.Invoke(new DragDropTextEvent(text, position));
     }
 
+    private unsafe void handleTextInputEvent(Silk.NET.SDL.TextInputEvent textEvent)
+    {
+        string text = Marshal.PtrToStringUTF8((nint)textEvent.Text);
+        if (!string.IsNullOrEmpty(text))
+        {
+            OnTextInput.Invoke(new TextInputEvent(text));
+        }
+    }
+
+    private unsafe void handleTextEditingEvent(Silk.NET.SDL.TextEditingEvent editEvent)
+    {
+        string text = Marshal.PtrToStringUTF8((nint)editEvent.Text);
+        OnTextEditing.Invoke(new TextEditingEvent(text ?? string.Empty, editEvent.Start, editEvent.Length));
+    }
+
+    public unsafe string GetClipboardText()
+    {
+        if (sdl.HasClipboardText() == SdlBool.False) return string.Empty;
+
+        byte* ptr = sdl.GetClipboardText();
+        if (ptr == null) return string.Empty;
+
+        try
+        {
+            return Marshal.PtrToStringUTF8((IntPtr)ptr) ?? string.Empty;
+        }
+        finally
+        {
+            sdl.Free(ptr);
+        }
+    }
+
+    public void SetClipboardText(string text)
+    {
+        sdl.SetClipboardText(text);
+    }
+
     private unsafe int getDisplayRefreshRate()
     {
         DisplayMode mode = new DisplayMode();
@@ -523,8 +599,40 @@ public class SDLWindow : IWindow
     /// <summary>
     /// Process all pending window events.
     /// </summary>
-    public void PollEvents()
+    public unsafe void PollEvents()
     {
+        bool? targetState;
+        RectangleF? targetRect;
+
+        // drain background thread commands safely
+        lock (textInputLock)
+        {
+            targetState = pendingTextInputState;
+            pendingTextInputState = null;
+
+            targetRect = pendingTextInputRect;
+            pendingTextInputRect = null;
+        }
+
+        // apply text input state switches on the main thread
+        if (targetState.HasValue)
+        {
+            if (targetState.Value)
+                sdl.StartTextInput();
+            else
+                sdl.StopTextInput();
+        }
+
+        // apply IME composition box positions on the main thread
+        if (targetRect.HasValue)
+        {
+            var rect = targetRect.Value;
+            var sdlRect = new Silk.NET.Maths.Rectangle<int>(
+                (int)rect.X, (int)rect.Y, (int)rect.Width, (int)rect.Height);
+            sdl.SetTextInputRect(ref sdlRect);
+        }
+
+        // normal OS message processing
         handleSdlEvents();
     }
 

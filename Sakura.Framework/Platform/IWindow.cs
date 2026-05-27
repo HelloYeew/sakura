@@ -144,6 +144,8 @@ public interface IWindow : IDisposable
     event Action<ScrollEvent> OnScroll;
     event Action<DragDropFileEvent> OnDragDropFile;
     event Action<DragDropTextEvent> OnDragDropText;
+    event Action<TextInputEvent> OnTextInput;
+    event Action<TextEditingEvent> OnTextEditing;
 
     /// <summary>
     /// Invoked when a render is requested.
@@ -156,4 +158,32 @@ public interface IWindow : IDisposable
     /// Close the window peacefully.
     /// </summary>
     void Close();
+
+    /// <summary>
+    /// Start text input mode, which will show the OS virtual keyboard on mobile platforms and allow IME input on desktop platforms.
+    /// </summary>
+    void StartTextInput();
+
+    /// <summary>
+    /// Stop text input mode, which will hide the OS virtual keyboard on mobile platforms and disable IME input on desktop platforms.
+    /// </summary>
+    void StopTextInput();
+
+    /// <summary>
+    /// Set the area of the window where text input is expected, which can help the OS to position the virtual keyboard and IME candidate window appropriately.
+    /// </summary>
+    /// <param name="rect"></param>
+    void SetTextInputRect(Maths.RectangleF rect);
+
+    /// <summary>
+    /// Gets the current text content from the system clipboard.
+    /// </summary>
+    /// <returns>The text content from the clipboard, or an empty string if the clipboard is empty or does not contain text.</returns>
+    string GetClipboardText();
+
+    /// <summary>
+    /// Sets the specified text content to the system clipboard, replacing any existing content.
+    /// </summary>
+    /// <param name="text">The text content to set to the clipboard.</param>
+    void SetClipboardText(string text);
 }
