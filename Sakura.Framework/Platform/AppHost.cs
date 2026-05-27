@@ -661,6 +661,9 @@ public abstract class AppHost : IDisposable
         if (Window != null && !Window.IsActive)
             return 60;
 
+        if (drawHz * 2 >= 1000 || Options.LimitUnlimitedUpdateRate)
+            return 1000;
+
         return drawHz * 2;
     }
 
