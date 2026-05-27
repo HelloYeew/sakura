@@ -1,7 +1,9 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Platform;
+using Sakura.Framework.Threading;
 
 namespace Sakura.Framework.Configurations;
 
@@ -15,7 +17,8 @@ public class FrameworkConfigManager : ConfigManager<FrameworkSetting>
     private void initializeDefaults()
     {
         Get(FrameworkSetting.FrameLimiter, FrameSync.Limit2x);
-        Get(FrameworkSetting.ShowFpsGraph, false);
+        Get(FrameworkSetting.ShowFpsGraph, PerformanceOverlayState.Hidden);
+        Get(FrameworkSetting.ExecutionMode, ExecutionMode.SingleThread);
         Get(FrameworkSetting.MasterVolume, 1.0);
         Get(FrameworkSetting.TrackVolume, 1.0);
         Get(FrameworkSetting.SampleVolume, 1.0);

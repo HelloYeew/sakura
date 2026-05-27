@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System.Threading;
 using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Graphics.Rendering;
@@ -15,7 +16,7 @@ public class FrameBufferManager
     private int waitingIndex = 2;
 
     private bool hasWaitingFrame = false;
-    private readonly object swapLock = new object();
+    private SpinLock swapLock = new SpinLock(false);
 
     /// <summary>
     /// Gets the index of the buffer the update thread should write to.
@@ -27,8 +28,11 @@ public class FrameBufferManager
     /// </summary>
     public void FinishUpdate()
     {
-        lock (swapLock)
+        bool lockTaken = false;
+        try
         {
+            swapLock.Enter(ref lockTaken);
+
             if (hasWaitingFrame)
             {
                 // The draw thread was too slow and missed the previous frame
@@ -40,6 +44,11 @@ public class FrameBufferManager
             (updateIndex, waitingIndex) = (waitingIndex, updateIndex);
             hasWaitingFrame = true;
         }
+        finally
+        {
+            if (lockTaken)
+                swapLock.Exit(false);
+        }
     }
 
     /// <summary>
@@ -48,21 +57,26 @@ public class FrameBufferManager
     /// </summary>
     public int GetDrawIndex()
     {
-        lock (swapLock)
+        bool lockTaken = false;
+        try
         {
+            swapLock.Enter(ref lockTaken);
+
             if (hasWaitingFrame)
             {
-                // new frame finished updating, swap it into the active draw slot
                 (drawIndex, waitingIndex) = (waitingIndex, drawIndex);
                 hasWaitingFrame = false;
             }
             else
             {
-                // Update thread hasn't finished a new frame yet
-                // so the draw thread is forced to reuse the previous frame
                 GlobalStatistics.Get<int>("Buffers", "Draw Starvation").Value++;
             }
             return drawIndex;
+        }
+        finally
+        {
+            if (lockTaken)
+                swapLock.Exit(false);
         }
     }
 }

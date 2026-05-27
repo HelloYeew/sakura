@@ -12,10 +12,24 @@ namespace Sakura.Framework.Platform;
 public class SDLGraphicsSurface : IGraphicsSurface
 {
     private Func<string, IntPtr> GetFunctionAddress { get; set; }
+    private Action MakeCurrent { get; set; }
+    private Action ClearCurrent { get; set; }
 
     Func<string, IntPtr> IGraphicsSurface.GetFunctionAddress
     {
         get => GetFunctionAddress;
         set => GetFunctionAddress = value;
+    }
+
+    Action IGraphicsSurface.MakeCurrent
+    {
+        get => MakeCurrent;
+        set => MakeCurrent = value;
+    }
+
+    Action IGraphicsSurface.ClearCurrent
+    {
+        get => ClearCurrent;
+        set => ClearCurrent = value;
     }
 }

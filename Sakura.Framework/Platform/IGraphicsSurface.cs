@@ -11,4 +11,14 @@ public interface IGraphicsSurface
     /// Get the address of the graphic API function from the window API.
     /// </summary>
     Func<string,nint> GetFunctionAddress { get; set; }
+
+    /// <summary>
+    /// Makes the graphics context current on the calling thread.
+    /// </summary>
+    Action MakeCurrent { get; set; }
+
+    /// <summary>
+    /// Clears the graphics context from the calling thread, allowing another thread to claim it.
+    /// </summary>
+    Action ClearCurrent { get; set; }
 }

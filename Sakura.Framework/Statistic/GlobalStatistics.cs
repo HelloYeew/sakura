@@ -8,7 +8,7 @@ namespace Sakura.Framework.Statistic;
 
 public static class GlobalStatistics
 {
-    private static readonly ConcurrentDictionary<string, ConcurrentDictionary<string, IGlobalStatistic>> statistics = new();
+    private static readonly ConcurrentDictionary<string, ConcurrentDictionary<string, IGlobalStatistic>> statistics = new ConcurrentDictionary<string, ConcurrentDictionary<string, IGlobalStatistic>>();
 
     public static GlobalStatistic<T> Get<T>(string group, string name)
     {

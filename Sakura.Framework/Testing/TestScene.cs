@@ -248,6 +248,8 @@ public abstract class TestScene : Container
 
             if (TestException != null) return;
 
+            if (!testScene.IsLoaded) return;
+
             if (currentStepIndex >= testScene.Steps.Count)
             {
                 host.Exit();

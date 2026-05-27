@@ -11,5 +11,6 @@ public enum FrameworkSetting
     MasterVolume,
     TrackVolume,
     SampleVolume,
-    WindowMode
+    WindowMode,
+    ExecutionMode
 }

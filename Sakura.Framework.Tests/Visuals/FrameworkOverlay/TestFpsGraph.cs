@@ -17,7 +17,7 @@ public class TestFpsGraph : TestScene
     [SetUp]
     public void SetUp()
     {
-        fpsGraph = new FpsGraph(Clock)
+        fpsGraph = new FpsGraph()
         {
             Anchor = Anchor.Centre,
             Origin = Anchor.Centre,

@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using System.IO;
 using Sakura.Framework.Reactive;
 
@@ -56,6 +57,12 @@ public interface IAudioManager
     /// <param name="path">The full path to the audio file</param>
     /// <returns>The loaded <see cref="ITrack"/></returns>
     ITrack CreateTrackFromFile(string path);
+
+    /// <summary>
+    /// Enqueues an action to be executed safely on the Audio thread.
+    /// </summary>
+    /// <param name="action">The action to execute.</param>
+    void EnqueueAction(Action action);
 
     /// <summary>
     /// Load a sample from a precised file path

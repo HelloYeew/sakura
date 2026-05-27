@@ -23,6 +23,7 @@ using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Reactive;
 using Sakura.Framework.Statistic;
+using Sakura.Framework.Threading;
 using Sakura.Framework.Timing;
 
 namespace Sakura.Framework.Platform;
@@ -35,13 +36,16 @@ public abstract class AppHost : IDisposable
     private App app;
 
     public Reactive<FrameSync> FrameLimiter { get; set; }
+    public Reactive<ExecutionMode> ExecutionMode { get; set; }
     protected internal IClock UpdateClock { get; private set; }
     protected internal IClock DrawClock { get; private set; }
-    private readonly ThrottledFrameClock inputClock = new ThrottledFrameClock(1000);
+    protected internal IClock AudioClock { get; private set; }
+    public IClock InputClock { get; private set; }
     private readonly ThrottledFrameClock soundClock = new ThrottledFrameClock(1000);
     private double lastUpdateTime;
-    private readonly Stopwatch gameLoopStopwatch = new Stopwatch();
+    private readonly Stopwatch appLoopStopwatch = new Stopwatch();
     private readonly ConcurrentQueue<Action> inputQueue = new ConcurrentQueue<Action>();
+    private readonly ConcurrentQueue<Action> mainThreadActions = new ConcurrentQueue<Action>();
 
     private double lastUpdateProcessTime;
     private double currentUpdateProcessTime;
@@ -49,6 +53,11 @@ public abstract class AppHost : IDisposable
     private readonly FrameBufferManager frameBufferManager = new FrameBufferManager();
     private readonly DrawNode[] rootDrawNodes = new DrawNode[3];
     private DrawNode currentFrameDrawNode;
+
+    private ThreadRunner threadRunner;
+    private AppThread updateThread;
+    private AppThread drawThread;
+    private AppThread audioThread;
 
     // TODO: This "should" not be accessible from outside the framework.
     public Storage FrameworkStorage { get; private set; } = new EmbeddedResourceStorage(typeof(AppHost).Assembly, "Sakura.Framework.Resources");
@@ -192,7 +201,18 @@ public abstract class AppHost : IDisposable
 
     private void updateTargetUpdateHz()
     {
-        targetUpdateHz = getTargetUpdateHz();
+        // if the ExecutionMode hasn't been initialized yet, default to single-thread safety
+        if (ExecutionMode != null && ExecutionMode.Value == Threading.ExecutionMode.MultiThread)
+        {
+            // multi-thread: update runs faster for better input/physics precision
+            targetUpdateHz = getUpdateTargetHz();
+        }
+        else
+        {
+            // single-thread: lock Update strictly to 1:1 with draw to prevent the death spiral
+            targetUpdateHz = getDrawTargetHz();
+        }
+
         Logger.Debug($"Target update rate is now {targetUpdateHz} Hz");
     }
 
@@ -269,6 +289,15 @@ public abstract class AppHost : IDisposable
             Window.Restored += updateTargetUpdateHz;
             Window.DisplayChanged += _ => updateTargetUpdateHz();
 
+            Window.RenderRequested += () =>
+            {
+                // make renderer still resize itself in single thread mode
+                if (executionState == ExecutionState.Running && ExecutionMode.Value == Threading.ExecutionMode.SingleThread)
+                {
+                    threadRunner.RunSingleThreadedFrame();
+                }
+            };
+
             Window.Initialize();
             Window.Create();
 
@@ -279,8 +308,56 @@ public abstract class AppHost : IDisposable
             Window.GetPhysicalSize(out int initialPhysicalWidth, out int initialPhysicalHeight);
             onResize(initialPhysicalWidth, initialPhysicalHeight, Window.Width, Window.Height);
 
-            UpdateClock = new Clock(true);
-            DrawClock = new Clock(true);
+            updateThread = new AppThread("UpdateThread", PerformUpdate, getUpdateTargetHz)
+            {
+                Priority = ThreadPriority.AboveNormal
+            };
+            drawThread = new AppThread("DrawThread", PerformDraw, getDrawTargetHz)
+            {
+                Priority = ThreadPriority.Normal
+            };
+            audioThread = new AppThread("AudioThread", PerformSoundUpdate, () => 1000)
+            {
+                Priority = ThreadPriority.Highest
+            };
+
+            drawThread.OnInitialize = () => Window.GraphicsSurface.MakeCurrent();
+
+            UpdateClock = updateThread.Clock;
+            DrawClock = drawThread.Clock;
+            AudioClock = audioThread.Clock;
+            InputClock = new Clock(true);
+
+            threadRunner = new ThreadRunner(updateThread, drawThread, audioThread);
+
+            ExecutionMode = FrameworkConfigManager.Get<ExecutionMode>(FrameworkSetting.ExecutionMode);
+
+            ExecutionMode.ValueChanged += e =>
+            {
+                mainThreadActions.Enqueue(() =>
+                {
+                    if (e.NewValue == Threading.ExecutionMode.MultiThread)
+                    {
+                        Window.GraphicsSurface.ClearCurrent();
+                        threadRunner.SetExecutionMode(Threading.ExecutionMode.MultiThread);
+                    }
+                    else
+                    {
+                        threadRunner.SetExecutionMode(Threading.ExecutionMode.SingleThread);
+                        Window.GraphicsSurface.MakeCurrent();
+                    }
+
+                    updateTargetUpdateHz();
+
+                    Logger.Verbose($"Execution mode changed from {e.OldValue} to {e.NewValue}");
+                });
+            };
+
+            if (ExecutionMode.Value == Threading.ExecutionMode.MultiThread)
+            {
+                Window.GraphicsSurface.ClearCurrent();
+                threadRunner.SetExecutionMode(Threading.ExecutionMode.MultiThread);
+            }
 
             this.app.Clock = UpdateClock;
 
@@ -288,46 +365,76 @@ public abstract class AppHost : IDisposable
             this.app.LoadComplete();
 
             lastUpdateTime = UpdateClock.CurrentTime;
-            gameLoopStopwatch.Start();
+            appLoopStopwatch.Start();
 
-            var spinWait = new SpinWait();
+            long timestampFrequency = Stopwatch.Frequency;
+            double msPerTick = 1000.0 / timestampFrequency;
+            long lastMainFrameTime = Stopwatch.GetTimestamp();
 
             try
             {
                 while (executionState == ExecutionState.Running)
                 {
-                    double frameStartTime = gameLoopStopwatch.Elapsed.TotalMilliseconds;
-                    UpdateClock.Update();
+                    GlobalStatistics.Get<int>("GC", "Gen 0 Collections").Value = GC.CollectionCount(0);
+                    GlobalStatistics.Get<int>("GC", "Gen 1 Collections").Value = GC.CollectionCount(1);
+                    GlobalStatistics.Get<int>("GC", "Gen 2 Collections").Value = GC.CollectionCount(2);
+
+                    while (mainThreadActions.TryDequeue(out var action))
+                    {
+                        action.Invoke();
+                    }
+
                     Window?.PollEvents();
 
                     if (Window?.IsExiting == true)
                         Exit();
 
-                    if (inputClock.Process(UpdateClock.CurrentTime))
-                        PerformInput();
+                    PerformInput();
 
-                    // 20251029: PerformSoundUpdate is removed since the AudioManager is updated in App.Update().
-                    // Will introduce it again when want multi-threaded audio update.
-
-                    PerformUpdate();
-                    PerformDraw();
-
-                    if (FrameLimiter.Value != FrameSync.VSync && FrameLimiter.Value != FrameSync.Unlimited)
+                    if (ExecutionMode.Value == Threading.ExecutionMode.SingleThread)
                     {
-                        // In non-VSync or unlimited modes, we need to limit the loop ourselves to the target frame rate.
-                        if (targetUpdateHz > 0)
-                        {
-                            double targetFrameTime = 1000.0 / targetUpdateHz;
+                        threadRunner.RunSingleThreadedFrame();
+                    }
 
-                            // A simple, busy-wait loop for precision.
-                            // For better CPU usage, a hybrid Thread.Sleep/SpinWait would be better,
-                            // but this is the most straightforward fix to ensure accuracy.
-                            // Logger.LogPrint($"Spinning... (elapsed: {gameLoopStopwatch.Elapsed.TotalMilliseconds - frameStartTime:F2}ms, target: {targetFrameTime:F2}ms)");
-                            while (gameLoopStopwatch.Elapsed.TotalMilliseconds - frameStartTime < targetFrameTime)
-                            {
-                                spinWait.SpinOnce();
-                            }
+                    double currentHz = ExecutionMode.Value == Threading.ExecutionMode.SingleThread
+                        ? targetUpdateHz
+                        : 1000.0;
+
+                    if (currentHz > 0)
+                    {
+                        double targetMainFrameTimeMs = 1000.0 / currentHz;
+                        long targetMainTicks = (long)(targetMainFrameTimeMs / msPerTick);
+                        long targetFrameTimeTimestamp = lastMainFrameTime + targetMainTicks;
+
+                        while (true)
+                        {
+                            long currentTimestamp = Stopwatch.GetTimestamp();
+                            long remainingTicks = targetFrameTimeTimestamp - currentTimestamp;
+
+                            if (remainingTicks <= 0)
+                                break;
+
+                            double timeRemainingMs = remainingTicks * msPerTick;
+                            if (timeRemainingMs >= 1.0)
+                                Thread.Sleep(TimeSpan.FromMilliseconds(timeRemainingMs - 0.2));
+                            else if (timeRemainingMs > 0.1)
+                                Thread.Yield();
+                            else
+                                Thread.SpinWait(10);
                         }
+
+                        lastMainFrameTime += targetMainTicks;
+
+                        long currentAfterWait = Stopwatch.GetTimestamp();
+                        if ((currentAfterWait - lastMainFrameTime) * msPerTick > targetMainFrameTimeMs * 5)
+                        {
+                            lastMainFrameTime = currentAfterWait;
+                        }
+                    }
+                    else
+                    {
+                        lastMainFrameTime = Stopwatch.GetTimestamp();
+                        Thread.Yield();
                     }
                 }
             }
@@ -344,6 +451,7 @@ public abstract class AppHost : IDisposable
         }
         finally
         {
+            threadRunner?.Dispose();
             Dispose(true);
             host_running_mutex.Release();
         }
@@ -401,7 +509,7 @@ public abstract class AppHost : IDisposable
 
     private void onResize(int physicalWidth, int physicalHeight, int logicalWidth, int logicalHeight)
     {
-        Renderer?.Resize(physicalWidth, physicalHeight, logicalWidth, logicalHeight);
+        Renderer?.ScheduleToDrawThread(() => Renderer.Resize(physicalWidth, physicalHeight, logicalWidth, logicalHeight));
         if (app != null) app.Size = new Vector2(logicalWidth, logicalHeight);
     }
 
@@ -429,7 +537,18 @@ public abstract class AppHost : IDisposable
     /// </summary>
     protected virtual void PerformInput()
     {
-        // Logger.LogPrint($"Input tick. Time: {UpdateClock.CurrentTime:F2}ms (delta: {UpdateClock.ElapsedFrameTime:F2}ms, frame: {UpdateClock.FramesPerSecond})");
+        InputClock.Update();
+    }
+
+    /// <summary>
+    /// Schedules an action to be safely executed on the OS Main User Interface Thread.
+    /// </summary>
+    public void ScheduleToMainThread(Action action)
+    {
+        if (action != null)
+        {
+            mainThreadActions.Enqueue(action);
+        }
     }
 
     /// <summary>
@@ -486,8 +605,6 @@ public abstract class AppHost : IDisposable
     /// </summary>
     protected virtual void PerformDraw()
     {
-        DrawClock.Update();
-
         GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame").Value = 0;
         Renderer?.Clear();
         Renderer?.StartFrame();
@@ -509,7 +626,7 @@ public abstract class AppHost : IDisposable
     /// Get the target update rate in Hz based on the current frame limiter setting.
     /// </summary>
     /// <returns>The target update rate in Hz, or 0 for unlimited.</returns>
-    private double getTargetUpdateHz()
+    private double getDrawTargetHz()
     {
         // In headless mode, default to a sensible refresh rate for update calculations.
         double refreshRate = Window?.DisplayHz > 0 ? Window.DisplayHz : 60;
@@ -532,6 +649,21 @@ public abstract class AppHost : IDisposable
             default:
                 return refreshRate;
         }
+    }
+
+    private double getUpdateTargetHz()
+    {
+        double drawHz = getDrawTargetHz();
+
+        if (drawHz == 0)
+            return Options.LimitUnlimitedUpdateRate ? 1000 : 0;
+
+        if (Window != null && !Window.IsActive)
+            return 60;
+
+        double updateHz = drawHz * 2;
+
+        return Options.LimitUnlimitedUpdateRate ? Math.Min(updateHz, 1000) : updateHz;
     }
 
     private void unhandledExceptionHandler(object sender, UnhandledExceptionEventArgs args)

@@ -262,8 +262,13 @@ public class Container : Drawable
     {
         RectangleF? maskToApply = Masking ? DrawRectangle : CurrentMaskingBounds;
 
-        foreach (var child in children)
+        for (int i = children.Count - 1; i >= 0; i--)
         {
+            // sanity check in case the list was aggressively shrunk by another thread
+            if (i >= children.Count)
+                continue;
+
+            var child = children[i];
             child.CurrentMaskingBounds = maskToApply;
 
             if (maskToApply.HasValue)
@@ -274,7 +279,6 @@ public class Container : Drawable
                 }
 
                 RectangleF childRect = child.DrawRectangle;
-
                 float leniency = 1.0f;
 
                 bool intersects = childRect.X <= maskToApply.Value.X + maskToApply.Value.Width + leniency &&
