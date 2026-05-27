@@ -112,7 +112,7 @@ public class AppThread
                     }
                     else if (timeRemainingMs > 0.1)
                     {
-                        Thread.Sleep(0);
+                        Thread.Yield();
                     }
                     else
                     {
@@ -133,6 +133,7 @@ public class AppThread
             else
             {
                 lastFrameTime = System.Diagnostics.Stopwatch.GetTimestamp();
+                Thread.Yield();
             }
         }
     }

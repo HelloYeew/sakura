@@ -405,7 +405,7 @@ public abstract class AppHost : IDisposable
                             if (timeRemainingMs >= 1.0)
                                 Thread.Sleep(TimeSpan.FromMilliseconds(timeRemainingMs - 0.2));
                             else if (timeRemainingMs > 0.1)
-                                Thread.Sleep(0);
+                                Thread.Yield();
                             else
                                 Thread.SpinWait(10);
                         }
@@ -421,6 +421,7 @@ public abstract class AppHost : IDisposable
                     else
                     {
                         lastMainFrameTime = Stopwatch.GetTimestamp();
+                        Thread.Yield();
                     }
                 }
             }
