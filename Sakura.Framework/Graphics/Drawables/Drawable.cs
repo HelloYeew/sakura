@@ -1012,6 +1012,9 @@ public abstract class Drawable
     public virtual bool OnDragDropFile(DragDropFileEvent e) => false;
     public virtual bool OnDragDropText(DragDropTextEvent e) => false;
 
+    public virtual bool OnTextInput(TextInputEvent e) => false;
+    public virtual bool OnTextEditing(TextEditingEvent e) => false;
+
     #endregion
 
     #region Focus Management

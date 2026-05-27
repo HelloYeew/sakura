@@ -531,5 +531,15 @@ public class Container : Drawable
         return base.OnDragDropText(e);
     }
 
+    public override bool OnTextInput(TextInputEvent e)
+    {
+        return children.Any(c => c.OnTextInput(e));
+    }
+
+    public override bool OnTextEditing(TextEditingEvent e)
+    {
+        return children.Any(c => c.OnTextEditing(e));
+    }
+
     #endregion
 }
