@@ -38,6 +38,7 @@ public class TestBrowserApp : App
     private ScrollableContainer stepScrollContainer;
     private BasicSliderBar<double> volumeSlider;
     private BasicCheckbox autoRunCheckbox;
+    private BasicTextBox searchTextBox;
 
     private readonly Assembly testAssembly;
 
@@ -188,6 +189,32 @@ public class TestBrowserApp : App
             Size = new Vector2(1)
         });
 
+        testSidebar.Add(searchTextBox = new BasicTextBox
+        {
+            RelativeSizeAxes = Axes.X,
+            Width = 0.95f,
+            Height = 25,
+            Anchor = Anchor.TopCentre,
+            Origin = Anchor.TopCentre,
+            Margin = new MarginPadding { Top = 5 }
+        });
+
+        searchTextBox.Text.ValueChanged += e =>
+        {
+            testListFlow.Clear();
+            loadTestClasses(e.NewValue);
+        };
+
+        var scrollWrapper = new Container
+        {
+            RelativeSizeAxes = Axes.Both,
+            Size = new Vector2(1),
+            Padding = new MarginPadding
+            {
+                Top = 35
+            }
+        };
+
         var leftScroll = new ScrollableContainer
         {
             RelativeSizeAxes = Axes.Both,
@@ -209,7 +236,8 @@ public class TestBrowserApp : App
         };
 
         leftScroll.Add(testListFlow);
-        testSidebar.Add(leftScroll);
+        scrollWrapper.Add(leftScroll);
+        testSidebar.Add(scrollWrapper);
         Add(testSidebar);
 
         stepSidebar = new Container
@@ -286,10 +314,11 @@ public class TestBrowserApp : App
         };
     }
 
-    private void loadTestClasses()
+    private void loadTestClasses(string searchQuery = "")
     {
         var testGroups = testAssembly.GetTypes()
             .Where(t => t.IsSubclassOf(typeof(TestScene)) && !t.IsAbstract)
+            .Where(t => string.IsNullOrEmpty(searchQuery) || t.Name.Contains(searchQuery, StringComparison.OrdinalIgnoreCase))
             .GroupBy(t => t.Namespace ?? "Unknown")
             .OrderBy(g => g.Key)
             .ToList();
