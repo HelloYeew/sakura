@@ -661,10 +661,9 @@ public abstract class AppHost : IDisposable
         if (Window != null && !Window.IsActive)
             return 60;
 
-        if (drawHz * 2 >= 1000 || Options.LimitUnlimitedUpdateRate)
-            return 1000;
+        double updateHz = drawHz * 2;
 
-        return drawHz * 2;
+        return Options.LimitUnlimitedUpdateRate ? Math.Min(updateHz, 1000) : updateHz;
     }
 
     private void unhandledExceptionHandler(object sender, UnhandledExceptionEventArgs args)
