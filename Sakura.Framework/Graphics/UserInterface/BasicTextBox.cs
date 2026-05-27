@@ -66,7 +66,11 @@ public class BasicTextBox : Container
                         Anchor = Anchor.CentreLeft,
                         Origin = Anchor.CentreLeft,
                         Text = "",
-                        Margin = new MarginPadding { Left = 5, Right = 5 },
+                        Margin = new MarginPadding
+                        {
+                            Left = 5,
+                            Right = 5
+                        },
                         Font = FontUsage.Default.With(size: 16)
                     },
                     imeText = new SpriteText
@@ -75,7 +79,12 @@ public class BasicTextBox : Container
                         Origin = Anchor.CentreLeft,
                         Text = "",
                         Color = Color.Yellow,
-                        Margin = new MarginPadding { Left = 5, Right = 5 }
+                        Margin = new MarginPadding
+                        {
+                            Left = 5,
+                            Right = 5
+                        },
+                        Font = FontUsage.Default.With(size: 16)
                     },
                     caret = new Box
                     {
@@ -105,7 +114,9 @@ public class BasicTextBox : Container
     {
         caret.ClearTransforms();
         caret.Alpha = 1;
-        caret.FadeTo(0, 750).Then().FadeTo(1, 750).Loop();
+        caret.FadeTo(0, 750)
+            .Then()
+            .FadeTo(1, 750).Loop();
     }
 
     #region Focus and Input State

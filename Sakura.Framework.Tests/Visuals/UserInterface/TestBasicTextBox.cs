@@ -60,7 +60,7 @@ public class TestBasicTextBox : ManualInputManagerTestScene
         AddAssert("Reactive value updated to 'Sakura'", () => textBox.Text.Value == "Sakura");
 
         AddStep("Type space and more text", () => InputManager.TypeText(" aaa"));
-        AddAssert("Text updated", () => textBox.Text.Value == "Sakura aaaa");
+        AddAssert("Text updated", () => textBox.Text.Value == "Sakura aaa");
     }
 
     [Test]
