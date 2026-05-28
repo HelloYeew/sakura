@@ -16,7 +16,7 @@ public class VideoSprite : Drawable, IDisposable
     private VideoDecoder decoder;
     private readonly string filePath;
 
-    private readonly string videoCacheKey = string.Empty;
+    private readonly string videoCacheKey = $"VideoSprite_{Guid.NewGuid()}";
 
     private IRenderer renderer;
     private ITextureManager textureManager;
@@ -67,7 +67,15 @@ public class VideoSprite : Drawable, IDisposable
     {
         if (decoder == null) return;
 
-        currentVideoTime = Math.Clamp(timeMs, 0, Duration);
+        if (Duration > 0)
+        {
+            currentVideoTime = Math.Clamp(timeMs, 0, Duration);
+        }
+        else
+        {
+            currentVideoTime = Math.Max(0, timeMs);
+        }
+
         decoder.Seek(currentVideoTime);
     }
 
@@ -127,16 +135,11 @@ public class VideoSprite : Drawable, IDisposable
 
     public void Dispose()
     {
-        decoder?.Dispose();
+        decoder.Dispose();
 
-        renderer?.ScheduleToDrawThread(() =>
+        if (textureManager != null && !string.IsNullOrEmpty(videoCacheKey))
         {
-            if (Texture?.GlTexture != null)
-            {
-                Texture.GlTexture.Dispose();
-            }
-
-            Texture?.Dispose();
-        });
+            textureManager.Evict(videoCacheKey);
+        }
     }
 }

@@ -20,6 +20,7 @@ public unsafe class VideoDecoder : IDisposable
     private SwsContext* swsContext;
     private int videoStreamIndex = -1;
     private double timeBase;
+    private readonly ManualResetEventSlim decoderStateEvent = new ManualResetEventSlim(false);
     private volatile bool seekRequested;
     private double seekTargetMs;
 
@@ -82,6 +83,7 @@ public unsafe class VideoDecoder : IDisposable
     {
         seekTargetMs = timeMs;
         seekRequested = true;
+        decoderStateEvent.Set();
     }
 
     private void InitializeFFmpeg()
@@ -106,7 +108,20 @@ public unsafe class VideoDecoder : IDisposable
 
         // Calculate timebase to convert PTS to milliseconds
         timeBase = stream->time_base.num / (double)stream->time_base.den;
-        Duration = (stream->duration * timeBase) * 1000.0;
+        if (formatContext->duration != ffmpeg.AV_NOPTS_VALUE)
+        {
+            // Global duration is measured in AV_TIME_BASE (microseconds)
+            Duration = (formatContext->duration / (double)ffmpeg.AV_TIME_BASE) * 1000.0;
+        }
+        else if (stream->duration != ffmpeg.AV_NOPTS_VALUE)
+        {
+            Duration = (stream->duration * timeBase) * 1000.0;
+        }
+        else
+        {
+            // FFmpeg literally cannot determine the length of this file
+            Duration = 0;
+        }
 
         // Initialize Codec Context
         codecContext = ffmpeg.avcodec_alloc_context3(codec);
@@ -140,33 +155,41 @@ public unsafe class VideoDecoder : IDisposable
         {
             while (!cancellationTokenSource.IsCancellationRequested)
             {
-                // Check if a seek was requested from the main thread
                 if (seekRequested)
                 {
-                    // Convert milliseconds to FFmpeg internal timebase
-                    long seekTargetPts = (long)((seekTargetMs / 1000.0) / timeBase);
-
-                    // Jump to the nearest keyframe BEFORE the target time
-                    ffmpeg.av_seek_frame(formatContext, videoStreamIndex, seekTargetPts, ffmpeg.AVSEEK_FLAG_BACKWARD);
-
-                    //  Flush the codec so old artifacts don't corrupt the new frames
+                    long seekTargetUs = (long)(seekTargetMs * 1000.0);
+                    ffmpeg.avformat_seek_file(formatContext, -1, long.MinValue, seekTargetUs, long.MaxValue, ffmpeg.AVSEEK_FLAG_BACKWARD);
                     ffmpeg.avcodec_flush_buffers(codecContext);
 
-                    // Empty our managed queue of old frames
                     while (frameQueue.TryDequeue(out var f)) f.Dispose();
 
                     seekRequested = false;
+                    decoderStateEvent.Reset();
+                    continue;
                 }
 
-                // Prevent memory blowout if the queue is full
                 if (frameQueue.Count > 30)
                 {
-                    Thread.Sleep(10);
+                    // wait up to 10ms for the queue to drain
+                    decoderStateEvent.Wait(10, cancellationTokenSource.Token);
                     continue;
                 }
 
                 if (ffmpeg.av_read_frame(formatContext, packet) < 0)
-                    break; // EOF or error
+                {
+                    decoderStateEvent.Reset();
+
+                    try
+                    {
+                        // wait indefinitely until Seek() calls decoderStateEvent.Set()
+                        decoderStateEvent.Wait(cancellationTokenSource.Token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                    continue;
+                }
 
                 if (packet->stream_index == videoStreamIndex)
                 {
@@ -214,7 +237,6 @@ public unsafe class VideoDecoder : IDisposable
 
     public bool TryGetNextFrame(out VideoFrame frame) => frameQueue.TryDequeue(out frame);
 
-    // Peeks without dequeuing so we know if it's time to advance
     public bool TryPeekNextFrame(out VideoFrame frame) => frameQueue.TryPeek(out frame);
 
     public void Dispose()
@@ -222,7 +244,11 @@ public unsafe class VideoDecoder : IDisposable
         cancellationTokenSource.Cancel();
         decodeTask.Wait();
 
-        if (swsContext != null) ffmpeg.sws_freeContext(swsContext);
+        decodeTask.Wait();
+        decoderStateEvent.Dispose();
+
+        if (swsContext != null)
+            ffmpeg.sws_freeContext(swsContext);
         if (codecContext != null)
         {
             var pCodecContext = codecContext;
