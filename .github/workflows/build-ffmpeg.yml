@@ -6,7 +6,7 @@ on:
 jobs:
   build-macos:
     name: Build macOS
-    runs-on: macos-13
+    runs-on: macos-26
     strategy:
       fail-fast: false
       matrix:
