@@ -158,9 +158,20 @@ public class Container : Drawable
 
         if (IsLoaded)
         {
-            drawable.Load();
-            drawable.LoadComplete();
-            drawable.Invalidate(InvalidationFlags.DrawInfo);
+            try
+            {
+                drawable.Load();
+                drawable.LoadComplete();
+                drawable.Invalidate(InvalidationFlags.DrawInfo);
+            }
+            catch
+            {
+                // rollback the addition if loading fails (e.g. synchronous LongRunningLoad constraint violation)
+                children.Remove(drawable);
+                drawable.Parent = null;
+                InvalidateTopology();
+                throw;
+            }
         }
     }
 
@@ -539,6 +550,65 @@ public class Container : Drawable
     public override bool OnTextEditing(TextEditingEvent e)
     {
         return children.Any(c => c.OnTextEditing(e));
+    }
+
+    #endregion
+
+    #region Child Querying & Management
+
+    /// <summary>
+    /// Checks whether the specified drawable is a direct child of this container.
+    /// </summary>
+    public virtual bool Contains(Drawable drawable)
+    {
+        if (Content != this)
+            return Content.Contains(drawable);
+
+        return children.Contains(drawable);
+    }
+
+    /// <summary>
+    /// Retrieves all children of a specific type.
+    /// </summary>
+    public IEnumerable<T> ChildrenOfType<T>() where T : Drawable
+    {
+        return Children.OfType<T>();
+    }
+
+    /// <summary>
+    /// Removes all children that match the conditions defined by the specified predicate.
+    /// </summary>
+    /// <returns>The number of children removed from the container.</returns>
+    public virtual int RemoveAll(Predicate<Drawable> match)
+    {
+        if (Content != this)
+            return Content.RemoveAll(match);
+
+        var toRemove = children.Where(match.Invoke).ToList();
+
+        foreach (var child in toRemove)
+        {
+            RemoveInternal(child);
+        }
+
+        return toRemove.Count;
+    }
+
+    /// <summary>
+    /// Removes a collection of drawables from this container.
+    /// </summary>
+    public virtual void RemoveRange(IEnumerable<Drawable> drawables)
+    {
+        if (Content != this)
+        {
+            Content.RemoveRange(drawables);
+            return;
+        }
+
+        foreach (var drawable in drawables.ToList())
+        {
+            RemoveInternal(drawable);
+        }
     }
 
     #endregion
