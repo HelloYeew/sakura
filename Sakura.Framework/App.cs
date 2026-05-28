@@ -239,6 +239,19 @@ public class App : Container, IFocusManager, IDisposable
         return base.OnKeyDown(e);
     }
 
+    public override bool OnMouseDown(MouseButtonEvent e)
+    {
+        bool handled = base.OnMouseDown(e);
+
+        // click empty space to unfocus
+        if (!handled)
+        {
+            ChangeFocus(null);
+        }
+
+        return handled;
+    }
+
     #region Focus Management
 
     private readonly List<Drawable> focusStack = new();

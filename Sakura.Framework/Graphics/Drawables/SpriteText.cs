@@ -223,6 +223,42 @@ public class SpriteText : Drawable
 
     protected override DrawNode CreateDrawNode() => new SpriteTextDrawNode();
 
+    /// <summary>
+    /// Gets the local position of a character at the specified index.
+    /// Useful for positioning a caret or IME composition text.
+    /// </summary>
+    public Vector2 GetCharacterPosition(int index)
+    {
+        // If there is no text yet, return the starting text offset.
+        if (shapedText == null || shapedText.Glyphs.Count == 0 || index < 0)
+        {
+            Vector2 originRelative = GetAnchorOriginVector(Origin);
+            Vector2 availableSpace = DrawSize - ContentSize;
+            return new Vector2(
+                availableSpace.X * originRelative.X,
+                availableSpace.Y * originRelative.Y
+            );
+        }
+
+        Vector2 originRel = GetAnchorOriginVector(Origin);
+        Vector2 availSpace = DrawSize - ContentSize;
+        Vector2 textOffset = new Vector2(
+            availSpace.X * originRel.X,
+            availSpace.Y * originRel.Y
+        );
+
+        // If the caret is at the very end of the string
+        if (index >= shapedText.Glyphs.Count)
+        {
+            var lastGlyph = shapedText.Glyphs[^1];
+            return new Vector2(lastGlyph.Position.X + lastGlyph.Size.X, lastGlyph.Position.Y) + textOffset;
+        }
+
+        // Caret is before or in the middle of the string
+        var glyph = shapedText.Glyphs[index];
+        return new Vector2(glyph.Position.X, glyph.Position.Y) + textOffset;
+    }
+
     public class SpriteTextDrawNode : DrawNode
     {
         private struct GlyphBatch

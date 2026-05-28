@@ -278,6 +278,8 @@ public abstract class AppHost : IDisposable
             Window.OnScroll += e => inputQueue.Enqueue(() => OnScroll(e));
             Window.OnDragDropFile += e => inputQueue.Enqueue(() => onDragDropFile(e));
             Window.OnDragDropText += e => inputQueue.Enqueue(() => onDragDropText(e));
+            Window.OnTextInput += e => inputQueue.Enqueue(() => OnTextInput(e));
+            Window.OnTextEditing += e => inputQueue.Enqueue(() => OnTextEditing(e));
             Window.Resized += (w, h) =>
             {
                 Window.GetPhysicalSize(out int pw, out int ph);
@@ -519,6 +521,8 @@ public abstract class AppHost : IDisposable
     private void OnScroll(ScrollEvent e) => app?.OnScroll(e);
     private void onDragDropFile(DragDropFileEvent e) => app?.OnDragDropFile(e);
     private void onDragDropText(DragDropTextEvent e) => app?.OnDragDropText(e);
+    protected void OnTextInput(TextInputEvent e) => app?.OnTextInput(e);
+    protected void OnTextEditing(TextEditingEvent e) => app?.OnTextEditing(e);
 
     protected virtual void SetupRenderer()
     {

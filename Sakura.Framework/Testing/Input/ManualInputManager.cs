@@ -191,4 +191,21 @@ public class ManualInputManager : Container
     {
         base.OnKeyUp(new KeyEvent(key, modifiers, false));
     }
+
+    /// <summary>
+    /// Synthesizes a native text input commit at the current focus.
+    /// </summary>
+    /// <param name="text">The string content to commit.</param>
+    public void TypeText(string text)
+    {
+        base.OnTextInput(new TextInputEvent(text));
+    }
+
+    /// <summary>
+    /// Synthesizes an active IME composition layout editing sequence.
+    /// </summary>
+    public void EditComposingText(string text, int start, int length)
+    {
+        base.OnTextEditing(new TextEditingEvent(text, start, length));
+    }
 }
