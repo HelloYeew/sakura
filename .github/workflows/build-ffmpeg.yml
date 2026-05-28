@@ -5,7 +5,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
   build-macos:
@@ -155,11 +154,20 @@ jobs:
           distribute "artifacts/win-x86" "win-x86"
           distribute "artifacts/win-arm64" "win-arm64"
 
-      - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v6
-        with:
-          commit-message: "Update Native FFmpeg Binaries"
-          title: "Update Native FFmpeg Binaries (GitHub Actions)"
-          body: "Auto-generated PR injecting custom FFmpeg binaries into both Sakura.Framework and Sakura.Framework.NativeLibraries."
-          branch: "update-ffmpeg-binaries"
-          delete-branch: true
+      - name: Commit and Push to Repository
+          run: |
+            git config --global user.name "github-actions[bot]"
+            git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+            git checkout -b update-ffmpeg-binaries
+            
+            git add Sakura.Framework/runtimes/
+            git add Sakura.Framework.NativeLibraries/runtimes/
+
+            if git diff --staged --quiet; then
+              echo "No changes in native libraries detected. Skipping push."
+            else
+              git commit -m "Update Native FFmpeg Binaries" -m "Co-authored-by: HelloYeew <68165621+HelloYeew@users.noreply.github.com>"
+
+              git push --force origin update-ffmpeg-binaries
+            fi
