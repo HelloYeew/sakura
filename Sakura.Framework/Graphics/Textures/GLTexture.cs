@@ -32,6 +32,7 @@ public class GLTexture : IDisposable
         this.gl = gl;
         Width = width;
         Height = height;
+        Handle = gl.GenTexture();
     }
 
     /// <summary>
