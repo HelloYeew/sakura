@@ -3,6 +3,10 @@ name: Build Custom FFmpeg
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   build-macos:
     name: Build macOS
