@@ -27,6 +27,8 @@ case $arch in
     arm64)
         FFMPEG_FLAGS+=(
             --arch=aarch64
+            --enable-cross-compile
+            --cross-prefix=aarch64-linux-gnu-
         )
         ;;
 esac

@@ -82,7 +82,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [x64, arm64]
+        arch: [ x64, arm64 ]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -90,7 +90,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install nasm pkg-config libva-dev libvdpau-dev
+          sudo apt-get install nasm pkg-config libva-dev libvdpau-dev gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
 
       - name: Build
         run: bash Sakura.Framework.NativeLibraries/script/ffmpeg/build-linux.sh
