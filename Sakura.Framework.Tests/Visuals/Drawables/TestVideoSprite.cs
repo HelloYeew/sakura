@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using NUnit.Framework;
+using Sakura.Framework.Allocation;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Textures;
@@ -16,7 +17,9 @@ namespace Sakura.Framework.Tests.Visuals.Drawables;
 public class TestVideoSprite : TestScene
 {
     private VideoSprite videoSprite;
-    private const string test_video_path = "/Users/helloyeew/Library/Application Support/Renako/beatmaps/54 Hare no Hi ni (TV Size) - Ushio Reira/mv.avi";
+
+    [Resolved]
+    private VideoStore videoStore { get; set; } = null!;
 
     [SetUp]
     public void SetUp()
@@ -28,7 +31,7 @@ public class TestVideoSprite : TestScene
     {
         AddStep("Add VideoSprite", () =>
         {
-            videoSprite = new VideoSprite(test_video_path)
+            videoSprite = new VideoSprite(videoStore.GetDecoder("test.avi"))
             {
                 Anchor = Anchor.Centre,
                 Origin = Anchor.Centre,
