@@ -3,7 +3,6 @@
 
 using Sakura.Framework.Graphics.Rendering;
 using Silk.NET.OpenGL;
-using Shader = Sakura.Framework.Graphics.Rendering.Shader;
 
 namespace Sakura.Framework.Graphics.Video;
 
@@ -15,10 +14,10 @@ internal class VideoDrawNode : DrawNode
 {
     private VideoTexture? videoTexture;
     private float[]? yuvMatrix;
-    private Shader? videoShader;
+    private IShader? videoShader;
     private GL? gl;
 
-    public void ApplyVideoState(VideoSprite source, VideoTexture? tex, float[]? matrix, Shader? shader, GL glRef)
+    public void ApplyVideoState(VideoSprite source, VideoTexture? tex, float[]? matrix, IShader? shader, GL glRef)
     {
         videoTexture = tex;
         yuvMatrix = matrix;

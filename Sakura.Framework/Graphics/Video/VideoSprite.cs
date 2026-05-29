@@ -42,7 +42,7 @@ public class VideoSprite : Drawable, IDisposable
     private readonly VideoDecoder? providedDecoder;
 
     private VideoDecoder decoder = null!;
-    private Shader? videoShader;
+    private IShader? videoShader;
     private GL gl;
 
     private readonly Queue<DecodedFrame> availableFrames = new();
@@ -209,14 +209,11 @@ public class VideoSprite : Drawable, IDisposable
         {
             availableFrames.Enqueue(f);
 
-            // Schedule the actual GL upload for this frame's texture.
-            // This runs in StartFrame() before any Draw() calls — safe GL ordering.
-            if (f.Texture.VideoTexture is VideoTexture vt)
-            {
-                var capturedVt = vt;
-                var capturedGl = gl;
-                renderer.ScheduleToDrawThread(() => capturedVt.FlushIfPending(capturedGl));
-            }
+            // Schedule the actual GL upload for this frame's NativeTexture.
+            // Runs in StartFrame() before any Draw() calls — safe GL ordering.
+            var capturedVt = f.NativeTexture;
+            var capturedGl = gl;
+            renderer.ScheduleToDrawThread(() => capturedVt.FlushIfPending(capturedGl));
         }
 
         // Establish ptsBias from the first frame received after a seek.
@@ -256,21 +253,18 @@ public class VideoSprite : Drawable, IDisposable
 
         if (lastFrame != null)
         {
-            var vt = lastFrame.Texture.VideoTexture as VideoTexture;
+            var vt = lastFrame.NativeTexture;
             currentMatrix = decoder.GetConversionMatrix();
 
-            if (vt != null)
-            {
-                // If the new frame's upload is already complete, use it directly.
-                // Otherwise fall back to the last confirmed-uploaded texture so
-                // the draw node always has something valid to render — no black frames.
-                if (vt.UploadComplete)
-                    lastUploadedTexture = vt;
+            // If the new frame's upload is already complete, use it directly.
+            // Otherwise fall back to the last confirmed-uploaded texture — no black frames.
+            if (vt.UploadComplete)
+                lastUploadedTexture = vt;
 
-                currentVideoTexture = lastUploadedTexture ?? vt;
-            }
+            currentVideoTexture = lastUploadedTexture ?? vt;
 
             // Set Drawable.Texture so GenerateVertices() has correct Width/Height for FillMode.
+            // This is now a dimension-only proxy with no GL handles.
             if (Texture != lastFrame.Texture)
                 Texture = lastFrame.Texture;
 

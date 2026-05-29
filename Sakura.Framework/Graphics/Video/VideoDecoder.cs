@@ -137,11 +137,8 @@ public unsafe class VideoDecoder : IDisposable
     {
         foreach (var f in frames)
         {
-            if (f.Texture.VideoTexture is VideoTexture vt)
-            {
-                vt.Reset();
-                availableTextures.Enqueue(vt);
-            }
+            f.NativeTexture.Reset();
+            availableTextures.Enqueue(f.NativeTexture);
         }
     }
 
@@ -437,8 +434,10 @@ public unsafe class VideoDecoder : IDisposable
             var upload = new VideoTextureUpload(frame);
             tex.SetData(upload);
 
-            var texture = new Texture(tex.GlTexture, tex);
-            decodedFrames.Enqueue(new DecodedFrame { Time = frameTime, Texture = texture });
+            // Texture is a dimension-only proxy — no GL handles, no Video namespace import needed.
+            // VideoSprite reads NativeTexture directly for rendering.
+            var texture = new Texture(width, height);
+            decodedFrames.Enqueue(new DecodedFrame { Time = frameTime, Texture = texture, NativeTexture = tex });
             GlobalStatistics.Get<int>("Video", "Frames Decoded").Value++;
         }
     }
@@ -535,10 +534,7 @@ public unsafe class VideoDecoder : IDisposable
 
         // Return all decodedFrames textures to the pool, then dispose them all.
         while (decodedFrames.TryDequeue(out var frame))
-        {
-            if (frame.Texture.VideoTexture is VideoTexture vt)
-                availableTextures.Enqueue(vt);
-        }
+            availableTextures.Enqueue(frame.NativeTexture);
 
         while (availableTextures.TryDequeue(out var vt))
             vt.Dispose(); // unregisters from textureManager, schedules GL delete

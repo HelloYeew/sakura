@@ -2,42 +2,24 @@
 // See the LICENSE file for full license text.
 
 using System;
-using Sakura.Framework.Graphics.Video;
 using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.Textures;
 
 /// <summary>
 /// A public-facing texture that drawables use.
-/// Points to a specific region (UvRect) within a larger GLTexture (atlas or standalone),
-/// or wraps a <see cref="VideoGLTexture"/> for the video pipeline.
+/// Points to a specific region (UvRect) within a larger <see cref="GLTexture"/>
+/// (atlas or standalone).
 /// </summary>
 public class Texture : IDisposable
 {
     /// <summary>
-    /// The underlying GPU texture (for regular images). Null for video textures.
+    /// The underlying GPU texture. Null for dimension-only proxy textures.
     /// </summary>
     public GLTexture? GlTexture { get; }
 
     /// <summary>
-    /// The underlying YUV GPU texture (for video). Null for regular textures.
-    /// </summary>
-    public VideoGLTexture? VideoGlTexture { get; }
-
-    /// <summary>
-    /// The <see cref="IVideoTexture"/> that manages upload lifecycle for this video texture.
-    /// Null for regular textures.
-    /// </summary>
-    public IVideoTexture? VideoTexture { get; }
-
-    /// <summary>
-    /// Whether this is a YUV video texture.
-    /// </summary>
-    public bool IsVideoTexture => VideoGlTexture != null;
-
-    /// <summary>
-    /// The rectangle (in 0-1 UV coordinates) this texture occupies within its GLTexture.
-    /// Always (0,0,1,1) for video and standalone textures.
+    /// UV region within the GL texture (0–1 coordinates).
     /// </summary>
     public RectangleF UvRect { get; }
 
@@ -45,13 +27,12 @@ public class Texture : IDisposable
     public int Height { get; }
 
     /// <summary>
-    /// Whether this texture has valid uploaded data and is safe to render.
-    /// For video textures this reflects <see cref="IVideoTexture.UploadComplete"/>.
+    /// True once the GPU upload has completed and the texture is safe to render.
     /// </summary>
-    public bool IsAvailable => VideoTexture?.UploadComplete ?? GlTexture?.Available ?? false;
+    public bool IsAvailable => GlTexture?.Available ?? false;
 
     /// <summary>
-    /// Creates a texture wrapping the entire area of a regular GLTexture.
+    /// Creates a texture wrapping the entire area of a <see cref="GLTexture"/>.<
     /// </summary>
     public Texture(GLTexture glTexture)
     {
@@ -62,39 +43,27 @@ public class Texture : IDisposable
     }
 
     /// <summary>
-    /// Creates a texture wrapping a sub-region of a regular GLTexture.
+    /// Creates a texture wrapping a sub-region of a <see cref="GLTexture"/>.
     /// </summary>
     public Texture(GLTexture glTexture, RectangleF uvRect)
     {
         GlTexture = glTexture;
         UvRect = uvRect;
-        Width = (int)(glTexture.Width * uvRect.Width);
+        Width = (int)(glTexture.Width  * uvRect.Width);
         Height = (int)(glTexture.Height * uvRect.Height);
     }
 
     /// <summary>
-    /// Creates a texture wrapping a three-plane YUV video texture.
+    /// Creates a dimension-only proxy texture with no GL backing.
+    /// Used by the video pipeline so <see cref="Sakura.Framework.Graphics.Drawables.Drawable"/>
+    /// can compute FillMode layout without knowing the underlying GPU resource type.
     /// </summary>
-    public Texture(VideoGLTexture videoGlTexture)
+    public Texture(int width, int height)
     {
-        VideoGlTexture = videoGlTexture;
+        GlTexture = null;
         UvRect = new RectangleF(0, 0, 1, 1);
-        Width = videoGlTexture.Width;
-        Height = videoGlTexture.Height;
-    }
-
-    /// <summary>
-    /// Creates a video texture that carries both the GL handles and the upload-lifecycle manager.
-    /// Used by <see cref="VideoDecoder"/> so <see cref="VideoSprite"/> can poll
-    /// <see cref="IVideoTexture.UploadComplete"/> without knowing the concrete type.
-    /// </summary>
-    public Texture(VideoGLTexture videoGlTexture, IVideoTexture videoTexture)
-    {
-        VideoGlTexture = videoGlTexture;
-        VideoTexture = videoTexture;
-        UvRect = new RectangleF(0, 0, 1, 1);
-        Width = videoGlTexture.Width;
-        Height = videoGlTexture.Height;
+        Width = width;
+        Height = height;
     }
 
     public void Dispose()
