@@ -7,33 +7,32 @@ using Sakura.Framework.Maths;
 namespace Sakura.Framework.Graphics.Textures;
 
 /// <summary>
-/// A public-facing texture represents that drawable use.
-/// It points to a specifix region (UvRect) within a larger TextureGL (atlas or standalone textures).
+/// A public-facing texture that drawables use.
+/// Points to a specific region (UvRect) within a larger <see cref="GLTexture"/>
+/// (atlas or standalone).
 /// </summary>
 public class Texture : IDisposable
 {
     /// <summary>
-    /// The underlying GPU texture.
+    /// The underlying GPU texture. Null for dimension-only proxy textures.
     /// </summary>
-    public GLTexture GlTexture { get; }
+    public GLTexture? GlTexture { get; }
 
     /// <summary>
-    /// The rectangle (in 0-1 UV coordinates) this texture occupies within its TextureGL.
+    /// UV region within the GL texture (0–1 coordinates).
     /// </summary>
     public RectangleF UvRect { get; }
 
-    /// <summary>
-    /// The width of this texture region in pixels.
-    /// </summary>
     public int Width { get; }
-
-    /// <summary>
-    /// The height of this texture region in pixels.
-    /// </summary>
     public int Height { get; }
 
     /// <summary>
-    /// Creates a new texture that represents the *entire* area of a TextureGL.
+    /// True once the GPU upload has completed and the texture is safe to render.
+    /// </summary>
+    public bool IsAvailable => GlTexture?.Available ?? false;
+
+    /// <summary>
+    /// Creates a texture wrapping the entire area of a <see cref="GLTexture"/>.<
     /// </summary>
     public Texture(GLTexture glTexture)
     {
@@ -44,20 +43,31 @@ public class Texture : IDisposable
     }
 
     /// <summary>
-    /// Creates a new texture that represents a *sub-region* of a TextureGL.
+    /// Creates a texture wrapping a sub-region of a <see cref="GLTexture"/>.
     /// </summary>
     public Texture(GLTexture glTexture, RectangleF uvRect)
     {
         GlTexture = glTexture;
         UvRect = uvRect;
-
-        // Calculate pixel size of this specific region
-        Width = (int)(glTexture.Width * uvRect.Width);
+        Width = (int)(glTexture.Width  * uvRect.Width);
         Height = (int)(glTexture.Height * uvRect.Height);
+    }
+
+    /// <summary>
+    /// Creates a dimension-only proxy texture with no GL backing.
+    /// Used by the video pipeline so <see cref="Sakura.Framework.Graphics.Drawables.Drawable"/>
+    /// can compute FillMode layout without knowing the underlying GPU resource type.
+    /// </summary>
+    public Texture(int width, int height)
+    {
+        GlTexture = null;
+        UvRect = new RectangleF(0, 0, 1, 1);
+        Width = width;
+        Height = height;
     }
 
     public void Dispose()
     {
-        GlTexture.Dispose();
+        GlTexture?.Dispose();
     }
 }

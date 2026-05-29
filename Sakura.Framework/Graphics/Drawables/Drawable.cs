@@ -31,6 +31,14 @@ public abstract class Drawable
 {
     public Container? Parent { get; internal set; }
 
+    /// <summary>
+    /// When true, this drawable will be disposed automatically when removed from its parent
+    /// container via <see cref="Container.Remove"/> or <see cref="Container.Clear"/>.
+    /// Set this on drawables that own unmanaged resources (e.g. video decoders, audio tracks).
+    /// Defaults to false to preserve backward-compatible behavior.
+    /// </summary>
+    public bool DisposeOnRemoval { get; set; }
+
     public bool IsHovered { get; private set; }
     public bool IsDragged { get; private set; }
 

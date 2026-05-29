@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
@@ -22,6 +23,7 @@ public class GLTextureManager : ITextureManager
     private readonly IImageLoader imageLoader;
     private readonly IRenderer renderer;
     private readonly Dictionary<string, Texture> textureCache = new Dictionary<string, Texture>();
+    private readonly ConcurrentDictionary<IVideoTexture, byte> videoTextures = new ConcurrentDictionary<IVideoTexture, byte>();
 
     private readonly Texture missingTexture;
 
@@ -169,4 +171,8 @@ public class GLTextureManager : ITextureManager
     }
 
     public IEnumerable<Texture> GetAllTextures() => textureCache.Values;
+
+    public void RegisterVideoTexture(IVideoTexture texture) => videoTextures.TryAdd(texture, 0);
+    public void UnregisterVideoTexture(IVideoTexture texture) => videoTextures.TryRemove(texture, out _);
+    public IEnumerable<IVideoTexture> GetAllVideoTextures() => videoTextures.Keys;
 }

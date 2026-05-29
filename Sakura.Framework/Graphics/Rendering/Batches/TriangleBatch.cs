@@ -97,6 +97,29 @@ public class TriangleBatch
     }
 
     /// <summary>
+    /// Uploads the provided vertices directly into the VBO and issues a DrawArrays call
+    /// without touching any texture slots or the internal vertex buffer.
+    /// Used for custom-shader drawables (e.g. VideoDrawNode) that manage their own textures.
+    /// </summary>
+    public unsafe void DrawRaw(ReadOnlySpan<SakuraVertex> rawVertices)
+    {
+        if (rawVertices.IsEmpty) return;
+
+        gl.BindVertexArray(vao);
+        gl.BindBuffer(BufferTargetARB.ArrayBuffer, vbo);
+
+        fixed (SakuraVertex* ptr = rawVertices)
+        {
+            gl.BufferSubData(BufferTargetARB.ArrayBuffer, 0, (nuint)(rawVertices.Length * vertexSize), ptr);
+        }
+
+        gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)rawVertices.Length);
+
+        GlobalStatistics.Get<int>("Renderer", "Draw Calls").Value++;
+        GlobalStatistics.Get<int>("Renderer", "Vertices Drawn").Value += rawVertices.Length;
+    }
+
+    /// <summary>
     /// Uploads the current batch of vertices to the GPU and draws them.
     /// </summary>
     public unsafe int Draw()
