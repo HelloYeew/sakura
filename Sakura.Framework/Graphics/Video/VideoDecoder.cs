@@ -12,6 +12,7 @@ using FFmpeg.AutoGen;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Logging;
+using Sakura.Framework.Reactive;
 using Sakura.Framework.Statistic;
 using Silk.NET.OpenGL;
 using Texture = Sakura.Framework.Graphics.Textures.Texture;
@@ -29,6 +30,15 @@ public unsafe class VideoDecoder : IDisposable
     public float LastDecodedFrameTime => lastDecodedFrameTime;
     public DecoderState State { get; private set; } = DecoderState.Ready;
     public bool Looping { get; set; }
+
+    public readonly Reactive<bool> HardwareAcceleration = new Reactive<bool>(true);
+
+    /// <summary>
+    /// The hardware device type that was successfully initialised, or
+    /// <see cref="AVHWDeviceType.AV_HWDEVICE_TYPE_NONE"/> when running on software.
+    /// Updated each time the codec is (re)opened.
+    /// </summary>
+    public AVHWDeviceType ActiveHardwareDevice { get; private set; } = AVHWDeviceType.AV_HWDEVICE_TYPE_NONE;
 
     private Stream? videoStream;
     private AVFormatContext* formatContext;
@@ -106,12 +116,61 @@ public unsafe class VideoDecoder : IDisposable
     {
         prepareDecoding();
         texturePoolWarmed = false;
+
+        // Subscribe to live hardware acceleration toggle.
+        // The handler enqueues a codec-recreation command into the decode loop's
+        // command queue so it is applied safely between frames — never mid-decode.
+        HardwareAcceleration.ValueChanged += onHardwareAccelerationChanged;
+
         cts = new CancellationTokenSource();
         decodeTask = Task.Factory.StartNew(
             () => decodeLoop(cts.Token),
             cts.Token,
             TaskCreationOptions.LongRunning,
             TaskScheduler.Default);
+    }
+
+    private void onHardwareAccelerationChanged(ValueChangedEvent<bool> e)
+    {
+        // Called from whatever thread changed the Reactive — could be the update thread
+        // (user toggling a setting) or the main thread (config load).
+        // Route through decoderCommands so it runs safely in the decode loop.
+        decoderCommands.Enqueue(recreateCodecContext);
+    }
+
+    /// <summary>
+    /// Closes and reopens the codec context, respecting the current
+    /// <see cref="HardwareAcceleration"/> value. Runs on the decode thread
+    /// (called from the <see cref="decoderCommands"/> queue).
+    /// Flushes pending decoded frames and resets the pool warm-up flag so
+    /// new textures are created for the (possibly different) pixel format.
+    /// </summary>
+    private void recreateCodecContext()
+    {
+        // Close the existing codec context (releases HW device context too)
+        if (codecContext != null)
+        {
+            fixed (AVCodecContext** p = &codecContext)
+                ffmpeg.avcodec_free_context(p);
+            codecContext = null;
+        }
+
+        // Flush buffered frames — they may have been decoded with the old codec config
+        while (decodedFrames.TryDequeue(out var staleFrame))
+            availableTextures.Enqueue(staleFrame.NativeTexture);
+
+        // Re-open with current HardwareAcceleration.Value
+        AVCodec* codec = null;
+        ffmpeg.av_find_best_stream(formatContext, AVMediaType.AVMEDIA_TYPE_VIDEO, -1, -1, &codec, 0);
+        if (codec != null)
+        {
+            openCodec(codec);
+            Logger.Verbose($"[VideoDecoder] Codec recreated — HW={HardwareAcceleration.Value}, device={ActiveHardwareDevice}");
+        }
+
+        // Reset pool warm-up so next frame triggers texture recreation if needed
+        texturePoolWarmed = false;
+        State = DecoderState.Ready;
     }
 
     public void Seek(double targetMs)
@@ -239,12 +298,128 @@ public unsafe class VideoDecoder : IDisposable
             ? avStream->duration * timeBaseInSeconds * 1000.0
             : formatContext->duration / (double)ffmpeg.AV_TIME_BASE * 1000.0;
 
+        openCodec(codec);
+    }
+
+    /// <summary>
+    /// Opens the codec context, trying hardware-accelerated decoders first (if
+    /// <see cref="AllowHardwareAcceleration"/> is true) and falling back to the
+    /// software decoder automatically on any failure.
+    ///
+    /// Hardware device priority:
+    ///   macOS  — VideoToolbox
+    ///   Windows — D3D11VA > DXVA2 > CUDA
+    ///   Linux   — VAAPI > VDPAU > CUDA
+    ///
+    /// If every HW attempt fails, or if <see cref="AllowHardwareAcceleration"/> is
+    /// false, the plain software codec is opened instead.
+    /// <see cref="ActiveHardwareDevice"/> reflects the final outcome.
+    /// </summary>
+    private void openCodec(AVCodec* codec)
+    {
+        if (HardwareAcceleration.Value)
+        {
+            // Platform-preferred HW device types, tried in order.
+            AVHWDeviceType[] candidates;
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                candidates = new[] { AVHWDeviceType.AV_HWDEVICE_TYPE_VIDEOTOOLBOX };
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                candidates = new[]
+                {
+                    AVHWDeviceType.AV_HWDEVICE_TYPE_D3D11VA,
+                    AVHWDeviceType.AV_HWDEVICE_TYPE_DXVA2,
+                    AVHWDeviceType.AV_HWDEVICE_TYPE_CUDA,
+                };
+            else
+                candidates = new[]
+                {
+                    AVHWDeviceType.AV_HWDEVICE_TYPE_VAAPI,
+                    AVHWDeviceType.AV_HWDEVICE_TYPE_VDPAU,
+                    AVHWDeviceType.AV_HWDEVICE_TYPE_CUDA,
+                };
+
+            foreach (var hwType in candidates)
+            {
+                if (tryOpenCodecWithHardware(codec, hwType))
+                {
+                    ActiveHardwareDevice = hwType;
+                    Logger.Verbose($"[VideoDecoder] Hardware decoding active: {hwType}");
+                    GlobalStatistics.Get<string>("Video", "HW Decoder").Value = hwType.ToString().Replace("AV_HWDEVICE_TYPE_", "");
+                    return;
+                }
+            }
+
+            Logger.Verbose("[VideoDecoder] No hardware decoder available, falling back to software.");
+        }
+
+        // Software fallback (or AllowHardwareAcceleration == false)
+        openCodecSoftware(codec);
+    }
+
+    private bool tryOpenCodecWithHardware(AVCodec* codec, AVHWDeviceType hwType)
+    {
+        // Check whether this codec supports the requested HW device type
+        bool supported = false;
+        for (int i = 0; ; i++)
+        {
+            var hwConfig = ffmpeg.avcodec_get_hw_config(codec, i);
+            if (hwConfig == null) break;
+
+            // AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX = 0x01
+            if ((hwConfig->methods & 0x01) != 0 && hwConfig->device_type == hwType)
+            {
+                supported = true;
+                break;
+            }
+        }
+
+        if (!supported)
+            return false;
+
+        var ctx = ffmpeg.avcodec_alloc_context3(codec);
+        if (ctx == null) return false;
+
+        ctx->pkt_timebase = avStream->time_base;
+        ffmpeg.avcodec_parameters_to_context(ctx, avStream->codecpar);
+
+        // Create the hardware device context
+        AVBufferRef* hwDeviceCtx = null;
+        int hwResult = ffmpeg.av_hwdevice_ctx_create(&hwDeviceCtx, hwType, null, null, 0);
+        if (hwResult < 0)
+        {
+            ffmpeg.avcodec_free_context(&ctx);
+            Logger.Verbose($"[VideoDecoder] Failed to create HW device context for {hwType}: {hwResult}");
+            return false;
+        }
+
+        // Transfer ownership of hwDeviceCtx to the codec context.
+        // avcodec_free_context will free it — do not call av_buffer_unref separately.
+        ctx->hw_device_ctx = hwDeviceCtx;
+
+        if (ffmpeg.avcodec_open2(ctx, codec, null) < 0)
+        {
+            ffmpeg.avcodec_free_context(&ctx);
+            Logger.Verbose($"[VideoDecoder] Failed to open codec with HW device {hwType}");
+            return false;
+        }
+
+        codecContext = ctx;
+        return true;
+    }
+
+    private void openCodecSoftware(AVCodec* codec)
+    {
         codecContext = ffmpeg.avcodec_alloc_context3(codec);
         codecContext->pkt_timebase = avStream->time_base;
         ffmpeg.avcodec_parameters_to_context(codecContext, avStream->codecpar);
 
         if (ffmpeg.avcodec_open2(codecContext, codec, null) < 0)
-            throw new Exception("Could not open codec.");
+            throw new Exception("Could not open software codec.");
+
+        ActiveHardwareDevice = AVHWDeviceType.AV_HWDEVICE_TYPE_NONE;
+        Logger.Verbose("[VideoDecoder] Software decoding active.");
+        GlobalStatistics.Get<string>("Video", "HW Decoder").Value = "Software";
     }
 
     private void decodeLoop(CancellationToken ct)
@@ -505,6 +680,9 @@ public unsafe class VideoDecoder : IDisposable
     {
         if (isDisposed) return;
         isDisposed = true;
+
+        HardwareAcceleration.ValueChanged -= onHardwareAccelerationChanged;
+        HardwareAcceleration.UnbindAll();
 
         decoderCommands.Clear();
         cts?.Cancel();

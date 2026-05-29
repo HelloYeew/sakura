@@ -23,5 +23,6 @@ public class FrameworkConfigManager : ConfigManager<FrameworkSetting>
         Get(FrameworkSetting.TrackVolume, 1.0);
         Get(FrameworkSetting.SampleVolume, 1.0);
         Get(FrameworkSetting.WindowMode, WindowMode.Windowed);
+        Get(FrameworkSetting.HardwareAcceleration, true);
     }
 }

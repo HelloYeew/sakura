@@ -12,5 +12,6 @@ public enum FrameworkSetting
     TrackVolume,
     SampleVolume,
     WindowMode,
-    ExecutionMode
+    ExecutionMode,
+    HardwareAcceleration
 }

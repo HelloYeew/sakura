@@ -96,7 +96,7 @@ public class VideoSprite : Drawable, IDisposable
     private IRenderer renderer = null!;
 
     [BackgroundDependencyLoader]
-    private void load(AppHost host, ITextureManager textureManager)
+    private void load(AppHost host, ITextureManager textureManager, Configurations.FrameworkConfigManager config)
     {
         renderer = host.Renderer;
         gl = GLRenderer.GL;
@@ -105,6 +105,8 @@ public class VideoSprite : Drawable, IDisposable
                   ?? (stream != null
                          ? new VideoDecoder(renderer, gl, textureManager, stream)
                          : new VideoDecoder(renderer, gl, textureManager, filePath!));
+
+        decoder.HardwareAcceleration.BindTo(config.Get<bool>(Configurations.FrameworkSetting.HardwareAcceleration));
 
         // Shader must be compiled on the draw thread (GL context owner in multi-thread mode).
         renderer.ScheduleToDrawThread(() =>
