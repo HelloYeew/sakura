@@ -43,20 +43,7 @@ public unsafe class VideoDecoder : IDisposable
     {
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
-            string frameworkRuntimePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "runtimes", "osx", "native");
-
-            if (Directory.Exists(frameworkRuntimePath) && File.Exists(Path.Combine(frameworkRuntimePath, "libavformat.58.dylib")))
-            {
-                ffmpeg.RootPath = frameworkRuntimePath;
-            }
-            else if (Directory.Exists("/opt/homebrew/lib") && File.Exists("/opt/homebrew/lib/libavformat.dylib"))
-            {
-                ffmpeg.RootPath = "/opt/homebrew/lib";
-            }
-            else
-            {
-                ffmpeg.RootPath = frameworkRuntimePath;
-            }
+            ffmpeg.RootPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "runtimes", "osx", "native");
         }
         else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
@@ -70,6 +57,8 @@ public unsafe class VideoDecoder : IDisposable
         }
 
         Logger.Debug($"[FFmpeg] RootPath resolved to: {ffmpeg.RootPath}");
+
+        DynamicallyLoadedBindings.Initialize();
     }
 
     public void Start()
