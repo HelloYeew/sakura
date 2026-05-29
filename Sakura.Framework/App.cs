@@ -16,6 +16,7 @@ using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Graphics.Textures;
+using Sakura.Framework.Graphics.Video;
 using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
@@ -37,6 +38,7 @@ public class App : Container, IFocusManager, IDisposable
 
     protected ITextureManager TextureManager { get; private set; }
     protected IFontStore FontStore { get; private set; }
+    protected VideoStore VideoStore { get; private set; }
 
     private Reactive<PerformanceOverlayState> fpsGraphState;
 
@@ -86,6 +88,7 @@ public class App : Container, IFocusManager, IDisposable
         switch (Host.Renderer)
         {
             case GLRenderer:
+                VideoStore = new VideoStore(embeddedResourceStorage.GetStorageForDirectory("Videos"), Host.Renderer, GLRenderer.GL);
                 TextureManager = new GLTextureManager(Host.Renderer, GLRenderer.GL, embeddedResourceStorage.GetStorageForDirectory("Textures"), CreateImageLoader());
                 FontStore = new GLFontStore(Host.Renderer, GLRenderer.GL);
                 // TODO: This will exposed all framework file resource out, maybe find better way?
@@ -98,6 +101,7 @@ public class App : Container, IFocusManager, IDisposable
             case HeadlessRenderer:
                 TextureManager = new HeadlessTextureManager();
                 FontStore = new HeadlessFontStore((HeadlessTextureManager)TextureManager);
+                VideoStore = null; // Video playback is not supported in headless mode
                 break;
 
             default:
@@ -108,6 +112,7 @@ public class App : Container, IFocusManager, IDisposable
 
         Cache<IAudioStore<ITrack>>(TrackStore);
         Cache<IAudioStore<ISample>>(SampleStore);
+        if (VideoStore != null) Cache(VideoStore);
 
         Cache(Host);
         Cache(this);

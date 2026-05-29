@@ -7,33 +7,44 @@ using Sakura.Framework.Maths;
 namespace Sakura.Framework.Graphics.Textures;
 
 /// <summary>
-/// A public-facing texture represents that drawable use.
-/// It points to a specifix region (UvRect) within a larger TextureGL (atlas or standalone textures).
+/// A public-facing texture that drawables use.
+/// Points to a specific region (UvRect) within a larger GLTexture (atlas or standalone),
+/// or wraps a <see cref="VideoGLTexture"/> for the video pipeline.
 /// </summary>
 public class Texture : IDisposable
 {
     /// <summary>
-    /// The underlying GPU texture.
+    /// The underlying GPU texture (for regular images). Null for video textures.
     /// </summary>
-    public GLTexture GlTexture { get; }
+    public GLTexture? GlTexture { get; }
 
     /// <summary>
-    /// The rectangle (in 0-1 UV coordinates) this texture occupies within its TextureGL.
+    /// The underlying YUV GPU texture (for video). Null for regular textures.
+    /// </summary>
+    public VideoGLTexture? VideoGlTexture { get; }
+
+    /// <summary>
+    /// Whether this is a YUV video texture.
+    /// </summary>
+    public bool IsVideoTexture => VideoGlTexture != null;
+
+    /// <summary>
+    /// The rectangle (in 0-1 UV coordinates) this texture occupies within its GLTexture.
+    /// Always (0,0,1,1) for video and standalone textures.
     /// </summary>
     public RectangleF UvRect { get; }
 
-    /// <summary>
-    /// The width of this texture region in pixels.
-    /// </summary>
     public int Width { get; }
-
-    /// <summary>
-    /// The height of this texture region in pixels.
-    /// </summary>
     public int Height { get; }
 
     /// <summary>
-    /// Creates a new texture that represents the *entire* area of a TextureGL.
+    /// Whether this texture has valid uploaded data and is safe to render.
+    /// For video textures this reflects <see cref="VideoGLTexture.Available"/>.
+    /// </summary>
+    public bool IsAvailable => VideoGlTexture?.Available ?? GlTexture?.Available ?? false;
+
+    /// <summary>
+    /// Creates a texture wrapping the entire area of a regular GLTexture.
     /// </summary>
     public Texture(GLTexture glTexture)
     {
@@ -44,20 +55,30 @@ public class Texture : IDisposable
     }
 
     /// <summary>
-    /// Creates a new texture that represents a *sub-region* of a TextureGL.
+    /// Creates a texture wrapping a sub-region of a regular GLTexture.
     /// </summary>
     public Texture(GLTexture glTexture, RectangleF uvRect)
     {
         GlTexture = glTexture;
         UvRect = uvRect;
-
-        // Calculate pixel size of this specific region
         Width = (int)(glTexture.Width * uvRect.Width);
         Height = (int)(glTexture.Height * uvRect.Height);
     }
 
+    /// <summary>
+    /// Creates a texture wrapping a three-plane YUV video texture.
+    /// </summary>
+    public Texture(VideoGLTexture videoGlTexture)
+    {
+        VideoGlTexture = videoGlTexture;
+        UvRect = new RectangleF(0, 0, 1, 1);
+        Width = videoGlTexture.Width;
+        Height = videoGlTexture.Height;
+    }
+
     public void Dispose()
     {
-        GlTexture.Dispose();
+        GlTexture?.Dispose();
+        VideoGlTexture?.Dispose();
     }
 }

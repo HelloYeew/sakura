@@ -2,81 +2,180 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Generic;
+using System.IO;
 using Sakura.Framework.Allocation;
-using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Drawables;
+using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Platform;
 using Silk.NET.OpenGL;
+using Shader = Sakura.Framework.Graphics.Rendering.Shader;
 
 namespace Sakura.Framework.Graphics.Video;
 
+/// <summary>
+///     Decodes and displays a video using GPU-side YUV→RGB conversion.
+/// </summary>
+/// <remarks>
+///     <para>
+///         <b>Time model:</b> the decoder produces frames with PTS timestamps in milliseconds.
+///         <see cref="VideoSprite"/> tracks a playback clock that starts at 0 and increments with
+///         real elapsed time. Frames are displayed when their PTS (offset-adjusted to start from 0)
+///         is &lt;= the playback clock.
+///     </para>
+///     <para>
+///         <b>Threading:</b>
+///         <list type="bullet">
+///             <item>FFmpeg decode runs on a dedicated <c>LongRunning</c> task thread.</item>
+///             <item>GPU upload runs inside <c>ScheduleToDrawThread</c> (draw thread).</item>
+///             <item><c>VideoSprite.Update()</c> runs on the update thread — no GL calls.</item>
+///             <item><c>VideoDrawNode.Draw()</c> runs on the draw thread — all GL calls.</item>
+///         </list>
+///     </para>
+/// </remarks>
 public class VideoSprite : Drawable, IDisposable
 {
-    private VideoDecoder decoder;
-    private readonly string filePath;
+    private readonly string? filePath;
+    private readonly Stream? stream;
+    private readonly VideoDecoder? providedDecoder;
 
-    private readonly string videoCacheKey = $"VideoSprite_{Guid.NewGuid()}";
+    private VideoDecoder decoder = null!;
+    private Shader? videoShader;
+    private GL gl;
 
-    private IRenderer renderer;
-    private ITextureManager textureManager;
+    private readonly Queue<DecodedFrame> availableFrames = new();
+    private DecodedFrame? lastFrame;
+
+    // Passed to VideoDrawNode every GenerateDrawNodeSubtree call (update thread write,
+    // draw thread read — triple-buffered draw nodes make this safe).
+    private VideoGLTexture? currentYuvTexture;
+    private float[]? currentMatrix;
+
+    // Playback clock list
+    // - seekBaseMs: the absolute video position (ms, 0-based) we last seeked to. Stays constant between seeks.
+    // - elapsedMs: how much real time has elapsed since the last seek. Incremented by ElapsedFrameTime each update while playing.
+    // - CurrentTime: seekBaseMs + elapsedMs — the current absolute video position.
+    //
+    // - ptsBias: PTS of the first frame received after a seek.
+    //   targetPts = CurrentTime + ptsBias is what we compare frame PTSes against.
+    //   This is because the decoder's PTS timestamps are not 0-based — they start at some offset baked into the container.
+    private double seekBaseMs;
+    private double elapsedMs;
+    private double ptsBias = double.NaN;
 
     public bool IsPlaying { get; private set; }
-    public double CurrentTime => currentVideoTime;
-    public double Duration => decoder.Duration;
+    public bool Buffering { get; private set; }
 
-    public double OriginalWidth => decoder.Width;
-    public double OriginalHeight => decoder.Height;
+    /// <summary>
+    /// Playback position in milliseconds from the start of the video (0-based).
+    /// </summary>
+    public double CurrentTime => seekBaseMs + elapsedMs;
 
-    private double currentVideoTime;
+    public double Duration => decoder?.Duration ?? 0;
+    public double OriginalWidth => decoder?.Width ?? 0;
+    public double OriginalHeight => decoder?.Height ?? 0;
 
     public VideoSprite(string filePath)
     {
         this.filePath = filePath;
     }
 
-    [BackgroundDependencyLoader]
-    private void load(AppHost host, ITextureManager textureManager)
+    public VideoSprite(Stream stream)
     {
-        renderer = host.Renderer;
-        this.textureManager = textureManager;
+        this.stream = stream;
     }
 
-    public override void Load()
+    public VideoSprite(VideoDecoder decoder)
     {
-        base.Load();
+        providedDecoder = decoder;
+    }
 
-        decoder = new VideoDecoder(filePath);
+    [BackgroundDependencyLoader]
+    private void load(AppHost host)
+    {
+        var renderer = host.Renderer;
+        gl = GLRenderer.GL;
+
+        decoder = providedDecoder
+                  ?? (stream != null
+                         ? new VideoDecoder(renderer, gl, stream)
+                         : new VideoDecoder(renderer, gl, filePath!));
+
+        // Shader must be compiled on the draw thread (GL context owner in multi-thread mode).
+        renderer.ScheduleToDrawThread(() =>
+        {
+            videoShader = new Shader(gl,
+                "Resources/Shaders/video.vert",
+                "Resources/Shaders/video.frag");
+        });
+
         decoder.Start();
 
-        Alpha = 0;
+        Alpha = 0f;
         IsPlaying = true;
     }
 
-    public void Play() => IsPlaying = true;
+    protected override DrawNode CreateDrawNode() => new VideoDrawNode();
 
+    public override DrawNode GenerateDrawNodeSubtree(int frameIndex)
+    {
+        var node = base.GenerateDrawNodeSubtree(frameIndex) as VideoDrawNode;
+        node?.ApplyVideoState(this, currentYuvTexture, currentMatrix, videoShader, gl);
+        return node!;
+    }
+
+    public void Play() => IsPlaying = true;
     public void Pause() => IsPlaying = false;
 
     public void Stop()
     {
         IsPlaying = false;
-        Seek(0);
+        seekTo(0);
     }
 
+    /// <summary>
+    /// Seeks to <paramref name="timeMs"/> milliseconds from the start of the video.
+    /// </summary>
     public void Seek(double timeMs)
     {
-        if (decoder == null) return;
+        double clamped = Duration > 0 ? Math.Clamp(timeMs, 0, Duration) : Math.Max(0, timeMs);
+        seekTo(clamped);
+    }
 
-        if (Duration > 0)
+    private void seekTo(double absoluteMs)
+    {
+        if (decoder == null)
+            return;
+
+        // seekBaseMs records where in the video we seeked to.
+        // elapsedMs resets to 0 — it will accumulate real time from this new position.
+        seekBaseMs = absoluteMs;
+        elapsedMs = 0;
+
+        // The decoder's Seek() takes a raw PTS value.
+        // If we know ptsBias (the container's PTS offset), use it.
+        // Otherwise pass absoluteMs directly — the decoder will seek close enough
+        // and ptsBias will be re-established from the first arriving frame.
+        double targetPts = double.IsNaN(ptsBias) ? absoluteMs : absoluteMs + ptsBias;
+        decoder.Seek(targetPts);
+
+        // Flush all buffered frames — they belong to the old position.
+        decoder.ReturnFrames(availableFrames);
+        availableFrames.Clear();
+
+        if (lastFrame != null)
         {
-            currentVideoTime = Math.Clamp(timeMs, 0, Duration);
-        }
-        else
-        {
-            currentVideoTime = Math.Max(0, timeMs);
+            decoder.ReturnFrames(new[] { lastFrame });
+            lastFrame = null;
         }
 
-        decoder.Seek(currentVideoTime);
+        currentYuvTexture = null;
+
+        // Reset ptsBias — will be re-established from the first frame after this seek.
+        // This is safe because elapsedMs=0 and seekBaseMs=absoluteMs, so even if the
+        // first frame arrives with a slightly different PTS we'll re-anchor correctly.
+        ptsBias = double.NaN;
     }
 
     public override void Update()
@@ -85,61 +184,76 @@ public class VideoSprite : Drawable, IDisposable
 
         if (!IsLoaded || decoder == null) return;
 
+        // Advance elapsed time since the last seek, clamped to video duration.
         if (IsPlaying)
         {
-            currentVideoTime += Clock.ElapsedFrameTime;
-
-            // Auto-loop behavior
-            if (currentVideoTime >= Duration)
-            {
-                Seek(0);
-            }
+            elapsedMs += Clock.ElapsedFrameTime;
+            if (Duration > 0 && seekBaseMs + elapsedMs >= Duration)
+                elapsedMs = Duration - seekBaseMs; // stop at end, don't overshoot
         }
 
-        // Drain frames up to the current video time
-        while (decoder.TryPeekNextFrame(out var nextFrame) && nextFrame.Timestamp <= currentVideoTime)
+        // Pull all freshly uploaded frames.
+        foreach (var f in decoder.GetDecodedFrames())
+            availableFrames.Enqueue(f);
+
+        // Establish ptsBias from the first frame received after a seek.
+        // ptsBias = firstFramePts - seekBaseMs
+        // This means: targetPts = seekBaseMs + elapsedMs + ptsBias
+        //           = seekBaseMs + elapsedMs + (firstFramePts - seekBaseMs)
+        //           = firstFramePts + elapsedMs (tracks correctly from any seek point)
+        if (double.IsNaN(ptsBias) && availableFrames.Count > 0)
+            ptsBias = availableFrames.Peek().Time - seekBaseMs;
+
+        if (!double.IsNaN(ptsBias))
         {
-            if (decoder.TryGetNextFrame(out var frameToDisplay))
+            // Raw PTS value that corresponds to the current playback position.
+            double targetPts = seekBaseMs + elapsedMs + ptsBias;
+
+            // Advance lastFrame to the newest frame whose PTS <= targetPts.
+            while (availableFrames.Count > 0 && availableFrames.Peek().Time <= targetPts)
             {
-                var capturedFrame = frameToDisplay;
+                if (lastFrame != null)
+                    decoder.ReturnFrames(new[] { lastFrame });
 
-                renderer.ScheduleToDrawThread(() =>
-                {
-                    unsafe
-                    {
-                        if (Texture == null)
-                        {
-                            Texture = textureManager.FromPixelData(decoder.Width, decoder.Height, capturedFrame.PixelData, videoCacheKey);
-                            Alpha = 1f;
-                        }
-                        else
-                        {
-                            var gl = GLRenderer.GL;
-                            gl.BindTexture(TextureTarget.Texture2D, Texture.GlTexture.Handle);
-                            gl.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
-
-                            fixed (byte* ptr = capturedFrame.PixelData)
-                            {
-                                gl.TexSubImage2D(TextureTarget.Texture2D, 0, 0, 0,
-                                    (uint)decoder.Width, (uint)decoder.Height,
-                                    PixelFormat.Rgba, PixelType.UnsignedByte, ptr);
-                            }
-                            gl.BindTexture(TextureTarget.Texture2D, 0);
-                        }
-                    }
-                    capturedFrame.Dispose();
-                });
+                lastFrame = availableFrames.Dequeue();
             }
         }
+
+        // Show the frame once it's been uploaded to the GPU.
+        if (lastFrame?.Texture.VideoGlTexture?.Available == true)
+        {
+            currentYuvTexture = lastFrame.Texture.VideoGlTexture;
+            currentMatrix = decoder.GetConversionMatrix();
+
+            // Set Drawable.Texture to the video texture so GenerateVertices() can
+            // read the correct Width/Height for FillMode calculations (Fit, Fill, Tile).
+            // The actual rendering uses the YUV shader in VideoDrawNode, not this texture.
+            if (Texture != lastFrame.Texture)
+                Texture = lastFrame.Texture;
+
+            if (Alpha == 0f)
+                Alpha = 1f;
+        }
+
+        Buffering = decoder.IsRunning && availableFrames.Count == 0 && lastFrame == null;
     }
 
     public void Dispose()
     {
-        decoder.Dispose();
-
-        if (textureManager != null && !string.IsNullOrEmpty(videoCacheKey))
+        if (decoder != null)
         {
-            textureManager.Evict(videoCacheKey);
+            decoder.ReturnFrames(availableFrames);
+            availableFrames.Clear();
+
+            if (lastFrame != null)
+            {
+                decoder.ReturnFrames(new[] { lastFrame });
+                lastFrame = null;
+            }
+
+            decoder.Dispose();
         }
+
+        videoShader?.Dispose();
     }
 }

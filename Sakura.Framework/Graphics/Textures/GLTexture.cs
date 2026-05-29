@@ -59,7 +59,6 @@ public class GLTexture : IDisposable
     {
         if (disposed) return;
 
-        Handle = gl.GenTexture();
         gl.ActiveTexture(TextureUnit.Texture0);
         gl.BindTexture(TextureTarget.Texture2D, Handle);
 
