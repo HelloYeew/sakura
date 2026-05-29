@@ -9,6 +9,7 @@ using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Platform;
+using Sakura.Framework.Statistic;
 using Silk.NET.OpenGL;
 using Shader = Sakura.Framework.Graphics.Rendering.Shader;
 
@@ -49,7 +50,8 @@ public class VideoSprite : Drawable, IDisposable
 
     // Passed to VideoDrawNode every GenerateDrawNodeSubtree call (update thread write,
     // draw thread read — triple-buffered draw nodes make this safe).
-    private VideoGLTexture? currentYuvTexture;
+    private VideoTexture? currentVideoTexture;
+    private VideoTexture? lastUploadedTexture; // last texture confirmed uploaded — fallback for draw node
     private float[]? currentMatrix;
 
     // Playback clock list
@@ -91,16 +93,18 @@ public class VideoSprite : Drawable, IDisposable
         providedDecoder = decoder;
     }
 
+    private IRenderer renderer = null!;
+
     [BackgroundDependencyLoader]
-    private void load(AppHost host)
+    private void load(AppHost host, ITextureManager textureManager)
     {
-        var renderer = host.Renderer;
+        renderer = host.Renderer;
         gl = GLRenderer.GL;
 
         decoder = providedDecoder
                   ?? (stream != null
-                         ? new VideoDecoder(renderer, gl, stream)
-                         : new VideoDecoder(renderer, gl, filePath!));
+                         ? new VideoDecoder(renderer, gl, textureManager, stream)
+                         : new VideoDecoder(renderer, gl, textureManager, filePath!));
 
         // Shader must be compiled on the draw thread (GL context owner in multi-thread mode).
         renderer.ScheduleToDrawThread(() =>
@@ -112,6 +116,10 @@ public class VideoSprite : Drawable, IDisposable
 
         decoder.Start();
 
+        // Auto-dispose when removed from the scene so the decoder, FFmpeg contexts,
+        // and video texture pool are always cleaned up without requiring explicit Dispose() calls.
+        DisposeOnRemoval = true;
+
         Alpha = 0f;
         IsPlaying = true;
     }
@@ -121,7 +129,7 @@ public class VideoSprite : Drawable, IDisposable
     public override DrawNode GenerateDrawNodeSubtree(int frameIndex)
     {
         var node = base.GenerateDrawNodeSubtree(frameIndex) as VideoDrawNode;
-        node?.ApplyVideoState(this, currentYuvTexture, currentMatrix, videoShader, gl);
+        node?.ApplyVideoState(this, currentVideoTexture, currentMatrix, videoShader, gl);
         return node!;
     }
 
@@ -170,7 +178,8 @@ public class VideoSprite : Drawable, IDisposable
             lastFrame = null;
         }
 
-        currentYuvTexture = null;
+        currentVideoTexture = null;
+        lastUploadedTexture = null;
 
         // Reset ptsBias — will be re-established from the first frame after this seek.
         // This is safe because elapsedMs=0 and seekBaseMs=absoluteMs, so even if the
@@ -184,17 +193,31 @@ public class VideoSprite : Drawable, IDisposable
 
         if (!IsLoaded || decoder == null) return;
 
-        // Advance elapsed time since the last seek, clamped to video duration.
+        // Advance elapsed time. Cap per-update advance at 100ms to avoid
+        // skipping frames during GC pauses or OS scheduler hiccups.
         if (IsPlaying)
         {
-            elapsedMs += Clock.ElapsedFrameTime;
+            elapsedMs += Math.Min(Clock.ElapsedFrameTime, 100.0);
             if (Duration > 0 && seekBaseMs + elapsedMs >= Duration)
-                elapsedMs = Duration - seekBaseMs; // stop at end, don't overshoot
+                elapsedMs = Duration - seekBaseMs;
         }
 
-        // Pull all freshly uploaded frames.
+        // Pull newly decoded frames and schedule their GL upload on the draw thread.
+        // decodedFrames are enqueued immediately by the decode thread after SetData(),
+        // so we see them here without waiting for the draw thread.
         foreach (var f in decoder.GetDecodedFrames())
+        {
             availableFrames.Enqueue(f);
+
+            // Schedule the actual GL upload for this frame's texture.
+            // This runs in StartFrame() before any Draw() calls — safe GL ordering.
+            if (f.Texture.VideoTexture is VideoTexture vt)
+            {
+                var capturedVt = vt;
+                var capturedGl = gl;
+                renderer.ScheduleToDrawThread(() => capturedVt.FlushIfPending(capturedGl));
+            }
+        }
 
         // Establish ptsBias from the first frame received after a seek.
         // ptsBias = firstFramePts - seekBaseMs
@@ -216,30 +239,59 @@ public class VideoSprite : Drawable, IDisposable
                     decoder.ReturnFrames(new[] { lastFrame });
 
                 lastFrame = availableFrames.Dequeue();
+                GlobalStatistics.Get<int>("Video", "Frames Displayed").Value++;
             }
+
+            // Count frames still queued ahead of playback position as skipped
+            // (they arrived too late and will be superseded next update).
+            int skipped = 0;
+            foreach (var f in availableFrames)
+            {
+                if (f.Time < targetPts) skipped++;
+                else break;
+            }
+            if (skipped > 0)
+                GlobalStatistics.Get<int>("Video", "Frames Skipped").Value += skipped;
         }
 
-        // Show the frame once it's been uploaded to the GPU.
-        if (lastFrame?.Texture.VideoGlTexture?.Available == true)
+        if (lastFrame != null)
         {
-            currentYuvTexture = lastFrame.Texture.VideoGlTexture;
+            var vt = lastFrame.Texture.VideoTexture as VideoTexture;
             currentMatrix = decoder.GetConversionMatrix();
 
-            // Set Drawable.Texture to the video texture so GenerateVertices() can
-            // read the correct Width/Height for FillMode calculations (Fit, Fill, Tile).
-            // The actual rendering uses the YUV shader in VideoDrawNode, not this texture.
+            if (vt != null)
+            {
+                // If the new frame's upload is already complete, use it directly.
+                // Otherwise fall back to the last confirmed-uploaded texture so
+                // the draw node always has something valid to render — no black frames.
+                if (vt.UploadComplete)
+                    lastUploadedTexture = vt;
+
+                currentVideoTexture = lastUploadedTexture ?? vt;
+            }
+
+            // Set Drawable.Texture so GenerateVertices() has correct Width/Height for FillMode.
             if (Texture != lastFrame.Texture)
                 Texture = lastFrame.Texture;
 
-            if (Alpha == 0f)
+            if (Alpha == 0f && lastUploadedTexture != null)
                 Alpha = 1f;
         }
 
         Buffering = decoder.IsRunning && availableFrames.Count == 0 && lastFrame == null;
+
+        GlobalStatistics.Get<bool>("Video", "Buffering").Value = Buffering;
+        GlobalStatistics.Get<double>("Video", "Playback Position (ms)").Value = Math.Round(CurrentTime, 1);
+        GlobalStatistics.Get<int>("Video", "Queue Depth").Value = availableFrames.Count;
     }
+
+    private bool isDisposed;
 
     public void Dispose()
     {
+        if (isDisposed) return;
+        isDisposed = true;
+
         if (decoder != null)
         {
             decoder.ReturnFrames(availableFrames);
@@ -251,9 +303,15 @@ public class VideoSprite : Drawable, IDisposable
                 lastFrame = null;
             }
 
-            decoder.Dispose();
+            decoder.Dispose(); // internally schedules GL texture disposal on draw thread
         }
 
-        videoShader?.Dispose();
+        // gl.DeleteProgram must run on the draw thread.
+        if (videoShader != null)
+        {
+            var shader = videoShader;
+            videoShader = null;
+            renderer?.ScheduleToDrawThread(shader.Dispose);
+        }
     }
 }

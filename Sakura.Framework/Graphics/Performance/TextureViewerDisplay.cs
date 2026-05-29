@@ -32,6 +32,7 @@ public class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFromDrawVisu
 
     private int lastTextureUpdates = -1;
     private int lastAtlasPageCount = -1;
+    private int lastVideoCount = -1;
     private double lastUpdateTime;
 
     [Resolved]
@@ -196,11 +197,13 @@ public class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFromDrawVisu
 
         int currentTextureUpdates = GlobalStatistics.Get<int>("Textures", "Texture Updates").Value;
         int currentAtlasPageCount = fontStore.Atlas != null ? fontStore.Atlas.GetAllPages().Count() : 0;
+        int currentVideoCount = textureManager.GetAllVideoTextures().Count();
 
-        if (currentTextureUpdates != lastTextureUpdates || currentAtlasPageCount != lastAtlasPageCount)
+        if (currentTextureUpdates != lastTextureUpdates || currentAtlasPageCount != lastAtlasPageCount || currentVideoCount != lastVideoCount)
         {
             lastTextureUpdates = currentTextureUpdates;
             lastAtlasPageCount = currentAtlasPageCount;
+            lastVideoCount = currentVideoCount;
             refreshTextures();
         }
     }
@@ -215,6 +218,22 @@ public class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFromDrawVisu
             flowContainer.Add(createTextureCard($"Texture ({tex.Width}x{tex.Height})", tex));
         }
 
+        var videoTextures = textureManager.GetAllVideoTextures()
+            .Where(vt => vt != null)
+            .ToList();
+
+        if (videoTextures.Count > 0)
+        {
+            var groups = videoTextures
+                .GroupBy(vt => (vt.Width, vt.Height));
+
+            foreach (var group in groups)
+            {
+                int groupUploaded = group.Count(vt => vt.UploadComplete);
+                flowContainer.Add(createVideoPoolCard(group.Key.Width, group.Key.Height, group.Count(), groupUploaded));
+            }
+        }
+
         if (fontStore.Atlas != null)
         {
             int pageIndex = 0;
@@ -224,6 +243,57 @@ public class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFromDrawVisu
                 pageIndex++;
             }
         }
+    }
+
+    /// <summary>
+    /// Creates an info-only card for a video texture.
+    /// </summary>
+    private Drawable createVideoPoolCard(int width, int height, int total, int uploaded)
+    {
+        return new Container
+        {
+            Anchor = Anchor.TopLeft,
+            Origin = Anchor.TopLeft,
+            Size = new Vector2(256, 256),
+            Children = new Drawable[]
+            {
+                new Box
+                {
+                    RelativeSizeAxes = Axes.Both,
+                    Color = Color.Black,
+                    Alpha = 0.9f
+                },
+                new FlowContainer
+                {
+                    Direction = FlowDirection.Vertical,
+                    RelativeSizeAxes = Axes.Both,
+                    Size = new Vector2(1),
+                    Spacing = new Vector2(0, 6),
+                    Padding = new MarginPadding(10),
+                    Children = new Drawable[]
+                    {
+                        new SpriteText
+                        {
+                            Text = "Video Texture Pool",
+                            Font = FontUsage.Default.With(size: 14, weight: "Bold"),
+                            Color = Color.White
+                        },
+                        new SpriteText
+                        {
+                            Text = $"Pool size: {total}",
+                            Font = FontUsage.Default.With(size: 12),
+                            Color = Color.LightGray
+                        },
+                        new SpriteText
+                        {
+                            Text = $"Uploaded: {uploaded} / {total}",
+                            Font = FontUsage.Default.With(size: 12),
+                            Color = uploaded == total ? Color.LimeGreen : Color.Yellow
+                        }
+                    }
+                }
+            }
+        };
     }
 
     private Drawable createTextureCard(string title, Texture texture)

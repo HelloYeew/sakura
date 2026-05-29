@@ -12,6 +12,7 @@ using FFmpeg.AutoGen;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Logging;
+using Sakura.Framework.Statistic;
 using Silk.NET.OpenGL;
 using Texture = Sakura.Framework.Graphics.Textures.Texture;
 
@@ -20,7 +21,7 @@ namespace Sakura.Framework.Graphics.Video;
 public unsafe class VideoDecoder : IDisposable
 {
     public double Duration { get; private set; }
-    public int Width => codecContext != null ? codecContext->width : 0;
+    public int Width  => codecContext != null ? codecContext->width  : 0;
     public int Height => codecContext != null ? codecContext->height : 0;
     public bool IsRunning => State == DecoderState.Running;
     public bool IsFaulted => State == DecoderState.Faulted;
@@ -42,48 +43,35 @@ public unsafe class VideoDecoder : IDisposable
     private avio_alloc_context_seek? seekCallback;
     private GCHandle selfHandle;
     private bool inputOpened;
+    private bool texturePoolWarmed;
 
     private const int io_buffer_size = 4096;
-    private const int max_pending_frames = 8;
+    private const int max_pending_frames = 4;
 
-    private volatile float lastDecodedFrameTime;
-    private double? skipOutputUntilTime;
-
-    /// <summary>
-    /// Counts frames that have been scheduled for GPU upload but not yet enqueued
-    /// into decodedFrames. The decode loop throttles on (decodedFrames + pendingUploads).
-    /// </summary>
-    private int pendingUploads;
-
-    private Task? decodeTask;
-    private CancellationTokenSource? cts;
-    private readonly ConcurrentQueue<Action> decoderCommands = new ConcurrentQueue<Action>();
-
-    /// <summary>
-    /// Frames ready for <see cref="VideoSprite"/> to consume (update thread reads this)
-    /// </summary>
     private readonly ConcurrentQueue<DecodedFrame> decodedFrames = new ConcurrentQueue<DecodedFrame>();
-
-    /// <summary>
-    /// Textures returned by <see cref="VideoSprite"/> after display (reused for next frames)
-    /// </summary>
-    private readonly ConcurrentQueue<VideoGLTexture> availableTextures = new ConcurrentQueue<VideoGLTexture>();
+    private readonly ConcurrentQueue<VideoTexture> availableTextures = new ConcurrentQueue<VideoTexture>();
 
     private readonly ConcurrentQueue<FFmpegFrame> hwTransferFrames = new ConcurrentQueue<FFmpegFrame>();
     private readonly ConcurrentQueue<FFmpegFrame> scalerFrames = new ConcurrentQueue<FFmpegFrame>();
 
-    private void returnHwTransferFrame(FFmpegFrame frame) => hwTransferFrames.Enqueue(frame);
-    private void returnScalerFrame(FFmpegFrame frame) => scalerFrames.Enqueue(frame);
+    private void returnHwTransferFrame(FFmpegFrame f) => hwTransferFrames.Enqueue(f);
+    private void returnScalerFrame(FFmpegFrame f) => scalerFrames.Enqueue(f);
+
+    private volatile float lastDecodedFrameTime;
+    private double? skipOutputUntilTime;
+
+    private Task? decodeTask;
+    private CancellationTokenSource? cts;
+    private readonly ConcurrentQueue<Action> decoderCommands = new();
 
     private readonly IRenderer renderer;
     private readonly GL gl;
+    private readonly ITextureManager textureManager;
 
     static VideoDecoder()
     {
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-        {
             ffmpeg.RootPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "runtimes", "osx", "native");
-        }
         else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
             string arch = RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? "win-arm64" : "win-x64";
@@ -95,20 +83,21 @@ public unsafe class VideoDecoder : IDisposable
             ffmpeg.RootPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "runtimes", arch, "native");
         }
 
-        Logger.Debug($"[FFmpeg] RootPath: {ffmpeg.RootPath}");
+        Logger.Verbose($"Initialized FFmpeg with root path {ffmpeg.RootPath}");
         DynamicallyLoadedBindings.Initialize();
     }
 
-    public VideoDecoder(IRenderer renderer, GL gl, string filePath)
-        : this(renderer, gl, File.OpenRead(filePath)) { }
+    public VideoDecoder(IRenderer renderer, GL gl, ITextureManager textureManager, string filePath)
+        : this(renderer, gl, textureManager, File.OpenRead(filePath)) { }
 
-    public VideoDecoder(IRenderer renderer, GL gl, Stream stream)
+    public VideoDecoder(IRenderer renderer, GL gl, ITextureManager textureManager, Stream stream)
     {
         if (!stream.CanRead)
             throw new ArgumentException("Stream must be readable.", nameof(stream));
 
         this.renderer = renderer;
         this.gl = gl;
+        this.textureManager = textureManager;
         videoStream = stream;
         selfHandle = GCHandle.Alloc(this);
     }
@@ -116,13 +105,13 @@ public unsafe class VideoDecoder : IDisposable
     public void Start()
     {
         prepareDecoding();
+        texturePoolWarmed = false;
         cts = new CancellationTokenSource();
         decodeTask = Task.Factory.StartNew(
             () => decodeLoop(cts.Token),
             cts.Token,
             TaskCreationOptions.LongRunning,
-            TaskScheduler.Default
-        );
+            TaskScheduler.Default);
     }
 
     public void Seek(double targetMs)
@@ -141,21 +130,23 @@ public unsafe class VideoDecoder : IDisposable
     }
 
     /// <summary>
-    /// Returns consumed frames back so their GPU textures can be reused.
-    /// Call from the update thread after you're done displaying a frame.
+    /// Returns consumed frames back so their <see cref="VideoTexture"/> instances can be reused.
+    /// Call from the update thread after finishing with a frame.
     /// </summary>
     public void ReturnFrames(IEnumerable<DecodedFrame> frames)
     {
         foreach (var f in frames)
         {
-            if (f.Texture.VideoGlTexture != null)
-                availableTextures.Enqueue(f.Texture.VideoGlTexture);
+            if (f.Texture.VideoTexture is VideoTexture vt)
+            {
+                vt.Reset();
+                availableTextures.Enqueue(vt);
+            }
         }
     }
 
     /// <summary>
-    /// Drains all frames that have been decoded since the last call.
-    /// Called from the update thread (VideoSprite.Update).
+    /// Drains all frames decoded since the last call. Called from the update thread.
     /// </summary>
     public IEnumerable<DecodedFrame> GetDecodedFrames()
     {
@@ -165,9 +156,6 @@ public unsafe class VideoDecoder : IDisposable
         return list;
     }
 
-    /// <summary>
-    /// Returns the column-major 3x3 YUV→RGB matrix for the video shader.
-    /// </summary>
     public float[] GetConversionMatrix()
     {
         if (codecContext == null) return rec601_matrix;
@@ -178,7 +166,6 @@ public unsafe class VideoDecoder : IDisposable
         return useHdtv ? rec709_matrix : rec601_matrix;
     }
 
-    // Rec.709 (HDTV) — column-major for mat3 uniform
     private static readonly float[] rec709_matrix =
     {
         1.164f,  1.164f, 1.164f,
@@ -186,7 +173,6 @@ public unsafe class VideoDecoder : IDisposable
         1.793f, -0.533f, 0.000f
     };
 
-    // Rec.601 (SDTV)
     private static readonly float[] rec601_matrix =
     {
         1.164f,  1.164f, 1.164f,
@@ -197,7 +183,8 @@ public unsafe class VideoDecoder : IDisposable
     private static int readPacket(void* opaque, byte* buf, int bufSize)
     {
         var handle = GCHandle.FromIntPtr((IntPtr)opaque);
-        if (!handle.IsAllocated || handle.Target is not VideoDecoder d) return ffmpeg.AVERROR_EOF;
+        if (!handle.IsAllocated || handle.Target is not VideoDecoder d)
+            return ffmpeg.AVERROR_EOF;
         int read = d.videoStream!.Read(new Span<byte>(buf, bufSize));
         return read == 0 ? ffmpeg.AVERROR_EOF : read;
     }
@@ -210,15 +197,13 @@ public unsafe class VideoDecoder : IDisposable
 
         return whence switch
         {
-            0       => d.videoStream.Seek(offset, SeekOrigin.Begin),
-            1       => d.videoStream.Seek(offset, SeekOrigin.Current),
-            2       => d.videoStream.Seek(offset, SeekOrigin.End),
-            0x10000 => d.videoStream.Length,   // AVSEEK_SIZE
-            _       => -1
+            0 => d.videoStream.Seek(offset, SeekOrigin.Begin),
+            1 => d.videoStream.Seek(offset, SeekOrigin.Current),
+            2 => d.videoStream.Seek(offset, SeekOrigin.End),
+            0x10000 => d.videoStream.Length,
+            _ => -1
         };
     }
-
-    // ── Init ────────────────────────────────────────────────────────────────────
 
     private void prepareDecoding()
     {
@@ -278,9 +263,9 @@ public unsafe class VideoDecoder : IDisposable
                 {
                     case DecoderState.Ready:
                     case DecoderState.Running:
-                        // Count both decoded frames waiting to be consumed and frames
-                        // scheduled for GPU upload but not yet in decodedFrames.
-                        if (decodedFrames.Count + pendingUploads < max_pending_frames)
+                        GlobalStatistics.Get<int>("Video", "Pool Available").Value = availableTextures.Count;
+                        GlobalStatistics.Get<int>("Video", "Pending Frames").Value = decodedFrames.Count;
+                        if (!texturePoolWarmed || !availableTextures.IsEmpty)
                             decodeNextFrame(packet, receiveFrame);
                         else
                         {
@@ -340,10 +325,8 @@ public unsafe class VideoDecoder : IDisposable
         else if (readResult == ffmpeg.AVERROR_EOF)
         {
             sendPacket(receiveFrame, null);
-            if (Looping)
-                Seek(0);
-            else
-                State = DecoderState.EndOfStream;
+            if (Looping) Seek(0);
+            else State = DecoderState.EndOfStream;
         }
         else if (readResult == -ffmpeg.EAGAIN)
         {
@@ -378,7 +361,6 @@ public unsafe class VideoDecoder : IDisposable
                 ? receiveFrame->best_effort_timestamp
                 : receiveFrame->pts;
 
-            // Guard against AV_NOPTS_VALUE start_time (common for many container formats)
             long startTime = avStream->start_time != ffmpeg.AV_NOPTS_VALUE ? avStream->start_time : 0;
             double frameTime = (ts - startTime) * timeBaseInSeconds * 1000.0;
 
@@ -417,27 +399,47 @@ public unsafe class VideoDecoder : IDisposable
             frame = ensureYuv420P(frame);
             if (frame == null) continue;
 
-            // Capture for closure
-            var capturedFrame = frame;
-            var capturedTime = frameTime;
-            var capturedGl = gl;
+            int width  = frame.Pointer->width;
+            int height = frame.Pointer->height;
 
-            // Try to grab a pooled texture. If none available, create one on the draw thread.
-            availableTextures.TryDequeue(out var pooledTex);
-
-            Interlocked.Increment(ref pendingUploads);
-            renderer.ScheduleToDrawThread(() =>
+            // Schedule pool warm-up on the draw thread on the very first frame.
+            // texturePoolWarmed is only scheduled once; the decode loop then polls
+            // availableTextures until textures arrive (typically within one draw frame ~4ms).
+            if (!texturePoolWarmed)
             {
-                var yuvTex = pooledTex ?? new VideoGLTexture(capturedGl, capturedFrame.Pointer->width, capturedFrame.Pointer->height);
+                texturePoolWarmed = true;
+                var capturedW = width;
+                var capturedH = height;
+                renderer.ScheduleToDrawThread(() =>
+                {
+                    while (availableTextures.Count < max_pending_frames)
+                        availableTextures.Enqueue(new VideoTexture(renderer, gl, textureManager, capturedW, capturedH));
+                });
+            }
 
-                var upload = new VideoTextureUpload(capturedFrame);
-                upload.Upload(capturedGl, yuvTex);
-                upload.Dispose(); // returns capturedFrame to pool
+            // Return this frame and sleep until the pool has textures.
+            if (availableTextures.IsEmpty)
+            {
+                frame.Return();
+                GlobalStatistics.Get<int>("Video", "Frames Dropped (Pool Full)").Value++;
+                Thread.Sleep(1);
+                continue;
+            }
 
-                var texture = new Texture(yuvTex);
-                decodedFrames.Enqueue(new DecodedFrame { Time = capturedTime, Texture = texture });
-                Interlocked.Decrement(ref pendingUploads);
-            });
+            if (!availableTextures.TryDequeue(out var tex))
+            {
+                frame.Return();
+                GlobalStatistics.Get<int>("Video", "Frames Dropped (Pool Full)").Value++;
+                Thread.Sleep(1);
+                continue;
+            }
+
+            var upload = new VideoTextureUpload(frame);
+            tex.SetData(upload);
+
+            var texture = new Texture(tex.GlTexture, tex);
+            decodedFrames.Enqueue(new DecodedFrame { Time = frameTime, Texture = texture });
+            GlobalStatistics.Get<int>("Video", "Frames Decoded").Value++;
         }
     }
 
@@ -489,9 +491,6 @@ public unsafe class VideoDecoder : IDisposable
         return scaled;
     }
 
-    /// <summary>
-    /// State of the decoder
-    /// </summary>
     public enum DecoderState
     {
         Ready = 0,
@@ -534,52 +533,24 @@ public unsafe class VideoDecoder : IDisposable
         if (swsContext != null)
             ffmpeg.sws_freeContext(swsContext);
 
-        // Drain decodedFrames and return their textures for disposal
-        while (decodedFrames.TryDequeue(out var f))
+        // Return all decodedFrames textures to the pool, then dispose them all.
+        while (decodedFrames.TryDequeue(out var frame))
         {
-            if (f.Texture.VideoGlTexture != null)
-                availableTextures.Enqueue(f.Texture.VideoGlTexture);
+            if (frame.Texture.VideoTexture is VideoTexture vt)
+                availableTextures.Enqueue(vt);
         }
 
-        // Dispose all pooled GL textures on the draw thread
-        var texturesToDispose = new List<VideoGLTexture>();
-        while (availableTextures.TryDequeue(out var t))
-            texturesToDispose.Add(t);
+        while (availableTextures.TryDequeue(out var vt))
+            vt.Dispose(); // unregisters from textureManager, schedules GL delete
 
-        if (texturesToDispose.Count > 0)
-        {
-            renderer.ScheduleToDrawThread(() =>
-            {
-                foreach (var t in texturesToDispose)
-                    t.Dispose();
-            });
-        }
-
-        while (hwTransferFrames.TryDequeue(out var hf))
-            hf.Dispose();
-        while (scalerFrames.TryDequeue(out var sf))
-            sf.Dispose();
+        while (hwTransferFrames.TryDequeue(out var hf)) hf.Dispose();
+        while (scalerFrames.TryDequeue(out var sf)) sf.Dispose();
 
         videoStream?.Dispose();
         videoStream = null;
 
-        if (selfHandle.IsAllocated) selfHandle.Free();
-
+        if (selfHandle.IsAllocated)
+            selfHandle.Free();
         GC.SuppressFinalize(this);
     }
-}
-
-internal static class AvPixelFormatExtensions
-{
-    public static bool IsHardwareFormat(this AVPixelFormat fmt) => fmt switch
-    {
-        AVPixelFormat.AV_PIX_FMT_VDPAU         => true,
-        AVPixelFormat.AV_PIX_FMT_CUDA           => true,
-        AVPixelFormat.AV_PIX_FMT_VAAPI          => true,
-        AVPixelFormat.AV_PIX_FMT_DXVA2_VLD      => true,
-        AVPixelFormat.AV_PIX_FMT_D3D11          => true,
-        AVPixelFormat.AV_PIX_FMT_VIDEOTOOLBOX   => true,
-        AVPixelFormat.AV_PIX_FMT_MEDIACODEC     => true,
-        _                                       => false,
-    };
 }

@@ -188,6 +188,9 @@ public class Container : Drawable
             drawable.Parent = null;
             Invalidate(InvalidationFlags.DrawInfo);
             InvalidateTopology();
+
+            if (drawable.DisposeOnRemoval && drawable is IDisposable disposable)
+                disposable.Dispose();
         }
     }
 
@@ -196,6 +199,9 @@ public class Container : Drawable
         foreach (var child in children)
         {
             child.Parent = null;
+
+            if (child.DisposeOnRemoval && child is IDisposable disposable)
+                disposable.Dispose();
         }
         children.Clear();
         Invalidate(InvalidationFlags.DrawInfo);

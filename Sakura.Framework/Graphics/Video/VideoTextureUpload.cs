@@ -13,7 +13,7 @@ namespace Sakura.Framework.Graphics.Video;
 /// without any CPU-side pixel conversion. The video shader performs YUV→RGB on the GPU.
 /// Disposing this upload returns the underlying <see cref="FFmpegFrame"/> to its pool.
 /// </summary>
-internal sealed unsafe class VideoTextureUpload : IDisposable
+public sealed unsafe class VideoTextureUpload : IDisposable
 {
     private readonly FFmpegFrame frame;
     private bool disposed;

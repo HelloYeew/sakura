@@ -88,8 +88,8 @@ public class App : Container, IFocusManager, IDisposable
         switch (Host.Renderer)
         {
             case GLRenderer:
-                VideoStore = new VideoStore(embeddedResourceStorage.GetStorageForDirectory("Videos"), Host.Renderer, GLRenderer.GL);
                 TextureManager = new GLTextureManager(Host.Renderer, GLRenderer.GL, embeddedResourceStorage.GetStorageForDirectory("Textures"), CreateImageLoader());
+                VideoStore = new VideoStore(embeddedResourceStorage.GetStorageForDirectory("Videos"), Host.Renderer, GLRenderer.GL, TextureManager);
                 FontStore = new GLFontStore(Host.Renderer, GLRenderer.GL);
                 // TODO: This will exposed all framework file resource out, maybe find better way?
                 var frameworkFontStorage = Host.FrameworkStorage.GetStorageForDirectory("Fonts");
