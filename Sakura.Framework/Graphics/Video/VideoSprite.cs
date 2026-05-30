@@ -184,15 +184,6 @@ public class VideoSprite : Drawable, IDisposable
         decoder.ReturnFrames(availableFrames);
         availableFrames.Clear();
 
-        if (lastFrame != null)
-        {
-            decoder.ReturnFrames(new[] { lastFrame });
-            lastFrame = null;
-        }
-
-        currentVideoTexture = null;
-        lastUploadedTexture = null;
-
         // Reset ptsBias — will be re-established from the first frame after this seek.
         // This is safe because elapsedMs=0 and seekBaseMs=absoluteMs, so even if the
         // first frame arrives with a slightly different PTS we'll re-anchor correctly.
