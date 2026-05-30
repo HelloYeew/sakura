@@ -355,16 +355,16 @@ public abstract class AppHost : IDisposable
                 });
             };
 
+            this.app.Clock = UpdateClock;
+
+            this.app.Load();
+            this.app.LoadComplete();
+
             if (ExecutionMode.Value == Threading.ExecutionMode.MultiThread)
             {
                 Window.GraphicsSurface.ClearCurrent();
                 threadRunner.SetExecutionMode(Threading.ExecutionMode.MultiThread);
             }
-
-            this.app.Clock = UpdateClock;
-
-            this.app.Load();
-            this.app.LoadComplete();
 
             lastUpdateTime = UpdateClock.CurrentTime;
             appLoopStopwatch.Start();

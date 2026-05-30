@@ -82,7 +82,7 @@ public class VideoSprite : Drawable, IDisposable
     /// with the provided time.
     /// </para>
     /// </remarks>
-    public double CurrentTime => seekBaseMs + elapsedMs;
+    public virtual double CurrentTime => seekBaseMs + elapsedMs;
 
     public double Duration => decoder?.Duration ?? 0;
     public double OriginalWidth => decoder?.Width ?? 0;
