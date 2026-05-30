@@ -70,8 +70,18 @@ public class VideoSprite : Drawable, IDisposable
     public bool Buffering { get; private set; }
 
     /// <summary>
-    /// Playback position in milliseconds from the start of the video (0-based).
+    /// Gets the current playback position of the video in milliseconds.
     /// </summary>
+    /// <remarks>
+    /// By default, this is driven by an internal clock that accumulates elapsed real-time
+    /// since the last seek (<c>seekBaseMs</c> + <c>elapsedMs</c>).
+    /// <para>
+    /// This property is <see langword="virtual"/> so it can be overridden to synchronize video
+    /// playback with an external master clock (such as an audio track's time). When overridden,
+    /// the video's update loop will automatically drop or hold frames to maintain perfect sync
+    /// with the provided time.
+    /// </para>
+    /// </remarks>
     public double CurrentTime => seekBaseMs + elapsedMs;
 
     public double Duration => decoder?.Duration ?? 0;
@@ -229,7 +239,7 @@ public class VideoSprite : Drawable, IDisposable
         if (!double.IsNaN(ptsBias))
         {
             // Raw PTS value that corresponds to the current playback position.
-            double targetPts = seekBaseMs + elapsedMs + ptsBias;
+            double targetPts = CurrentTime + ptsBias;
 
             // Advance lastFrame to the newest frame whose PTS <= targetPts.
             while (availableFrames.Count > 0 && availableFrames.Peek().Time <= targetPts)
