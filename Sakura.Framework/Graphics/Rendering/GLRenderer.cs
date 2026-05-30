@@ -169,6 +169,10 @@ public class GLRenderer : IRenderer
         shader.SetUniform("u_IsBorder", false);
     }
 
+    public void DisableSrgb() => gl.Disable(EnableCap.FramebufferSrgb);
+
+    public void RestoreSrgb()  => gl.Enable(EnableCap.FramebufferSrgb);
+
     public void DrawVerticesRaw(ReadOnlySpan<Vertex.Vertex> vertices)
     {
         triangleBatch.DrawRaw(vertices);

@@ -74,4 +74,17 @@ public interface IRenderer
     /// textures independently of the renderer's slot management.
     /// </summary>
     void DrawVerticesRaw(ReadOnlySpan<Vertex.Vertex> vertices);
+
+    /// <summary>
+    /// Disables sRGB framebuffer encoding for the next draw call.
+    /// Required for video rendering: YUV→RGB output is already gamma-encoded
+    /// and must NOT be re-encoded by the sRGB framebuffer path.
+    /// Call <see cref="RestoreSrgb"/> immediately after the draw call.
+    /// </summary>
+    void DisableSrgb();
+
+    /// <summary>
+    /// Re-enables sRGB framebuffer encoding after a <see cref="DisableSrgb"/> call.
+    /// </summary>
+    void RestoreSrgb();
 }

@@ -79,4 +79,6 @@ public class HeadlessRenderer : IRenderer
     public void FlushBatch() { }
     public void RestoreMainShader() { }
     public void DrawVerticesRaw(ReadOnlySpan<Vertex.Vertex> vertices) { }
+    public void DisableSrgb() { }
+    public void RestoreSrgb() { }
 }
