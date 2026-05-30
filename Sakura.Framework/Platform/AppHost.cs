@@ -482,21 +482,24 @@ public abstract class AppHost : IDisposable
 
         if (!e.IsRepeat && e.Key == Key.F11 && (e.Modifiers & KeyModifiers.Control) == 0)
         {
-            switch (Window.WindowMode)
+            ScheduleToMainThread(() =>
             {
-                case WindowMode.Windowed:
-                    Window.WindowMode = WindowMode.Borderless;
-                    break;
-                case WindowMode.Borderless:
-                    if (RuntimeInfo.IsMacOS)
+                switch (Window.WindowMode)
+                {
+                    case WindowMode.Windowed:
+                        Window.WindowMode = WindowMode.Borderless;
+                        break;
+                    case WindowMode.Borderless:
+                        if (RuntimeInfo.IsMacOS)
+                            Window.WindowMode = WindowMode.Windowed;
+                        else
+                            Window.WindowMode = WindowMode.Fullscreen;
+                        break;
+                    case WindowMode.Fullscreen:
                         Window.WindowMode = WindowMode.Windowed;
-                    else
-                        Window.WindowMode = WindowMode.Fullscreen;
-                    break;
-                case WindowMode.Fullscreen:
-                    Window.WindowMode = WindowMode.Windowed;
-                    break;
-            }
+                        break;
+                }
+            });
         }
         if (!e.IsRepeat && e.Key == Key.F12 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
