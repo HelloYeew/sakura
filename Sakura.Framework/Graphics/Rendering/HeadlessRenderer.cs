@@ -56,13 +56,12 @@ public class HeadlessRenderer : IRenderer
     {
 
     }
-
-    public void PushMask(RectangleF rect, float cornerRadius)
+    public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius)
     {
-
+        throw new NotImplementedException();
     }
 
-    public void PopMask(RectangleF rect, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<Vertex.Vertex> maskVertices = default)
+    public void PopMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<Vertex.Vertex> maskVertices = default)
     {
 
     }

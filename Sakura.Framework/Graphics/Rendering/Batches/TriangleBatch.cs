@@ -59,13 +59,17 @@ public class TriangleBatch
         gl.EnableVertexAttribArray(3);
         gl.VertexAttribPointer(3, 1, VertexAttribPointerType.Float, false, (uint)vertexSize, (void*)Marshal.OffsetOf<SakuraVertex>(nameof(SakuraVertex.TexIndex)));
 
-        // Location 4: Clip Rect (Vector4: Left, Top, Right, Bottom)
+        // Location 4: Clip Data (Center and Size)
         gl.EnableVertexAttribArray(4);
-        gl.VertexAttribPointer(4, 4, VertexAttribPointerType.Float, false, (uint)vertexSize, (void*)Marshal.OffsetOf<SakuraVertex>(nameof(SakuraVertex.ClipRect)));
+        gl.VertexAttribPointer(4, 4, VertexAttribPointerType.Float, false, (uint)vertexSize, (void*)Marshal.OffsetOf<SakuraVertex>(nameof(SakuraVertex.ClipData)));
 
-        // Location 5: Clip Radius
+        // Location 5: Clip Shear X
         gl.EnableVertexAttribArray(5);
-        gl.VertexAttribPointer(5, 1, VertexAttribPointerType.Float, false, (uint)vertexSize, (void*)Marshal.OffsetOf<SakuraVertex>(nameof(SakuraVertex.ClipRadius)));
+        gl.VertexAttribPointer(5, 1, VertexAttribPointerType.Float, false, (uint)vertexSize, (void*)Marshal.OffsetOf<SakuraVertex>(nameof(SakuraVertex.ClipShearX)));
+
+        // Location 6: Clip Radius
+        gl.EnableVertexAttribArray(6);
+        gl.VertexAttribPointer(6, 1, VertexAttribPointerType.Float, false, (uint)vertexSize, (void*)Marshal.OffsetOf<SakuraVertex>(nameof(SakuraVertex.ClipRadius)));
 
         gl.BindVertexArray(0);
     }
@@ -81,16 +85,17 @@ public class TriangleBatch
         vertices[vertexCount++] = vertex;
     }
 
-    public void AddRange(ReadOnlySpan<SakuraVertex> newVertices, float textureIndex = 0f, Vector4? clipRect = null, float clipRadius = 0f)
+    public void AddRange(ReadOnlySpan<SakuraVertex> newVertices, float textureIndex = 0f, Vector4? clipData = null, float clipShearX = 0f, float clipRadius = 0f)
     {
         // If no clip rect is provided, use an invalid rect so let shader ignore it
-        Vector4 actualClipRect = clipRect ?? new Vector4(-1, -1, -2, -2);
+        Vector4 actualClipData = clipData ?? new Vector4(0, 0, -1, -1);
 
         foreach (var vertex in newVertices)
         {
             var v = vertex;
             v.TexIndex = textureIndex;
-            v.ClipRect = actualClipRect;
+            v.ClipData = actualClipData;
+            v.ClipShearX = clipShearX;
             v.ClipRadius = clipRadius;
             Add(v);
         }
