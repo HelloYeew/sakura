@@ -203,6 +203,9 @@ public class MathStructGenerator : IIncrementalGenerator
             // Skip methods that return types we don't know how to handle (e.g., generic types)
             if (member.IsGenericMethod) continue;
 
+            bool isUnsafe = member.ReturnType.TypeKind == TypeKind.Pointer || member.Parameters.Any(p => p.Type.TypeKind == TypeKind.Pointer);
+            string unsafeModifier = isUnsafe ? "unsafe " : "";
+
             string returnTypeName = getMappedTypeName(member.ReturnType, typeMap);
             string parameters = string.Join(", ", member.Parameters.Select(p => $"{getParameterModifier(p)}{getMappedTypeName(p.Type, typeMap)} {p.Name}"));
 
@@ -218,7 +221,7 @@ public class MathStructGenerator : IIncrementalGenerator
             if (hasRefOutParams)
             {
                 // Generate a full method body to handle the conversion manually.
-                code.AppendLine($"    public static {returnTypeName} {member.Name}({parameters})");
+                code.AppendLine($"    public static {unsafeModifier}{returnTypeName} {member.Name}({parameters})");
                 code.AppendLine($"    {{");
 
                 // Create temporary local variables for each 'out' or 'ref' parameter.
@@ -277,7 +280,7 @@ public class MathStructGenerator : IIncrementalGenerator
             {
                 // Original logic for simple expression-bodied methods.
                 string arguments = string.Join(", ", member.Parameters.Select(p => $"{getParameterModifier(p)}{p.Name}"));
-                code.AppendLine($"    public static {returnTypeName} {member.Name}({parameters}) => {underlyingTypeName}.{member.Name}({arguments});");
+                code.AppendLine($"    public static {unsafeModifier}{returnTypeName} {member.Name}({parameters}) => {underlyingTypeName}.{member.Name}({arguments});");
             }
             code.AppendLine();
         }
