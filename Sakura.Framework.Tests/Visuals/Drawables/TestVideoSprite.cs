@@ -14,18 +14,13 @@ using Sakura.Framework.Utilities; // For Precision.AlmostEquals if needed
 namespace Sakura.Framework.Tests.Visuals.Drawables;
 
 [TestFixture]
+[VisualTestOnly("Video decoder test required real hardware")]
 public class TestVideoSprite : TestScene
 {
     private VideoSprite videoSprite;
 
     [Resolved]
     private VideoStore videoStore { get; set; } = null!;
-
-    [SetUp]
-    public void SetUp()
-    {
-        AddStep("Clear scene", () => Clear());
-    }
 
     private void createVideo()
     {
