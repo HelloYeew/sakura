@@ -646,13 +646,11 @@ public abstract class AppHost : IDisposable
         Window?.SwapBuffers();
     }
 
-    // In single-thread mode all threads run together at targetUpdateHz (= draw Hz, locked 1:1).
-    // In multi-thread mode each thread runs at its own independent rate.
     private bool isMultiThread => ExecutionMode?.Value == Threading.ExecutionMode.MultiThread;
-    internal double GetInputTargetHz()  => isMultiThread ? 1000.0              : targetUpdateHz;
-    internal double GetAudioTargetHz()  => isMultiThread ? 1000.0              : targetUpdateHz;
+    internal double GetInputTargetHz() => isMultiThread ? 1000.0 : targetUpdateHz;
+    internal double GetAudioTargetHz() => isMultiThread ? 1000.0 : targetUpdateHz;
     internal double GetUpdateTargetHz() => isMultiThread ? getUpdateTargetHz() : targetUpdateHz;
-    internal double GetDrawTargetHz()   => isMultiThread ? getDrawTargetHz()   : targetUpdateHz;
+    internal double GetDrawTargetHz() => isMultiThread ? getDrawTargetHz() : targetUpdateHz;
 
     private double getDrawTargetHz()
     {
