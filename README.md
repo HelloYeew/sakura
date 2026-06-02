@@ -8,13 +8,28 @@ See [sample app repository](https://github.com/HelloYeew/sakura-sample-app) for 
 
 ## Documentation
 
-We don't have an official tutorial/documentation yet. But for the API reference you can check [the API reference site](https://helloyeew.github.io/sakura-api-docs).
+Some incomplete documentation is in [wiki](https://github.com/HelloYeew/sakura/wiki), or the API reference you can check [the API reference site](https://helloyeew.github.io/sakura-api-docs).
+
+## Requirements
+
+- .NET 9.0 SDK
+- We recommend to use IDE like [Visual Studio](https://visualstudio.microsoft.com/vs/), [Rider](https://www.jetbrains.com/rider/) or [VS Code](https://code.visualstudio.com/) for development with this framework.
+
+```shell
+git clone https://github.com/HelloYeew/sakura
+cd sakura
+dotnet restore
+
+# Run visual test
+cd Sakura.Framework.Tests
+dotnet run
+```
 
 ## Start development on this framework
 
-If you are reading this part, you probably want to "contribute" to this framework, not "use" it. Please read the following instructions.
+If you are reading this part, you probably want to "contribute" to this framework, not "use" it.
 
-_More information soon_
+See requirement above for project setup. Contributing in the form of pull request, suggestions or bug reports via issues are welcome.
 
 ## Source Generator
 

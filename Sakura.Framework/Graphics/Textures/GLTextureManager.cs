@@ -2,9 +2,12 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Linq;
+using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Statistic;
@@ -18,7 +21,9 @@ public class GLTextureManager : ITextureManager
     private readonly GL gl;
     private readonly Storage storage;
     private readonly IImageLoader imageLoader;
+    private readonly IRenderer renderer;
     private readonly Dictionary<string, Texture> textureCache = new Dictionary<string, Texture>();
+    private readonly ConcurrentDictionary<IVideoTexture, byte> videoTextures = new ConcurrentDictionary<IVideoTexture, byte>();
 
     private readonly Texture missingTexture;
 
@@ -27,8 +32,9 @@ public class GLTextureManager : ITextureManager
     /// </summary>
     public Texture WhitePixel { get; }
 
-    public GLTextureManager(GL gl, Storage storage, IImageLoader imageLoader)
+    public GLTextureManager(IRenderer renderer, GL gl, Storage storage, IImageLoader imageLoader)
     {
+        this.renderer = renderer;
         this.gl = gl;
         this.storage = storage;
         this.imageLoader = imageLoader;
@@ -53,9 +59,21 @@ public class GLTextureManager : ITextureManager
             using var stream = storage.GetStream(path);
             if (stream == null) throw new FileNotFoundException($"Texture not found: {path}");
 
-            using var rawImage = imageLoader.Load(stream);
-            var glTexture = new GLTexture(gl, rawImage.Width, rawImage.Height, rawImage.Data);
+            var rawImage = imageLoader.Load(stream);
+
+            // force a copy of the pooled memory immediately on the update thread
+            byte[] pixelDataCopy = rawImage.Data.ToArray();
+
+            var glTexture = new GLTexture(gl, rawImage.Width, rawImage.Height);
             var texture = new Texture(glTexture);
+
+            // dispose the native image on the thread that created it
+            rawImage.Dispose();
+
+            renderer.ScheduleToDrawThread(() =>
+            {
+                glTexture.Upload(pixelDataCopy);
+            });
 
             textureCache[path] = texture;
             GlobalStatistics.Get<int>("Textures", "Loaded Textures").Value = textureCache.Count;
@@ -70,13 +88,25 @@ public class GLTextureManager : ITextureManager
 
     public Texture FromPixelData(int width, int height, ReadOnlySpan<byte> pixelData, string cacheKey = null)
     {
-        var texture = new Texture(new GLTexture(gl, width, height, pixelData));
+        var glTexture = new GLTexture(gl, width, height);
+        var texture = new Texture(glTexture);
+
+        byte[] dataCopy = pixelData.ToArray();
+
+        renderer.ScheduleToDrawThread(() =>
+        {
+            ReadOnlySpan<byte> span = dataCopy;
+            glTexture.Upload(span);
+        });
 
         if (!string.IsNullOrEmpty(cacheKey))
         {
             if (textureCache.TryGetValue(cacheKey, out var oldTexture))
             {
-                oldTexture.GlTexture?.Dispose();
+                renderer.ScheduleToDrawThread(() =>
+                {
+                    oldTexture.GlTexture?.Dispose();
+                });
             }
 
             textureCache[cacheKey] = texture;
@@ -97,7 +127,7 @@ public class GLTextureManager : ITextureManager
         const int height = 1;
         byte[] data = new byte[width * height * 4];
 
-        var glTex = new GLTexture(gl, width, height, data);
+        var glTex = new GLTexture(gl, width, height);
         return new Texture(glTex);
     }
 
@@ -109,7 +139,10 @@ public class GLTextureManager : ITextureManager
         {
             if (texture != WhitePixel && texture.GlTexture.Handle != missingTexture.GlTexture.Handle)
             {
-                texture.Dispose();
+                renderer.ScheduleToDrawThread(() =>
+                {
+                    texture.Dispose();
+                });
             }
 
             textureCache.Remove(path);
@@ -127,7 +160,10 @@ public class GLTextureManager : ITextureManager
         {
             if (tex != WhitePixel && tex.GlTexture.Handle != missingTexture.GlTexture.Handle)
             {
-                tex.GlTexture.Dispose();
+                renderer.ScheduleToDrawThread(() =>
+                {
+                    tex.GlTexture.Dispose();
+                });
             }
         }
 
@@ -135,4 +171,8 @@ public class GLTextureManager : ITextureManager
     }
 
     public IEnumerable<Texture> GetAllTextures() => textureCache.Values;
+
+    public void RegisterVideoTexture(IVideoTexture texture) => videoTextures.TryAdd(texture, 0);
+    public void UnregisterVideoTexture(IVideoTexture texture) => videoTextures.TryRemove(texture, out _);
+    public IEnumerable<IVideoTexture> GetAllVideoTextures() => videoTextures.Keys;
 }

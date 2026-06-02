@@ -5,6 +5,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
 using Sakura.Framework.Allocation;
 using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Graphics.Colors;
@@ -18,7 +20,6 @@ using Sakura.Framework.Maths;
 using Sakura.Framework.Statistic;
 using Sakura.Framework.Timing;
 using Sakura.Framework.Utilities;
-using Silk.NET.OpenGL;
 using Texture = Sakura.Framework.Graphics.Textures.Texture;
 
 namespace Sakura.Framework.Graphics.Drawables;
@@ -30,13 +31,32 @@ public abstract class Drawable
 {
     public Container? Parent { get; internal set; }
 
+    /// <summary>
+    /// When true, this drawable will be disposed automatically when removed from its parent
+    /// container via <see cref="Container.Remove"/> or <see cref="Container.Clear"/>.
+    /// Set this on drawables that own unmanaged resources (e.g. video decoders, audio tracks).
+    /// Defaults to false to preserve backward-compatible behavior.
+    /// </summary>
+    public bool DisposeOnRemoval { get; set; }
+
     public bool IsHovered { get; private set; }
     public bool IsDragged { get; private set; }
 
     /// <summary>
-    /// Whether this drawable has been loaded.
+    /// The current loading state of the component
     /// </summary>
-    public bool IsLoaded { get; private set; }
+    public LoadState LoadState { get; internal set; } = LoadState.NotLoaded;
+
+    /// <summary>
+    /// Whether this drawable has been ready or loaded.
+    /// </summary>
+    public bool IsLoaded => LoadState >= LoadState.Ready;
+
+    private readonly object loadLock = new object();
+    private Task? loadTask;
+    private int? loadTaskId;
+    private IReadOnlyDependencyContainer? asyncParentDependencies;
+    private bool isTopLevelAsyncLoad;
 
     private Anchor anchor = Anchor.TopLeft;
     private Anchor origin = Anchor.TopLeft;
@@ -529,11 +549,6 @@ public abstract class Drawable
 
                 case TextureFillMode.Tile:
                     // Expand UVs > 1.0 to repeat
-
-                    // Note: This changes the GL state for this texture handle globally.
-                    // If this texture is used elsewhere with Clamp, it will affect it.
-                    Texture.GlTexture.SetWrapMode(TextureWrapMode.Repeat);
-
                     float repeatX = DrawSize.X / Texture.Width;
                     float repeatY = DrawSize.Y / Texture.Height;
 
@@ -602,13 +617,90 @@ public abstract class Drawable
     /// </summary>
     public virtual void Load()
     {
-        if (IsLoaded) return;
+        if (LoadState >= LoadState.Ready) return;
 
-        loadDependencies();
+        // If an asynchronous load is currently running, block the thread until it finishes
+        // The loadTaskId check ensures we don't deadlock if the Task itself is the one calling Load()
+        if (loadTask != null && loadTaskId != Task.CurrentId && !loadTask.IsCompleted)
+        {
+            loadTask.Wait();
+            return;
+        }
 
-        OnLoad(this);
+        lock (loadLock)
+        {
+            if (LoadState >= LoadState.Ready) return;
 
-        IsLoaded = true;
+            bool isLongRunning = GetType().GetCustomAttribute<LongRunningLoadAttribute>(true) != null;
+            if (isLongRunning && !isTopLevelAsyncLoad)
+            {
+                throw new InvalidOperationException(
+                    $"Drawable {GetDisplayName()} is marked with [LongRunningLoad] and must exclusively be loaded via {nameof(LoadComponentAsync)}().");
+            }
+
+            LoadState = LoadState.Loading;
+
+            loadDependencies(asyncParentDependencies);
+            asyncParentDependencies = null;
+
+            OnLoad(this);
+
+            LoadState = LoadState.Ready;
+        }
+    }
+
+    /// <summary>
+    /// Asynchronously loads a component and its children, preventing interface thread blockage.
+    /// </summary>
+    /// <param name="component">The component to load.</param>
+    /// <param name="onLoaded">An action to perform once the component is ready (e.g., adding it to a container).</param>
+    /// <param name="cancellationToken">A token to cancel the task before it executes.</param>
+    /// <returns>A task representing the load process.</returns>
+    public Task LoadComponentAsync<T>(T component, Action<T>? onLoaded = null, CancellationToken cancellationToken = default) where T : Drawable
+    {
+        ArgumentNullException.ThrowIfNull(component);
+
+        lock (component.loadLock)
+        {
+            // if the component is already loading or loaded, attach to the existing task.
+            if (component.LoadState >= LoadState.Loading || component.loadTask != null)
+            {
+                if (onLoaded != null)
+                {
+                    if (component.loadTask != null && !component.loadTask.IsCompleted)
+                        return component.loadTask.ContinueWith(_ => Scheduler?.Add(() => onLoaded(component)), cancellationToken);
+
+                    Scheduler?.Add(() => onLoaded(component));
+                }
+                return component.loadTask ?? Task.CompletedTask;
+            }
+
+            // transfer our dependencies down so the child can resolve dependencies off-thread.
+            component.asyncParentDependencies = Dependencies;
+            component.isTopLevelAsyncLoad = true;
+
+            bool isLongRunning = component.GetType().GetCustomAttribute<LongRunningLoadAttribute>(true) != null;
+            var creationOptions = isLongRunning ? TaskCreationOptions.LongRunning : TaskCreationOptions.None;
+            var scheduler = Scheduler; // capture the parent's scheduler
+
+            component.loadTask = Task.Factory.StartNew(() =>
+            {
+                component.loadTaskId = Task.CurrentId;
+                component.Load(); // trigger the virtual method
+            }, cancellationToken, creationOptions, TaskScheduler.Default);
+
+            // return a continuation that handles routing the callback back to the main update thread
+            return component.loadTask.ContinueWith(t =>
+            {
+                if (t.IsFaulted) throw t.Exception!.InnerException!;
+
+                if (onLoaded != null && !cancellationToken.IsCancellationRequested)
+                {
+                    // the callback must be executed on the target's update thread.
+                    scheduler?.Add(() => onLoaded(component));
+                }
+            }, cancellationToken, TaskContinuationOptions.None, TaskScheduler.Default);
+        }
     }
 
     /// <summary>
@@ -617,6 +709,10 @@ public abstract class Drawable
     /// </summary>
     public virtual void LoadComplete()
     {
+        if (LoadState >= LoadState.Loaded)
+            return;
+
+        LoadState = LoadState.Loaded;
         OnLoadComplete(this);
     }
 
@@ -705,9 +801,9 @@ public abstract class Drawable
         ownDependencies.Cache(instance);
     }
 
-    private void loadDependencies()
+    private void loadDependencies(IReadOnlyDependencyContainer? overrideParentContainer = null)
     {
-        IReadOnlyDependencyContainer? parentContainer = getParentDependencyContainer();
+        IReadOnlyDependencyContainer? parentContainer = overrideParentContainer ?? getParentDependencyContainer();
         dependencies = ownDependencies = new DependencyContainer(parentContainer);
 
         // inject dependencies into [Resolved] fields/properties
@@ -1017,6 +1113,9 @@ public abstract class Drawable
 
     public virtual bool OnDragDropFile(DragDropFileEvent e) => false;
     public virtual bool OnDragDropText(DragDropTextEvent e) => false;
+
+    public virtual bool OnTextInput(TextInputEvent e) => false;
+    public virtual bool OnTextEditing(TextEditingEvent e) => false;
 
     #endregion
 

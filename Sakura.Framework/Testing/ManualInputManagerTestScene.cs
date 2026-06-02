@@ -47,7 +47,8 @@ public abstract class ManualInputManagerTestScene : TestScene
 
         InputManager.Add(new CursorContainer
         {
-            Depth = float.MaxValue
+            Depth = float.MaxValue,
+            HideWhenOutsideWindow = false
         });
 
         var inputToggleOverlay = new Container

@@ -10,18 +10,18 @@ using Sakura.Framework.Audio;
 using Sakura.Framework.Audio.BassEngine;
 using Sakura.Framework.Audio.Headless;
 using Sakura.Framework.Configurations;
-using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Graphics.Textures;
-using Sakura.Framework.Graphics.Transforms;
+using Sakura.Framework.Graphics.Video;
 using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Reactive;
+using Sakura.Framework.Threading;
 using Sakura.Framework.Timing;
 
 namespace Sakura.Framework;
@@ -32,16 +32,15 @@ public class App : Container, IFocusManager, IDisposable
 
     protected AppHost Host { get; private set; }
 
-    internal FpsGraph FpsGraph { get; private set; }
-
     protected IAudioManager AudioManager { get; private set; }
     protected TrackStore TrackStore { get; private set; }
     protected SampleStore SampleStore { get; private set; }
 
     protected ITextureManager TextureManager { get; private set; }
     protected IFontStore FontStore { get; private set; }
+    protected VideoStore VideoStore { get; private set; }
 
-    private Reactive<bool> showFpsGraph;
+    private Reactive<PerformanceOverlayState> fpsGraphState;
 
     /// <summary>
     /// The Assembly where embedded resources are stored.
@@ -65,7 +64,7 @@ public class App : Container, IFocusManager, IDisposable
 
     public override void Load()
     {
-        Clock = new FramedClock(Host.AppClock, true);
+        Clock = new FramedClock(Host.UpdateClock, true);
 
         base.Load();
 
@@ -89,8 +88,9 @@ public class App : Container, IFocusManager, IDisposable
         switch (Host.Renderer)
         {
             case GLRenderer:
-                TextureManager = new GLTextureManager(GLRenderer.GL, embeddedResourceStorage.GetStorageForDirectory("Textures"), CreateImageLoader());
-                FontStore = new GLFontStore(GLRenderer.GL);
+                TextureManager = new GLTextureManager(Host.Renderer, GLRenderer.GL, embeddedResourceStorage.GetStorageForDirectory("Textures"), CreateImageLoader());
+                VideoStore = new VideoStore(embeddedResourceStorage.GetStorageForDirectory("Videos"), Host.Renderer, GLRenderer.GL, TextureManager);
+                FontStore = new GLFontStore(Host.Renderer, GLRenderer.GL);
                 // TODO: This will exposed all framework file resource out, maybe find better way?
                 var frameworkFontStorage = Host.FrameworkStorage.GetStorageForDirectory("Fonts");
                 var fontStorage = embeddedResourceStorage.GetStorageForDirectory("Fonts");
@@ -101,6 +101,7 @@ public class App : Container, IFocusManager, IDisposable
             case HeadlessRenderer:
                 TextureManager = new HeadlessTextureManager();
                 FontStore = new HeadlessFontStore((HeadlessTextureManager)TextureManager);
+                VideoStore = null; // Video playback is not supported in headless mode
                 break;
 
             default:
@@ -111,6 +112,7 @@ public class App : Container, IFocusManager, IDisposable
 
         Cache<IAudioStore<ITrack>>(TrackStore);
         Cache<IAudioStore<ISample>>(SampleStore);
+        if (VideoStore != null) Cache(VideoStore);
 
         Cache(Host);
         Cache(this);
@@ -118,7 +120,7 @@ public class App : Container, IFocusManager, IDisposable
         if (Host.Storage != null) Cache(Host.Storage);
         Cache(Host.FrameworkConfigManager);
 
-        showFpsGraph = Host.FrameworkConfigManager.Get(FrameworkSetting.ShowFpsGraph, false);
+        fpsGraphState = Host.FrameworkConfigManager.Get(FrameworkSetting.ShowFpsGraph, PerformanceOverlayState.Hidden);
 
         Add(drawVisualiser = new DrawVisualiser(this)
         {
@@ -140,20 +142,10 @@ public class App : Container, IFocusManager, IDisposable
             Depth = float.MaxValue - 10,
             Alpha = 0
         });
-        Add(FpsGraph = new FpsGraph(Host.AppClock)
+        Add(new FpsGraph()
         {
             Depth = float.MaxValue
         });
-
-        if (!showFpsGraph)
-            FpsGraph.Hide();
-        showFpsGraph.ValueChanged += value =>
-        {
-            if (value.NewValue)
-                FpsGraph.FadeIn(200, Easing.OutQuint);
-            else
-                FpsGraph.FadeOut(200, Easing.OutQuint);
-        };
     }
 
     private void toggleVisualiser()
@@ -207,7 +199,7 @@ public class App : Container, IFocusManager, IDisposable
     {
         base.Update();
         AudioManager?.Update(Clock.ElapsedFrameTime);
-        Scheduler.Update();
+        Scheduler?.Update();
     }
 
     public override bool OnKeyDown(KeyEvent e)
@@ -227,6 +219,10 @@ public class App : Container, IFocusManager, IDisposable
             toggleTextureViewerDisplay();
             return true;
         }
+        else if (!e.IsRepeat && e.Key == Key.F7 && (e.Modifiers & KeyModifiers.Control) > 0)
+        {
+            Host.ExecutionMode.Value = Host.ExecutionMode.Value == ExecutionMode.MultiThread ? ExecutionMode.SingleThread : ExecutionMode.MultiThread;
+        }
         else if (!e.IsRepeat && e.Key == Key.F9 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
             toggleAudioMixerVisualiserDisplay();
@@ -234,7 +230,8 @@ public class App : Container, IFocusManager, IDisposable
         }
         if (!e.IsRepeat && e.Key == Key.F11 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
-            showFpsGraph.Value = !showFpsGraph.Value;
+            int nextState = ((int)fpsGraphState.Value + 1) % 3;
+            fpsGraphState.Value = (PerformanceOverlayState)nextState;
             return true;
         }
 
@@ -245,6 +242,19 @@ public class App : Container, IFocusManager, IDisposable
         }
 
         return base.OnKeyDown(e);
+    }
+
+    public override bool OnMouseDown(MouseButtonEvent e)
+    {
+        bool handled = base.OnMouseDown(e);
+
+        // click empty space to unfocus
+        if (!handled)
+        {
+            ChangeFocus(null);
+        }
+
+        return handled;
     }
 
     #region Focus Management
@@ -316,7 +326,7 @@ public class App : Container, IFocusManager, IDisposable
         return true;
     }
 
-    public virtual void TriggerFocusContention(Drawable? triggerSource)
+    public virtual void TriggerFocusContention(Drawable triggerSource)
     {
         if (triggerSource != null && triggerSource.RequestsFocus)
         {

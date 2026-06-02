@@ -72,4 +72,7 @@ public class HeadlessTextureManager : ITextureManager
     }
 
     public IEnumerable<Texture> GetAllTextures() => new[] { WhitePixel };
+    public void RegisterVideoTexture(IVideoTexture texture) { }
+    public void UnregisterVideoTexture(IVideoTexture texture) { }
+    public IEnumerable<IVideoTexture> GetAllVideoTextures() => System.Array.Empty<IVideoTexture>();
 }

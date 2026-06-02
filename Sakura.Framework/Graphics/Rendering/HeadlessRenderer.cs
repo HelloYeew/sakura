@@ -13,6 +13,7 @@ namespace Sakura.Framework.Graphics.Rendering;
 public class HeadlessRenderer : IRenderer
 {
     public Texture WhitePixel { get; }
+    public Sakura.Framework.Maths.Matrix4x4 ProjectionMatrix => default;
     private readonly HeadlessTextureManager textureManager;
 
     public HeadlessRenderer(HeadlessTextureManager textureManager)
@@ -70,4 +71,14 @@ public class HeadlessRenderer : IRenderer
     {
 
     }
+    public void ScheduleToDrawThread(Action action)
+    {
+
+    }
+
+    public void FlushBatch() { }
+    public void RestoreMainShader() { }
+    public void DrawVerticesRaw(ReadOnlySpan<Vertex.Vertex> vertices) { }
+    public void DisableSrgb() { }
+    public void RestoreSrgb() { }
 }

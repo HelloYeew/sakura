@@ -96,9 +96,19 @@ public abstract class ConfigManager<TLookup> where TLookup : struct, Enum
                     // Find the existing reactive object (which has the correct generic type)
                     if (settings.TryGetValue(lookup, out var reactiveObject))
                     {
-                        // Use reflection to call its Parse method
-                        var parseMethod = reactiveObject.GetType().GetMethod("Parse");
-                        parseMethod?.Invoke(reactiveObject, new object[] { value, System.Globalization.CultureInfo.InvariantCulture });
+                        try
+                        {
+                            var parseMethod = reactiveObject.GetType().GetMethod("Parse");
+                            parseMethod?.Invoke(reactiveObject, new object[]
+                            {
+                                value, System.Globalization.CultureInfo.InvariantCulture
+                            });
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Warning($"[{GetType().Name}] Failed to parse setting '{lookup}' from value '{value}'. Falling back to default. Error: {ex.InnerException?.Message ?? ex.Message}");
+                            Save();
+                        }
                     }
                 }
             }

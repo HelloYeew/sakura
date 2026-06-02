@@ -41,7 +41,23 @@ public interface ITextureManager : IDisposable
     bool Evict(string path);
 
     /// <summary>
-    /// Retrieves all currently loaded and cached textures.
+    /// Retrieves all currently loaded and cached regular textures.
     /// </summary>
     IEnumerable<Texture> GetAllTextures();
+
+    /// <summary>
+    /// Registers a video texture so it appears in the texture viewer and can be tracked.
+    /// Called by <see cref="Sakura.Framework.Graphics.Video.VideoDecoder"/> when creating a new texture.
+    /// </summary>
+    void RegisterVideoTexture(IVideoTexture texture);
+
+    /// <summary>
+    /// Unregisters a video texture when it is disposed.
+    /// </summary>
+    void UnregisterVideoTexture(IVideoTexture texture);
+
+    /// <summary>
+    /// Returns all currently active video textures.
+    /// </summary>
+    IEnumerable<IVideoTexture> GetAllVideoTextures();
 }

@@ -43,4 +43,48 @@ public interface IRenderer
     /// </summary>
     /// <param name="blendingMode">The blend mode to set.</param>
     void SetBlendMode(BlendingMode blendingMode);
+
+    /// <summary>
+    /// Schedules an action to be executed on the Draw thread at the start of the next frame.
+    /// This is vital for OpenGL resource creation from other threads.
+    /// </summary>
+    void ScheduleToDrawThread(Action action);
+
+    /// <summary>
+    /// The current orthographic projection matrix used for rendering.
+    /// Custom shaders must set this on their own program before drawing.
+    /// </summary>
+    Maths.Matrix4x4 ProjectionMatrix { get; }
+
+    /// <summary>
+    /// Flushes any pending batched geometry to the GPU immediately.
+    /// Must be called before switching shader programs mid-frame.
+    /// </summary>
+    void FlushBatch();
+
+    /// <summary>
+    /// Restores the main scene shader and its standard uniforms after a custom shader was used.
+    /// Must be called after any DrawNode that switches to a non-standard shader.
+    /// </summary>
+    void RestoreMainShader();
+
+    /// <summary>
+    /// Uploads the given vertices into the shared VBO and issues a raw DrawArrays call
+    /// without touching any texture slots. Used by VideoDrawNode so it can bind its own
+    /// textures independently of the renderer's slot management.
+    /// </summary>
+    void DrawVerticesRaw(ReadOnlySpan<Vertex.Vertex> vertices);
+
+    /// <summary>
+    /// Disables sRGB framebuffer encoding for the next draw call.
+    /// Required for video rendering: YUV→RGB output is already gamma-encoded
+    /// and must NOT be re-encoded by the sRGB framebuffer path.
+    /// Call <see cref="RestoreSrgb"/> immediately after the draw call.
+    /// </summary>
+    void DisableSrgb();
+
+    /// <summary>
+    /// Re-enables sRGB framebuffer encoding after a <see cref="DisableSrgb"/> call.
+    /// </summary>
+    void RestoreSrgb();
 }

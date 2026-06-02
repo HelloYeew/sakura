@@ -223,7 +223,7 @@ public class GlobalStatisticsDisplay : FocusedOverlayContainer, IRemoveFromDrawV
         }
 
         currentTimeText.Text = $"{DateTime.Now:dd MMMM yyyy HH:mm:ss tt}";
-        runningTimeText.Text = $"Has been running for {TimeSpan.FromSeconds(host.AppClock.CurrentTime / 1000):hh\\:mm\\:ss}";
+        runningTimeText.Text = $"Has been running for {TimeSpan.FromSeconds(host.UpdateClock.CurrentTime / 1000):hh\\:mm\\:ss}";
     }
 
     public override bool OnKeyDown(KeyEvent e)

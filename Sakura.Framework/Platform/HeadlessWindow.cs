@@ -4,6 +4,7 @@
 using System;
 using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
+using Sakura.Framework.Maths;
 using Sakura.Framework.Reactive;
 
 namespace Sakura.Framework.Platform;
@@ -22,7 +23,9 @@ public class HeadlessWindow : IWindow
     public Reactive<WindowMode> WindowModeReactive { get; } = new Reactive<WindowMode>(WindowMode.Windowed);
     public bool CursorVisible { get; set; } = true;
     public Reactive<CursorState> CursorState { get; } = new Reactive<CursorState>(Input.CursorState.Default);
+    public bool CursorInWindow { get; } = true;
     public IGraphicsSurface GraphicsSurface { get; } = new HeadlessGraphicsSurface();
+    private string headlessClipboard = string.Empty;
     public void Initialize()
     {
         Logger.Verbose("🪟 Headless window initialized");
@@ -66,6 +69,30 @@ public class HeadlessWindow : IWindow
         ExitRequested?.Invoke();
         Exited?.Invoke();
     }
+    public void StartTextInput()
+    {
+
+    }
+
+    public void StopTextInput()
+    {
+
+    }
+
+    public void SetTextInputRect(RectangleF rect)
+    {
+
+    }
+
+    public string GetClipboardText()
+    {
+        return headlessClipboard;
+    }
+
+    public void SetClipboardText(string text)
+    {
+        headlessClipboard = text;
+    }
 
     public event Action? Update;
     public event Action? FocusLost;
@@ -84,6 +111,8 @@ public class HeadlessWindow : IWindow
     public event Action<ScrollEvent>? OnScroll;
     public event Action<DragDropFileEvent>? OnDragDropFile;
     public event Action<DragDropTextEvent>? OnDragDropText;
+    public event Action<TextInputEvent>? OnTextInput;
+    public event Action<TextEditingEvent>? OnTextEditing;
     public event Action? RenderRequested;
 
     public void Dispose()

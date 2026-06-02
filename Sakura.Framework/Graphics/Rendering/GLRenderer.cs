@@ -4,6 +4,7 @@
 #nullable disable
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
@@ -30,6 +31,7 @@ public class GLRenderer : IRenderer
     internal static GL GL => gl;
 
     public Texture WhitePixel { get; private set; }
+    public Matrix4x4 ProjectionMatrix => projectionMatrix;
 
     private Shader shader;
 
@@ -56,6 +58,8 @@ public class GLRenderer : IRenderer
     private ClipState currentClip;
 
     private DrawNode rootNode;
+
+    private readonly ConcurrentQueue<Action> drawThreadQueue = new ConcurrentQueue<Action>();
 
     private struct ClipState
     {
@@ -136,7 +140,42 @@ public class GLRenderer : IRenderer
 
     public void StartFrame()
     {
-        // TODO: Implement frame start logic if needed.
+        while (drawThreadQueue.TryDequeue(out var action))
+        {
+            action.Invoke();
+        }
+
+        // TODO: Any other StartFrame logic...
+    }
+
+    public void ScheduleToDrawThread(Action action)
+    {
+        drawThreadQueue.Enqueue(action);
+    }
+
+    public void FlushBatch()
+    {
+        triangleBatch.Draw();
+        resetTextureSlots();
+    }
+
+    public void RestoreMainShader()
+    {
+        shader.Use();
+        shader.SetUniform("u_Projection", projectionMatrix);
+        int[] samplers = new int[] { 0, 1, 2, 3, 4, 5, 6, 7 };
+        shader.SetUniformIntArray("u_Textures", samplers);
+        shader.SetUniform("u_IsMasking", false);
+        shader.SetUniform("u_IsBorder", false);
+    }
+
+    public void DisableSrgb() => gl.Disable(EnableCap.FramebufferSrgb);
+
+    public void RestoreSrgb()  => gl.Enable(EnableCap.FramebufferSrgb);
+
+    public void DrawVerticesRaw(ReadOnlySpan<Vertex.Vertex> vertices)
+    {
+        triangleBatch.DrawRaw(vertices);
     }
 
     public void Draw(IClock clock)
@@ -184,7 +223,12 @@ public class GLRenderer : IRenderer
 
     public void DrawVertices(ReadOnlySpan<SakuraVertex> vertices, Texture texture)
     {
-        uint handle = texture.GlTexture.Handle;
+        // Video textures (VideoGLTexture) are handled by VideoDrawNode directly —
+        // fall back to WhitePixel so the batch slot logic stays consistent.
+        if (texture.GlTexture == null)
+            texture = WhitePixel;
+
+        uint handle = texture.GlTexture!.Handle;
         float textureIndex = -1;
 
         for (int i = 0; i < boundTextureCount; i++)

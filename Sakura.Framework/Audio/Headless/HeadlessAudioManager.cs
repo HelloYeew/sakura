@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using Sakura.Framework.Logging;
@@ -16,6 +17,7 @@ public class HeadlessAudioManager : IAudioManager, IDisposable
     public Reactive<double> SampleVolume { get; } = new Reactive<double>(1.0);
 
     private readonly List<HeadlessAudioChannel> activeChannels = new List<HeadlessAudioChannel>();
+    private readonly ConcurrentQueue<Action> audioThreadActions = new ConcurrentQueue<Action>();
 
     public ITrack CreateTrack(Stream stream) => new HeadlessTrack(this, stream);
     public ITrack CreateTrackFromFile(string path) => new HeadlessTrack(this, path);
@@ -39,8 +41,21 @@ public class HeadlessAudioManager : IAudioManager, IDisposable
         Logger.Verbose("🔈 Headless audio manager initialized");
     }
 
+    public void EnqueueAction(Action action)
+    {
+        if (action != null)
+        {
+            audioThreadActions.Enqueue(action);
+        }
+    }
+
     public void Update(double frameTime)
     {
+        while (audioThreadActions.TryDequeue(out var action))
+        {
+            action.Invoke();
+        }
+
         for (int i = activeChannels.Count - 1; i >= 0; i--)
         {
             var channel = activeChannels[i];
@@ -50,7 +65,7 @@ public class HeadlessAudioManager : IAudioManager, IDisposable
 
     internal void RegisterChannel(HeadlessAudioChannel channel)
     {
-        activeChannels.Add(channel);
+        EnqueueAction(() => activeChannels.Add(channel));
     }
 
     public void StopAll()

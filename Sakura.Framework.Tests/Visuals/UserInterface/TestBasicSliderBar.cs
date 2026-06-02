@@ -15,7 +15,7 @@ namespace Sakura.Framework.Tests.Visuals.UserInterface;
 
 public class TestBasicSliderBar : ManualInputManagerTestScene
 {
-    private BasicSliderBar slider;
+    private BasicSliderBar<float> slider;
     private SpriteText valueText;
 
     [SetUp]
@@ -32,7 +32,7 @@ public class TestBasicSliderBar : ManualInputManagerTestScene
                 Size = new Vector2(200, 30),
             });
 
-            TestContent.Add(slider = new BasicSliderBar
+            TestContent.Add(slider = new BasicSliderBar<float>
             {
                 Anchor = Anchor.Centre,
                 Origin = Anchor.Centre,
@@ -100,12 +100,12 @@ public class TestBasicSliderBar : ManualInputManagerTestScene
     [Test]
     public void TestTwoSlidersSameReactive()
     {
-        BasicSliderBar slider2 = null!;
+        BasicSliderBar<float> slider2 = null!;
         SpriteText valueText2 = null!;
 
         AddStep("Add second slider", () =>
         {
-            TestContent.Add(slider2 = new BasicSliderBar
+            TestContent.Add(slider2 = new BasicSliderBar<float>
             {
                 Anchor = Anchor.Centre,
                 Origin = Anchor.Centre,

@@ -52,6 +52,13 @@ public class BasicDropdown<T> : Container
             }
         };
 
+        header.Text = Current.Value?.ToString() ?? "Select...";
+    }
+
+    public override void LoadComplete()
+    {
+        base.LoadComplete();
+
         Current.ValueChanged += e =>
         {
             header.Text = e.NewValue?.ToString() ?? "Select...";

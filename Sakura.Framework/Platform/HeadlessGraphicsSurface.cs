@@ -10,4 +10,7 @@ namespace Sakura.Framework.Platform;
 public class HeadlessGraphicsSurface : IGraphicsSurface
 {
     public Func<string, IntPtr> GetFunctionAddress { get; set; } = _ => nint.Zero;
+
+    public Action MakeCurrent { get; set; } = () => { };
+    public Action ClearCurrent { get; set; } = () => { };
 }
