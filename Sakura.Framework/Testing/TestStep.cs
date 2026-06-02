@@ -35,6 +35,12 @@ public class SliderStep<T> : TestStep where T : struct, INumber<T>
     public Action<T>? ValueChanged { get; set; }
 }
 
+public class RepeatStep : ActionStep
+{
+    public int RepeatCount { get; set; }
+    public int CurrentIteration { get; set; }
+}
+
 public enum StepContext
 {
     OneTimeSetUp,

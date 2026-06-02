@@ -103,6 +103,17 @@ public abstract class TestScene : Container
         });
     }
 
+    public void AddRepeatStep(string description, Action stepAction, int repeatCount)
+    {
+        steps.Add(new RepeatStep
+        {
+            Description = description,
+            Action = stepAction,
+            RepeatCount = repeatCount,
+            Context = CurrentStepContext
+        });
+    }
+
     [SetUp]
     public virtual void SetupNUnit()
     {
@@ -280,7 +291,20 @@ public abstract class TestScene : Container
 
                 try
                 {
-                    if (step is ActionStep actionStep)
+                    if (step is RepeatStep repeatStep)
+                    {
+                        repeatStep.Action?.Invoke();
+                        repeatStep.CurrentIteration++;
+
+                        if (repeatStep.CurrentIteration < repeatStep.RepeatCount)
+                        {
+                            isExecutingStep = false;
+                            return;
+                        }
+
+                        repeatStep.CurrentIteration = 0;
+                    }
+                    else if (step is ActionStep actionStep)
                     {
                         actionStep.Action?.Invoke();
                     }

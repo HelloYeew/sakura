@@ -29,7 +29,23 @@ namespace Sakura.Framework.Graphics.Drawables;
 /// </summary>
 public abstract class Drawable
 {
-    public Container? Parent { get; internal set; }
+    private Container? parent;
+
+    public Container? Parent
+    {
+        get => parent;
+        internal set
+        {
+            if (parent == value) return;
+            parent = value;
+            OnParentChanged();
+        }
+    }
+
+    /// <summary>
+    /// Invoked when the parent of this drawable is changed (added or removed from a container).
+    /// </summary>
+    protected virtual void OnParentChanged() { }
 
     /// <summary>
     /// When true, this drawable will be disposed automatically when removed from its parent
@@ -880,7 +896,9 @@ public abstract class Drawable
     /// </summary>
     public virtual void UpdateSubTree()
     {
-        if (IsMaskedAway && !AlwaysPresent)
+        (Clock as FramedClock)?.Update();
+
+        if ((IsMaskedAway || !IsAlive) && !AlwaysPresent)
             return;
 
         Update();
@@ -892,7 +910,6 @@ public abstract class Drawable
 
         GlobalStatistics.Get<int>("Drawables", "Updated Last Frame").Value++;
 
-        (Clock as FramedClock)?.Update();
         Scheduler?.Update();
         applyTransforms();
 
@@ -1011,12 +1028,12 @@ public abstract class Drawable
     /// <summary>
     /// The time at which this drawable becomes alive.
     /// </summary>
-    public double LifetimeStart { get; private set; } = double.MinValue;
+    public double LifetimeStart { get; set; } = double.MinValue;
 
     /// <summary>
     /// The time at which this drawable ceases to be alive (dead).
     /// </summary>
-    public double LifetimeEnd { get; private set; } = double.MaxValue;
+    public double LifetimeEnd { get; set; } = double.MaxValue;
 
     /// <summary>
     /// Whether this drawable should be removed from its parent when <see cref="IsAlive"/> is false.
