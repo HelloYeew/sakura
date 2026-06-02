@@ -108,6 +108,19 @@ public abstract class TestScene : Container
     {
         if (!IsVisualRunner)
         {
+            string methodName = TestContext.CurrentContext.Test.MethodName;
+            if (!string.IsNullOrEmpty(methodName))
+            {
+                var method = GetType().GetMethod(methodName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                var attribute = method?.GetCustomAttribute<VisualTestOnlyAttribute>()
+                                ?? GetType().GetCustomAttribute<VisualTestOnlyAttribute>();
+
+                if (attribute != null)
+                {
+                    Assert.Ignore(attribute.Reason);
+                }
+            }
+
             steps.Clear();
             Clear();
         }
