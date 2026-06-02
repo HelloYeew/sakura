@@ -97,8 +97,9 @@ public class AppThread
 
         long lastFrameTime = System.Diagnostics.Stopwatch.GetTimestamp();
 
-        // Accumulated sleep error for drift correction (same approach as osu!framework's ThrottledFrameClock).
         double accumulatedSleepError = 0.0;
+
+        const double min_sleep_ms = 0.5;
 
         while (isRunning)
         {
@@ -121,7 +122,7 @@ public class AppThread
                 // Excess = how long we should sleep (with drift correction).
                 double sleepMs = targetFrameTimeMs - elapsedMs + accumulatedSleepError;
 
-                if (sleepMs > 0)
+                if (sleepMs >= min_sleep_ms)
                 {
                     var sleepSpan = TimeSpan.FromMilliseconds(sleepMs);
                     double beforeMs = System.Diagnostics.Stopwatch.GetTimestamp() * msPerTick;
@@ -131,21 +132,26 @@ public class AppThread
 
                     double actualSleepMs = System.Diagnostics.Stopwatch.GetTimestamp() * msPerTick - beforeMs;
 
-                    // Correct for overshoot/undershoot; clamp to avoid runaway catch-up.
+                    // Fold overshoot/undershoot back into the accumulator.
                     accumulatedSleepError += sleepMs - actualSleepMs;
-                    accumulatedSleepError = Math.Max(-1000.0 / 30.0, accumulatedSleepError);
                 }
                 else
                 {
-                    // Already late — reset error so we don't double-compensate.
-                    accumulatedSleepError = 0;
+                    // Frame is late or remainder is below the sleep precision floor.
+                    // Carry the deficit forward so the next frame compensates, rather than discarding it.
+                    accumulatedSleepError += sleepMs;
                 }
+
+                // Clamp the accumulator: allow at most ~33 ms of catch-up debt (one missed 30fps frame),
+                // and allow up to +2 ms of credit (so a frame that finished early can donate it forward).
+                accumulatedSleepError = Math.Clamp(accumulatedSleepError, -1000.0 / 30.0, 2.0);
 
                 // Advance the frame anchor by one frame quantum (keeps cadence locked).
                 long targetTicks = (long)(targetFrameTimeMs / msPerTick);
                 lastFrameTime += targetTicks;
 
-                // If we've slipped more than 5 frames behind, reset to avoid a catch-up avalanche.
+                // If we've slipped more than 5 frames behind (e.g. after a GC pause or window drag),
+                // snap the anchor forward to avoid a long catch-up avalanche of back-to-back frames.
                 long currentAfterWait = System.Diagnostics.Stopwatch.GetTimestamp();
                 double thresholdMs = Math.Max(targetFrameTimeMs * 5, 50.0);
                 if ((currentAfterWait - lastFrameTime) * msPerTick > thresholdMs)
@@ -156,10 +162,11 @@ public class AppThread
             }
             else
             {
-                // Unlimited rate — yield once so we don't monopolise the CPU.
+                // Truly unlimited — don't sleep or yield. The frame runs back-to-back as fast as
+                // the work allows. Users who want CPU relief in unlimited mode should enable
+                // LimitUnlimitedUpdateRate in HostOptions, which caps at 1000 Hz with nanosleep.
                 lastFrameTime = System.Diagnostics.Stopwatch.GetTimestamp();
                 accumulatedSleepError = 0;
-                Thread.Sleep(0);
             }
         }
 

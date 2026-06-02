@@ -374,6 +374,7 @@ public abstract class AppHost : IDisposable
             double msPerTick = 1000.0 / timestampFrequency;
             long lastMainFrameTime = Stopwatch.GetTimestamp();
             double mainSleepError = 0.0;
+            const double main_min_sleep_ms = 0.5;
 
             INativeSleep mainNativeSleep = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
                 ? new WindowsNativeSleep()
@@ -417,7 +418,7 @@ public abstract class AppHost : IDisposable
                         double elapsedMs = (nowTicks - lastMainFrameTime) * msPerTick;
                         double sleepMs = targetMainFrameTimeMs - elapsedMs + mainSleepError;
 
-                        if (sleepMs > 0)
+                        if (sleepMs >= main_min_sleep_ms)
                         {
                             var sleepSpan = TimeSpan.FromMilliseconds(sleepMs);
                             double beforeMs = Stopwatch.GetTimestamp() * msPerTick;
@@ -427,12 +428,13 @@ public abstract class AppHost : IDisposable
 
                             double actualSleepMs = Stopwatch.GetTimestamp() * msPerTick - beforeMs;
                             mainSleepError += sleepMs - actualSleepMs;
-                            mainSleepError = Math.Max(-1000.0 / 30.0, mainSleepError);
                         }
                         else
                         {
-                            mainSleepError = 0;
+                            mainSleepError += sleepMs;
                         }
+
+                        mainSleepError = Math.Clamp(mainSleepError, -1000.0 / 30.0, 2.0);
 
                         lastMainFrameTime += targetMainTicks;
 
@@ -644,10 +646,14 @@ public abstract class AppHost : IDisposable
         Window?.SwapBuffers();
     }
 
-    /// <summary>
-    /// Get the target update rate in Hz based on the current frame limiter setting.
-    /// </summary>
-    /// <returns>The target update rate in Hz, or 0 for unlimited.</returns>
+    // In single-thread mode all threads run together at targetUpdateHz (= draw Hz, locked 1:1).
+    // In multi-thread mode each thread runs at its own independent rate.
+    private bool isMultiThread => ExecutionMode?.Value == Threading.ExecutionMode.MultiThread;
+    internal double GetInputTargetHz()  => isMultiThread ? 1000.0              : targetUpdateHz;
+    internal double GetAudioTargetHz()  => isMultiThread ? 1000.0              : targetUpdateHz;
+    internal double GetUpdateTargetHz() => isMultiThread ? getUpdateTargetHz() : targetUpdateHz;
+    internal double GetDrawTargetHz()   => isMultiThread ? getDrawTargetHz()   : targetUpdateHz;
+
     private double getDrawTargetHz()
     {
         // In headless mode, default to a sensible refresh rate for update calculations.
