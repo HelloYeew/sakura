@@ -42,8 +42,8 @@ public class FpsGraph : Container, IRemoveFromDrawVisualiser
     private FontUsage graphFontUsage = FontUsage.Default.With(size: 14);
     private FontUsage boldGraphFontUsage = FontUsage.Default.With(size: 14, weight: "Bold");
 
-    private const float extended_width = 350;
-    private const float compact_width = 300;
+    private const float extended_width = 400;
+    private const float compact_width = 340;
 
     [Resolved]
     private AppHost host { get; set; }
