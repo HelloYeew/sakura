@@ -56,6 +56,7 @@ public static class RuntimeInfo
     public static bool IsDesktop => OS == Platform.Linux || OS == Platform.macOS || OS == Platform.Windows;
     public static bool IsMobile => OS == Platform.iOS || OS == Platform.Android;
     public static bool IsApple => OS == Platform.iOS || OS == Platform.macOS;
+    public static bool IsWindows => OS == Platform.Windows;
 
     [SuppressMessage("ReSharper", "InconsistentNaming")]
     public static bool IsMacOS => OS == Platform.macOS;
