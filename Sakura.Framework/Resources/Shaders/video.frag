@@ -5,7 +5,8 @@
 in vec4 v_Color;
 in vec2 v_TexCoords;
 in vec2 v_FragPos;
-in vec4 v_ClipRect;
+in vec4 v_ClipData;
+in float v_ClipShearX;
 in float v_ClipRadius;
 
 out vec4 FragColor;
@@ -38,7 +39,7 @@ void main()
     rgb = pow(rgb, vec3(2.2));
 
     FragColor = vec4(rgb, 1.0) * v_Color;
-    
-    if (!applyClipping(v_FragPos, v_ClipRect, v_ClipRadius, FragColor))
+
+    if (!applyClipping(v_FragPos, v_ClipData, v_ClipShearX, v_ClipRadius, FragColor))
         discard;
 }

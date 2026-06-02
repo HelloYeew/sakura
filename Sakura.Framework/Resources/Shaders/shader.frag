@@ -6,7 +6,8 @@ in vec4 v_Color;
 in vec2 v_TexCoords;
 in vec2 v_FragPos;
 in float v_TexIndex;
-in vec4 v_ClipRect;
+in vec4 v_ClipData;
+in float v_ClipShearX;
 in float v_ClipRadius;
 
 out vec4 FragColor;
@@ -15,7 +16,9 @@ uniform sampler2D u_Textures[8];
 
 // Masking uniforms
 uniform bool u_IsMasking;
-uniform vec4 u_MaskRect; // x, y, width, height in screen space
+uniform vec2 u_MaskCenter;     // True center of the element in screen space
+uniform vec2 u_MaskHalfSize;   // Un-sheared half size (Width/2, Height/2)
+uniform float u_ShearX;        // Container.Shear.X
 uniform float u_CornerRadius;
 
 // Border uniforms
@@ -27,11 +30,11 @@ void main()
 {
     if (u_IsBorder)
     {
-        vec2 halfSize = u_MaskRect.zw / 2.0;
-        vec2 center = u_MaskRect.xy + halfSize;
-        vec2 posInRect = v_FragPos - center;
+        vec2 posInRect = v_FragPos - u_MaskCenter;
+        float sk = u_ShearX * u_MaskHalfSize.y;
+        
+        float dist = sdRoundParallelogram(posInRect, u_MaskHalfSize, sk, u_CornerRadius);
 
-        float dist = sdRoundBox(posInRect, halfSize, u_CornerRadius);
         float outerAlpha = 1.0 - smoothstep(-0.5, 0.5, dist);
         float innerAlpha = smoothstep(-u_BorderThickness - 0.5, -u_BorderThickness + 0.5, dist);
 
@@ -57,23 +60,20 @@ void main()
     else texColor = vec4(1.0);
 
     texColor *= v_Color;
-    
+
     if (u_IsMasking && u_CornerRadius > 0.0)
     {
-        // Apply rounded corner clipping
-        vec2 halfSize = u_MaskRect.zw / 2.0;
-        vec2 center = u_MaskRect.xy + u_MaskRect.zw / 2.0;
-        vec2 posInRect = v_FragPos - center;
+        vec2 posInRect = v_FragPos - u_MaskCenter;
+        float sk = u_ShearX * u_MaskHalfSize.y;
 
-        float dist = sdRoundBox(posInRect, halfSize, u_CornerRadius);
+        float dist = sdRoundParallelogram(posInRect, u_MaskHalfSize, sk, u_CornerRadius);
 
-        // Discard fragments outside the rounded rectangle
-        if (dist > 0.0)
-        discard;
+        // Discard fragments outside the sheared rounded rectangle
+        if (dist > 0.0) discard;
     }
 
     FragColor = texColor;
-    
-    if (!applyClipping(v_FragPos, v_ClipRect, v_ClipRadius, FragColor))
+
+    if (!applyClipping(v_FragPos, v_ClipData, v_ClipShearX, v_ClipRadius, FragColor))
         discard;
 }

@@ -34,9 +34,9 @@ public interface IRenderer
 
     void DrawVertices(ReadOnlySpan<Vertex.Vertex> vertices, Texture textureGl);
 
-    void PushMask(RectangleF rect, float cornerRadius);
+    void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius);
 
-    void PopMask(RectangleF rect, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<Vertex.Vertex> maskVertices = default);
+    void PopMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<Vertex.Vertex> maskVertices = default);
 
     /// <summary>
     /// Sets the blend mode for subsequent draw calls. This will affect how colors are blended when drawing.

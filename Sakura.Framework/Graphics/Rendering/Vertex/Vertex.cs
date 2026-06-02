@@ -38,11 +38,16 @@ public struct Vertex
     public float TexIndex;
 
     /// <summary>
-    /// The clipping rectangle for this vertex, used for software clipping in the shader.
-    /// The rectangle is defined as (Left, Top, Right, Bottom).
+    /// The clipping data (Center.X, Center.Y, HalfWidth, HalfHeight).
     /// </summary>
     [VertexMember(4, VertexAttribPointerType.Float)]
-    public Vector4 ClipRect;
+    public Vector4 ClipData;
+
+    /// <summary>
+    /// The horizontal shear modifier for clipping.
+    /// </summary>
+    [VertexMember(1, VertexAttribPointerType.Float)]
+    public float ClipShearX;
 
     /// <summary>
     /// The radius for clipping corners, used for rounded rectangles. A value of 0 means no rounding.

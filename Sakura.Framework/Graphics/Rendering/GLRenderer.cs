@@ -63,7 +63,8 @@ public class GLRenderer : IRenderer
 
     private struct ClipState
     {
-        public Vector4 Rect;
+        public Vector4 ClipData;
+        public float ShearX;
         public float Radius;
     }
 
@@ -207,8 +208,8 @@ public class GLRenderer : IRenderer
         clipStack.Clear();
         currentClip = new ClipState
         {
-            // Default to -2 so make the right edge less than left
-            Rect = new Vector4(-1, -1, -2, -2),
+            ClipData = new Vector4(0, 0, -1, -1), // -1 HalfWidth means inactive
+            ShearX = 0,
             Radius = 0
         };
         shader.SetUniform("u_IsMasking", false);
@@ -267,7 +268,7 @@ public class GLRenderer : IRenderer
             GlobalStatistics.Get<int>("Renderer", "Texture Binds").Value++;
         }
 
-        triangleBatch.AddRange(vertices, textureIndex, currentClip.Rect, currentClip.Radius);
+        triangleBatch.AddRange(vertices, textureIndex, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
     }
 
     private void drawMaskShape(Drawable maskDrawable, float cornerRadius)
@@ -282,11 +283,11 @@ public class GLRenderer : IRenderer
         }
 
         // Add the mask's vertices to the batch and draw *only* them.
-        triangleBatch.AddRange(maskDrawable.Vertices, 0f, currentClip.Rect, currentClip.Radius);
+        triangleBatch.AddRange(maskDrawable.Vertices, 0f, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
         triangleBatch.Draw(); // Flush *just* the mask
     }
 
-    private void drawBorder(RectangleF rect, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<SakuraVertex> vertices)
+    private void drawBorder(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<SakuraVertex> vertices)
     {
         if (borderThickness <= 0 || vertices.Length == 0)
             return;
@@ -294,8 +295,12 @@ public class GLRenderer : IRenderer
         triangleBatch.Draw();
 
         shader.SetUniform("u_IsBorder", true);
-        shader.SetUniform("u_MaskRect", new Vector4(rect.X, rect.Y, rect.Width, rect.Height));
+
+        shader.SetUniform("u_MaskCenter", maskCenter);
+        shader.SetUniform("u_MaskHalfSize", maskHalfSize);
+        shader.SetUniform("u_ShearX", shearX);
         shader.SetUniform("u_CornerRadius", cornerRadius);
+
         shader.SetUniform("u_BorderThickness", borderThickness);
         shader.SetUniform("u_BorderColor", borderColor);
 
@@ -309,37 +314,66 @@ public class GLRenderer : IRenderer
                 boundTextureCount = 1;
         }
 
-        triangleBatch.AddRange(vertices, 0f, currentClip.Rect, currentClip.Radius);
+        triangleBatch.AddRange(vertices, 0f, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
         triangleBatch.Draw();
 
         shader.SetUniform("u_IsBorder", false);
         lastBoundTextureHandle = uint.MaxValue;
     }
 
-    public void PushMask(RectangleF rect, float cornerRadius)
+    public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius)
     {
-        float left = rect.X;
-        float top = rect.Y;
-        float right = rect.X + rect.Width;
-        float bottom = rect.Y + rect.Height;
+        clipStack.Push(currentClip);
 
-        // If already inside a mask, intersect the rectangles so they don't break out
-        if (currentClip.Rect.X >= 0)
+        // calculate the true AABB of this new mask, taking horizontal shear into account
+        float skewOffset = Math.Abs(shearX * maskHalfSize.Y);
+        float left = maskCenter.X - maskHalfSize.X - skewOffset;
+        float right = maskCenter.X + maskHalfSize.X + skewOffset;
+        float top = maskCenter.Y - maskHalfSize.Y;
+        float bottom = maskCenter.Y + maskHalfSize.Y;
+
+        // if we are already inside a parent mask (Z > 0), intersect their bounding boxes
+        if (currentClip.ClipData.Z > 0)
         {
-            left = Math.Max(left, currentClip.Rect.X);
-            top = Math.Max(top, currentClip.Rect.Y);
-            right = Math.Min(right, currentClip.Rect.Z);
-            bottom = Math.Min(bottom, currentClip.Rect.W);
+            float parentSkew = Math.Abs(currentClip.ShearX * currentClip.ClipData.W);
+            float pLeft = currentClip.ClipData.X - currentClip.ClipData.Z - parentSkew;
+            float pRight = currentClip.ClipData.X + currentClip.ClipData.Z + parentSkew;
+            float pTop = currentClip.ClipData.Y - currentClip.ClipData.W;
+            float pBottom = currentClip.ClipData.Y + currentClip.ClipData.W;
+
+            left = Math.Max(left, pLeft);
+            right = Math.Min(right, pRight);
+            top = Math.Max(top, pTop);
+            bottom = Math.Min(bottom, pBottom);
         }
 
-        clipStack.Push(currentClip);
-        currentClip = new ClipState { Rect = new Vector4(left, top, right, bottom), Radius = cornerRadius };
+        Vector2 newCenter = new Vector2((left + right) / 2f, (top + bottom) / 2f);
+        Vector2 newHalfSize = new Vector2((right - left) / 2f, (bottom - top) / 2f);
+
+        // if the intersection collapses (the child is completely outside the parent mask),
+        // we shrink the mask to practically zero so the shader correctly discards all fragments.
+        if (left >= right || top >= bottom)
+        {
+            newHalfSize = new Vector2(0.0001f, 0.0001f);
+        }
+        else
+        {
+            // remove the skew offset again so the shader receives the true un-sheared half-size
+            newHalfSize.X = Math.Max(0.0001f, newHalfSize.X - skewOffset);
+        }
+
+        currentClip = new ClipState
+        {
+            ClipData = new Vector4(newCenter.X, newCenter.Y, newHalfSize.X, newHalfSize.Y),
+            ShearX = shearX,
+            Radius = cornerRadius
+        };
     }
 
-    public void PopMask(RectangleF rect, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<SakuraVertex> maskVertices = default)
+    public void PopMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<SakuraVertex> maskVertices = default)
     {
         currentClip = clipStack.Pop();
-        drawBorder(rect, cornerRadius, borderThickness, borderColor, maskVertices);
+        drawBorder(maskCenter, maskHalfSize, shearX, cornerRadius, borderThickness, borderColor, maskVertices);
     }
 
     public void SetBlendMode(BlendingMode blendingMode)
