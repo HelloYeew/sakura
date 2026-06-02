@@ -32,7 +32,6 @@ public class GLTexture : IDisposable
         this.gl = gl;
         Width = width;
         Height = height;
-        Handle = gl.GenTexture();
     }
 
     /// <summary>
@@ -58,6 +57,11 @@ public class GLTexture : IDisposable
     public void Upload(ReadOnlySpan<byte> data)
     {
         if (disposed) return;
+
+        if (Handle == 0)
+        {
+            Handle = gl.GenTexture();
+        }
 
         gl.ActiveTexture(TextureUnit.Texture0);
         gl.BindTexture(TextureTarget.Texture2D, Handle);
@@ -88,7 +92,7 @@ public class GLTexture : IDisposable
     {
         gl.ActiveTexture(unit);
 
-        if (!Available && WhitePixel != null)
+        if ((!Available || disposed || Handle == 0) && WhitePixel != null)
         {
             gl.BindTexture(TextureTarget.Texture2D, WhitePixel.Handle);
             return;
@@ -100,7 +104,10 @@ public class GLTexture : IDisposable
     public void Dispose()
     {
         if (disposed) return;
-        gl.DeleteTexture(Handle);
+        if (Handle != 0)
+        {
+            gl.DeleteTexture(Handle);
+        }
         disposed = true;
         GC.SuppressFinalize(this);
     }
