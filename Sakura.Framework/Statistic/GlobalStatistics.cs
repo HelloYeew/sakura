@@ -34,4 +34,24 @@ public static class GlobalStatistics
             }
         }
     }
+
+    public static void Remove(IGlobalStatistic statistic)
+    {
+        if (statistic == null)
+            return;
+        Remove(statistic.Group, statistic.Name);
+    }
+
+    public static void Remove(string group, string name)
+    {
+        if (statistics.TryGetValue(group, out var groupStats))
+        {
+            groupStats.TryRemove(name, out _);
+
+            if (groupStats.IsEmpty)
+            {
+                statistics.TryRemove(group, out _);
+            }
+        }
+    }
 }

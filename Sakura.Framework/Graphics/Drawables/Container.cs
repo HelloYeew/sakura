@@ -230,7 +230,7 @@ public class Container : Drawable
         {
             var child = children[i];
 
-            if (!child.IsAlive && child.RemoveWhenNotAlive)
+            if (Clock.CurrentTime >= child.LifetimeEnd && child.RemoveWhenNotAlive)
             {
                 Remove(child);
             }
@@ -389,7 +389,7 @@ public class Container : Drawable
         node.Children.Clear();
         foreach (var child in children.OrderBy(c => c.Depth))
         {
-            if (!child.IsMaskedAway || child.AlwaysPresent)
+            if ((!child.IsMaskedAway && child.IsAlive) || child.AlwaysPresent)
             {
                 node.Children.Add(child.GenerateDrawNodeSubtree(frameIndex));
             }

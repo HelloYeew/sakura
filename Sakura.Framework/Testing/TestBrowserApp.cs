@@ -547,8 +547,23 @@ public class TestBrowserApp : App
 
             try
             {
-                // We must cast to ActionStep to invoke the Action
-                if (step is ActionStep actionStep)
+                if (step is RepeatStep repeatStep)
+                {
+                    repeatStep.Action?.Invoke();
+                    repeatStep.CurrentIteration++;
+
+                    button?.UpdateText($"{repeatStep.Description} ({repeatStep.CurrentIteration}/{repeatStep.RepeatCount})");
+
+                    if (repeatStep.CurrentIteration < repeatStep.RepeatCount)
+                    {
+                        Scheduler?.AddDelayed(runNextStep, 10);
+                        return;
+                    }
+
+                    repeatStep.CurrentIteration = 0;
+                    button?.SetState(true);
+                }
+                else if (step is ActionStep actionStep)
                 {
                     actionStep.Action?.Invoke();
                     Logger.Log($"[Test] Auto-executed step: {step.Description}");
@@ -695,6 +710,34 @@ public class TestBrowserApp : App
         stepsFlow.Add(new TestSliderStepControl<T>(step));
     }
 
+    private void generateStepVisual(RepeatStep step)
+    {
+        Color buttonColor = Color.DarkMagenta;
+
+        TestStepButton stepButton = null!;
+        stepButton = new TestStepButton($"{step.Description} (0/{step.RepeatCount})", () =>
+        {
+            try
+            {
+                stepButton.Flash();
+                for (int i = 0; i < step.RepeatCount; i++)
+                {
+                    step.Action?.Invoke();
+                }
+                stepButton.UpdateText($"{step.Description} ({step.RepeatCount}/{step.RepeatCount})");
+                stepButton.SetState(true);
+                Logger.Log($"Executed repeat step: {step.Description} x{step.RepeatCount}");
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"[Test] Step failed: {step.Description}", ex);
+                stepButton.SetState(false);
+            }
+        }, buttonColor);
+
+        stepsFlow.Add(stepButton);
+    }
+
     private IEnumerable getTestCaseSourceData(Type type, string name, object instance)
     {
         var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
@@ -772,6 +815,7 @@ public class TestBrowserApp : App
         private Box backgroundBox;
         private Box statusBox;
         private Color originalBackgroundColor;
+        private SpriteText drawableText;
 
         public TestStepButton(string text, Action action, Color backgroundColor)
         {
@@ -802,7 +846,7 @@ public class TestBrowserApp : App
                 Origin = Anchor.TopLeft
             });
 
-            Add(new SpriteText
+            Add(drawableText = new SpriteText
             {
                 Text = text,
                 Font = FontUsage.Default.With(size: 15),
@@ -837,6 +881,11 @@ public class TestBrowserApp : App
         {
             backgroundBox.Color = originalBackgroundColor;
             backgroundBox.FlashColour(Color.White, 500, Easing.OutQuint);
+        }
+
+        public void UpdateText(string newText)
+        {
+            drawableText.Text = newText;
         }
     }
 
