@@ -12,7 +12,7 @@ Some incomplete documentation is in [wiki](https://github.com/HelloYeew/sakura/w
 
 ## Requirements
 
-- .NET 9.0 SDK
+- .NET 10.0 SDK
 - We recommend to use IDE like [Visual Studio](https://visualstudio.microsoft.com/vs/), [Rider](https://www.jetbrains.com/rider/) or [VS Code](https://code.visualstudio.com/) for development with this framework.
 
 ```shell
