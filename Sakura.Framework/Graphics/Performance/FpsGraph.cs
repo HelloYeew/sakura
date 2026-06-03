@@ -42,8 +42,8 @@ public class FpsGraph : Container, IRemoveFromDrawVisualiser
     private FontUsage graphFontUsage = FontUsage.Default.With(size: 14);
     private FontUsage boldGraphFontUsage = FontUsage.Default.With(size: 14, weight: "Bold");
 
-    private const float extended_width = 350;
-    private const float compact_width = 300;
+    private const float extended_width = 400;
+    private const float compact_width = 340;
 
     [Resolved]
     private AppHost host { get; set; }
@@ -191,10 +191,10 @@ public class FpsGraph : Container, IRemoveFromDrawVisualiser
 
         displaysFlow.Add(currentContextFlow);
 
-        displaysFlow.Add(new ThreadStatisticsDisplay("Input", host.InputClock, Color.LimeGreen, host));
-        displaysFlow.Add(new ThreadStatisticsDisplay("Audio", host.AudioClock, Color.Yellow, host));
-        displaysFlow.Add(new ThreadStatisticsDisplay("Update", host.UpdateClock, Color.Purple, host));
-        displaysFlow.Add(new ThreadStatisticsDisplay("Draw", host.DrawClock, Color.Cyan, host));
+        displaysFlow.Add(new ThreadStatisticsDisplay("Input", host.InputClock, Color.LimeGreen, host, host.GetInputTargetHz));
+        displaysFlow.Add(new ThreadStatisticsDisplay("Audio", host.AudioClock, Color.Yellow, host, host.GetAudioTargetHz));
+        displaysFlow.Add(new ThreadStatisticsDisplay("Update", host.UpdateClock, Color.Purple, host, host.GetUpdateTargetHz));
+        displaysFlow.Add(new ThreadStatisticsDisplay("Draw", host.DrawClock, Color.Cyan, host, host.GetDrawTargetHz));
 
         state = host.FrameworkConfigManager.Get(FrameworkSetting.ShowFpsGraph, PerformanceOverlayState.Hidden);
         state.ValueChanged += e => updateState(e.NewValue);
@@ -266,6 +266,7 @@ public class FpsGraph : Container, IRemoveFromDrawVisualiser
         private readonly string name;
         private readonly IClock clock;
         private readonly Color baseColor;
+        private readonly Func<double> getTargetHz;
 
         private readonly AppHost host;
         private double lastRecordedTime;
@@ -275,18 +276,26 @@ public class FpsGraph : Container, IRemoveFromDrawVisualiser
         private int bucketFrameCount;
         private int bucketHighestGc = -1;
 
+        private const int jitter_ring_size = 128;
+        private readonly double[] jitterRing = new double[jitter_ring_size];
+        private int jitterRingIndex;
+        private double jitterRingSum;
+        private double jitterRingSumOfSquares;
+        private int jitterRingCount;
+
         private SpriteText statsText;
         private ThreadBarGraph barGraph;
         private Box textBackground;
 
         private PerformanceOverlayState currentState;
 
-        public ThreadStatisticsDisplay(string name, IClock clock, Color baseColor, AppHost host)
+        public ThreadStatisticsDisplay(string name, IClock clock, Color baseColor, AppHost host, Func<double> getTargetHz)
         {
             this.name = name;
             this.clock = clock;
             this.baseColor = baseColor;
             this.host = host;
+            this.getTargetHz = getTargetHz;
 
             for (int i = 0; i < max_history; i++)
             {
@@ -392,9 +401,18 @@ public class FpsGraph : Container, IRemoveFromDrawVisualiser
                         }
                     }
 
+                    double rawFrame = clock.ElapsedFrameTime;
+                    double evicted = jitterRing[jitterRingIndex];
+                    jitterRingSum += rawFrame - evicted;
+                    jitterRingSumOfSquares += rawFrame * rawFrame - evicted * evicted;
+                    jitterRing[jitterRingIndex] = rawFrame;
+                    jitterRingIndex = (jitterRingIndex + 1) % jitter_ring_size;
+                    if (jitterRingCount < jitter_ring_size)
+                        jitterRingCount++;
+
                     bucketHighestGc = Math.Max(bucketHighestGc, highestGcGen);
-                    bucketMaxTime = Math.Max(bucketMaxTime, clock.ElapsedFrameTime);
-                    bucketSumTime += clock.ElapsedFrameTime;
+                    bucketMaxTime = Math.Max(bucketMaxTime, rawFrame);
+                    bucketSumTime += rawFrame;
                     bucketFrameCount++;
 
                     lastRecordedTime = clock.CurrentTime;
@@ -435,8 +453,8 @@ public class FpsGraph : Container, IRemoveFromDrawVisualiser
                     }
                 }
 
-                // throttle the heavy vertex rendering to ~60Hz to protect the CPU
-                if (Clock.CurrentTime - lastVisualUpdateTime >= 16.6)
+                // throttle stats text to 10Hz (unreadable faster) and vertex rebuild to the same cadence
+                if (Clock.CurrentTime - lastVisualUpdateTime >= 100.0)
                 {
                     updateStats();
 
@@ -454,27 +472,29 @@ public class FpsGraph : Container, IRemoveFromDrawVisualiser
         {
             if (currentCount == 0) return;
 
-            // mean (average frame time)
+            // FPS
             double sum = 0;
             for (int i = 0; i < currentCount; i++)
-            {
                 sum += frameHistory[i].ElapsedTime;
-            }
             double meanFrameTime = sum / currentCount;
-
-            // jitter via standard deviation
-            double varianceSum = 0;
-            for (int i = 0; i < currentCount; i++)
-            {
-                double diff = frameHistory[i].ElapsedTime - meanFrameTime;
-                varianceSum += diff * diff;
-            }
-            double stdDev = Math.Sqrt(varianceSum / currentCount);
-
-            // safeguard against division by zero for FPS
             double fps = meanFrameTime > 0.0001 ? 1000.0 / meanFrameTime : 0;
 
-            statsText.Text = $"{fps,4:F0}fps ({meanFrameTime,4:F2}ms ±{stdDev,4:F2}ms)";
+            // Jitter from the raw ring using the one-pass computational variance formula:
+            // Var(x) = E[x²] - E[x]²
+            // This operates on raw (pre-bucket) frame times, so spikes are never averaged away.
+            double jitter = 0;
+            if (jitterRingCount > 0)
+            {
+                int n = jitterRingCount < jitter_ring_size ? jitterRingCount : jitter_ring_size;
+                double mean = jitterRingSum / n;
+                double variance = jitterRingSumOfSquares / n - mean * mean;
+                // Clamp to 0 to guard against tiny floating-point negatives.
+                jitter = Math.Sqrt(Math.Max(0, variance));
+            }
+
+            double targetHz = getTargetHz();
+            string hzText = targetHz is > 0 and < 10_000 ? $"{targetHz:0}hz" : "∞hz";
+            statsText.Text = $"{fps,4:F0}fps ({meanFrameTime,4:F2}ms ±{jitter,4:F2}ms) {hzText,5}";
         }
 
         private class ThreadBarGraph : Drawable

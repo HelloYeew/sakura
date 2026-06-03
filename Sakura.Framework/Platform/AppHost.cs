@@ -10,6 +10,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Runtime;
 using System.Runtime.ExceptionServices;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using JetBrains.Annotations;
@@ -372,6 +373,12 @@ public abstract class AppHost : IDisposable
             long timestampFrequency = Stopwatch.Frequency;
             double msPerTick = 1000.0 / timestampFrequency;
             long lastMainFrameTime = Stopwatch.GetTimestamp();
+            double mainSleepError = 0.0;
+            const double main_min_sleep_ms = 0.5;
+
+            INativeSleep mainNativeSleep = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                ? new WindowsNativeSleep()
+                : UnixNativeSleep.IsAvailable ? new UnixNativeSleep() : null;
 
             try
             {
@@ -406,24 +413,28 @@ public abstract class AppHost : IDisposable
                     {
                         double targetMainFrameTimeMs = 1000.0 / currentHz;
                         long targetMainTicks = (long)(targetMainFrameTimeMs / msPerTick);
-                        long targetFrameTimeTimestamp = lastMainFrameTime + targetMainTicks;
 
-                        while (true)
+                        long nowTicks = Stopwatch.GetTimestamp();
+                        double elapsedMs = (nowTicks - lastMainFrameTime) * msPerTick;
+                        double sleepMs = targetMainFrameTimeMs - elapsedMs + mainSleepError;
+
+                        if (sleepMs >= main_min_sleep_ms)
                         {
-                            long currentTimestamp = Stopwatch.GetTimestamp();
-                            long remainingTicks = targetFrameTimeTimestamp - currentTimestamp;
+                            var sleepSpan = TimeSpan.FromMilliseconds(sleepMs);
+                            double beforeMs = Stopwatch.GetTimestamp() * msPerTick;
 
-                            if (remainingTicks <= 0)
-                                break;
+                            if (mainNativeSleep?.Sleep(sleepSpan) != true)
+                                Thread.Sleep(sleepSpan);
 
-                            double timeRemainingMs = remainingTicks * msPerTick;
-                            if (timeRemainingMs >= 1.0)
-                                Thread.Sleep(TimeSpan.FromMilliseconds(timeRemainingMs - 0.2));
-                            else if (timeRemainingMs > 0.1)
-                                Thread.Yield();
-                            else
-                                Thread.SpinWait(10);
+                            double actualSleepMs = Stopwatch.GetTimestamp() * msPerTick - beforeMs;
+                            mainSleepError += sleepMs - actualSleepMs;
                         }
+                        else
+                        {
+                            mainSleepError += sleepMs;
+                        }
+
+                        mainSleepError = Math.Clamp(mainSleepError, -1000.0 / 30.0, 2.0);
 
                         lastMainFrameTime += targetMainTicks;
 
@@ -431,18 +442,24 @@ public abstract class AppHost : IDisposable
                         if ((currentAfterWait - lastMainFrameTime) * msPerTick > targetMainFrameTimeMs * 5)
                         {
                             lastMainFrameTime = currentAfterWait;
+                            mainSleepError = 0;
                         }
                     }
                     else
                     {
                         lastMainFrameTime = Stopwatch.GetTimestamp();
-                        Thread.Yield();
+                        mainSleepError = 0;
+                        Thread.Sleep(0);
                     }
                 }
             }
             catch (OutOfMemoryException ex)
             {
                 Logger.Error("The application has run out of memory and needs to close.", ex);
+            }
+            finally
+            {
+                mainNativeSleep?.Dispose();
             }
         }
         catch (Exception ex)
@@ -629,10 +646,12 @@ public abstract class AppHost : IDisposable
         Window?.SwapBuffers();
     }
 
-    /// <summary>
-    /// Get the target update rate in Hz based on the current frame limiter setting.
-    /// </summary>
-    /// <returns>The target update rate in Hz, or 0 for unlimited.</returns>
+    private bool isMultiThread => ExecutionMode?.Value == Threading.ExecutionMode.MultiThread;
+    internal double GetInputTargetHz() => isMultiThread ? 1000.0 : targetUpdateHz;
+    internal double GetAudioTargetHz() => isMultiThread ? 1000.0 : targetUpdateHz;
+    internal double GetUpdateTargetHz() => isMultiThread ? getUpdateTargetHz() : targetUpdateHz;
+    internal double GetDrawTargetHz() => isMultiThread ? getDrawTargetHz() : targetUpdateHz;
+
     private double getDrawTargetHz()
     {
         // In headless mode, default to a sensible refresh rate for update calculations.
