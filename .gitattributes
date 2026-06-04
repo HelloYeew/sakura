@@ -1,0 +1,11 @@
+# Default behavior: normalize to LF internally, checkout as native OS
+* text=auto
+
+# Specify language diff tools for better git diff output
+*.cs text diff=csharp
+*.sln text merge=union
+*.csproj text merge=union
+*.md text
+
+# Force bash scripts to always be LF (so they don't break on Windows)
+*.sh text eol=lf
