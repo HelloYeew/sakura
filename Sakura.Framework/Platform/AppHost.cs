@@ -547,6 +547,7 @@ public abstract class AppHost : IDisposable
     protected virtual void SetupRenderer()
     {
         Renderer = CreateRenderer();
+        Renderer.ShaderStorage = FrameworkStorage.GetStorageForDirectory("Shaders");
         Renderer.Initialize(Window.GraphicsSurface);
     }
 

@@ -32,8 +32,9 @@ public class GLRenderer : IRenderer
 
     public Texture WhitePixel { get; private set; }
     public Matrix4x4 ProjectionMatrix => projectionMatrix;
+    public Storage ShaderStorage { get; set; }
 
-    private Shader shader;
+    private GLShader shader;
 
     private Matrix4x4 projectionMatrix;
 
@@ -109,7 +110,7 @@ public class GLRenderer : IRenderer
         WhitePixel = new Texture(GLTexture.WhitePixel);
         resetTextureSlots();
 
-        shader = new Shader(gl, "Resources/Shaders/shader.vert", "Resources/Shaders/shader.frag");
+        shader = new GLShader(gl, ShaderStorage, "shader.vert", "shader.frag");
 
         triangleBatch = new TriangleBatch(gl, 1000 * 12);
 
@@ -171,7 +172,7 @@ public class GLRenderer : IRenderer
     public void DisableSrgb() => gl.Disable(EnableCap.FramebufferSrgb);
     public void RestoreSrgb() => gl.Enable(EnableCap.FramebufferSrgb);
 
-    public IShader CreateShader(string vertexResourcePath, string fragmentResourcePath) => new Shader(gl, vertexResourcePath, fragmentResourcePath);
+    public IShader CreateShader(Storage storage, string vertexPath, string fragmentPath) => new GLShader(gl, storage, vertexPath, fragmentPath);
 
     public void DrawVerticesRaw(ReadOnlySpan<Vertex.Vertex> vertices)
     {

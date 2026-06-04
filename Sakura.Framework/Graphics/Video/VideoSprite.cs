@@ -117,9 +117,7 @@ public class VideoSprite : Drawable, IDisposable
         // Shader must be compiled on the draw thread (GL context owner in multi-thread mode).
         renderer.ScheduleToDrawThread(() =>
         {
-            videoShader = renderer.CreateShader(
-                "Resources/Shaders/video.vert",
-                "Resources/Shaders/video.frag");
+            videoShader = renderer.CreateShader(renderer.ShaderStorage, "video.vert", "video.frag");
         });
 
         decoder.Start();

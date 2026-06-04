@@ -89,10 +89,21 @@ public interface IRenderer
     void RestoreSrgb();
 
     /// <summary>
-    /// Creates a backend-specific shader from embedded resource paths.
+    /// Storage pointing to the framework's built-in shader directory.
+    /// Use this to load the framework's own shaders, or as a base for composite stores
+    /// that overlay game shaders on top of framework utilities.
+    /// Set by <see cref="Platform.AppHost"/> after <see cref="Initialize"/> completes.
+    /// </summary>
+    Storage ShaderStorage { get; set; }
+
+    /// <summary>
+    /// Creates a backend-specific shader by loading source from a <see cref="Platform.Storage"/>.
+    /// Works with any Storage: embedded resources, on-disk files, composite stores, etc.
+    /// <c>#include "filename"</c> directives are resolved relative to the same Storage.
     /// Must be called on the draw thread.
     /// </summary>
-    /// <param name="vertexResourcePath">Embedded resource path for the vertex shader.</param>
-    /// <param name="fragmentResourcePath">Embedded resource path for the fragment shader.</param>
-    IShader CreateShader(string vertexResourcePath, string fragmentResourcePath);
+    /// <param name="storage">Storage containing the shader source files.</param>
+    /// <param name="vertexPath">Path inside the storage to the vertex shader (e.g. "shader.vert").</param>
+    /// <param name="fragmentPath">Path inside the storage to the fragment shader (e.g. "shader.frag").</param>
+    IShader CreateShader(Storage storage, string vertexPath, string fragmentPath);
 }
