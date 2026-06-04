@@ -12,16 +12,16 @@ namespace Sakura.Framework.Graphics.Video;
 /// <summary>
 /// A YUV420P video texture following the osu!framework upload pattern:
 /// <see cref="SetData"/> stores the upload request on the decode thread (no GL calls).
-/// The actual upload is performed lazily by <see cref="VideoDrawNode"/> on the draw thread
-/// the first time this texture is about to be drawn.
-/// <see cref="UploadComplete"/> becomes true after the draw thread performs the upload.
-/// This means <see cref="VideoDecoder"/> can enqueue a <see cref="DecodedFrame"/> immediately
-/// after <see cref="SetData"/> without waiting for the draw thread — eliminating the
-/// decode→draw→update→draw latency chain that caused stuttering.
+/// The actual upload is performed lazily on the draw thread the first time this texture
+/// is about to be drawn. <see cref="UploadComplete"/> becomes true after the upload.
 /// </summary>
 public sealed class VideoTexture : IVideoTexture
 {
-    public VideoGLTexture GlTexture { get; }
+    /// <summary>
+    /// The GL-specific YUV plane container. Kept internal to the video layer;
+    /// higher-level code uses <see cref="BindPlanes"/> and <see cref="UploadComplete"/>.
+    /// </summary>
+    internal VideoGLTexture GlTexture { get; }
 
     // IVideoTexture
     public int Width  => GlTexture.Width;
@@ -35,23 +35,17 @@ public sealed class VideoTexture : IVideoTexture
     public bool UploadComplete => Volatile.Read(ref uploadComplete);
     private bool uploadComplete;
 
-    /// <summary>
-    /// Pending upload set by the decode thread, consumed by the draw thread.
-    /// Volatile so the draw thread always sees the latest write.
-    /// </summary>
     private volatile VideoTextureUpload? pendingUpload;
 
     private readonly ITextureManager textureManager;
-    private bool isDisposed;
-
-    /// <summary>
-    /// Must be called on the draw thread (GL context owner).
-    /// </summary>
     private readonly IRenderer renderer;
+    private readonly GL gl;
+    private bool isDisposed;
 
     public VideoTexture(IRenderer renderer, GL gl, ITextureManager textureManager, int width, int height)
     {
         this.renderer = renderer;
+        this.gl = gl;
         this.textureManager = textureManager;
         GlTexture = new VideoGLTexture(gl, width, height);
         textureManager.RegisterVideoTexture(this);
@@ -59,7 +53,6 @@ public sealed class VideoTexture : IVideoTexture
 
     /// <summary>
     /// Stores a pending upload. Called from the decode thread — no GL calls.
-    /// The draw thread will flush this via <see cref="FlushIfPending"/>.
     /// </summary>
     public void SetData(VideoTextureUpload upload)
     {
@@ -69,33 +62,33 @@ public sealed class VideoTexture : IVideoTexture
 
     /// <summary>
     /// If there is a pending upload, performs it now. Must be called on the draw thread.
-    /// Called by <see cref="VideoDrawNode"/> before drawing each frame.
     /// </summary>
-    public void FlushIfPending(GL gl)
+    public void FlushIfPending()
     {
         var upload = pendingUpload;
         if (upload == null) return;
 
-        pendingUpload = null; // clear before upload so a racing SetData isn't lost
+        pendingUpload = null;
         upload.Upload(gl, GlTexture);
-        upload.Dispose(); // returns FFmpegFrame to its pool
+        upload.Dispose();
         Volatile.Write(ref uploadComplete, true);
         GlobalStatistics.Get<int>("Video", "Frames Uploaded").Value++;
     }
 
     /// <summary>
+    /// Binds the Y, U, V planes to texture units 0, 1, 2.
+    /// Must be called on the draw thread. Keeps all GL calls inside the video layer.
+    /// </summary>
+    public void BindPlanes() => GlTexture.BindPlanes();
+
+    /// <summary>
     /// Called when this texture is returned to the pool for reuse.
-    /// Disposes any pending upload that hasn't been flushed yet.
-    /// Does NOT reset UploadComplete — the old pixel data remains valid on the GPU
-    /// until SetData() is called for the next frame, preventing black frames during
-    /// the window between Reset() and the next upload completing.
     /// </summary>
     public void Reset()
     {
         var pending = pendingUpload;
         pendingUpload = null;
-        pending?.Dispose(); // returns FFmpegFrame to native pool
-        // UploadComplete intentionally NOT cleared here — cleared in SetData() instead.
+        pending?.Dispose();
     }
 
     public void Dispose()

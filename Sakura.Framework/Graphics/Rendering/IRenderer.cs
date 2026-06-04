@@ -87,4 +87,12 @@ public interface IRenderer
     /// Re-enables sRGB framebuffer encoding after a <see cref="DisableSrgb"/> call.
     /// </summary>
     void RestoreSrgb();
+
+    /// <summary>
+    /// Creates a backend-specific shader from embedded resource paths.
+    /// Must be called on the draw thread.
+    /// </summary>
+    /// <param name="vertexResourcePath">Embedded resource path for the vertex shader.</param>
+    /// <param name="fragmentResourcePath">Embedded resource path for the fragment shader.</param>
+    IShader CreateShader(string vertexResourcePath, string fragmentResourcePath);
 }

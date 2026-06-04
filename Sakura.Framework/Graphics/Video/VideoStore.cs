@@ -5,7 +5,6 @@ using System.IO;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Platform;
-using Silk.NET.OpenGL;
 
 namespace Sakura.Framework.Graphics.Video;
 
@@ -17,14 +16,12 @@ public class VideoStore
 {
     private readonly Storage storage;
     private readonly IRenderer renderer;
-    private readonly GL gl;
     private readonly ITextureManager textureManager;
 
-    public VideoStore(Storage storage, IRenderer renderer, GL gl, ITextureManager textureManager)
+    public VideoStore(Storage storage, IRenderer renderer, ITextureManager textureManager)
     {
         this.storage = storage;
         this.renderer = renderer;
-        this.gl = gl;
         this.textureManager = textureManager;
     }
 
@@ -39,6 +36,6 @@ public class VideoStore
             return null;
 
         Stream stream = storage.GetStream(name, FileAccess.Read, FileMode.Open);
-        return new VideoDecoder(renderer, gl, textureManager, stream);
+        return new VideoDecoder(renderer, textureManager, stream);
     }
 }

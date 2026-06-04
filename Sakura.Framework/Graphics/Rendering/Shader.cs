@@ -237,6 +237,22 @@ public class Shader : IShader
     }
 
     /// <summary>
+    /// Sets a 3×3 matrix uniform from a row-major float[9] array.
+    /// Used by the video shader for YUV→RGB colour conversion coefficients.
+    /// </summary>
+    public void SetUniform(string name, float[] mat3x3)
+    {
+        int location = gl.GetUniformLocation(handle, name);
+        if (location == -1) return;
+
+        unsafe
+        {
+            fixed (float* p = mat3x3)
+                gl.UniformMatrix3(location, 1, false, p);
+        }
+    }
+
+    /// <summary>
     /// Loads and compiles a shader from an embedded resource.
     /// </summary>
     /// <param name="type">Type of the shader (OpenGL enum).</param>

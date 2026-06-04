@@ -2,27 +2,26 @@
 // See the LICENSE file for full license text.
 
 using Sakura.Framework.Graphics.Rendering;
-using Silk.NET.OpenGL;
 
 namespace Sakura.Framework.Graphics.Video;
 
 /// <summary>
 /// Renders a YUV420P video frame using the dedicated video shader.
-/// All GL calls run on the draw thread inside <see cref="Draw"/>.
+/// All GPU calls run on the draw thread inside <see cref="Draw"/>.
+/// No GL types are referenced here — GL stays inside <see cref="VideoTexture"/>
+/// and <see cref="Sakura.Framework.Graphics.Textures.VideoGLTexture"/>.
 /// </summary>
 internal class VideoDrawNode : DrawNode
 {
     private VideoTexture? videoTexture;
     private float[]? yuvMatrix;
     private IShader? videoShader;
-    private GL? gl;
 
-    public void ApplyVideoState(VideoSprite source, VideoTexture? tex, float[]? matrix, IShader? shader, GL glRef)
+    public void ApplyVideoState(VideoTexture? tex, float[]? matrix, IShader? shader)
     {
         videoTexture = tex;
         yuvMatrix = matrix;
         videoShader = shader;
-        gl = glRef;
     }
 
     public override void Draw(IRenderer renderer)
@@ -30,45 +29,28 @@ internal class VideoDrawNode : DrawNode
         if (DrawAlpha <= 0 || Vertices.Length == 0)
             return;
 
-        if (videoTexture == null || videoShader == null || gl == null)
+        if (videoTexture == null || videoShader == null)
             return;
 
         if (!videoTexture.UploadComplete)
             return;
-
-        var glTex = videoTexture.GlTexture;
 
         renderer.FlushBatch();
 
         videoShader.Use();
         videoShader.SetUniform("u_Projection", renderer.ProjectionMatrix);
 
-        gl.ActiveTexture(TextureUnit.Texture0);
-        gl.BindTexture(TextureTarget.Texture2D, glTex.YHandle);
-
-        gl.ActiveTexture(TextureUnit.Texture1);
-        gl.BindTexture(TextureTarget.Texture2D, glTex.UHandle);
-
-        gl.ActiveTexture(TextureUnit.Texture2);
-        gl.BindTexture(TextureTarget.Texture2D, glTex.VHandle);
+        // Bind Y/U/V planes to texture units 0/1/2 — GL stays inside VideoTexture.
+        videoTexture.BindPlanes();
 
         videoShader.SetUniform("u_TextureY", 0);
         videoShader.SetUniform("u_TextureU", 1);
         videoShader.SetUniform("u_TextureV", 2);
 
         if (yuvMatrix != null)
-            setMatrix3Uniform("u_YuvCoeff", yuvMatrix);
+            videoShader.SetUniform("u_YuvCoeff", yuvMatrix);
 
         renderer.DrawVerticesRaw(Vertices);
         renderer.RestoreMainShader();
-    }
-
-    private unsafe void setMatrix3Uniform(string name, float[] mat)
-    {
-        int loc = gl!.GetUniformLocation(videoShader!.Handle, name);
-        if (loc == -1) return;
-
-        fixed (float* p = mat)
-            gl.UniformMatrix3(loc, 1, false, p);
     }
 }

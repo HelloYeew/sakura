@@ -80,4 +80,6 @@ public class HeadlessRenderer : IRenderer
     public void DrawVerticesRaw(ReadOnlySpan<Vertex.Vertex> vertices) { }
     public void DisableSrgb() { }
     public void RestoreSrgb() { }
+
+    public IShader CreateShader(string vertexResourcePath, string fragmentResourcePath) => new HeadlessShader();
 }

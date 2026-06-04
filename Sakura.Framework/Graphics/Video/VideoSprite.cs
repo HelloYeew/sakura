@@ -10,8 +10,6 @@ using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Statistic;
-using Silk.NET.OpenGL;
-using Shader = Sakura.Framework.Graphics.Rendering.Shader;
 
 namespace Sakura.Framework.Graphics.Video;
 
@@ -43,7 +41,6 @@ public class VideoSprite : Drawable, IDisposable
 
     private VideoDecoder decoder = null!;
     private IShader? videoShader;
-    private GL gl;
 
     private readonly Queue<DecodedFrame> availableFrames = new();
     private DecodedFrame? lastFrame;
@@ -109,19 +106,18 @@ public class VideoSprite : Drawable, IDisposable
     private void load(AppHost host, ITextureManager textureManager, Configurations.FrameworkConfigManager config)
     {
         renderer = host.Renderer;
-        gl = GLRenderer.GL;
 
         decoder = providedDecoder
                   ?? (stream != null
-                         ? new VideoDecoder(renderer, gl, textureManager, stream)
-                         : new VideoDecoder(renderer, gl, textureManager, filePath!));
+                         ? new VideoDecoder(renderer, textureManager, stream)
+                         : new VideoDecoder(renderer, textureManager, filePath!));
 
         decoder.HardwareAcceleration.BindTo(config.Get<bool>(Configurations.FrameworkSetting.HardwareAcceleration));
 
         // Shader must be compiled on the draw thread (GL context owner in multi-thread mode).
         renderer.ScheduleToDrawThread(() =>
         {
-            videoShader = new Shader(gl,
+            videoShader = renderer.CreateShader(
                 "Resources/Shaders/video.vert",
                 "Resources/Shaders/video.frag");
         });
@@ -141,7 +137,7 @@ public class VideoSprite : Drawable, IDisposable
     public override DrawNode GenerateDrawNodeSubtree(int frameIndex)
     {
         var node = base.GenerateDrawNodeSubtree(frameIndex) as VideoDrawNode;
-        node?.ApplyVideoState(this, currentVideoTexture, currentMatrix, videoShader, gl);
+        node?.ApplyVideoState(currentVideoTexture, currentMatrix, videoShader);
         return node!;
     }
 
@@ -215,8 +211,7 @@ public class VideoSprite : Drawable, IDisposable
             // Schedule the actual GL upload for this frame's NativeTexture.
             // Runs in StartFrame() before any Draw() calls — safe GL ordering.
             var capturedVt = f.NativeTexture;
-            var capturedGl = gl;
-            renderer.ScheduleToDrawThread(() => capturedVt.FlushIfPending(capturedGl));
+            renderer.ScheduleToDrawThread(() => capturedVt.FlushIfPending());
         }
 
         // Establish ptsBias from the first frame received after a seek.

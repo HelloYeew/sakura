@@ -97,16 +97,18 @@ public unsafe class VideoDecoder : IDisposable
         DynamicallyLoadedBindings.Initialize();
     }
 
-    public VideoDecoder(IRenderer renderer, GL gl, ITextureManager textureManager, string filePath)
-        : this(renderer, gl, textureManager, File.OpenRead(filePath)) { }
+    public VideoDecoder(IRenderer renderer, ITextureManager textureManager, string filePath)
+        : this(renderer, textureManager, File.OpenRead(filePath)) { }
 
-    public VideoDecoder(IRenderer renderer, GL gl, ITextureManager textureManager, Stream stream)
+    public VideoDecoder(IRenderer renderer, ITextureManager textureManager, Stream stream)
     {
         if (!stream.CanRead)
             throw new ArgumentException("Stream must be readable.", nameof(stream));
 
         this.renderer = renderer;
-        this.gl = gl;
+        // GL is only needed inside the GL video layer. Retrieve it from GLRenderer so
+        // callers (VideoSprite) don't need to reference GL at all.
+        this.gl = GLRenderer.GL;
         this.textureManager = textureManager;
         videoStream = stream;
         selfHandle = GCHandle.Alloc(this);

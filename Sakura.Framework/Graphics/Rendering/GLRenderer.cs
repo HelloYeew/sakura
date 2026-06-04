@@ -171,6 +171,8 @@ public class GLRenderer : IRenderer
     public void DisableSrgb() => gl.Disable(EnableCap.FramebufferSrgb);
     public void RestoreSrgb() => gl.Enable(EnableCap.FramebufferSrgb);
 
+    public IShader CreateShader(string vertexResourcePath, string fragmentResourcePath) => new Shader(gl, vertexResourcePath, fragmentResourcePath);
+
     public void DrawVerticesRaw(ReadOnlySpan<Vertex.Vertex> vertices)
     {
         triangleBatch.DrawRaw(vertices);
