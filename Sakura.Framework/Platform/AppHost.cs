@@ -324,7 +324,7 @@ public abstract class AppHost : IDisposable
                 Priority = ThreadPriority.Highest
             };
 
-            drawThread.OnInitialize = () => Window.GraphicsSurface.MakeCurrent();
+            drawThread.OnInitialize = () => Window.MakeCurrent();
 
             UpdateClock = updateThread.Clock;
             DrawClock = drawThread.Clock;
@@ -341,13 +341,13 @@ public abstract class AppHost : IDisposable
                 {
                     if (e.NewValue == Threading.ExecutionMode.MultiThread)
                     {
-                        Window.GraphicsSurface.ClearCurrent();
+                        Window.ClearCurrent();
                         threadRunner.SetExecutionMode(Threading.ExecutionMode.MultiThread);
                     }
                     else
                     {
                         threadRunner.SetExecutionMode(Threading.ExecutionMode.SingleThread);
-                        Window.GraphicsSurface.MakeCurrent();
+                        Window.MakeCurrent();
                     }
 
                     updateTargetUpdateHz();
@@ -363,7 +363,7 @@ public abstract class AppHost : IDisposable
 
             if (ExecutionMode.Value == Threading.ExecutionMode.MultiThread)
             {
-                Window.GraphicsSurface.ClearCurrent();
+                Window.ClearCurrent();
                 threadRunner.SetExecutionMode(Threading.ExecutionMode.MultiThread);
             }
 
@@ -547,6 +547,7 @@ public abstract class AppHost : IDisposable
     protected virtual void SetupRenderer()
     {
         Renderer = CreateRenderer();
+        Renderer.ShaderStorage = FrameworkStorage.GetStorageForDirectory("Shaders");
         Renderer.Initialize(Window.GraphicsSurface);
     }
 

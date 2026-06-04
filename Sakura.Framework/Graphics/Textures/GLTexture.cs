@@ -10,13 +10,14 @@ using Silk.NET.OpenGL;
 namespace Sakura.Framework.Graphics.Textures;
 
 /// <summary>
-/// The actual texture loaded in OpenGL.
-/// <remarks>The drawable should use the public-facing <see cref="Texture"/> which may point to a region of this TextureGL</remarks>
+/// The OpenGL-backed implementation of <see cref="INativeTexture"/>.
 /// </summary>
 [SuppressMessage("ReSharper", "InconsistentNaming")]
-public class GLTexture : IDisposable
+public class GLTexture : INativeTexture
 {
-    public uint Handle { get; private set; }
+    public uint GLHandle { get; private set; }
+    public nint Handle => (nint)GLHandle;
+
     public int Width { get; }
     public int Height { get; }
 
@@ -27,6 +28,19 @@ public class GLTexture : IDisposable
 
     public static GLTexture WhitePixel { get; private set; }
 
+    /// <summary>
+    /// Creates the shared 1×1 white pixel texture if it doesn't exist yet.
+    /// Must be called on the draw thread after the GL context is current.
+    /// </summary>
+    public static void CreateWhitePixel(GL gl)
+    {
+        if (WhitePixel != null) return;
+
+        byte[] whitePixelData = { 255, 255, 255, 255 };
+        WhitePixel = new GLTexture(gl, 1, 1);
+        WhitePixel.Upload(whitePixelData);
+    }
+
     public GLTexture(GL gl, int width, int height)
     {
         this.gl = gl;
@@ -34,37 +48,29 @@ public class GLTexture : IDisposable
         Height = height;
     }
 
-    /// <summary>
-    /// Change the texture wrap mode (for tiling/repeating).
-    /// </summary>
-    /// <param name="mode">The wrap mode to set.</param>
     public void SetWrapMode(TextureWrapMode mode)
     {
         if (gl == null || disposed) return;
 
         gl.GetInteger(GLEnum.TextureBinding2D, out int currentlyBoundTexture);
-
         Bind();
         gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)mode);
         gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)mode);
-
-        if (currentlyBoundTexture != Handle && currentlyBoundTexture > 0)
-        {
+        if (currentlyBoundTexture > 0 && (uint)currentlyBoundTexture != GLHandle)
             gl.BindTexture(TextureTarget.Texture2D, (uint)currentlyBoundTexture);
-        }
     }
 
     public void Upload(ReadOnlySpan<byte> data)
     {
         if (disposed) return;
 
-        if (Handle == 0)
+        if (GLHandle == 0)
         {
-            Handle = gl.GenTexture();
+            GLHandle = gl.GenTexture();
         }
 
         gl.ActiveTexture(TextureUnit.Texture0);
-        gl.BindTexture(TextureTarget.Texture2D, Handle);
+        gl.BindTexture(TextureTarget.Texture2D, GLHandle);
 
         gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Srgb8Alpha8, (uint)Width, (uint)Height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, data);
         gl.GenerateMipmap(TextureTarget.Texture2D);
@@ -78,36 +84,35 @@ public class GLTexture : IDisposable
         Available = true;
     }
 
-    public static void CreateWhitePixel(GL gl)
+    public void UploadRegion(int x, int y, int width, int height, ReadOnlySpan<byte> data)
     {
-        if (WhitePixel == null)
-        {
-            byte[] whitePixelData = { 255, 255, 255, 255 };
-            WhitePixel = new GLTexture(gl, 1, 1);
-            WhitePixel.Upload(whitePixelData); // can upload directly because this is initialized on the main thread
-        }
+        if (disposed || GLHandle == 0) return;
+
+        gl.ActiveTexture(TextureUnit.Texture0);
+        gl.BindTexture(TextureTarget.Texture2D, GLHandle);
+        gl.TexSubImage2D(TextureTarget.Texture2D, 0, x, y, (uint)width, (uint)height, PixelFormat.Rgba, PixelType.UnsignedByte, data);
+        gl.GenerateMipmap(TextureTarget.Texture2D);
     }
 
-    public void Bind(TextureUnit unit = TextureUnit.Texture0)
+    public void Bind(int slot = 0)
     {
-        gl.ActiveTexture(unit);
+        gl.ActiveTexture(TextureUnit.Texture0 + slot);
 
-        if ((!Available || disposed || Handle == 0) && WhitePixel != null)
+        if (!Available || disposed || GLHandle == 0)
         {
-            gl.BindTexture(TextureTarget.Texture2D, WhitePixel.Handle);
+            if (WhitePixel != null)
+                gl.BindTexture(TextureTarget.Texture2D, WhitePixel.GLHandle);
             return;
         }
 
-        gl.BindTexture(TextureTarget.Texture2D, Handle);
+        gl.BindTexture(TextureTarget.Texture2D, GLHandle);
     }
 
     public void Dispose()
     {
         if (disposed) return;
-        if (Handle != 0)
-        {
-            gl.DeleteTexture(Handle);
-        }
+        if (GLHandle != 0)
+            gl.DeleteTexture(GLHandle);
         disposed = true;
         GC.SuppressFinalize(this);
     }

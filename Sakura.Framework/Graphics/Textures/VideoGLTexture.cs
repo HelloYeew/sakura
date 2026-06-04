@@ -2,16 +2,19 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
+using Sakura.Framework.Graphics.Video;
 using Silk.NET.OpenGL;
 
 namespace Sakura.Framework.Graphics.Textures;
 
 /// <summary>
 /// Holds three single-channel GL textures representing the Y, U, V planes of a YUV420P frame.
-/// Used exclusively by the video pipeline — the video shader samples all three planes and
+/// Used exclusively by the GL video pipeline — the video shader samples all three planes and
 /// performs YUV→RGB conversion on the GPU.
 /// </summary>
+[SuppressMessage("ReSharper", "InconsistentNaming")]
 public sealed class VideoGLTexture : IDisposable
 {
     public uint YHandle { get; private set; }
@@ -40,6 +43,23 @@ public sealed class VideoGLTexture : IDisposable
         YHandle = gl.GenTexture();
         UHandle = gl.GenTexture();
         VHandle = gl.GenTexture();
+    }
+
+    /// <summary>
+    /// Binds the Y, U, V planes to texture units 0, 1, 2 respectively.
+    /// Must be called on the draw thread. Keeps GL calls inside this layer
+    /// so higher-level code (VideoDrawNode) doesn't need a GL reference.
+    /// </summary>
+    public void BindPlanes()
+    {
+        gl.ActiveTexture(TextureUnit.Texture0);
+        gl.BindTexture(TextureTarget.Texture2D, YHandle);
+
+        gl.ActiveTexture(TextureUnit.Texture1);
+        gl.BindTexture(TextureTarget.Texture2D, UHandle);
+
+        gl.ActiveTexture(TextureUnit.Texture2);
+        gl.BindTexture(TextureTarget.Texture2D, VHandle);
     }
 
     /// <summary>

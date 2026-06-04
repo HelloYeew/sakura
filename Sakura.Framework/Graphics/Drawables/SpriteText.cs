@@ -319,7 +319,7 @@ public class SpriteText : Drawable
             {
                 var glyph = text.shapedText.Glyphs[i];
 
-                if (currentTexture != null && currentTexture.GlTexture.Handle != glyph.Texture.GlTexture.Handle)
+                if (currentTexture != null && currentTexture.BackendTexture?.Handle != glyph.Texture.BackendTexture?.Handle)
                 {
                     batches[batchCount++] = new GlyphBatch
                     {

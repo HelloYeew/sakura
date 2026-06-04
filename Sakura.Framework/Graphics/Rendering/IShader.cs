@@ -27,10 +27,13 @@ public interface IShader : IDisposable
     void SetUniformIntArray(string name, int[] values);
 
     /// <summary>
-    /// The native program handle. Used by backend-specific code that needs raw access
-    /// (e.g. <c>gl.GetUniformLocation(shader.Handle, name)</c> for matrix3 uniforms
-    /// not covered by the interface).
-    /// Cast to the appropriate type for your backend.
+    /// Sets a 3×3 matrix uniform from a row-major float[9] array.
+    /// Used by the video shader for YUV→RGB colour conversion coefficients.
+    /// </summary>
+    void SetUniform(string name, float[] mat3X3);
+
+    /// <summary>
+    /// The native program handle. Used by backend-specific code that needs raw access.
     /// </summary>
     uint Handle { get; }
 }

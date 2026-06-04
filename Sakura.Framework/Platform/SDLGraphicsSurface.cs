@@ -9,27 +9,11 @@ using System.Diagnostics.CodeAnalysis;
 namespace Sakura.Framework.Platform;
 
 [SuppressMessage("ReSharper", "InconsistentNaming")]
-public class SDLGraphicsSurface : IGraphicsSurface
+public class SDLGraphicsSurface : IOpenGLGraphicsSurface
 {
-    private Func<string, IntPtr> GetFunctionAddress { get; set; }
-    private Action MakeCurrent { get; set; }
-    private Action ClearCurrent { get; set; }
+    public GraphicsSurfaceType Type => GraphicsSurfaceType.OpenGL;
 
-    Func<string, IntPtr> IGraphicsSurface.GetFunctionAddress
-    {
-        get => GetFunctionAddress;
-        set => GetFunctionAddress = value;
-    }
-
-    Action IGraphicsSurface.MakeCurrent
-    {
-        get => MakeCurrent;
-        set => MakeCurrent = value;
-    }
-
-    Action IGraphicsSurface.ClearCurrent
-    {
-        get => ClearCurrent;
-        set => ClearCurrent = value;
-    }
+    public Func<string, nint> GetFunctionAddress { get; set; }
+    public Action MakeCurrent { get; set; }
+    public Action ClearCurrent { get; set; }
 }
