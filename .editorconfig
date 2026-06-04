@@ -1,23 +1,22 @@
 # EditorConfig is awesome: http://editorconfig.org
 root = true
 
-[*.{csproj,props,targets}]
-charset = utf-8-bom
-end_of_line = crlf
+[*]
+end_of_line = lf
 insert_final_newline = true
+trim_trailing_whitespace = true
+charset = utf-8
+
+[*.{json,yaml,yml,xml,csproj,props,targets}]
 indent_style = space
 indent_size = 2
-trim_trailing_whitespace = true
 
 [g_*.cs]
 generated_code = true
 
 [*.cs]
-end_of_line = crlf
-insert_final_newline = true
 indent_style = space
 indent_size = 4
-trim_trailing_whitespace = true
 
 #license header
 file_header_template= This code is part of the Sakura framework project. Licensed under the MIT License.\nSee the LICENSE file for full license text.
