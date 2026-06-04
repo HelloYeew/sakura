@@ -41,7 +41,7 @@ public partial class GLShader : IShader
         string vertSrc = loadFromStorage(storage, vertexPath);
         string fragSrc = loadFromStorage(storage, fragmentPath);
 
-        uint vertex   = compileShader(ShaderType.VertexShader,   vertSrc,  vertexPath);
+        uint vertex = compileShader(ShaderType.VertexShader,   vertSrc,  vertexPath);
         uint fragment = compileShader(ShaderType.FragmentShader, fragSrc, fragmentPath);
 
         handle = link(vertex, fragment);
@@ -93,19 +93,28 @@ public partial class GLShader : IShader
     public void SetUniform(string name, int value)
     {
         int loc = gl.GetUniformLocation(handle, name);
-        if (loc != -1) gl.Uniform1(loc, value);
+        if (loc != -1)
+        {
+            gl.Uniform1(loc, value);
+        }
     }
 
     public void SetUniform(string name, float value)
     {
         int loc = gl.GetUniformLocation(handle, name);
-        if (loc != -1) gl.Uniform1(loc, value);
+        if (loc != -1)
+        {
+            gl.Uniform1(loc, value);
+        }
     }
 
     public void SetUniform(string name, bool value)
     {
         int loc = gl.GetUniformLocation(handle, name);
-        if (loc != -1) gl.Uniform1(loc, value ? 1 : 0);
+        if (loc != -1)
+        {
+            gl.Uniform1(loc, value ? 1 : 0);
+        }
     }
 
     public void SetUniform(string name, Matrix4x4 value)
