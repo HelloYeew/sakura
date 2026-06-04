@@ -103,10 +103,8 @@ public class GLTextureManager : ITextureManager
         {
             if (textureCache.TryGetValue(cacheKey, out var oldTexture))
             {
-                renderer.ScheduleToDrawThread(() =>
-                {
-                    oldTexture.GlTexture?.Dispose();
-                });
+                var oldNative = oldTexture.BackendTexture;
+                renderer.ScheduleToDrawThread(() => oldNative?.Dispose());
             }
 
             textureCache[cacheKey] = texture;
@@ -117,18 +115,10 @@ public class GLTextureManager : ITextureManager
         return texture;
     }
 
-    /// <summary>
-    /// Create a simple
-    /// </summary>
-    /// <returns></returns>
     private Texture createNullTexture()
     {
-        const int width = 1;
-        const int height = 1;
-        byte[] data = new byte[width * height * 4];
-
-        var glTex = new GLTexture(gl, width, height);
-        return new Texture(glTex);
+        var glTexture = new GLTexture(gl, 1, 1);
+        return new Texture(glTexture);
     }
 
     public bool Evict(string path)
@@ -137,11 +127,11 @@ public class GLTextureManager : ITextureManager
 
         if (textureCache.TryGetValue(path, out var texture))
         {
-            if (texture != WhitePixel && texture.GlTexture.Handle != missingTexture.GlTexture.Handle)
+            if (texture.BackendTexture != null && texture.BackendTexture != WhitePixel.BackendTexture && texture.BackendTexture != missingTexture.BackendTexture)
             {
                 renderer.ScheduleToDrawThread(() =>
                 {
-                    texture.Dispose();
+                    texture.BackendTexture!.Dispose();
                 });
             }
 
@@ -156,13 +146,13 @@ public class GLTextureManager : ITextureManager
 
     public void Dispose()
     {
-        foreach (var tex in textureCache.Values)
+        foreach (var texture in textureCache.Values)
         {
-            if (tex != WhitePixel && tex.GlTexture.Handle != missingTexture.GlTexture.Handle)
+            if (texture.BackendTexture != null && texture.BackendTexture != WhitePixel.BackendTexture && texture.BackendTexture != missingTexture.BackendTexture)
             {
                 renderer.ScheduleToDrawThread(() =>
                 {
-                    tex.GlTexture.Dispose();
+                    texture.BackendTexture!.Dispose();
                 });
             }
         }

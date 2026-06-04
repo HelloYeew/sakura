@@ -91,6 +91,18 @@ public interface IWindow : IDisposable
     IGraphicsSurface GraphicsSurface { get; }
 
     /// <summary>
+    /// Makes the graphics context current on the calling thread.
+    /// For OpenGL this binds the GL context; for Metal this is a no-op.
+    /// </summary>
+    void MakeCurrent();
+
+    /// <summary>
+    /// Releases the graphics context from the calling thread so another thread can claim it.
+    /// For OpenGL this unbinds the GL context; for Metal this is a no-op.
+    /// </summary>
+    void ClearCurrent();
+
+    /// <summary>
     /// Initialize all necessary parts for the window.
     /// This needs to be called before any function that interacts with the window.
     /// </summary>

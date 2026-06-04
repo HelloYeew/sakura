@@ -46,6 +46,16 @@ public class HeadlessWindow : IWindow
 
     }
 
+    public void MakeCurrent()
+    {
+
+    }
+
+    public void ClearCurrent()
+    {
+
+    }
+
     public void SetVSync(bool enabled)
     {
 

@@ -31,7 +31,7 @@ public class SDLWindow : IWindow
     private static unsafe Window* window;
     private PfnEventFilter resizeEventFilter;
 
-    private IGraphicsSurface graphicsSurface = new SDLGraphicsSurface();
+    private readonly SDLGraphicsSurface graphicsSurface = new SDLGraphicsSurface();
     private readonly MouseState mouseState = new MouseState();
 
     private bool initialized;
@@ -641,6 +641,10 @@ public class SDLWindow : IWindow
     {
         swapBuffers();
     }
+
+    public void MakeCurrent() => graphicsSurface.MakeCurrent();
+
+    public void ClearCurrent() => graphicsSurface.ClearCurrent();
 
     /// <summary>
     /// Swap the front and back buffers to present the rendered frame.

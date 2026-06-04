@@ -70,11 +70,11 @@ public class GLRenderer : IRenderer
 
     public unsafe void Initialize(IGraphicsSurface graphicsSurface)
     {
-        gl = GL.GetApi(graphicsSurface.GetFunctionAddress);
+        var glSurface = (IOpenGLGraphicsSurface)graphicsSurface;
+
+        gl = GL.GetApi(glSurface.GetFunctionAddress);
         if (gl == null)
-        {
             throw new InvalidOperationException("Failed to initialize OpenGL context.");
-        }
 
         Logger.Verbose("🖼️ OpenGL renderer initialized");
         byte* glInfo = gl.GetString(StringName.Version);
@@ -145,8 +145,6 @@ public class GLRenderer : IRenderer
         {
             action.Invoke();
         }
-
-        // TODO: Any other StartFrame logic...
     }
 
     public void ScheduleToDrawThread(Action action)
@@ -171,8 +169,7 @@ public class GLRenderer : IRenderer
     }
 
     public void DisableSrgb() => gl.Disable(EnableCap.FramebufferSrgb);
-
-    public void RestoreSrgb()  => gl.Enable(EnableCap.FramebufferSrgb);
+    public void RestoreSrgb() => gl.Enable(EnableCap.FramebufferSrgb);
 
     public void DrawVerticesRaw(ReadOnlySpan<Vertex.Vertex> vertices)
     {
@@ -226,10 +223,12 @@ public class GLRenderer : IRenderer
     {
         // Video textures (VideoGLTexture) are handled by VideoDrawNode directly —
         // fall back to WhitePixel so the batch slot logic stays consistent.
-        if (texture.GlTexture == null)
+        if (texture.BackendTexture == null)
             texture = WhitePixel;
 
-        uint handle = texture.GlTexture!.Handle;
+        // Inside GLRenderer it's safe to cast to GLTexture for the raw uint handle.
+        var glTexture = (GLTexture)texture.BackendTexture!;
+        uint handle = glTexture.GLHandle;
         float textureIndex = -1;
 
         for (int i = 0; i < boundTextureCount; i++)
@@ -244,13 +243,12 @@ public class GLRenderer : IRenderer
         if (textureIndex == -1 && boundTextureCount < 8)
         {
             textureIndex = boundTextureCount;
-            texture.GlTexture.Bind(TextureUnit.Texture0 + boundTextureCount);
+            glTexture.Bind(boundTextureCount);
             boundTextureHandles[boundTextureCount] = handle;
             boundTextureCount++;
             GlobalStatistics.Get<int>("Renderer", "Texture Binds").Value++;
         }
 
-        // If slot is full, flush and start over
         if (textureIndex == -1)
         {
             GlobalStatistics.Get<int>("Renderer", "Slot Exhaustion Flushes").Value++;
@@ -262,7 +260,7 @@ public class GLRenderer : IRenderer
 
             // Bind to slot 0
             textureIndex = 0;
-            texture.GlTexture.Bind();
+            glTexture.Bind();
             boundTextureHandles[0] = handle;
             boundTextureCount++;
             GlobalStatistics.Get<int>("Renderer", "Texture Binds").Value++;
@@ -273,18 +271,16 @@ public class GLRenderer : IRenderer
 
     private void drawMaskShape(Drawable maskDrawable, float cornerRadius)
     {
-        if (boundTextureCount == 0 || GLTexture.WhitePixel.Handle != boundTextureHandles[0])
+        if (boundTextureCount == 0 || GLTexture.WhitePixel.GLHandle != boundTextureHandles[0])
         {
             triangleBatch.Draw();
-            gl.ActiveTexture(TextureUnit.Texture0);
-            GLTexture.WhitePixel.Bind();
-            boundTextureHandles[0] = GLTexture.WhitePixel.Handle;
+            GLTexture.WhitePixel.Bind(0);
+            boundTextureHandles[0] = GLTexture.WhitePixel.GLHandle;
             if (boundTextureCount == 0) boundTextureCount = 1;
         }
 
-        // Add the mask's vertices to the batch and draw *only* them.
         triangleBatch.AddRange(maskDrawable.Vertices, 0f, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
-        triangleBatch.Draw(); // Flush *just* the mask
+        triangleBatch.Draw();
     }
 
     private void drawBorder(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<SakuraVertex> vertices)
@@ -304,14 +300,12 @@ public class GLRenderer : IRenderer
         shader.SetUniform("u_BorderThickness", borderThickness);
         shader.SetUniform("u_BorderColor", borderColor);
 
-        if (boundTextureCount == 0 || GLTexture.WhitePixel.Handle != boundTextureHandles[0])
+        if (boundTextureCount == 0 || GLTexture.WhitePixel.GLHandle != boundTextureHandles[0])
         {
             triangleBatch.Draw();
-            gl.ActiveTexture(TextureUnit.Texture0);
             GLTexture.WhitePixel.Bind();
-            boundTextureHandles[0] = GLTexture.WhitePixel.Handle;
-            if (boundTextureCount == 0)
-                boundTextureCount = 1;
+            boundTextureHandles[0] = GLTexture.WhitePixel.GLHandle;
+            if (boundTextureCount == 0) boundTextureCount = 1;
         }
 
         triangleBatch.AddRange(vertices, 0f, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
@@ -426,17 +420,13 @@ public class GLRenderer : IRenderer
         {
             for (int i = 0; i < 8; i++)
             {
-                GLTexture.WhitePixel.Bind(TextureUnit.Texture0 + i);
+                GLTexture.WhitePixel.Bind(i);
             }
         }
 
         gl.ActiveTexture(TextureUnit.Texture0);
     }
 
-    /// <summary>
-    /// Retrieves the list of OpenGL extensions supported by the current context.
-    /// </summary>
-    /// <returns>A string containing the names of all supported OpenGL extensions, separated by spaces.</returns>
     private unsafe string GetExtensions()
     {
         gl.GetInteger(GetPName.NumExtensions, out int numExtensions);

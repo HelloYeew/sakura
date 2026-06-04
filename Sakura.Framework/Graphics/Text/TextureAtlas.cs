@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Statistic;
@@ -12,7 +13,7 @@ using Texture = Sakura.Framework.Graphics.Textures.Texture;
 namespace Sakura.Framework.Graphics.Text;
 
 /// <summary>
-/// Manage a dynamic texture atlas for storing rasterized glyphs.
+/// Manage a dynamic texture atlas
 /// </summary>
 public class TextureAtlas : IDisposable
 {
@@ -64,14 +65,12 @@ public class TextureAtlas : IDisposable
 
         int destX = page.CurrentX;
         int destY = page.CurrentY;
-        var targetGlTexture = page.GlTexture;
+        INativeTexture targetNativeTexture = page.NativeTexture;
 
         renderer.ScheduleToDrawThread(() =>
         {
-            targetGlTexture.Bind();
             ReadOnlySpan<byte> span = pixelDataCopy;
-            gl.TexSubImage2D(TextureTarget.Texture2D, 0, destX, destY, (uint)regionWidth, (uint)regionHeight, PixelFormat.Rgba, PixelType.UnsignedByte, span);
-            gl.GenerateMipmap(TextureTarget.Texture2D);
+            targetNativeTexture.UploadRegion(destX, destY, regionWidth, regionHeight, span);
         });
 
         // Calculate UVs
@@ -80,7 +79,7 @@ public class TextureAtlas : IDisposable
         float uw = (float)regionWidth / width;
         float vh = (float)regionHeight / height;
 
-        var region = new Texture(page.GlTexture, new Maths.RectangleF(u, v, uw, vh));
+        var region = new Texture(page.NativeTexture, new Maths.RectangleF(u, v, uw, vh));
 
         // Advance cursor
         page.CurrentX += regionWidth + padding;
@@ -100,7 +99,7 @@ public class TextureAtlas : IDisposable
             testY += page.RowHeight + padding;
         }
 
-        return (testY + areaHeight + padding <= height);
+        return testY + areaHeight + padding <= height;
     }
 
     public void Clear()
@@ -133,34 +132,28 @@ public class TextureAtlas : IDisposable
 
     public IEnumerable<Texture> GetAllPages()
     {
-        foreach (var page in pages)
-        {
-            yield return new Texture(page.GlTexture);
-        }
+        return pages.Select(page => new Texture(page.NativeTexture));
     }
 
     private class AtlasPage : IDisposable
     {
-        public GLTexture GlTexture { get; }
+        public INativeTexture NativeTexture { get; }
         public int CurrentX { get; set; } = 0;
         public int CurrentY { get; set; } = 0;
         public int RowHeight { get; set; } = 0;
 
         public AtlasPage(IRenderer renderer, GL gl, int width, int height)
         {
-            GlTexture = new GLTexture(gl, width, height);
+            var glTexture = new GLTexture(gl, width, height);
+            NativeTexture = glTexture;
 
-            // Queue the initial blank texture allocation to the Draw thread
             byte[] emptyData = new byte[width * height * 4];
-            renderer.ScheduleToDrawThread(() =>
-            {
-                GlTexture.Upload(emptyData);
-            });
+            renderer.ScheduleToDrawThread(() => glTexture.Upload(emptyData));
         }
 
         public void Dispose()
         {
-            GlTexture.Dispose();
+            NativeTexture.Dispose();
         }
     }
 }
