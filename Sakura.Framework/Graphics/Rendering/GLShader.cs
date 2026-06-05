@@ -82,7 +82,7 @@ public partial class GLShader : IShader
         GlobalStatistics.Get<int>("Graphics", "Loaded Shaders").Value++;
     }
 
-    public uint Handle => handle;
+    public nint Handle => (nint)handle;
 
     public void Use()
     {

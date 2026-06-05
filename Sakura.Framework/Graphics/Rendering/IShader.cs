@@ -35,5 +35,5 @@ public interface IShader : IDisposable
     /// <summary>
     /// The native program handle. Used by backend-specific code that needs raw access.
     /// </summary>
-    uint Handle { get; }
+    nint Handle { get; }
 }

@@ -3,12 +3,12 @@
 
 using System.Runtime.InteropServices;
 using Sakura.Framework.Maths;
-using Silk.NET.OpenGL;
 
 namespace Sakura.Framework.Graphics.Rendering.Vertex;
 
 /// <summary>
 /// A vertex with position, color, and texture coordinates.
+/// Each renderer maps the <see cref="VertexMemberAttribute"/> annotations to its own attribute layout API.
 /// </summary>
 [StructLayout(LayoutKind.Sequential)]
 public struct Vertex
@@ -16,43 +16,43 @@ public struct Vertex
     /// <summary>
     /// The position of the vertex.
     /// </summary>
-    [VertexMember(2, VertexAttribPointerType.Float)]
+    [VertexMember(2, VertexMemberType.Float)]
     public Vector2 Position;
 
     /// <summary>
     /// The color of the vertex.
     /// </summary>
-    [VertexMember(4, VertexAttribPointerType.Float)]
+    [VertexMember(4, VertexMemberType.Float)]
     public Vector4 Color;
 
     /// <summary>
     /// The texture coordinates of the vertex.
     /// </summary>
-    [VertexMember(2, VertexAttribPointerType.Float)]
+    [VertexMember(2, VertexMemberType.Float)]
     public Vector2 TexCoords;
 
     /// <summary>
-    /// The index of the texture to use for this vertex to make it able to bind multiple textures in a single draw call.
+    /// Index of the texture to use, allowing multiple textures per draw call.
     /// </summary>
-    [VertexMember(1, VertexAttribPointerType.Float)]
+    [VertexMember(1, VertexMemberType.Float)]
     public float TexIndex;
 
     /// <summary>
     /// The clipping data (Center.X, Center.Y, HalfWidth, HalfHeight).
     /// </summary>
-    [VertexMember(4, VertexAttribPointerType.Float)]
+    [VertexMember(4, VertexMemberType.Float)]
     public Vector4 ClipData;
 
     /// <summary>
-    /// The horizontal shear modifier for clipping.
+    /// Horizontal shear modifier for clipping.
     /// </summary>
-    [VertexMember(1, VertexAttribPointerType.Float)]
+    [VertexMember(1, VertexMemberType.Float)]
     public float ClipShearX;
 
     /// <summary>
-    /// The radius for clipping corners, used for rounded rectangles. A value of 0 means no rounding.
+    /// Corner radius for clipping. 0 means no rounding.
     /// </summary>
-    [VertexMember(1, VertexAttribPointerType.Float)]
+    [VertexMember(1, VertexMemberType.Float)]
     public float ClipRadius;
 
     /// <summary>

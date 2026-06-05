@@ -17,9 +17,4 @@ public interface IVideoTexture
     /// True once the GPU upload for the current frame is complete.
     /// </summary>
     bool UploadComplete { get; }
-
-    /// <summary>
-    /// The Y-plane GL texture handle, usable as a greyscale preview.
-    /// </summary>
-    uint YPlaneHandle { get; }
 }

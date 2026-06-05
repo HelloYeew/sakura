@@ -35,6 +35,11 @@ internal class VideoDrawNode : DrawNode
         if (!videoTexture.UploadComplete)
             return;
 
+        // Video rendering requires GL-specific operations (sRGB toggle, raw vertex upload).
+        // On non-GL renderers video is silently skipped until a backend-agnostic path exists.
+        if (renderer is not IGLRenderer glRenderer)
+            return;
+
         renderer.FlushBatch();
 
         videoShader.Use();
@@ -50,7 +55,9 @@ internal class VideoDrawNode : DrawNode
         if (yuvMatrix != null)
             videoShader.SetUniform("u_YuvCoeff", yuvMatrix);
 
-        renderer.DrawVerticesRaw(Vertices);
+        glRenderer.DisableSrgb();
+        glRenderer.DrawVerticesRaw(Vertices);
+        glRenderer.RestoreSrgb();
         renderer.RestoreMainShader();
     }
 }

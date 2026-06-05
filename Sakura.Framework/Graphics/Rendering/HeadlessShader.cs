@@ -8,7 +8,7 @@ namespace Sakura.Framework.Graphics.Rendering;
 
 public sealed class HeadlessShader : IShader
 {
-    public uint Handle => 0;
+    public nint Handle => 0;
 
     public void Use() { }
     public void SetUniform(string name, int value) { }
