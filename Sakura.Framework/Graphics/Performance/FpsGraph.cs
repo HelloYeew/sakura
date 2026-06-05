@@ -77,7 +77,7 @@ public class FpsGraph : Container, IRemoveFromDrawVisualiser
         {
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
-            Size = new Vector2(extended_width, 80),
+            Size = new Vector2(extended_width, 100),
             Children = new Drawable[]
             {
                 new Box()
