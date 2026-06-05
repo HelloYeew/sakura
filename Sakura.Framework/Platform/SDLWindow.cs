@@ -8,12 +8,14 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using System.Threading;
+using Sakura.Framework.Configurations;
 using Sakura.Framework.Input;
+using Silk.NET.OpenGL;
 using Silk.NET.SDL;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Reactive;
-using Silk.NET.OpenGL;
+using Silk.NET.Maths;
 using SilkMouseButtonEvent = Silk.NET.SDL.MouseButtonEvent;
 using SakuraCursorState = Sakura.Framework.Input.CursorState;
 using SakuraMouseButtonEvent = Sakura.Framework.Input.MouseButtonEvent;
@@ -31,7 +33,15 @@ public class SDLWindow : IWindow
     private static unsafe Window* window;
     private PfnEventFilter resizeEventFilter;
 
-    private readonly SDLGraphicsSurface graphicsSurface = new SDLGraphicsSurface();
+    // Graphics surfaces — only one will be active depending on the selected renderer.
+    private readonly SDLGraphicsSurface glSurface = new SDLGraphicsSurface();
+    private readonly MetalGraphicsSurface metalSurface = new MetalGraphicsSurface();
+    private IGraphicsSurface activeSurface;
+
+    private RendererType graphicsApi = RendererType.OpenGL;
+
+    private FrameworkConfigManager windowConfig;
+
     private readonly MouseState mouseState = new MouseState();
 
     private bool initialized;
@@ -49,7 +59,8 @@ public class SDLWindow : IWindow
 
     private WindowMode windowMode = WindowMode.Windowed;
 
-    private WindowFlags windowFlags = WindowFlags.Opengl | WindowFlags.AllowHighdpi;
+    // Base flags — no graphics API flag yet; added by SetGraphicsApi() before Create().
+    private WindowFlags windowFlags = WindowFlags.AllowHighdpi;
 
     public string Title
     {
@@ -81,7 +92,49 @@ public class SDLWindow : IWindow
     public int Height => logicalHeight;
 
     public bool CursorInWindow { get; private set; }
-    public IGraphicsSurface GraphicsSurface => graphicsSurface;
+    public IGraphicsSurface GraphicsSurface => activeSurface;
+
+    /// <summary>
+    /// Provides the config manager so the window can persist and restore its position, size and mode.
+    /// Must be called before <see cref="Create()"/>.
+    /// </summary>
+    public void SetWindowConfig(FrameworkConfigManager config)
+    {
+        windowConfig = config;
+
+        var savedMode = config.Get<WindowMode>(FrameworkSetting.WindowMode).Value;
+        WindowModeReactive.Value = savedMode;
+    }
+
+    /// <summary>
+    /// Must be called by <see cref="AppHost"/> before <see cref="Create()"/> to configure
+    /// which graphics API flag to apply to the SDL window.
+    /// </summary>
+    public void SetGraphicsApi(RendererType type)
+    {
+        graphicsApi = type;
+
+        switch (type)
+        {
+            case RendererType.Metal:
+                // Metal windows need no special SDL window flag on SDL2.
+                activeSurface = metalSurface;
+                break;
+
+            default:
+                // OpenGL
+                windowFlags |= WindowFlags.Opengl;
+                activeSurface = glSurface;
+
+                // SDL requires GL attributes to be set before SDL_CreateWindow.
+                sdl.GLSetAttribute(GLattr.ContextMajorVersion, 3);
+                sdl.GLSetAttribute(GLattr.ContextMinorVersion, 3);
+                sdl.GLSetAttribute(GLattr.ContextFlags, (int)ContextFlagMask.ForwardCompatibleBit);
+                sdl.GLSetAttribute(GLattr.ContextProfileMask, (int)GLprofile.Core);
+                sdl.GLSetAttribute(GLattr.FramebufferSrgbCapable, 1);
+                break;
+        }
+    }
 
     public bool IsActive { get; private set; } = true;
     public bool IsExiting { get; private set; }
@@ -189,20 +242,43 @@ public class SDLWindow : IWindow
                 break;
         }
 
-        // Make sure SDL use OpenGL 3.3 or later
-        sdl.GLSetAttribute(GLattr.ContextMajorVersion, 3);
-        sdl.GLSetAttribute(GLattr.ContextMinorVersion, 3);
-        sdl.GLSetAttribute(GLattr.ContextFlags, (int)ContextFlagMask.ForwardCompatibleBit);
-        sdl.GLSetAttribute(GLattr.ContextProfileMask, (int)GLprofile.Core);
+        int spawnX = Sdl.WindowposCentered;
+        int spawnY = Sdl.WindowposCentered;
+        int spawnW = 800;
+        int spawnH = 600;
 
-        sdl.GLSetAttribute(GLattr.FramebufferSrgbCapable, 1);
+        if (windowConfig != null && windowMode == WindowMode.Windowed)
+        {
+            int savedX = windowConfig.Get<int>(FrameworkSetting.WindowX).Value;
+            int savedY = windowConfig.Get<int>(FrameworkSetting.WindowY).Value;
+            int savedW = windowConfig.Get<int>(FrameworkSetting.WindowWidth).Value;
+            int savedH = windowConfig.Get<int>(FrameworkSetting.WindowHeight).Value;
+
+            if (savedX != -1 && savedY != -1 && isPositionOnConnectedDisplay(savedX, savedY))
+            {
+                spawnX = savedX;
+                spawnY = savedY;
+            }
+            else if (savedX != -1 && savedY != -1)
+            {
+                // fallback to center if the saved position is invalid (e.g. monitor was disconnected)
+                Logger.Warning($"Saved window position ({savedX},{savedY}) is not on any connected display. Resetting to center.");
+                windowConfig.Get<int>(FrameworkSetting.WindowX).Value = -1;
+                windowConfig.Get<int>(FrameworkSetting.WindowY).Value = -1;
+            }
+            if (savedW > 0 && savedH > 0)
+            {
+                spawnW = savedW;
+                spawnH = savedH;
+            }
+        }
 
         window = sdl.CreateWindow(
             title,
-            Sdl.WindowposCentered, // X position
-            Sdl.WindowposCentered, // Y position
-            800, // Width
-            600, // Height
+            spawnX,
+            spawnY,
+            spawnW,
+            spawnH,
             (uint)windowFlags
         );
 
@@ -212,7 +288,31 @@ public class SDLWindow : IWindow
             throw new Exception("SDL window creation failed.");
         }
 
-        // TODO: This should move to the renderer class but still need to figure out how to pass the context to the renderer
+        resizeEventFilter = new PfnEventFilter(resizeCallback);
+        sdl.AddEventWatch(resizeEventFilter, null);
+
+        DisplayHz = getDisplayRefreshRate();
+        Logger.Verbose($"Display refresh rate: {DisplayHz} Hz");
+
+        int w, h;
+        sdl.GetWindowSize(window, &w, &h);
+        logicalWidth = w;
+        logicalHeight = h;
+
+        // Physical size is resolved after the graphics context is initialised
+        // (GL: GLGetDrawableSize; Metal: GetDrawableSize falls back to logical).
+        currentWidth = w;
+        currentHeight = h;
+
+        Logger.Verbose("SDL window created successfully");
+    }
+
+    /// <summary>
+    /// Creates the OpenGL context and wires up the <see cref="SDLGraphicsSurface"/>.
+    /// Must be called after <see cref="Create()"/> when the selected renderer is OpenGL.
+    /// </summary>
+    public unsafe void InitializeGLContext()
+    {
         glContext = sdl.GLCreateContext(window);
         if (glContext == null)
         {
@@ -222,31 +322,52 @@ public class SDLWindow : IWindow
 
         sdl.GLMakeCurrent(window, glContext);
 
-        resizeEventFilter = new PfnEventFilter(resizeCallback);
-        sdl.AddEventWatch(resizeEventFilter, null);
+        // Wire up the GL surface callbacks used by GLRenderer.
+        glSurface.GetFunctionAddress = proc => (nint)sdl.GLGetProcAddress(proc);
+        glSurface.MakeCurrent = () => sdl.GLMakeCurrent(window, glContext);
+        glSurface.ClearCurrent = () => sdl.GLMakeCurrent(window, null);
 
-        DisplayHz = getDisplayRefreshRate();
-        Logger.Verbose($"Display refresh rate: {DisplayHz} Hz");
-
-        GetDrawableSize(out currentWidth, out currentHeight);
-
-        int w, h, phyW, phyH;
-        sdl.GetWindowSize(window, &w, &h);
+        // GL drawable size may differ from logical size on HiDPI displays.
+        int phyW, phyH;
         sdl.GLGetDrawableSize(window, &phyW, &phyH);
-
-        logicalWidth = w;
-        logicalHeight = h;
         currentWidth = phyW;
         currentHeight = phyH;
 
-        Logger.Verbose("SDL window created successfully");
-
-        graphicsSurface.GetFunctionAddress = proc => (nint)sdl.GLGetProcAddress(proc);
-        graphicsSurface.MakeCurrent = () => sdl.GLMakeCurrent(window, glContext);
-        graphicsSurface.ClearCurrent = () => sdl.GLMakeCurrent(window, null);
-
-        Resized.Invoke(logicalWidth, logicalHeight);
+        Logger.Verbose("OpenGL context created successfully");
     }
+
+    /// <summary>
+    /// Creates the Metal view via SDL and stores the <c>CAMetalLayer</c> pointer
+    /// in the <see cref="MetalGraphicsSurface"/>. Must be called after <see cref="Create()"/>
+    /// when the selected renderer is Metal.
+    /// </summary>
+    public unsafe void InitializeMetalSurface()
+    {
+        void* view = SDL_Metal_CreateView(window);
+        if (view == null)
+        {
+            Logger.Error("Failed to create Metal view: " + sdl.GetErrorS());
+            throw new Exception("Metal view creation failed.");
+        }
+
+        void* layer = SDL_Metal_GetLayer(view);
+        if (layer == null)
+        {
+            Logger.Error("Failed to get CAMetalLayer from Metal view.");
+            throw new Exception("CAMetalLayer retrieval failed.");
+        }
+
+        metalSurface.MetalLayer = (nint)layer;
+
+        Logger.Verbose("Metal surface initialised successfully");
+    }
+
+    // SDL2 Metal API — not exposed by Silk.NET.SDL, so P/Invoke directly.
+    [DllImport("SDL2")]
+    private static extern unsafe void* SDL_Metal_CreateView(void* window);
+
+    [DllImport("SDL2")]
+    private static extern unsafe void* SDL_Metal_GetLayer(void* view);
 
     public void Close()
     {
@@ -259,10 +380,21 @@ public class SDLWindow : IWindow
         {
             width = 0;
             height = 0;
+            return;
         }
 
         int drawableWidth, drawableHeight;
-        sdl.GLGetDrawableSize(window, &drawableWidth, &drawableHeight);
+
+        if (graphicsApi == RendererType.Metal)
+        {
+            // Metal: drawable size equals the window's pixel size on HiDPI.
+            sdl.GetWindowSizeInPixels(window, &drawableWidth, &drawableHeight);
+        }
+        else
+        {
+            sdl.GLGetDrawableSize(window, &drawableWidth, &drawableHeight);
+        }
+
         width = drawableWidth;
         height = drawableHeight;
     }
@@ -287,7 +419,11 @@ public class SDLWindow : IWindow
         if (windowWidth == 0 || windowHeight == 0) return (1.0f, 1.0f);
 
         int drawableWidth, drawableHeight;
-        sdl.GLGetDrawableSize(window, &drawableWidth, &drawableHeight);
+
+        if (graphicsApi == RendererType.Metal)
+            sdl.GetWindowSizeInPixels(window, &drawableWidth, &drawableHeight);
+        else
+            sdl.GLGetDrawableSize(window, &drawableWidth, &drawableHeight);
 
         return ((float)drawableWidth / windowWidth, (float)drawableHeight / windowHeight);
     }
@@ -321,6 +457,16 @@ public class SDLWindow : IWindow
         windowMode = newMode;
         WindowModeReactive.Value = newMode;
 
+        if (windowConfig != null)
+        {
+            windowConfig.Get<WindowMode>(FrameworkSetting.WindowMode).Value = newMode;
+        }
+        else
+        {
+            Logger.Warning("windowConfig is null — WindowMode change will not be persisted.");
+        }
+
+
         if (window == null) return;
 
         switch (newMode)
@@ -328,7 +474,26 @@ public class SDLWindow : IWindow
             case WindowMode.Windowed:
                 sdl.SetWindowFullscreen(window, 0);
                 sdl.SetWindowBordered(window, SdlBool.True);
-                sdl.SetWindowPosition(window, Sdl.WindowposCentered, Sdl.WindowposCentered);
+
+                if (windowConfig != null)
+                {
+                    int savedX = windowConfig.Get<int>(FrameworkSetting.WindowX).Value;
+                    int savedY = windowConfig.Get<int>(FrameworkSetting.WindowY).Value;
+                    int savedW = windowConfig.Get<int>(FrameworkSetting.WindowWidth).Value;
+                    int savedH = windowConfig.Get<int>(FrameworkSetting.WindowHeight).Value;
+
+                    if (savedW > 0 && savedH > 0)
+                        sdl.SetWindowSize(window, savedW, savedH);
+
+                    if (savedX != -1 && savedY != -1 && isPositionOnConnectedDisplay(savedX, savedY))
+                        sdl.SetWindowPosition(window, savedX, savedY);
+                    else
+                        sdl.SetWindowPosition(window, Sdl.WindowposCentered, Sdl.WindowposCentered);
+                }
+                else
+                {
+                    sdl.SetWindowPosition(window, Sdl.WindowposCentered, Sdl.WindowposCentered);
+                }
                 break;
 
             case WindowMode.Borderless:
@@ -343,7 +508,11 @@ public class SDLWindow : IWindow
 
         int w, h, phyW, phyH;
         sdl.GetWindowSize(window, &w, &h);
-        sdl.GLGetDrawableSize(window, &phyW, &phyH);
+
+        if (graphicsApi == RendererType.Metal)
+            sdl.GetWindowSizeInPixels(window, &phyW, &phyH);
+        else
+            sdl.GLGetDrawableSize(window, &phyW, &phyH);
 
         logicalWidth = w;
         logicalHeight = h;
@@ -457,7 +626,10 @@ public class SDLWindow : IWindow
             case WindowEventID.Resized:
                 int drawableWidth, drawableHeight, windowWidth, windowHeight;
                 sdl.GetWindowSize(window, &windowWidth, &windowHeight);
-                sdl.GLGetDrawableSize(window, &drawableWidth, &drawableHeight);
+                if (graphicsApi == RendererType.Metal)
+                    sdl.GetWindowSizeInPixels(window, &drawableWidth, &drawableHeight);
+                else
+                    sdl.GLGetDrawableSize(window, &drawableWidth, &drawableHeight);
                 // SDL sometimes sends multiple resize events with the same size, ignore them
                 // to prevent resize event got invoke multiple times
                 if (drawableWidth == currentWidth && drawableHeight == currentHeight && windowWidth == logicalWidth && windowHeight == logicalHeight)
@@ -467,7 +639,24 @@ public class SDLWindow : IWindow
                 logicalWidth = windowWidth;
                 logicalHeight = windowHeight;
                 Logger.Verbose($"Window resized to {drawableWidth}x{drawableHeight} (logical size: {windowWidth}x{windowHeight})");
+
+                if (windowConfig != null && windowMode == WindowMode.Windowed)
+                {
+                    windowConfig.Get<int>(FrameworkSetting.WindowWidth).Value = windowWidth;
+                    windowConfig.Get<int>(FrameworkSetting.WindowHeight).Value = windowHeight;
+                }
+
                 Resized.Invoke(logicalWidth, logicalHeight);
+                break;
+
+            case WindowEventID.Moved:
+                if (windowConfig != null && windowMode == WindowMode.Windowed)
+                {
+                    int posX, posY;
+                    sdl.GetWindowPosition(window, &posX, &posY);
+                    windowConfig.Get<int>(FrameworkSetting.WindowX).Value = posX;
+                    windowConfig.Get<int>(FrameworkSetting.WindowY).Value = posY;
+                }
                 break;
 
             case WindowEventID.Enter:
@@ -584,6 +773,33 @@ public class SDLWindow : IWindow
         sdl.SetClipboardText(text);
     }
 
+    /// <summary>
+    /// Returns true if the given screen position falls within the bounds of any connected display.
+    /// Used to detect whether a saved window position is still valid after monitor changes.
+    /// </summary>
+    private static bool isPositionOnConnectedDisplay(int x, int y)
+    {
+        int numDisplays = sdl.GetNumVideoDisplays();
+
+        for (int i = 0; i < numDisplays; i++)
+        {
+            Rectangle<int> bounds = default;
+            if (sdl.GetDisplayBounds(i, ref bounds) != 0)
+                continue;
+
+            // Check if the position is within this display's bounds.
+            // Use a small margin (at least 64px of the title bar must be visible).
+            const int margin = 64;
+            if (x >= bounds.Origin.X - margin &&
+                x < bounds.Origin.X + bounds.Size.X &&
+                y >= bounds.Origin.Y - margin &&
+                y < bounds.Origin.Y + bounds.Size.Y)
+                return true;
+        }
+
+        return false;
+    }
+
     private unsafe int getDisplayRefreshRate()
     {
         DisplayMode mode = new DisplayMode();
@@ -637,31 +853,50 @@ public class SDLWindow : IWindow
         handleSdlEvents();
     }
 
-    public void SwapBuffers()
+    public unsafe void SwapBuffers()
     {
-        swapBuffers();
+        if (graphicsApi == RendererType.Metal)
+        {
+            // Metal: presentation is handled by the renderer's command buffer commit.
+            // Nothing to do at the window layer.
+        }
+        else
+        {
+            if (window != null)
+                sdl.GLSwapWindow(window);
+        }
     }
 
-    public void MakeCurrent() => graphicsSurface.MakeCurrent();
-
-    public void ClearCurrent() => graphicsSurface.ClearCurrent();
+    /// <summary>
+    /// Makes the graphics context current on the calling thread.
+    /// For OpenGL: binds the GL context.
+    /// For Metal: no-op.
+    /// </summary>
+    public void MakeCurrent()
+    {
+        if (graphicsApi != RendererType.Metal)
+            glSurface.MakeCurrent();
+    }
 
     /// <summary>
-    /// Swap the front and back buffers to present the rendered frame.
+    /// Releases the graphics context from the calling thread.
+    /// For OpenGL: unbinds the GL context.
+    /// For Metal: no-op.
     /// </summary>
-    private unsafe void swapBuffers()
+    public void ClearCurrent()
     {
-        if (window != null)
-            sdl.GLSwapWindow(window);
+        if (graphicsApi != RendererType.Metal)
+            glSurface.ClearCurrent();
     }
 
     /// <summary>
     /// Enable or disable VSync.
     /// </summary>
-    /// <param name="enabled">True to enable VSync, false to disable.</param>
     public void SetVSync(bool enabled)
     {
-        sdl.GLSetSwapInterval(enabled ? 1 : 0);
+        if (graphicsApi != RendererType.Metal)
+            sdl.GLSetSwapInterval(enabled ? 1 : 0);
+        // Metal VSync is controlled via CAMetalLayer.displaySyncEnabled, will handled in MetalRenderer.
     }
 
     private unsafe void setTitle(string newTitle)
@@ -763,7 +998,7 @@ public class SDLWindow : IWindow
         }
         sdlCursors.Clear();
 
-        if (glContext != null)
+        if (glContext != null && graphicsApi != RendererType.Metal)
         {
             sdl.GLDeleteContext(glContext);
             glContext = null;

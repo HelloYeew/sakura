@@ -4,7 +4,7 @@
 using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
-using Sakura.Framework.Graphics.Video;
+using FFmpeg.AutoGen;
 using Silk.NET.OpenGL;
 
 namespace Sakura.Framework.Graphics.Textures;
@@ -15,7 +15,7 @@ namespace Sakura.Framework.Graphics.Textures;
 /// performs YUV→RGB conversion on the GPU.
 /// </summary>
 [SuppressMessage("ReSharper", "InconsistentNaming")]
-public sealed class VideoGLTexture : IDisposable
+public sealed class VideoGLTexture : INativeVideoTexture
 {
     public uint YHandle { get; private set; }
     public uint UHandle { get; private set; }
@@ -63,7 +63,40 @@ public sealed class VideoGLTexture : IDisposable
     }
 
     /// <summary>
-    /// Marks the texture as having valid data. Called by <see cref="VideoTextureUpload"/> after upload.
+    /// Uploads a decoded YUV420P frame into the Y, U, V planes.
+    /// Must be called on the render thread.
+    /// </summary>
+    public unsafe void Upload(AVFrame* frame)
+    {
+        int width = frame->width;
+        int height = frame->height;
+        int chromaWidth = (width + 1) / 2;
+        int chromaHeight = (height + 1) / 2;
+
+        uploadPlane(YHandle, frame->data[0], frame->linesize[0], width, height);
+        uploadPlane(UHandle, frame->data[1], frame->linesize[1], chromaWidth, chromaHeight);
+        uploadPlane(VHandle, frame->data[2], frame->linesize[2], chromaWidth, chromaHeight);
+        MarkAvailable();
+    }
+
+    private unsafe void uploadPlane(uint handle, byte* data, int linesize, int width, int height)
+    {
+        gl.BindTexture(TextureTarget.Texture2D, handle);
+        gl.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
+        gl.PixelStore(PixelStoreParameter.UnpackRowLength, linesize);
+
+        gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.R8, (uint)width, (uint)height, 0, PixelFormat.Red, PixelType.UnsignedByte, data);
+
+        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+
+        gl.PixelStore(PixelStoreParameter.UnpackRowLength, 0);
+    }
+
+    /// <summary>
+    /// Marks the texture as having valid data. Called after a successful upload.
     /// </summary>
     public void MarkAvailable() => Volatile.Write(ref available, true);
 

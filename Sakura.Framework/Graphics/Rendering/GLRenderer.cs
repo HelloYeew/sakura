@@ -24,7 +24,7 @@ using Texture = Sakura.Framework.Graphics.Textures.Texture;
 namespace Sakura.Framework.Graphics.Rendering;
 
 [SuppressMessage("ReSharper", "InconsistentNaming")]
-public class GLRenderer : IRenderer
+public class GLRenderer : IGLRenderer
 {
     private static GL gl;
 
@@ -33,6 +33,8 @@ public class GLRenderer : IRenderer
     public Texture WhitePixel { get; private set; }
     public Matrix4x4 ProjectionMatrix => projectionMatrix;
     public Storage ShaderStorage { get; set; }
+
+    private GLTexture whiteGLTexture => (GLTexture)WhitePixel.BackendTexture!;
 
     private GLShader shader;
 
@@ -174,6 +176,8 @@ public class GLRenderer : IRenderer
 
     public IShader CreateShader(Storage storage, string vertexPath, string fragmentPath) => new GLShader(gl, storage, vertexPath, fragmentPath);
 
+    public INativeVideoTexture CreateVideoTexture(int width, int height) => new VideoGLTexture(gl, width, height);
+
     public void DrawVerticesRaw(ReadOnlySpan<Vertex.Vertex> vertices)
     {
         triangleBatch.DrawRaw(vertices);
@@ -274,11 +278,11 @@ public class GLRenderer : IRenderer
 
     private void drawMaskShape(Drawable maskDrawable, float cornerRadius)
     {
-        if (boundTextureCount == 0 || GLTexture.WhitePixel.GLHandle != boundTextureHandles[0])
+        if (boundTextureCount == 0 || whiteGLTexture.GLHandle != boundTextureHandles[0])
         {
             triangleBatch.Draw();
-            GLTexture.WhitePixel.Bind(0);
-            boundTextureHandles[0] = GLTexture.WhitePixel.GLHandle;
+            whiteGLTexture.Bind(0);
+            boundTextureHandles[0] = whiteGLTexture.GLHandle;
             if (boundTextureCount == 0) boundTextureCount = 1;
         }
 
@@ -303,11 +307,11 @@ public class GLRenderer : IRenderer
         shader.SetUniform("u_BorderThickness", borderThickness);
         shader.SetUniform("u_BorderColor", borderColor);
 
-        if (boundTextureCount == 0 || GLTexture.WhitePixel.GLHandle != boundTextureHandles[0])
+        if (boundTextureCount == 0 || whiteGLTexture.GLHandle != boundTextureHandles[0])
         {
             triangleBatch.Draw();
-            GLTexture.WhitePixel.Bind();
-            boundTextureHandles[0] = GLTexture.WhitePixel.GLHandle;
+            whiteGLTexture.Bind();
+            boundTextureHandles[0] = whiteGLTexture.GLHandle;
             if (boundTextureCount == 0) boundTextureCount = 1;
         }
 
@@ -419,11 +423,11 @@ public class GLRenderer : IRenderer
 
         // Pre-fill all OpenGL texture units with a valid texture (WhitePixel)
         // to fix some strict driver that will complain about "unloadable texture"
-        if (GLTexture.WhitePixel != null)
+        if (WhitePixel?.BackendTexture != null)
         {
             for (int i = 0; i < 8; i++)
             {
-                GLTexture.WhitePixel.Bind(i);
+                whiteGLTexture.Bind(i);
             }
         }
 

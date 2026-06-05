@@ -54,6 +54,7 @@ public class TestBasicDropdown : ManualInputManagerTestScene
 
         AddStep("Move to dropdown header", () => InputManager.MoveMouseTo(dropdown));
         AddStep("Click dropdown to open", () => InputManager.Click(MouseButton.Left));
+        AddWaitStep("Wait a bit", 50);
 
         // the header is 30 pixels high. B is the second item (index 1).
         // y offset = header height + (item Height * index) + (item Height / 2 for center)

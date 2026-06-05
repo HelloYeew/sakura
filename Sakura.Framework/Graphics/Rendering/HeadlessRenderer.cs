@@ -77,10 +77,10 @@ public class HeadlessRenderer : IRenderer
     }
 
     public void FlushBatch() { }
+
     public void RestoreMainShader() { }
-    public void DrawVerticesRaw(ReadOnlySpan<Vertex.Vertex> vertices) { }
-    public void DisableSrgb() { }
-    public void RestoreSrgb() { }
 
     public IShader CreateShader(Storage storage, string vertexPath, string fragmentPath) => new HeadlessShader();
+
+    public INativeVideoTexture CreateVideoTexture(int width, int height) => new HeadlessNativeVideoTexture(width, height);
 }

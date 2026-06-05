@@ -69,26 +69,6 @@ public interface IRenderer
     void RestoreMainShader();
 
     /// <summary>
-    /// Uploads the given vertices into the shared VBO and issues a raw DrawArrays call
-    /// without touching any texture slots. Used by VideoDrawNode so it can bind its own
-    /// textures independently of the renderer's slot management.
-    /// </summary>
-    void DrawVerticesRaw(ReadOnlySpan<Vertex.Vertex> vertices);
-
-    /// <summary>
-    /// Disables sRGB framebuffer encoding for the next draw call.
-    /// Required for video rendering: YUV→RGB output is already gamma-encoded
-    /// and must NOT be re-encoded by the sRGB framebuffer path.
-    /// Call <see cref="RestoreSrgb"/> immediately after the draw call.
-    /// </summary>
-    void DisableSrgb();
-
-    /// <summary>
-    /// Re-enables sRGB framebuffer encoding after a <see cref="DisableSrgb"/> call.
-    /// </summary>
-    void RestoreSrgb();
-
-    /// <summary>
     /// Storage pointing to the framework's built-in shader directory.
     /// Use this to load the framework's own shaders, or as a base for composite stores
     /// that overlay game shaders on top of framework utilities.
@@ -106,4 +86,10 @@ public interface IRenderer
     /// <param name="vertexPath">Path inside the storage to the vertex shader (e.g. "shader.vert").</param>
     /// <param name="fragmentPath">Path inside the storage to the fragment shader (e.g. "shader.frag").</param>
     IShader CreateShader(Storage storage, string vertexPath, string fragmentPath);
+
+    /// <summary>
+    /// Creates a backend-specific YUV420P video texture of the given dimensions.
+    /// Must be called on the render thread.
+    /// </summary>
+    INativeVideoTexture CreateVideoTexture(int width, int height);
 }

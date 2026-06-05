@@ -14,7 +14,6 @@ using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Reactive;
 using Sakura.Framework.Statistic;
-using Silk.NET.OpenGL;
 using Texture = Sakura.Framework.Graphics.Textures.Texture;
 
 namespace Sakura.Framework.Graphics.Video;
@@ -75,7 +74,6 @@ public unsafe class VideoDecoder : IDisposable
     private readonly ConcurrentQueue<Action> decoderCommands = new();
 
     private readonly IRenderer renderer;
-    private readonly GL gl;
     private readonly ITextureManager textureManager;
 
     static VideoDecoder()
@@ -106,9 +104,6 @@ public unsafe class VideoDecoder : IDisposable
             throw new ArgumentException("Stream must be readable.", nameof(stream));
 
         this.renderer = renderer;
-        // GL is only needed inside the GL video layer. Retrieve it from GLRenderer so
-        // callers (VideoSprite) don't need to reference GL at all.
-        this.gl = GLRenderer.GL;
         this.textureManager = textureManager;
         videoStream = stream;
         selfHandle = GCHandle.Alloc(this);
@@ -587,7 +582,7 @@ public unsafe class VideoDecoder : IDisposable
                 renderer.ScheduleToDrawThread(() =>
                 {
                     while (availableTextures.Count < max_pending_frames)
-                        availableTextures.Enqueue(new VideoTexture(renderer, gl, textureManager, capturedW, capturedH));
+                        availableTextures.Enqueue(new VideoTexture(renderer, textureManager, capturedW, capturedH));
                 });
             }
 
