@@ -34,6 +34,11 @@ while :; do
         linux-arm64)
             _OSDir=linux-arm64
             ;;
+        android)
+            _AndroidABI=$2
+            _OSDir=android-$2
+            shift
+            ;;
         ios)
             _CMakeEnableBitcode=-DENABLE_BITCODE=0
             _CMakeBuildTarget=sakura-spirv
@@ -58,7 +63,22 @@ fi
 mkdir -p $_OutputPath
 pushd $_OutputPath
 
-if [[ $_OSDir == "ios" ]]; then
+if [[ $_OSDir == android-* ]]; then
+    if [[ -z "$ANDROID_NDK_ROOT" ]]; then
+        echo "Build failed: ANDROID_NDK_ROOT must be set."
+        exit 1
+    fi
+
+    cmake ../../.. \
+        -DCMAKE_BUILD_TYPE=$_CMakeBuildType \
+        -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake" \
+        -DANDROID_ABI="$_AndroidABI" \
+        -DANDROID_PLATFORM=android-21 \
+        -DPYTHON_EXECUTABLE=$_PythonExePath
+
+    cmake --build . --target $_CMakeBuildTarget
+
+elif [[ $_OSDir == "ios" ]]; then
     mkdir -p device-build
     pushd device-build
 
@@ -97,6 +117,7 @@ if [[ $_OSDir == "ios" ]]; then
 	    -framework ./simulator-build-combined/sakura-spirv.framework \
 	    -output ./sakura-spirv.xcframework
 else
+    # macOS / Linux
     cmake ../../.. -DCMAKE_BUILD_TYPE=$_CMakeBuildType $_CMakeGenerator $_CMakeEnableBitcode -DPYTHON_EXECUTABLE=$_PythonExePath -DCMAKE_OSX_ARCHITECTURES="$_CMakeOsxArchitectures"
     cmake --build . --target $_CMakeBuildTarget $_CMakeExtraBuildArgs
 fi

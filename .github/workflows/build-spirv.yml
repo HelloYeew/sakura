@@ -53,23 +53,23 @@ jobs:
             artifact_name: Sakura.Framework.SPIRV/build/Release/ios/sakura-spirv.xcframework.zip
 
           # Android
-          - os: windows-latest
-            build_args: release android arm64-v8a --android-ndk '%ANDROID_NDK_HOME%'
+          - os: ubuntu-22.04
+            build_args: release android arm64-v8a
             build_target: android-arm64-v8a
             artifact_name: Sakura.Framework.SPIRV/build/Release/android-arm64-v8a/libsakura-spirv.so
 
-          - os: windows-latest
-            build_args: release android armeabi-v7a --android-ndk '%ANDROID_NDK_HOME%'
+          - os: ubuntu-22.04
+            build_args: release android armeabi-v7a
             build_target: android-armeabi-v7a
             artifact_name: Sakura.Framework.SPIRV/build/Release/android-armeabi-v7a/libsakura-spirv.so
 
-          - os: windows-latest
-            build_args: release android x86_64 --android-ndk '%ANDROID_NDK_HOME%'
+          - os: ubuntu-22.04
+            build_args: release android x86_64
             build_target: android-x86_64
             artifact_name: Sakura.Framework.SPIRV/build/Release/android-x86_64/libsakura-spirv.so
 
-          - os: windows-latest
-            build_args: release android x86 --android-ndk '%ANDROID_NDK_HOME%'
+          - os: ubuntu-22.04
+            build_args: release android x86
             build_target: android-x86
             artifact_name: Sakura.Framework.SPIRV/build/Release/android-x86/libsakura-spirv.so
 
@@ -79,6 +79,12 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+
+      - name: Set ANDROID_NDK_ROOT
+        if: startsWith(matrix.build_target, 'android')
+        run: |
+          NDK_PATH=$(ls -d ${ANDROID_SDK_ROOT}/ndk/* 2>/dev/null | sort -V | tail -1)
+          echo "ANDROID_NDK_ROOT=$NDK_PATH" >> $GITHUB_ENV
 
       - name: Sync shaderc (Windows)
         working-directory: Sakura.Framework.SPIRV
