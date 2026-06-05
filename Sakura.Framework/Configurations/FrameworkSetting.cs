@@ -13,5 +13,6 @@ public enum FrameworkSetting
     SampleVolume,
     WindowMode,
     ExecutionMode,
-    HardwareAcceleration
+    HardwareAcceleration,
+    RendererType
 }

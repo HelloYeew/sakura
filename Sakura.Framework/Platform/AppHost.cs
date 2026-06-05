@@ -185,6 +185,13 @@ public abstract class AppHost : IDisposable
     /// <returns>An instance of <see cref="IRenderer"/> that represents the renderer.</returns>
     protected abstract IRenderer CreateRenderer();
 
+    /// <summary>
+    /// Called between <see cref="IWindow.Initialize"/> and <see cref="IWindow.Create"/> to
+    /// configure the window for the chosen graphics API (e.g. call <see cref="SDLWindow.SetGraphicsApi"/>).
+    /// Override in platform-specific hosts. Default implementation is nothing to do.
+    /// </summary>
+    protected virtual void PrepareWindowForRenderer(IWindow window) { }
+
     private static readonly SemaphoreSlim host_running_mutex = new SemaphoreSlim(1);
 
     protected virtual void SetupForRun()
@@ -302,6 +309,7 @@ public abstract class AppHost : IDisposable
             };
 
             Window.Initialize();
+            PrepareWindowForRenderer(Window);
             Window.Create();
 
             onFrameLimiterChanged(new ValueChangedEvent<FrameSync>(default, FrameLimiter.Value));
@@ -548,8 +556,16 @@ public abstract class AppHost : IDisposable
     {
         Renderer = CreateRenderer();
         Renderer.ShaderStorage = FrameworkStorage.GetStorageForDirectory("Shaders");
+        InitializeGraphicsContext(Window, Renderer);
         Renderer.Initialize(Window.GraphicsSurface);
     }
+
+    /// <summary>
+    /// Initialises the backend graphics context on the window after the renderer is chosen.
+    /// Called inside <see cref="SetupRenderer"/>. Override to perform backend-specific setup
+    /// (e.g. creating the GL context or Metal surface). Default implementation is a no-op.
+    /// </summary>
+    protected virtual void InitializeGraphicsContext(IWindow window, IRenderer renderer) { }
 
     private void onFrameLimiterChanged(ValueChangedEvent<FrameSync> e)
     {
