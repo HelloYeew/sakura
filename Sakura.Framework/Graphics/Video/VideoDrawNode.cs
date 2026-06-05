@@ -55,9 +55,7 @@ internal class VideoDrawNode : DrawNode
         if (yuvMatrix != null)
             videoShader.SetUniform("u_YuvCoeff", yuvMatrix);
 
-        glRenderer.DisableSrgb();
         glRenderer.DrawVerticesRaw(Vertices);
-        glRenderer.RestoreSrgb();
         renderer.RestoreMainShader();
     }
 }
