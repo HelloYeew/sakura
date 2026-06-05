@@ -83,7 +83,7 @@ FFMPEG_FLAGS+=(
     --nm="$bin_path/llvm-nm"
     --ranlib="$bin_path/llvm-ranlib"
     --strip="$bin_path/llvm-strip"
-    --x86asmexe="$bin_path/yasm"
+    --x86asmexe="nasm"
     --extra-cflags="-fstrict-aliasing -fPIC -DANDROID -D__ANDROID__ $cflags"
 
     $asm_options
