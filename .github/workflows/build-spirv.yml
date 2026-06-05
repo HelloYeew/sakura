@@ -85,9 +85,9 @@ jobs:
         shell: bash
         run: |
           if [ "$RUNNER_OS" == "Windows" ]; then
-            ./ext/sync-shaderc.cmd
+            cmd /c ext\\sync-shaderc.cmd
           else
-            ./ext/sync-shaderc.sh
+            bash ext/sync-shaderc.sh
           fi
 
       - name: Build ${{ matrix.build_target }} native library
@@ -95,16 +95,17 @@ jobs:
         shell: bash
         run: |
           if [ "$RUNNER_OS" == "Windows" ]; then
-            ./build-native.cmd ${{ matrix.build_args }}
+            cmd /c build-native.cmd ${{ matrix.build_args }}
           else
-            ./build-native.sh ${{ matrix.build_args }}
+            bash build-native.sh ${{ matrix.build_args }}
           fi
 
       - name: Compress iOS framework for upload
         if: ${{ matrix.build_target == 'ios' }}
         working-directory: Sakura.Framework.SPIRV
+        shell: bash
         run: |
-          cp -r build/Release/ios/sakura-spirv.xcframework ./
+          cp -r build/Release/ios/sakura-spirv.xcframework .
           zip -r build/Release/ios/sakura-spirv.xcframework.zip sakura-spirv.xcframework
 
       - name: Upload ${{ matrix.build_target }} artifact

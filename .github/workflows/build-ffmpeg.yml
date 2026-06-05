@@ -156,7 +156,7 @@ jobs:
         run: bash Sakura.Framework.NativeLibraries/script/ffmpeg/build-android.sh
         env:
           arch: ${{ matrix.arch }}
-          ANDROID_NDK_ROOT: ${{ env.ANDROID_NDK_ROOT }}
+          ANDROID_NDK_ROOT: ${{ env.ANDROID_NDK }}
 
       - name: Upload
         uses: actions/upload-artifact@v4
