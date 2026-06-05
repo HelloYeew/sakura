@@ -28,6 +28,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Sakura.Framework.SourceGenerators\Sakura.Framework.SourceGenerators.csproj" ReferenceOutputAssembly="false" OutputItemType="Analyzer" />
+    <ProjectReference Include="..\Sakura.Framework.SPIRV\Sakura.Framework.SPIRV.csproj" />
   </ItemGroup>
   <ItemGroup>
     <None Include="runtimes\**\native\*">

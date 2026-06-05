@@ -32,6 +32,36 @@ jobs:
           name: macOS-${{ matrix.arch }}
           path: macOS-${{ matrix.arch }}
 
+  build-ios:
+    name: Build iOS
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, simulator-arm64, simulator-x86_64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install gas-preprocessor
+        run: |
+          brew install nasm
+          curl -L https://raw.githubusercontent.com/FFmpeg/gas-preprocessor/master/gas-preprocessor.pl \
+            -o /usr/local/bin/gas-preprocessor.pl
+          chmod +x /usr/local/bin/gas-preprocessor.pl
+
+      - name: Build
+        run: bash Sakura.Framework.NativeLibraries/script/ffmpeg/build-iOS.sh
+        env:
+          arch: ${{ matrix.arch }}
+          GAS_PREPROCESSOR: /usr/local/bin/gas-preprocessor.pl
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: iOS-${{ matrix.arch }}
+          path: iOS-${{ matrix.arch }}
+
   build-win:
     name: Build Windows
     runs-on: ubuntu-22.04
@@ -85,7 +115,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [ x64, arm64 ]
+        arch: [x64, arm64]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -106,37 +136,51 @@ jobs:
           name: linux-${{ matrix.arch }}
           path: linux-${{ matrix.arch }}
 
-  deploy-pr:
-    name: Combine and Create PR
-    runs-on: macos-latest
-    needs: [build-macos, build-win, build-win-arm64, build-linux]
+  build-android:
+    name: Build Android
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [armeabi-v7a, arm64-v8a, x86, x86_64]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Download all artifacts
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install nasm
+
+      - name: Build
+        run: bash Sakura.Framework.NativeLibraries/script/ffmpeg/build-android.sh
+        env:
+          arch: ${{ matrix.arch }}
+          ANDROID_NDK_ROOT: ${{ env.ANDROID_NDK_ROOT }}
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-${{ matrix.arch }}
+          path: android-${{ matrix.arch }}
+
+  deploy-pr:
+    name: Combine and Create PR
+    runs-on: macos-latest
+    needs: [build-macos, build-ios, build-win, build-win-arm64, build-linux, build-android]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
 
       - name: Process and Distribute Binaries
         run: |
-          # 1. Combine macOS binaries into Universal dylibs
-          mkdir -p macOS-universal
-          for f in artifacts/macOS-arm64/*.dylib; do
-              filename=$(basename "$f")
-              if [ -f "artifacts/macOS-x86_64/$filename" ]; then
-                  lipo -create -output "macOS-universal/$filename" "$f" "artifacts/macOS-x86_64/$filename"
-              else
-                  cp "$f" "macOS-universal/$filename"
-              fi
-          done
-
-          # 2. Define our two target base directories
           TARGET_A="Sakura.Framework/runtimes"
           TARGET_B="Sakura.Framework.NativeLibraries/runtimes"
 
-          # 3. Helper function to copy to both destinations
           distribute() {
             local src=$1
             local dest=$2
@@ -146,13 +190,56 @@ jobs:
             cp -a "$src/." "$TARGET_B/$dest/native/"
           }
 
-          # 4. Route all binaries to their respective architecture folders
+          # macOS universal
+          mkdir -p macOS-universal
+          for f in artifacts/macOS-arm64/*.dylib; do
+              filename=$(basename "$f")
+              if [ -f "artifacts/macOS-x86_64/$filename" ]; then
+                  lipo -create -output "macOS-universal/$filename" "$f" "artifacts/macOS-x86_64/$filename"
+              else
+                  cp "$f" "macOS-universal/$filename"
+              fi
+          done
           distribute "macOS-universal" "osx"
+
+          # iOS — combine simulator archs then create xcframeworks
+          platform=iOS bash Sakura.Framework.NativeLibraries/script/ffmpeg/combine_dylibs.sh
+
+          # Create simulator-universal from arm64 + x86_64 simulators
+          mkdir -p iOS-simulator-universal
+          for f in artifacts/iOS-simulator-arm64/*.dylib; do
+              filename=$(basename "$f")
+              if [ -f "artifacts/iOS-simulator-x86_64/$filename" ]; then
+                  lipo -create -output "iOS-simulator-universal/$filename" \
+                    "$f" "artifacts/iOS-simulator-x86_64/$filename"
+              else
+                  cp "$f" "iOS-simulator-universal/$filename"
+              fi
+          done
+
+          # Stage iOS artifacts for xcframework creation
+          cp -r artifacts/iOS-arm64 iOS-arm64
+          cp -r iOS-simulator-universal iOS-simulator-universal
+
+          bash Sakura.Framework.NativeLibraries/script/ffmpeg/create-xcframeworks.sh
+
+          mkdir -p "$TARGET_A/ios/native"
+          mkdir -p "$TARGET_B/ios/native"
+          cp -r iOS-xcframework/. "$TARGET_A/ios/native/"
+          cp -r iOS-xcframework/. "$TARGET_B/ios/native/"
+
+          # Desktop
           distribute "artifacts/linux-x64" "linux-x64"
           distribute "artifacts/linux-arm64" "linux-arm64"
           distribute "artifacts/win-x64" "win-x64"
           distribute "artifacts/win-x86" "win-x86"
           distribute "artifacts/win-arm64" "win-arm64"
+
+          # Android
+          distribute "artifacts/android-armeabi-v7a" "android-arm"
+          distribute "artifacts/android-arm64-v8a" "android-arm64"
+          distribute "artifacts/android-x86" "android-x86"
+          distribute "artifacts/android-x86_64" "android-x64"
 
       - name: Commit and Push to Repository
         run: |
@@ -168,6 +255,5 @@ jobs:
             echo "No changes in native libraries detected. Skipping push."
           else
             git commit -m "Update Native FFmpeg Binaries" -m "Co-authored-by: HelloYeew <68165621+HelloYeew@users.noreply.github.com>"
-
             git push --force origin update-ffmpeg-binaries
           fi
