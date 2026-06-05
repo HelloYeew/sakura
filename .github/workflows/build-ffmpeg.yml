@@ -158,14 +158,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install nasm
 
-      - name: Setup Android NDK
-        uses: android-actions/setup-android@v4
+      - name: Set ANDROID_NDK_ROOT
+        run: |
+          NDK_PATH=$(ls -d ${ANDROID_SDK_ROOT}/ndk/* 2>/dev/null | sort -V | tail -1)
+          echo "ANDROID_NDK_ROOT=$NDK_PATH" >> $GITHUB_ENV
 
       - name: Build
         run: bash Sakura.Framework.NativeLibraries/script/ffmpeg/build-android.sh
         env:
           arch: ${{ matrix.arch }}
-          ANDROID_NDK_ROOT: ${{ env.ANDROID_NDK_ROOT }}
 
       - name: Upload
         uses: actions/upload-artifact@v4
