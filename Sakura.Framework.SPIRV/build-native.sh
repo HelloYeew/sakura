@@ -70,13 +70,26 @@ if [[ $_OSDir == android-* ]]; then
     fi
 
     cmake ../../.. \
-        -DCMAKE_BUILD_TYPE=$_CMakeBuildType \
+        -DCMAKE_BUILD_TYPE=MinSizeRel \
         -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake" \
         -DANDROID_ABI="$_AndroidABI" \
         -DANDROID_PLATFORM=android-21 \
+        -DANDROID_STL=c++_shared \
+        -DCMAKE_C_FLAGS_MINSIZEREL="-Os -DNDEBUG" \
+        -DCMAKE_CXX_FLAGS_MINSIZEREL="-Os -DNDEBUG" \
+        -DCMAKE_SHARED_LINKER_FLAGS="-Wl,--strip-all" \
+        -DSHADERC_SKIP_TESTS=ON \
+        -DSHADERC_SKIP_INSTALL=ON \
+        -DENABLE_GLSLANG_BINARIES=OFF \
         -DPYTHON_EXECUTABLE=$_PythonExePath -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
     cmake --build . --target $_CMakeBuildTarget
+
+    # Strip debug symbols from the output binary
+    STRIP="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+    if [ -f "$STRIP" ]; then
+        find . -name "libsakura-spirv.so" -exec "$STRIP" --strip-unneeded {} \;
+    fi
 
 elif [[ $_OSDir == "ios" ]]; then
     mkdir -p device-build
