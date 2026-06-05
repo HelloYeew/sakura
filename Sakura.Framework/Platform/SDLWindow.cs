@@ -258,8 +258,6 @@ public class SDLWindow : IWindow
         currentHeight = h;
 
         Logger.Verbose("SDL window created successfully");
-
-        Resized.Invoke(logicalWidth, logicalHeight);
     }
 
     /// <summary>
