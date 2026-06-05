@@ -1,5 +1,7 @@
-cmake_minimum_required (VERSION 3.0)
+cmake_minimum_required (VERSION 3.5)
 cmake_policy(SET CMP0057 NEW)
+
+project(sakura-spirv)
 
 set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Minimum OS X deployment version")
 
@@ -21,8 +23,6 @@ include_directories(ext/SPIRV-Cross/include)
 include_directories(ext/shaderc/libshaderc/include/shaderc)
 
 file(GLOB_RECURSE LIBSAKURA_SPIRV_SOURCES src/libsakura-spirv/*.cpp src/libsakura-spirv/*.hpp)
-
-project(sakura-spirv)
 
 set(LIBRARY_TYPE SHARED)
 message( "Configured to build a shared library." )
