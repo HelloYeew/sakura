@@ -74,7 +74,7 @@ if [[ $_OSDir == android-* ]]; then
         -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake" \
         -DANDROID_ABI="$_AndroidABI" \
         -DANDROID_PLATFORM=android-21 \
-        -DPYTHON_EXECUTABLE=$_PythonExePath
+        -DPYTHON_EXECUTABLE=$_PythonExePath -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
     cmake --build . --target $_CMakeBuildTarget
 
@@ -82,7 +82,7 @@ elif [[ $_OSDir == "ios" ]]; then
     mkdir -p device-build
     pushd device-build
 
-    cmake ../../../.. -DIOS=ON -DCMAKE_BUILD_TYPE=$_CMakeBuildType $_CMakeGenerator -DPLATFORM=OS64 -DDEPLOYMENT_TARGET=13.4 $_CMakeEnableBitcode -DPYTHON_EXECUTABLE=$_PythonExePath -DCMAKE_OSX_ARCHITECTURES="$_CMakeOsxArchitectures"
+    cmake ../../../.. -DIOS=ON -DCMAKE_BUILD_TYPE=$_CMakeBuildType $_CMakeGenerator -DPLATFORM=OS64 -DDEPLOYMENT_TARGET=13.4 $_CMakeEnableBitcode -DPYTHON_EXECUTABLE=$_PythonExePath -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_OSX_ARCHITECTURES="$_CMakeOsxArchitectures"
     cmake --build . --target $_CMakeBuildTarget $_CMakeExtraBuildArgs
 
     popd
@@ -90,7 +90,7 @@ elif [[ $_OSDir == "ios" ]]; then
     mkdir -p simulator-build-arm64
     pushd simulator-build-arm64
 
-    cmake ../../../.. -DIOS=ON -DCMAKE_BUILD_TYPE=$_CMakeBuildType $_CMakeGenerator -DPLATFORM=SIMULATORARM64 -DDEPLOYMENT_TARGET=13.4 $_CMakeEnableBitcode -DPYTHON_EXECUTABLE=$_PythonExePath -DCMAKE_OSX_ARCHITECTURES="$_CMakeOsxArchitectures"
+    cmake ../../../.. -DIOS=ON -DCMAKE_BUILD_TYPE=$_CMakeBuildType $_CMakeGenerator -DPLATFORM=SIMULATORARM64 -DDEPLOYMENT_TARGET=13.4 $_CMakeEnableBitcode -DPYTHON_EXECUTABLE=$_PythonExePath -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_OSX_ARCHITECTURES="$_CMakeOsxArchitectures"
     cmake --build . --target $_CMakeBuildTarget $_CMakeExtraBuildArgs
 
     popd
@@ -98,7 +98,7 @@ elif [[ $_OSDir == "ios" ]]; then
     mkdir -p simulator-build-x64
     pushd simulator-build-x64
 
-    cmake ../../../.. -DIOS=ON -DCMAKE_BUILD_TYPE=$_CMakeBuildType $_CMakeGenerator -DPLATFORM=SIMULATOR64 -DDEPLOYMENT_TARGET=13.4 $_CMakeEnableBitcode -DPYTHON_EXECUTABLE=$_PythonExePath -DCMAKE_OSX_ARCHITECTURES="$_CMakeOsxArchitectures"
+    cmake ../../../.. -DIOS=ON -DCMAKE_BUILD_TYPE=$_CMakeBuildType $_CMakeGenerator -DPLATFORM=SIMULATOR64 -DDEPLOYMENT_TARGET=13.4 $_CMakeEnableBitcode -DPYTHON_EXECUTABLE=$_PythonExePath -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_OSX_ARCHITECTURES="$_CMakeOsxArchitectures"
     cmake --build . --target $_CMakeBuildTarget $_CMakeExtraBuildArgs
 
     popd
@@ -118,7 +118,7 @@ elif [[ $_OSDir == "ios" ]]; then
 	    -output ./sakura-spirv.xcframework
 else
     # macOS / Linux
-    cmake ../../.. -DCMAKE_BUILD_TYPE=$_CMakeBuildType $_CMakeGenerator $_CMakeEnableBitcode -DPYTHON_EXECUTABLE=$_PythonExePath -DCMAKE_OSX_ARCHITECTURES="$_CMakeOsxArchitectures"
+    cmake ../../.. -DCMAKE_BUILD_TYPE=$_CMakeBuildType $_CMakeGenerator $_CMakeEnableBitcode -DPYTHON_EXECUTABLE=$_PythonExePath -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_OSX_ARCHITECTURES="$_CMakeOsxArchitectures"
     cmake --build . --target $_CMakeBuildTarget $_CMakeExtraBuildArgs
 fi
 
