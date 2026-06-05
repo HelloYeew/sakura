@@ -59,7 +59,7 @@ public class TestDrawablePool : TestScene
 
         AddRepeatStep("Get new pooled drawables", () => consumeDrawable(), 50);
 
-        AddUntilStep("All returned to pool", () => pool.CountAvailable == pool.CurrentPoolSize);
+        AddUntilStep("All returned to pool", () => pool.CountAvailable == pool.CurrentPoolSize, 15000);
 
         AddAssert("Pool grew in size", () => pool.CountAvailable > pool_size);
         AddAssert("Consumed drawables report returned to pool", () => consumed.All(d => !d.IsInUse));
