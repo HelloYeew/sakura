@@ -8,12 +8,14 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using System.Threading;
+using Sakura.Framework.Configurations;
 using Sakura.Framework.Input;
 using Silk.NET.OpenGL;
 using Silk.NET.SDL;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Reactive;
+using Silk.NET.Maths;
 using SilkMouseButtonEvent = Silk.NET.SDL.MouseButtonEvent;
 using SakuraCursorState = Sakura.Framework.Input.CursorState;
 using SakuraMouseButtonEvent = Sakura.Framework.Input.MouseButtonEvent;
@@ -37,6 +39,8 @@ public class SDLWindow : IWindow
     private IGraphicsSurface activeSurface;
 
     private RendererType graphicsApi = RendererType.OpenGL;
+
+    private FrameworkConfigManager windowConfig;
 
     private readonly MouseState mouseState = new MouseState();
 
@@ -89,6 +93,18 @@ public class SDLWindow : IWindow
 
     public bool CursorInWindow { get; private set; }
     public IGraphicsSurface GraphicsSurface => activeSurface;
+
+    /// <summary>
+    /// Provides the config manager so the window can persist and restore its position, size and mode.
+    /// Must be called before <see cref="Create()"/>.
+    /// </summary>
+    public void SetWindowConfig(FrameworkConfigManager config)
+    {
+        windowConfig = config;
+
+        var savedMode = config.Get<WindowMode>(FrameworkSetting.WindowMode).Value;
+        WindowModeReactive.Value = savedMode;
+    }
 
     /// <summary>
     /// Must be called by <see cref="AppHost"/> before <see cref="Create()"/> to configure
@@ -226,12 +242,43 @@ public class SDLWindow : IWindow
                 break;
         }
 
+        int spawnX = Sdl.WindowposCentered;
+        int spawnY = Sdl.WindowposCentered;
+        int spawnW = 800;
+        int spawnH = 600;
+
+        if (windowConfig != null && windowMode == WindowMode.Windowed)
+        {
+            int savedX = windowConfig.Get<int>(FrameworkSetting.WindowX).Value;
+            int savedY = windowConfig.Get<int>(FrameworkSetting.WindowY).Value;
+            int savedW = windowConfig.Get<int>(FrameworkSetting.WindowWidth).Value;
+            int savedH = windowConfig.Get<int>(FrameworkSetting.WindowHeight).Value;
+
+            if (savedX != -1 && savedY != -1 && isPositionOnConnectedDisplay(savedX, savedY))
+            {
+                spawnX = savedX;
+                spawnY = savedY;
+            }
+            else if (savedX != -1 && savedY != -1)
+            {
+                // fallback to center if the saved position is invalid (e.g. monitor was disconnected)
+                Logger.Warning($"Saved window position ({savedX},{savedY}) is not on any connected display. Resetting to center.");
+                windowConfig.Get<int>(FrameworkSetting.WindowX).Value = -1;
+                windowConfig.Get<int>(FrameworkSetting.WindowY).Value = -1;
+            }
+            if (savedW > 0 && savedH > 0)
+            {
+                spawnW = savedW;
+                spawnH = savedH;
+            }
+        }
+
         window = sdl.CreateWindow(
             title,
-            Sdl.WindowposCentered,
-            Sdl.WindowposCentered,
-            800,
-            600,
+            spawnX,
+            spawnY,
+            spawnW,
+            spawnH,
             (uint)windowFlags
         );
 
@@ -410,6 +457,16 @@ public class SDLWindow : IWindow
         windowMode = newMode;
         WindowModeReactive.Value = newMode;
 
+        if (windowConfig != null)
+        {
+            windowConfig.Get<WindowMode>(FrameworkSetting.WindowMode).Value = newMode;
+        }
+        else
+        {
+            Logger.Warning("windowConfig is null — WindowMode change will not be persisted.");
+        }
+
+
         if (window == null) return;
 
         switch (newMode)
@@ -417,7 +474,26 @@ public class SDLWindow : IWindow
             case WindowMode.Windowed:
                 sdl.SetWindowFullscreen(window, 0);
                 sdl.SetWindowBordered(window, SdlBool.True);
-                sdl.SetWindowPosition(window, Sdl.WindowposCentered, Sdl.WindowposCentered);
+
+                if (windowConfig != null)
+                {
+                    int savedX = windowConfig.Get<int>(FrameworkSetting.WindowX).Value;
+                    int savedY = windowConfig.Get<int>(FrameworkSetting.WindowY).Value;
+                    int savedW = windowConfig.Get<int>(FrameworkSetting.WindowWidth).Value;
+                    int savedH = windowConfig.Get<int>(FrameworkSetting.WindowHeight).Value;
+
+                    if (savedW > 0 && savedH > 0)
+                        sdl.SetWindowSize(window, savedW, savedH);
+
+                    if (savedX != -1 && savedY != -1 && isPositionOnConnectedDisplay(savedX, savedY))
+                        sdl.SetWindowPosition(window, savedX, savedY);
+                    else
+                        sdl.SetWindowPosition(window, Sdl.WindowposCentered, Sdl.WindowposCentered);
+                }
+                else
+                {
+                    sdl.SetWindowPosition(window, Sdl.WindowposCentered, Sdl.WindowposCentered);
+                }
                 break;
 
             case WindowMode.Borderless:
@@ -563,7 +639,24 @@ public class SDLWindow : IWindow
                 logicalWidth = windowWidth;
                 logicalHeight = windowHeight;
                 Logger.Verbose($"Window resized to {drawableWidth}x{drawableHeight} (logical size: {windowWidth}x{windowHeight})");
+
+                if (windowConfig != null && windowMode == WindowMode.Windowed)
+                {
+                    windowConfig.Get<int>(FrameworkSetting.WindowWidth).Value = windowWidth;
+                    windowConfig.Get<int>(FrameworkSetting.WindowHeight).Value = windowHeight;
+                }
+
                 Resized.Invoke(logicalWidth, logicalHeight);
+                break;
+
+            case WindowEventID.Moved:
+                if (windowConfig != null && windowMode == WindowMode.Windowed)
+                {
+                    int posX, posY;
+                    sdl.GetWindowPosition(window, &posX, &posY);
+                    windowConfig.Get<int>(FrameworkSetting.WindowX).Value = posX;
+                    windowConfig.Get<int>(FrameworkSetting.WindowY).Value = posY;
+                }
                 break;
 
             case WindowEventID.Enter:
@@ -680,6 +773,33 @@ public class SDLWindow : IWindow
         sdl.SetClipboardText(text);
     }
 
+    /// <summary>
+    /// Returns true if the given screen position falls within the bounds of any connected display.
+    /// Used to detect whether a saved window position is still valid after monitor changes.
+    /// </summary>
+    private static bool isPositionOnConnectedDisplay(int x, int y)
+    {
+        int numDisplays = sdl.GetNumVideoDisplays();
+
+        for (int i = 0; i < numDisplays; i++)
+        {
+            Rectangle<int> bounds = default;
+            if (sdl.GetDisplayBounds(i, ref bounds) != 0)
+                continue;
+
+            // Check if the position is within this display's bounds.
+            // Use a small margin (at least 64px of the title bar must be visible).
+            const int margin = 64;
+            if (x >= bounds.Origin.X - margin &&
+                x < bounds.Origin.X + bounds.Size.X &&
+                y >= bounds.Origin.Y - margin &&
+                y < bounds.Origin.Y + bounds.Size.Y)
+                return true;
+        }
+
+        return false;
+    }
+
     private unsafe int getDisplayRefreshRate()
     {
         DisplayMode mode = new DisplayMode();
@@ -755,7 +875,7 @@ public class SDLWindow : IWindow
     public void MakeCurrent()
     {
         if (graphicsApi != RendererType.Metal)
-            glSurface.MakeCurrent?.Invoke();
+            glSurface.MakeCurrent();
     }
 
     /// <summary>
@@ -766,7 +886,7 @@ public class SDLWindow : IWindow
     public void ClearCurrent()
     {
         if (graphicsApi != RendererType.Metal)
-            glSurface.ClearCurrent?.Invoke();
+            glSurface.ClearCurrent();
     }
 
     /// <summary>

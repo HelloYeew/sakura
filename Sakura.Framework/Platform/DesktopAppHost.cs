@@ -112,7 +112,10 @@ public class DesktopAppHost : AppHost
     protected override void PrepareWindowForRenderer(IWindow window)
     {
         if (window is SDLWindow sdlWindow)
+        {
             sdlWindow.SetGraphicsApi(selectedRendererType);
+            sdlWindow.SetWindowConfig(FrameworkConfigManager);
+        }
     }
 
     /// <summary>

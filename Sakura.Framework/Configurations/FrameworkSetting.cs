@@ -14,5 +14,9 @@ public enum FrameworkSetting
     WindowMode,
     ExecutionMode,
     HardwareAcceleration,
-    RendererType
+    RendererType,
+    WindowX,
+    WindowY,
+    WindowWidth,
+    WindowHeight
 }
