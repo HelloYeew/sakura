@@ -38,6 +38,7 @@ public class FpsGraph : Container, IRemoveFromDrawVisualiser
     private SpriteText limiterText;
     private SpriteText windowModeText;
     private SpriteText executionModeText;
+    private SpriteText rendererText;
 
     private FontUsage graphFontUsage = FontUsage.Default.With(size: 14);
     private FontUsage boldGraphFontUsage = FontUsage.Default.With(size: 14, weight: "Bold");
@@ -183,6 +184,36 @@ public class FpsGraph : Container, IRemoveFromDrawVisualiser
                                     Text = "N/A"
                                 }
                             }
+                        },
+                        new FlowContainer()
+                        {
+                            Anchor = Anchor.TopLeft,
+                            Origin = Anchor.TopLeft,
+                            Direction = FlowDirection.Horizontal,
+                            Size = new Vector2(1, 20),
+                            RelativeSizeAxes = Axes.X,
+                            Spacing = new Vector2(10, 0),
+                            Children = new Drawable[]
+                            {
+                                new SpriteText()
+                                {
+                                    Anchor = Anchor.TopLeft,
+                                    Origin = Anchor.TopLeft,
+                                    Size = new Vector2(200, 10),
+                                    Color = Color.White,
+                                    Font = boldGraphFontUsage,
+                                    Text = "Renderer"
+                                },
+                                rendererText = new SpriteText()
+                                {
+                                    Anchor = Anchor.TopLeft,
+                                    Origin = Anchor.TopLeft,
+                                    Size = new Vector2(200, 10),
+                                    Color = Color.White,
+                                    Font = graphFontUsage,
+                                    Text = "N/A"
+                                }
+                            }
                         }
                     }
                 }
@@ -203,6 +234,17 @@ public class FpsGraph : Container, IRemoveFromDrawVisualiser
         updateState(state.Value);
     }
 
+    private string getRendererText()
+    {
+        var configured = host.FrameworkConfigManager.Get<RendererType>(FrameworkSetting.RendererType).Value;
+        string actual = host.Renderer?.GetType().Name ?? "None";
+
+        if (actual.EndsWith("Renderer"))
+            actual = actual[..^"Renderer".Length];
+
+        return configured == RendererType.Automatic ? $"Automatic ({actual})" : actual;
+    }
+
     public override void LoadComplete()
     {
         base.LoadComplete();
@@ -210,6 +252,7 @@ public class FpsGraph : Container, IRemoveFromDrawVisualiser
         windowModeText.Text = $"{host.Window?.WindowModeReactive.Value} ({host.Window?.Width}x{host.Window?.Height})";
         executionModeText.Text = $"{host.ExecutionMode.Value}";
         limiterText.Text = $"{host.FrameLimiter.Value}";
+        rendererText.Text = getRendererText();
 
         host.FrameLimiter.ValueChanged += value =>
         {
