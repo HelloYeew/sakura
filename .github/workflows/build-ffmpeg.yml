@@ -212,10 +212,10 @@ jobs:
           done
           distribute "macOS-universal" "osx"
 
-          # iOS — combine simulator archs then create xcframeworks
-          platform=iOS bash Sakura.Framework.NativeLibraries/script/ffmpeg/combine_dylibs.sh
+          # Stage iOS device slice
+          cp -r artifacts/iOS-arm64 iOS-arm64
 
-          # Create simulator-universal from arm64 + x86_64 simulators
+          # Combine iOS simulator slices (arm64 + x86_64) into universal
           mkdir -p iOS-simulator-universal
           for f in artifacts/iOS-simulator-arm64/*.dylib; do
               filename=$(basename "$f")
@@ -227,10 +227,7 @@ jobs:
               fi
           done
 
-          # Stage iOS artifacts for xcframework creation
-          cp -r artifacts/iOS-arm64 iOS-arm64
-          cp -r iOS-simulator-universal iOS-simulator-universal
-
+          # Create xcframeworks from device + simulator-universal slices
           bash Sakura.Framework.NativeLibraries/script/ffmpeg/create-xcframeworks.sh
 
           mkdir -p "$TARGET_A/ios/native"

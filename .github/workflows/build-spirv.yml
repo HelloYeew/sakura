@@ -80,25 +80,29 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Sync shaderc
+      - name: Sync shaderc (Windows)
+        working-directory: Sakura.Framework.SPIRV
+        shell: cmd
+        run: ext\sync-shaderc.cmd
+        if: runner.os == 'Windows'
+
+      - name: Sync shaderc (non-Windows)
         working-directory: Sakura.Framework.SPIRV
         shell: bash
-        run: |
-          if [ "$RUNNER_OS" == "Windows" ]; then
-            cmd /c ext\\sync-shaderc.cmd
-          else
-            bash ext/sync-shaderc.sh
-          fi
+        run: bash ext/sync-shaderc.sh
+        if: runner.os != 'Windows'
 
       - name: Build ${{ matrix.build_target }} native library
         working-directory: Sakura.Framework.SPIRV
+        shell: cmd
+        run: build-native.cmd ${{ matrix.build_args }}
+        if: runner.os == 'Windows'
+
+      - name: Build ${{ matrix.build_target }} native library (non-Windows)
+        working-directory: Sakura.Framework.SPIRV
         shell: bash
-        run: |
-          if [ "$RUNNER_OS" == "Windows" ]; then
-            cmd /c build-native.cmd ${{ matrix.build_args }}
-          else
-            bash build-native.sh ${{ matrix.build_args }}
-          fi
+        run: bash build-native.sh ${{ matrix.build_args }}
+        if: runner.os != 'Windows'
 
       - name: Compress iOS framework for upload
         if: ${{ matrix.build_target == 'ios' }}
