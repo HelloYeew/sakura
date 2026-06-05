@@ -106,8 +106,16 @@ public class SDLWindow : IWindow
                 break;
 
             default:
+                // OpenGL
                 windowFlags |= WindowFlags.Opengl;
                 activeSurface = glSurface;
+
+                // SDL requires GL attributes to be set before SDL_CreateWindow.
+                sdl.GLSetAttribute(GLattr.ContextMajorVersion, 3);
+                sdl.GLSetAttribute(GLattr.ContextMinorVersion, 3);
+                sdl.GLSetAttribute(GLattr.ContextFlags, (int)ContextFlagMask.ForwardCompatibleBit);
+                sdl.GLSetAttribute(GLattr.ContextProfileMask, (int)GLprofile.Core);
+                sdl.GLSetAttribute(GLattr.FramebufferSrgbCapable, 1);
                 break;
         }
     }
@@ -260,13 +268,6 @@ public class SDLWindow : IWindow
     /// </summary>
     public unsafe void InitializeGLContext()
     {
-        // Set required OpenGL attributes before context creation.
-        sdl.GLSetAttribute(GLattr.ContextMajorVersion, 3);
-        sdl.GLSetAttribute(GLattr.ContextMinorVersion, 3);
-        sdl.GLSetAttribute(GLattr.ContextFlags, (int)ContextFlagMask.ForwardCompatibleBit);
-        sdl.GLSetAttribute(GLattr.ContextProfileMask, (int)GLprofile.Core);
-        sdl.GLSetAttribute(GLattr.FramebufferSrgbCapable, 1);
-
         glContext = sdl.GLCreateContext(window);
         if (glContext == null)
         {
