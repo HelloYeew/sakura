@@ -75,7 +75,7 @@ jobs:
 
     name: ${{ matrix.build_target }} Native Build
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           submodules: recursive
@@ -119,7 +119,7 @@ jobs:
           zip -r build/Release/ios/sakura-spirv.xcframework.zip sakura-spirv.xcframework
 
       - name: Upload ${{ matrix.build_target }} artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.build_target }}
           path: ${{ matrix.artifact_name }}
@@ -130,7 +130,7 @@ jobs:
     runs-on: macos-latest
     needs: native_builds
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/download-artifact@v4
         with:

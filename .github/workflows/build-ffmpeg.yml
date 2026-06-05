@@ -16,7 +16,7 @@ jobs:
         arch: [x86_64, arm64]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install dependencies
         run: brew install nasm
@@ -27,7 +27,7 @@ jobs:
           arch: ${{ matrix.arch }}
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macOS-${{ matrix.arch }}
           path: macOS-${{ matrix.arch }}
@@ -41,7 +41,7 @@ jobs:
         arch: [arm64, simulator-arm64, simulator-x86_64]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install gas-preprocessor
         run: |
@@ -57,7 +57,7 @@ jobs:
           GAS_PREPROCESSOR: /usr/local/bin/gas-preprocessor.pl
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: iOS-${{ matrix.arch }}
           path: iOS-${{ matrix.arch }}
@@ -71,7 +71,7 @@ jobs:
         arch: [x86, x64]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install dependencies
         run: |
@@ -84,7 +84,7 @@ jobs:
           arch: ${{ matrix.arch }}
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: win-${{ matrix.arch }}
           path: win-${{ matrix.arch }}
@@ -96,7 +96,7 @@ jobs:
       image: mstorsjo/llvm-mingw:latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Build
         run: bash Sakura.Framework.NativeLibraries/script/ffmpeg/build-win.sh
@@ -104,7 +104,7 @@ jobs:
           arch: arm64
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: win-arm64
           path: win-arm64
@@ -118,7 +118,7 @@ jobs:
         arch: [x64, arm64]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install dependencies
         run: |
@@ -131,7 +131,7 @@ jobs:
           arch: ${{ matrix.arch }}
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-${{ matrix.arch }}
           path: linux-${{ matrix.arch }}
@@ -145,7 +145,7 @@ jobs:
         arch: [armeabi-v7a, arm64-v8a, x86, x86_64]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -169,7 +169,7 @@ jobs:
           arch: ${{ matrix.arch }}
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: android-${{ matrix.arch }}
           path: android-${{ matrix.arch }}
@@ -180,7 +180,7 @@ jobs:
     needs: [build-macos, build-ios, build-win, build-win-arm64, build-linux, build-android]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - uses: actions/download-artifact@v4
         with:
