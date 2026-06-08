@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup Label="Project">
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -7,12 +7,20 @@
   <PropertyGroup Label="Nuget">
     <IsPackable>true</IsPackable>
     <Title>Sakura Framework Native Libraries</Title>
-    <Description>Native libraries using in Sakura framework</Description>
+    <Description>Native library used by Sakura Framework</Description>
     <PackageId>Sakura.Framework.NativeLibraries</PackageId>
-    <PackageTags>sakura framework native libraries</PackageTags>
+    <Authors>HelloYeew</Authors>
+    <Copyright>Copyright (c) 2026 HelloYeew</Copyright>
+    <PackageTags>sakura framework native libraries ffmpeg bass</PackageTags>
+    <RepositoryUrl>https://github.com/HelloYeew/sakura</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/HelloYeew/sakura</PackageProjectUrl>
+    <PackageIcon>icon.png</PackageIcon>
     <IncludeBuildOutput>false</IncludeBuildOutput>
   </PropertyGroup>
   <ItemGroup>
+    <None Include="..\icon.png" Pack="true" PackagePath="/" />
     <None Include="runtimes\**\native\*">
       <Pack>true</Pack>
       <PackagePath>runtimes</PackagePath>
@@ -23,18 +31,5 @@
       <Pack>true</Pack>
       <PackagePath>lib\$(TargetFramework)</PackagePath>
     </None>
-  </ItemGroup>
-  <ItemGroup>
-    <Content Include="runtimes\.DS_Store" />
-    <Content Include="runtimes\linux-arm64\.DS_Store" />
-    <Content Include="runtimes\linux-arm64\native\.DS_Store" />
-    <Content Include="runtimes\linux-x64\.DS_Store" />
-    <Content Include="runtimes\linux-x64\native\.DS_Store" />
-    <Content Include="runtimes\linux-x86\.DS_Store" />
-    <Content Include="runtimes\win-arm64\.DS_Store" />
-    <Content Include="runtimes\win-x64\.DS_Store" />
-    <Content Include="runtimes\win-x64\native\.DS_Store" />
-    <Content Include="runtimes\win-x86\.DS_Store" />
-    <Content Include="runtimes\win-x86\native\.DS_Store" />
   </ItemGroup>
 </Project>

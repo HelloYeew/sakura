@@ -188,16 +188,13 @@ jobs:
 
       - name: Process and Distribute Binaries
         run: |
-          TARGET_A="Sakura.Framework/runtimes"
-          TARGET_B="Sakura.Framework.NativeLibraries/runtimes"
+          TARGET="Sakura.Framework.NativeLibraries/runtimes"
 
           distribute() {
             local src=$1
             local dest=$2
-            mkdir -p "$TARGET_A/$dest/native"
-            mkdir -p "$TARGET_B/$dest/native"
-            cp -a "$src/." "$TARGET_A/$dest/native/"
-            cp -a "$src/." "$TARGET_B/$dest/native/"
+            mkdir -p "$TARGET/$dest/native"
+            cp -a "$src/." "$TARGET/$dest/native/"
           }
 
           # macOS universal
@@ -230,10 +227,8 @@ jobs:
           # Create xcframeworks from device + simulator-universal slices
           bash Sakura.Framework.NativeLibraries/script/ffmpeg/create-xcframeworks.sh
 
-          mkdir -p "$TARGET_A/ios/native"
-          mkdir -p "$TARGET_B/ios/native"
-          cp -r iOS-xcframework/. "$TARGET_A/ios/native/"
-          cp -r iOS-xcframework/. "$TARGET_B/ios/native/"
+          mkdir -p "$TARGET/ios/native"
+          cp -r iOS-xcframework/. "$TARGET/ios/native/"
 
           # Desktop
           distribute "artifacts/linux-x64" "linux-x64"
@@ -255,7 +250,6 @@ jobs:
 
           git checkout -b update-ffmpeg-binaries
 
-          git add Sakura.Framework/runtimes/
           git add Sakura.Framework.NativeLibraries/runtimes/
 
           if git diff --staged --quiet; then

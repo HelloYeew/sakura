@@ -9,8 +9,16 @@
   <PropertyGroup Label="Nuget">
     <Title>Sakura Framework</Title>
     <PackageId>Sakura.Framework</PackageId>
+    <Description>A cross-platform graphic framework and set of toolkits for making basic UI application and 2D game</Description>
+    <Authors>HelloYeew</Authors>
+    <Copyright>Copyright (c) 2026 HelloYeew</Copyright>
     <PackageReleaseNotes>Automated build</PackageReleaseNotes>
-    <PackageTags>sakura framework</PackageTags>
+    <PackageTags>sakura framework ui game cross-platform opengl sdl</PackageTags>
+    <RepositoryUrl>https://github.com/HelloYeew/sakura</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/HelloYeew/sakura</PackageProjectUrl>
+    <PackageIcon>icon.png</PackageIcon>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="FFmpeg.AutoGen" Version="8.1.0" />
@@ -20,20 +28,18 @@
     <PackageReference Include="ManagedBass" Version="4.0.2" />
     <PackageReference Include="ManagedBass.Fx" Version="4.0.2" />
     <PackageReference Include="ManagedBass.Mix" Version="4.0.2" />
-    <PackageReference Include="NUnit" Version="4.4.0" />
+    <PackageReference Include="Sakura.Framework.NativeLibraries" Version="2026.608.0" />
+    <PackageReference Include="Sakura.Framework.SourceGenerators" Version="2026.608.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
     <PackageReference Include="Sakura.Framework.SPIRV" Version="2026.608.1" />
     <PackageReference Include="Silk.NET.OpenGL" Version="2.22.0" />
     <PackageReference Include="Silk.NET.SDL" Version="2.22.0" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
-    <!-- TODO: PackageReference to NativeLibs when published to NuGet-->
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\Sakura.Framework.SourceGenerators\Sakura.Framework.SourceGenerators.csproj" ReferenceOutputAssembly="false" OutputItemType="Analyzer" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="runtimes\**\native\*">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+    <None Include="..\icon.png" Pack="true" PackagePath="/" />
     <None Remove="SourceGenerated\**" />
   </ItemGroup>
   <PropertyGroup>
