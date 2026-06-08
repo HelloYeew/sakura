@@ -60,16 +60,16 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag framework-${{ steps.version.outputs.version }}
-          git push origin framework-${{ steps.version.outputs.version }}
+          git tag ${{ steps.version.outputs.version }}
+          git push origin ${{ steps.version.outputs.version }}
 
       - name: Create GitHub Release (draft)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create framework-${{ steps.version.outputs.version }} \
+          gh release create ${{ steps.version.outputs.version }} \
             ./nupkg/*.nupkg \
-            --title "Sakura.Framework ${{ steps.version.outputs.version }}" \
+            --title "${{ steps.version.outputs.version }}" \
             --draft \
             --generate-notes
 
