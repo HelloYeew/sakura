@@ -21,6 +21,7 @@
     <PackageReference Include="ManagedBass.Fx" Version="4.0.2" />
     <PackageReference Include="ManagedBass.Mix" Version="4.0.2" />
     <PackageReference Include="NUnit" Version="4.4.0" />
+    <PackageReference Include="Sakura.Framework.SPIRV" Version="2026.608.1" />
     <PackageReference Include="Silk.NET.OpenGL" Version="2.22.0" />
     <PackageReference Include="Silk.NET.SDL" Version="2.22.0" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
@@ -28,7 +29,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Sakura.Framework.SourceGenerators\Sakura.Framework.SourceGenerators.csproj" ReferenceOutputAssembly="false" OutputItemType="Analyzer" />
-    <ProjectReference Include="..\Sakura.Framework.SPIRV\Sakura.Framework.SPIRV.csproj" />
   </ItemGroup>
   <ItemGroup>
     <None Include="runtimes\**\native\*">
