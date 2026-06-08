@@ -22,3 +22,10 @@ if exist "%THIRD_PARTY_CMAKE%" (
     echo Patched %THIRD_PARTY_CMAKE%: GLSLANG_ENABLE_INSTALL set to OFF
 )
 
+:: Fix SPIRV-Tools Xcode build system conflict: guard the shared library target
+set SPIRV_SOURCE_CMAKE=%~dp0shaderc\third_party\spirv-tools\source\CMakeLists.txt
+if exist "%SPIRV_SOURCE_CMAKE%" (
+    python -c "import sys,re; path=r'%SPIRV_SOURCE_CMAKE%'; f=open(path); c=f.read(); f.close(); p=r'(# Always build \$\{SPIRV_TOOLS\}-shared\..*?)\n(if\(SPIRV_TOOLS_BUILD_STATIC\))'; r='if(NOT CMAKE_GENERATOR MATCHES \"Xcode\")\n'+r'\1'+'\nendif() # NOT Xcode generator\n'+r'\2'; nc,n=re.subn(p,r,c,flags=re.DOTALL); open(path,'w').write(nc) if n else None; print(f'Patched {n} occurrences')"
+    echo Patched %SPIRV_SOURCE_CMAKE%: SPIRV-Tools-shared guarded against Xcode generator
+)
+
