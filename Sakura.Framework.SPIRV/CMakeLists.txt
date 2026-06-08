@@ -11,6 +11,13 @@ endif()
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# Force dynamic CRT (/MD) on MSVC for all targets (shaderc, glslang, SPIRV-Tools,
+# and sakura-spirv itself). Without this, new versions of glslang default to /MT,
+# causing a RuntimeLibrary mismatch linker error when linking against the DLL.
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL" CACHE STRING "" FORCE)
+endif()
+
 add_subdirectory(ext/SPIRV-Cross)
 
 set(SHADERC_SKIP_TESTS ON)
