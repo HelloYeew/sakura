@@ -15,3 +15,10 @@ for /f "tokens=* delims=" %%a in (%~dp0shaderc\CMakeLists.tmp) do (
 )
 del %~dp0shaderc\CMakeLists.tmp
 
+:: Fix glslang install flag: replace generator expression with plain OFF
+set THIRD_PARTY_CMAKE=%~dp0shaderc\third_party\CMakeLists.txt
+if exist "%THIRD_PARTY_CMAKE%" (
+    powershell -Command "(Get-Content '%THIRD_PARTY_CMAKE%') -replace 'set\(GLSLANG_ENABLE_INSTALL \$<NOT:\$\{SKIP_GLSLANG_INSTALL\}>\)', 'set(GLSLANG_ENABLE_INSTALL OFF)' | Set-Content '%THIRD_PARTY_CMAKE%'"
+    echo Patched %THIRD_PARTY_CMAKE%: GLSLANG_ENABLE_INSTALL set to OFF
+)
+
