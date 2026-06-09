@@ -27,7 +27,7 @@ namespace Sakura.Framework.Graphics.Drawables;
 /// <summary>
 /// A lowest level of the component hierarchy. All drawable components should be inherited from this class.
 /// </summary>
-public abstract class Drawable
+public abstract partial class Drawable : Allocation.IDependencyInjectionCandidate
 {
     private Container? parent;
 
@@ -794,7 +794,7 @@ public abstract class Drawable
     #region Dependency Injection
 
     private IReadOnlyDependencyContainer dependencies = null!;
-    private DependencyContainer? ownDependencies;
+    private IReadOnlyDependencyContainer? ownDependencies;
 
     /// <summary>
     /// Provides access to this drawable's dependency container.
@@ -811,54 +811,22 @@ public abstract class Drawable
     /// <typeparam name="T">The type of the dependency to cache</typeparam>
     protected void Cache<T>(T instance) where T : class
     {
-        if (ownDependencies == null)
+        if (ownDependencies is not DependencyContainer dc)
             throw new InvalidOperationException($"Cannot cache dependencies before {nameof(Load)} has been called.");
 
-        ownDependencies.Cache(instance);
+        dc.Cache(instance);
     }
 
     private void loadDependencies(IReadOnlyDependencyContainer? overrideParentContainer = null)
     {
         IReadOnlyDependencyContainer? parentContainer = overrideParentContainer ?? getParentDependencyContainer();
-        dependencies = ownDependencies = new DependencyContainer(parentContainer);
 
-        // inject dependencies into [Resolved] fields/properties
-        dependencies.Inject(this);
+        // Build the child container, caching any [Cached] members declared on this drawable.
+        // Uses the source-generated fast path when available, reflection fallback otherwise.
+        dependencies = ownDependencies = DependencyActivator.BuildChildDependencies(this, parentContainer);
 
-        var loadMethod = GetType().GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-            .FirstOrDefault(m => m.GetCustomAttribute<BackgroundDependencyLoaderAttribute>() != null);
-
-        if (loadMethod != null)
-        {
-            // Check if the method has parameters we need to inject
-            var methodParams = loadMethod.GetParameters();
-
-            if (methodParams.Length > 0)
-            {
-                // resolve from main container
-                object?[] resolvedParams = new object?[methodParams.Length];
-
-                // get the generic Get<T> method from the dependency container
-                var getMethod = dependencies.GetType().GetMethod(nameof(IReadOnlyDependencyContainer.Get), BindingFlags.Public | BindingFlags.Instance);
-                if (getMethod == null) throw new InvalidOperationException("Could not find Get method on dependency container.");
-
-                for (int i = 0; i < methodParams.Length; i++)
-                {
-                    // foreach parameter, resolve the dependency using reflection
-                    var paramType = methodParams[i].ParameterType;
-                    var concreteGetMethod = getMethod.MakeGenericMethod(paramType);
-                    resolvedParams[i] = concreteGetMethod.Invoke(dependencies, null);
-                }
-
-                // invoke the method with the resolved dependencies
-                loadMethod.Invoke(this, resolvedParams);
-            }
-            else
-            {
-                // no parameters in load method, invoke as before
-                loadMethod.Invoke(this, null);
-            }
-        }
+        // Inject [Resolved] members and invoke [BackgroundDependencyLoader].
+        DependencyActivator.Inject(this, dependencies);
     }
 
     private IReadOnlyDependencyContainer? getParentDependencyContainer()

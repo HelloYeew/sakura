@@ -15,7 +15,7 @@ using Sakura.Framework.Reactive;
 
 namespace Sakura.Framework.Graphics.UserInterface;
 
-public class BasicTextBox : Container
+public partial class BasicTextBox : Container
 {
     private readonly Box background;
     private readonly Container textContainer;

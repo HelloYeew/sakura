@@ -21,7 +21,7 @@ using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Graphics.Performance;
 
-public class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFromDrawVisualiser
+public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFromDrawVisualiser
 {
     private readonly FlowContainer flowContainer;
     private readonly ScrollableContainer scrollContainer;

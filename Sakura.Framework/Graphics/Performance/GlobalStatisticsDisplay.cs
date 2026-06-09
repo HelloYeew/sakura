@@ -20,7 +20,7 @@ using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Graphics.Performance;
 
-public class GlobalStatisticsDisplay : FocusedOverlayContainer, IRemoveFromDrawVisualiser
+public partial class GlobalStatisticsDisplay : FocusedOverlayContainer, IRemoveFromDrawVisualiser
 {
     private readonly FlowContainer groupsFlow;
     private readonly ScrollableContainer scrollContainer;

@@ -19,7 +19,7 @@ using Sakura.Framework.Platform;
 
 namespace Sakura.Framework.Graphics.Performance;
 
-public class AudioMixerVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisualiser
+public partial class AudioMixerVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisualiser
 {
     private readonly Container contentContainer;
     private readonly ScrollableContainer scrollContainer;
@@ -169,7 +169,7 @@ public class AudioMixerVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisu
     protected override void PopOut() => this.FadeOut(200, Easing.OutQuint);
 }
 
-public class MixerGroupDisplay : FlowContainer
+public partial class MixerGroupDisplay : FlowContainer
 {
     private readonly IAudioMixer mixer;
     private readonly FlowContainer channelsFlow;
@@ -218,7 +218,7 @@ public class MixerGroupDisplay : FlowContainer
     }
 }
 
-public class ChannelLevelDisplay : Container
+public partial class ChannelLevelDisplay : Container
 {
     private readonly IAudioChannel channel;
     private readonly SpriteText nameText;

@@ -16,7 +16,7 @@ namespace Sakura.Framework.Graphics.Cursor;
 
 // TODO: Add IRemoveFromDrawVisualiser to make inspect mode not catch the cursor drawable.
 // The cursor container should also show in the draw visualiser too.
-public class CursorContainer : Container, IRemoveFromDrawVisualiser
+public partial class CursorContainer : Container, IRemoveFromDrawVisualiser
 {
     public Drawable ActiveCursor { get; protected set; }
 

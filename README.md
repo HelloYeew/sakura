@@ -1,5 +1,7 @@
 # 🌸🗡️ Sakura Framework
 
+![NuGet](https://img.shields.io/nuget/v/Sakura.Framework)
+
 A graphic framework and set of toolkits for making basic UI application and 2D game (right now) target to support as many platforms as possible. Backed by .NET.
 
 ## Use this framework
@@ -13,7 +15,6 @@ Some incomplete documentation is in [wiki](https://github.com/HelloYeew/sakura/w
 ## Requirements
 
 - .NET 10.0 SDK
-- CMake 3.x (required to build native SPIRV libraries, don't need if just using pre-built binaries)
 - We recommend to use IDE like [Visual Studio](https://visualstudio.microsoft.com/vs/), [Rider](https://www.jetbrains.com/rider/) or [VS Code](https://code.visualstudio.com/) for development with this framewor
 
 ## Quick start
@@ -30,20 +31,9 @@ dotnet run
 
 Note : `--recurse-submodules` is required to pull the SPIRV-Cross submodule used by `Sakura.Framework.SPIRV`.
 
-## Native libraries
-
-Sakura use two sets of custom built native binaries that are pre-built and committed to the repository:
-
-| Library | Location | Purpose |
-|---|---|---|
-| FFmpeg | `Sakura.Framework/runtimes/` | Video decoding |
-| libsakura-spirv | `Sakura.Framework/runtimes/` | GLSL → SPIR-V → MSL/HLSL/GLSL shader compilation |
-
-These are built by GitHub Actions workflows (`.github/workflows/build-ffmpeg.yml` and `.github/workflows/build-spirv.yml`) and committed via pull request. You do not need to build them yourself for normal development.
-
 ### Building native libraries manually
 
-If you need to rebuild them (e.g. after updating dependencies):
+If you need to rebuild a native library :
 
 **FFmpeg:**
 ```shell
@@ -55,21 +45,6 @@ bash Sakura.Framework.NativeLibraries/script/ffmpeg/build-android.sh
 
 # iOS (requires gas-preprocessor)
 bash Sakura.Framework.NativeLibraries/script/ffmpeg/build-iOS.sh
-```
-
-**libsakura-spirv:**
-```shell
-cd Sakura.Framework.SPIRV
-
-# Sync shaderc dependencies first
-./ext/sync-shaderc.sh # macOS/Linux
-# or
-./ext/sync-shaderc.cmd # Windows
-
-# Build
-./build-native.sh release osx 'arm64;x86_64' # macOS universal
-./build-native.sh release linux-x64 # Linux
-./build-native.cmd release win-x64 # Windows
 ```
 
 ## Contributing
