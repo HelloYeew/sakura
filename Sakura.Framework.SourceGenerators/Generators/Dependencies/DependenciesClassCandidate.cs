@@ -27,6 +27,13 @@ internal sealed class DependenciesClassCandidate
     public string? Namespace { get; set; }
 
     /// <summary>
+    /// Enclosing type names (outermost first) for nested classes, e.g. ["CursorContainer"] for
+    /// CursorContainer.DefaultCursor. Empty for top-level classes.
+    /// Each entry is just the simple name (with type params if generic).
+    /// </summary>
+    public IReadOnlyList<string> EnclosingTypes { get; set; } = new List<string>();
+
+    /// <summary>
     /// True when an ancestor type also implements IDependencyInjectionCandidate,
     /// meaning the generated method should use <c>override</c> instead of <c>virtual</c>
     /// and should call <c>base.RegisterForDependencyActivation(registry)</c>.

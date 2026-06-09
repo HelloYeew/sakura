@@ -74,7 +74,7 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
         if (hasDiAttribute(classSyntax))
             return true;
 
-        // Also accept if it directly names IDependencyInjectionCandidate in its base list.
+        // Accept if it directly names IDependencyInjectionCandidate in its base list.
         // This is a syntax-only check so we just look for the simple name.
         if (classSyntax.BaseList != null)
         {
@@ -85,6 +85,15 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
                     return true;
             }
         }
+
+        // Accept any partial class that has a base class (i.e. base list is non-empty and the
+        // first entry is a class, not just an interface). The semantic transform will filter out
+        // types whose base type does not implement IDependencyInjectionCandidate.
+        // This is necessary so that relay types like `Container : Drawable` — which have no DI
+        // attributes themselves — still get a pass-through override generated, so that subclasses
+        // further down (e.g. `CursorZone : Container`) can safely emit their own override.
+        if (classSyntax.BaseList != null && classSyntax.BaseList.Types.Count > 0)
+            return true;
 
         return false;
     }
@@ -246,11 +255,24 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
         // Skip only if nothing to do at this level and not the chain root and no base to override.
         if (!hasAnything && !baseIsCandidate && !isDirectCandidate)
             return null;
+        // Collect enclosing type names (outermost first) for nested classes.
+        var enclosingTypes = new List<string>();
+        var enclosing = symbol.ContainingType;
+        while (enclosing != null)
+        {
+            string enclosingName = enclosing.Name;
+            if (enclosing.TypeParameters.Length > 0)
+                enclosingName += $"<{string.Join(", ", enclosing.TypeParameters.Select(tp => tp.Name))}>";
+            enclosingTypes.Insert(0, enclosingName);
+            enclosing = enclosing.ContainingType;
+        }
+
         return new DependenciesClassCandidate
         {
             FullyQualifiedName = symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
             ClassName = symbol.Name,
             Namespace = symbol.ContainingNamespace.IsGlobalNamespace ? null : symbol.ContainingNamespace.ToDisplayString(),
+            EnclosingTypes = enclosingTypes,
             BaseTypeIsCandidate = baseIsCandidate,
             TypeParameters = symbol.TypeParameters.Select(tp => tp.Name).ToList(),
             ResolvedMembers = resolvedMembers,
@@ -278,12 +300,20 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
             sb.AppendLine("{");
         }
 
+        string indent = candidate.Namespace != null ? "    " : string.Empty;
+
+        // Open enclosing partial class wrappers (outermost first) for nested classes.
+        foreach (var enclosingName in candidate.EnclosingTypes)
+        {
+            sb.AppendLine($"{indent}partial class {enclosingName}");
+            sb.AppendLine($"{indent}{{");
+            indent += "    ";
+        }
+
         // Build generic type parameter suffix.
         string typeParams = candidate.TypeParameters.Count > 0
             ? $"<{string.Join(", ", candidate.TypeParameters)}>"
             : string.Empty;
-
-        string indent = candidate.Namespace != null ? "    " : string.Empty;
 
         // Class declaration — add ISourceGeneratedDependencyActivator.
         // If the base type is already a candidate it already declared the interface, so we only
@@ -385,6 +415,13 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
         sb.AppendLine($"{memberIndent}}}"); // close RegisterForDependencyActivation
 
         sb.AppendLine($"{indent}}}"); // close class
+
+        // Close enclosing partial class wrappers (innermost first).
+        for (int i = candidate.EnclosingTypes.Count - 1; i >= 0; i--)
+        {
+            indent = indent.Length >= 4 ? indent.Substring(4) : string.Empty;
+            sb.AppendLine($"{indent}}}"); // close enclosing class
+        }
 
         if (candidate.Namespace != null)
             sb.AppendLine("}"); // close namespace
