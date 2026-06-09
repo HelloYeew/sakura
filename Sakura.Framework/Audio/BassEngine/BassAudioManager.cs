@@ -7,6 +7,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 using ManagedBass;
 using ManagedBass.Fx;
 using ManagedBass.Mix;
@@ -22,6 +23,58 @@ namespace Sakura.Framework.Audio.BassEngine;
 /// </summary>
 internal class BassAudioManager : IAudioManager, IDisposable
 {
+    static BassAudioManager()
+    {
+        loadNativeLibraries();
+    }
+
+    /// <summary>
+    /// Pre-loads BASS native DLLs from the runtimes/ folder next to the assembly.
+    /// This is necessary when Sakura.Framework is consumed via a project reference rather
+    /// than a NuGet package, because MSBuild does not copy transitive NuGet native assets
+    /// to the output root in that case.
+    /// </summary>
+    private static void loadNativeLibraries()
+    {
+        string rid = getRid();
+        if (rid == null) return;
+
+        string assemblyDir = Path.GetDirectoryName(typeof(BassAudioManager).Assembly.Location);
+        if (assemblyDir == null) return;
+
+        string nativeDir = Path.Combine(assemblyDir, "runtimes", rid, "native");
+        if (!Directory.Exists(nativeDir)) return;
+
+        string ext = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".dll"
+            : RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? ".dylib"
+            : ".so";
+
+        foreach (string name in new[] { "bass", "bass_fx", "bassmix" })
+        {
+            string path = Path.Combine(nativeDir, name + ext);
+            if (File.Exists(path) && !NativeLibrary.TryLoad(path, out _))
+                Logger.Warning($"[BASS] Failed to pre-load native library: {path}");
+        }
+    }
+
+    private static string getRid()
+    {
+        bool isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+        bool isOsx = RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
+        bool isLinux = RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
+
+        return RuntimeInformation.OSArchitecture switch
+        {
+            Architecture.Arm64 when isWindows => "win-arm64",
+            Architecture.X64 when isWindows => "win-x64",
+            Architecture.X86 when isWindows => "win-x86",
+            Architecture.Arm64 when isOsx => "osx-arm64",
+            Architecture.X64 when isOsx => "osx-x64",
+            Architecture.X64 when isLinux => "linux-x64",
+            Architecture.Arm64 when isLinux => "linux-arm64",
+            _ => null
+        };
+    }
     private readonly List<BassAudioChannel> activeChannels = new List<BassAudioChannel>();
     private readonly ConcurrentQueue<Action> audioThreadActions = new ConcurrentQueue<Action>();
     private readonly SyncProcedure channelEndSync;
