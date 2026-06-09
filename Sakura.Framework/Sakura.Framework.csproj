@@ -61,4 +61,31 @@
   <ItemGroup>
     <EmbeddedResource Remove="SourceGenerated\**" />
   </ItemGroup>
+
+  <!--
+    Copy native libraries from runtimes/<rid>/native/ to the output root so that P/Invoke
+    can find them when this project is consumed via a project reference (not NuGet).
+    NuGet does this automatically; project references do not.
+  -->
+  <Target Name="CopyNativeLibrariesToOutput" AfterTargets="Build">
+    <PropertyGroup>
+      <_NativeRid Condition="$([MSBuild]::IsOSPlatform('Windows')) And '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'Arm64'">win-arm64</_NativeRid>
+      <_NativeRid Condition="$([MSBuild]::IsOSPlatform('Windows')) And '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'X64'">win-x64</_NativeRid>
+      <_NativeRid Condition="$([MSBuild]::IsOSPlatform('Windows')) And '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'X86'">win-x86</_NativeRid>
+      <_NativeRid Condition="$([MSBuild]::IsOSPlatform('OSX')) And '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'Arm64'">osx-arm64</_NativeRid>
+      <_NativeRid Condition="$([MSBuild]::IsOSPlatform('OSX')) And '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'X64'">osx-x64</_NativeRid>
+      <_NativeRid Condition="$([MSBuild]::IsOSPlatform('Linux')) And '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'X64'">linux-x64</_NativeRid>
+      <_NativeRid Condition="$([MSBuild]::IsOSPlatform('Linux')) And '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'Arm64'">linux-arm64</_NativeRid>
+    </PropertyGroup>
+    <ItemGroup Condition="'$(_NativeRid)' != ''">
+      <_NativeFiles Include="$(OutputPath)runtimes\$(_NativeRid)\native\*" />
+    </ItemGroup>
+    <Copy Condition="'$(_NativeRid)' != '' And '@(_NativeFiles)' != ''"
+          SourceFiles="@(_NativeFiles)"
+          DestinationFolder="$(OutputPath)"
+          SkipUnchangedFiles="true" />
+    <Message Condition="'$(_NativeRid)' != '' And '@(_NativeFiles)' != ''"
+             Text="[Sakura] Copied native libraries for $(_NativeRid) to $(OutputPath)"
+             Importance="normal" />
+  </Target>
 </Project>
