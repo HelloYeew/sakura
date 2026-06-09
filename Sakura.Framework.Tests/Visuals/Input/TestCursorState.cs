@@ -14,7 +14,7 @@ using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests.Visuals.Input;
 
-public class TestCursorState : ManualInputManagerTestScene
+public partial class TestCursorState : ManualInputManagerTestScene
 {
     private CursorZone pointerZone;
     private CursorZone textZone;
@@ -102,7 +102,7 @@ public class TestCursorState : ManualInputManagerTestScene
     /// <summary>
     /// A custom container that changes the cursor state when hovered.
     /// </summary>
-    private class CursorZone : Container
+    private partial class CursorZone : Container
     {
         private readonly CursorState targetState;
         private Box background;

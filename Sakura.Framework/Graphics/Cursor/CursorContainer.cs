@@ -99,7 +99,7 @@ public partial class CursorContainer : Container, IRemoveFromDrawVisualiser
         ActiveCursor.Position = localPosition;
     }
 
-    private class DefaultCursor : Container
+    private partial class DefaultCursor : Container
     {
         private readonly IconSprite iconSprite;
 

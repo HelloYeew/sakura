@@ -13,7 +13,7 @@ using Sakura.Framework.Testing;
 namespace Sakura.Framework.Tests.Visuals.UserInterface;
 
 [TestFixture]
-public class TestBasicTextBox : ManualInputManagerTestScene
+public partial class TestBasicTextBox : ManualInputManagerTestScene
 {
     private BasicTextBox textBox;
     private SpriteText valueTrackerText;

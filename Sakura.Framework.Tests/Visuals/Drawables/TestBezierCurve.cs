@@ -13,7 +13,7 @@ using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Tests.Visuals.Drawables;
 
-public class TestBezierCurve : TestScene
+public partial class TestBezierCurve : TestScene
 {
     private BezierCurve curve;
     private Box p0Marker;

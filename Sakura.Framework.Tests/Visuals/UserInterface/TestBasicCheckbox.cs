@@ -12,7 +12,7 @@ using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests.Visuals.UserInterface;
 
-public class TestBasicCheckbox : ManualInputManagerTestScene
+public partial class TestBasicCheckbox : ManualInputManagerTestScene
 {
     private BasicCheckbox checkbox;
     private SpriteText stateText;

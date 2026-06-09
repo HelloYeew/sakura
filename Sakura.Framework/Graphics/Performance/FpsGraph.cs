@@ -297,7 +297,7 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
         }
     }
 
-    private class ThreadStatisticsDisplay : Container
+    private partial class ThreadStatisticsDisplay : Container
     {
         private const int max_history = 240;
         private readonly FrameData[] frameHistory = new FrameData[max_history];
@@ -540,7 +540,7 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
             statsText.Text = $"{fps,4:F0}fps ({meanFrameTime,4:F2}ms ±{jitter,4:F2}ms) {hzText,5}";
         }
 
-        private class ThreadBarGraph : Drawable
+        private partial class ThreadBarGraph : Drawable
         {
             private readonly ThreadStatisticsDisplay display;
 

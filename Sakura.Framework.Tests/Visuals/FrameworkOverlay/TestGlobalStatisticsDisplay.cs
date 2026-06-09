@@ -8,7 +8,7 @@ using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests.Visuals.FrameworkOverlay;
 
-public class TestGlobalStatisticsDisplay : TestScene
+public partial class TestGlobalStatisticsDisplay : TestScene
 {
     private GlobalStatisticsDisplay overlay;
 

@@ -549,7 +549,7 @@ public partial class ScrollableContainer : Container
         return true;
     }
 
-    private class ScrollbarContainer : Container
+    private partial class ScrollbarContainer : Container
     {
         public Action<Vector2>? OnDragged;
 

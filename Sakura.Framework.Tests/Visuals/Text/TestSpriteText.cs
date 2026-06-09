@@ -11,7 +11,7 @@ using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests.Visuals.Text;
 
-public class TestSpriteText : TestScene
+public partial class TestSpriteText : TestScene
 {
     [SetUp]
     public void SetUp()

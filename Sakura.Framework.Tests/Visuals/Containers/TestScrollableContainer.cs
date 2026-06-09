@@ -14,7 +14,7 @@ using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests.Visuals.Containers;
 
-public class TestScrollableContainer : ManualInputManagerTestScene
+public partial class TestScrollableContainer : ManualInputManagerTestScene
 {
     private ScrollableContainer scrollContainer;
     private FlowContainer flowContent;

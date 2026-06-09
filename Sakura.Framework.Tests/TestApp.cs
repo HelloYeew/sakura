@@ -7,7 +7,7 @@ using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests;
 
-public class TestApp : TestBrowserApp
+public partial class TestApp : TestBrowserApp
 {
     public TestApp(Assembly testAssembly = null!) : base(testAssembly)
     {

@@ -10,7 +10,7 @@ using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests.Visuals.FrameworkOverlay;
 
-public class TestFpsGraph : TestScene
+public partial class TestFpsGraph : TestScene
 {
     private FpsGraph fpsGraph;
 

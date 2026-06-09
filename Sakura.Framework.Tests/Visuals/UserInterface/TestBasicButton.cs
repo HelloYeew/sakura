@@ -12,7 +12,7 @@ using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests.Visuals.UserInterface;
 
-public class TestBasicButton : ManualInputManagerTestScene
+public partial class TestBasicButton : ManualInputManagerTestScene
 {
     private BasicButton button;
     private int clickCount;

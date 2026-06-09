@@ -11,7 +11,7 @@ using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests.Visuals.Drawables;
 
-public class TestIconSprite : TestScene
+public partial class TestIconSprite : TestScene
 {
     private IconSprite icon;
 

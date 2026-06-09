@@ -16,7 +16,7 @@ using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests.Visuals.Drawables;
 
-public class TestDrawablePool : TestScene
+public partial class TestDrawablePool : TestScene
 {
     private DrawablePool<TestDrawable>? pool;
     private SpriteText? count;
@@ -243,7 +243,7 @@ public class TestDrawablePool : TestScene
         });
     }
 
-    private class TestPool : DrawablePool<TestDrawable>
+    private partial class TestPool : DrawablePool<TestDrawable>
     {
         private readonly double fadeTime;
 
@@ -259,7 +259,7 @@ public class TestDrawablePool : TestScene
         }
     }
 
-    private class TestDrawable : PoolableDrawable
+    private partial class TestDrawable : PoolableDrawable
     {
         private readonly double fadeTime;
         private readonly SpriteText text;

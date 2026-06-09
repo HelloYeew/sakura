@@ -12,7 +12,7 @@ using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests.Visuals.Textures;
 
-public class TestTextureFill : TestScene
+public partial class TestTextureFill : TestScene
 {
     private Sprite imageSprite;
 

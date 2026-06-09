@@ -14,7 +14,7 @@ using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests.Visuals.Platform;
 
-public class TestActiveState : TestScene
+public partial class TestActiveState : TestScene
 {
     [Resolved]
     private IWindow window { get; set; }

@@ -14,7 +14,7 @@ using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Tests.Visuals.Containers;
 
-public class TestDrawSizePreservingFillContainer : TestScene
+public partial class TestDrawSizePreservingFillContainer : TestScene
 {
     private DrawSizePreservingFillContainer fillContainer = null!;
     private SpriteText strategyText = null!;

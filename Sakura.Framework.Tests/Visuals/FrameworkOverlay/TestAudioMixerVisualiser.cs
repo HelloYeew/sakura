@@ -10,7 +10,7 @@ using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests.Visuals.FrameworkOverlay;
 
-public class TestAudioMixerVisualiser : TestScene
+public partial class TestAudioMixerVisualiser : TestScene
 {
     private AudioMixerVisualiser overlay;
 

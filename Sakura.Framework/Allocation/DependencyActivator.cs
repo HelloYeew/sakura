@@ -124,7 +124,10 @@ public static class DependencyActivator
         {
             if (!activator_cache.ContainsKey(current))
             {
-                Logger.Debug($"Reflection fallback used for type '{current.FullName}', Consider making it partial to enable source generation.");
+                string location = current.IsNested
+                    ? $"nested class '{current.DeclaringType?.Name}.{current.Name}'"
+                    : $"'{current.FullName}'";
+                Logger.Debug($"[DI] Reflection fallback for {location}. Make it (and any enclosing class) partial to enable source generation.");
 
                 activator_cache[current] = new ActivatorEntry(
                     ReflectionDependencyActivator.GetInjectDelegate(current),

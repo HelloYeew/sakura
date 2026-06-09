@@ -11,7 +11,7 @@ using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests.Visuals.Containers;
 
-public class TestPanZoomContainer : ManualInputManagerTestScene
+public partial class TestPanZoomContainer : ManualInputManagerTestScene
 {
     private PanZoomContainer panZoom = null!;
     private SpriteText statsText = null!;
@@ -90,7 +90,7 @@ public class TestPanZoomContainer : ManualInputManagerTestScene
         });
     }
 
-    private class DummyNode : Container
+    private partial class DummyNode : Container
     {
         public DummyNode()
         {

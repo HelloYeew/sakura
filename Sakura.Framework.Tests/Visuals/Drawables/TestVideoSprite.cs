@@ -15,7 +15,7 @@ namespace Sakura.Framework.Tests.Visuals.Drawables;
 
 [TestFixture]
 [VisualTestOnly("Video decoder test required real hardware")]
-public class TestVideoSprite : TestScene
+public partial class TestVideoSprite : TestScene
 {
     private VideoSprite videoSprite;
 

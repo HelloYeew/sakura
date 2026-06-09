@@ -11,7 +11,7 @@ using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests.Visuals.Drawables;
 
-public class TestShearedMasking : TestScene
+public partial class TestShearedMasking : TestScene
 {
     [SetUp]
     public void SetUp()

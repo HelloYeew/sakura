@@ -13,7 +13,7 @@ using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests.Visuals.FrameworkOverlay;
 
-public class TestDrawVisualiser : TestScene
+public partial class TestDrawVisualiser : TestScene
 {
     private DrawVisualiser visualiser;
 

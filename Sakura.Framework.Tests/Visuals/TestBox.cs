@@ -11,7 +11,7 @@ using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests.Visuals;
 
-public class TestBox : TestScene
+public partial class TestBox : TestScene
 {
     private Box box = null!;
 

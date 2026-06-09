@@ -12,7 +12,7 @@ using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests.Visuals.Containers;
 
-public class TestGridContainer : TestScene
+public partial class TestGridContainer : TestScene
 {
     private GridContainer grid = null!;
 

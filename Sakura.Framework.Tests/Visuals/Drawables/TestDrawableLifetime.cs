@@ -11,7 +11,7 @@ using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests.Visuals.Drawables;
 
-public class TestDrawableLifetime : TestScene
+public partial class TestDrawableLifetime : TestScene
 {
     [Test]
     public void TestFutureLifetimeStart()
@@ -107,7 +107,7 @@ public class TestDrawableLifetime : TestScene
     /// <summary>
     /// A dummy drawable that tracks its own updates and disposal state for testing.
     /// </summary>
-    private class LifetimeTestDrawable : Container, IDisposable
+    private partial class LifetimeTestDrawable : Container, IDisposable
     {
         public bool IsDisposed { get; private set; }
         public int UpdateCount { get; private set; }

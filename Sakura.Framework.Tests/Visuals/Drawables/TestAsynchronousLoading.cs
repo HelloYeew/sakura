@@ -13,7 +13,7 @@ using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests.Visuals.Drawables;
 
-public class TestAsynchronousLoading : TestScene
+public partial class TestAsynchronousLoading : TestScene
 {
     [SetUp]
     public void SetUp()

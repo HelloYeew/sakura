@@ -11,7 +11,7 @@ using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests.Visuals.Drawables;
 
-public class TestPath : TestScene
+public partial class TestPath : TestScene
 {
     private Container pathContainer = null!;
     private SpriteText performanceText = null!;

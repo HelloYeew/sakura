@@ -236,7 +236,7 @@ public abstract partial class TestScene : Container
     /// <summary>
     /// A localized <see cref="App"/> instance responsible for running the test steps within the headless update loop.
     /// </summary>
-    private class HeadlessTestRunnerApp : App
+    private partial class HeadlessTestRunnerApp : App
     {
         private readonly TestScene testScene;
         private readonly AppHost host;

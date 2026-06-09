@@ -16,7 +16,7 @@ using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Tests.Visuals.Screens;
 
-public class TestScreenStack : TestScene
+public partial class TestScreenStack : TestScene
 {
     private ScreenStack stack = null!;
 
@@ -124,7 +124,7 @@ public class TestScreenStack : TestScene
         AddWaitStep("Wait for transition", 700);
     }
 
-    private class DummyScreen : Screen
+    private partial class DummyScreen : Screen
     {
         private const int transition_time = 500;
 
@@ -182,7 +182,7 @@ public class TestScreenStack : TestScene
         }
     }
 
-    private class SwipingScreen : Screen
+    private partial class SwipingScreen : Screen
     {
         public override void Load()
         {
@@ -226,7 +226,7 @@ public class TestScreenStack : TestScene
         }
     }
 
-    private class SlideScreen : Screen
+    private partial class SlideScreen : Screen
     {
         private readonly int slideDirection;
 
@@ -282,7 +282,7 @@ public class TestScreenStack : TestScene
         }
     }
 
-    private class ZoomScreen : Screen
+    private partial class ZoomScreen : Screen
     {
         public override void Load()
         {

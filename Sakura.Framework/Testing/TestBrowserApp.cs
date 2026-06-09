@@ -754,7 +754,7 @@ public partial class TestBrowserApp : App
         return null;
     }
 
-    private class TestBrowserButton : ClickableContainer
+    private partial class TestBrowserButton : ClickableContainer
     {
         private Box backgroundBox;
         private Color originalBackgroundColor;
@@ -810,7 +810,7 @@ public partial class TestBrowserApp : App
         }
     }
 
-    private class TestStepButton : ClickableContainer
+    private partial class TestStepButton : ClickableContainer
     {
         private Box backgroundBox;
         private Box statusBox;
@@ -889,7 +889,7 @@ public partial class TestBrowserApp : App
         }
     }
 
-    private class TestSliderStepControl<T> : Container where T : struct, INumber<T>
+    private partial class TestSliderStepControl<T> : Container where T : struct, INumber<T>
     {
         public TestSliderStepControl(SliderStep<T> step)
         {
@@ -937,7 +937,7 @@ public partial class TestBrowserApp : App
         }
     }
 
-    private class HeaderButton : ClickableContainer
+    private partial class HeaderButton : ClickableContainer
     {
         public HeaderButton(string text, Action action, Color bgColor)
         {

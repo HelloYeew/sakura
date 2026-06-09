@@ -13,7 +13,7 @@ using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Tests.Visuals.UserInterface;
 
-public class TestBasicSliderBar : ManualInputManagerTestScene
+public partial class TestBasicSliderBar : ManualInputManagerTestScene
 {
     private BasicSliderBar<float> slider;
     private SpriteText valueText;

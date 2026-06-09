@@ -12,7 +12,7 @@ using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests.Visuals.UserInterface;
 
-public class TestBasicDropdown : ManualInputManagerTestScene
+public partial class TestBasicDropdown : ManualInputManagerTestScene
 {
     private BasicDropdown<string> dropdown;
     private SpriteText selectedText;

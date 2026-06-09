@@ -329,7 +329,7 @@ public partial class GridContainer : Container
         return cellSizes;
     }
 
-    private class CellContainer : Container
+    private partial class CellContainer : Container
     {
         public GridContainer? GridParent { get; set; }
 
