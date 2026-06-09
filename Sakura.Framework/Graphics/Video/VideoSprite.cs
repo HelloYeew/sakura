@@ -33,7 +33,7 @@ namespace Sakura.Framework.Graphics.Video;
 ///         </list>
 ///     </para>
 /// </remarks>
-public class VideoSprite : Drawable, IDisposable
+public partial class VideoSprite : Drawable, IDisposable
 {
     private readonly string? filePath;
     private readonly Stream? stream;

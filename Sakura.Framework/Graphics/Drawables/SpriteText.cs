@@ -16,7 +16,7 @@ namespace Sakura.Framework.Graphics.Drawables;
 /// <summary>
 /// A drawable that renders text using a specified font.
 /// </summary>
-public class SpriteText : Drawable
+public partial class SpriteText : Drawable
 {
     private string text = string.Empty;
     private FontUsage fontUsage = FontUsage.Default;
@@ -97,7 +97,7 @@ public class SpriteText : Drawable
     private void computeLayout()
     {
         if ((fontStore == null || window == null) && Dependencies != null)
-            Dependencies.Inject(this);
+            DependencyActivator.Inject(this, Dependencies);
 
         if (fontStore == null || window == null) return;
 

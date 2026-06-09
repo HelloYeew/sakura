@@ -28,7 +28,7 @@ public enum PerformanceOverlayState
     Expanded
 }
 
-public class FpsGraph : Container, IRemoveFromDrawVisualiser
+public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
 {
     private Reactive<PerformanceOverlayState> state;
 

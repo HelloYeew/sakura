@@ -4,7 +4,7 @@
 namespace Sakura.Framework.Allocation;
 
 /// <summary>
-/// A container that contains and can retrieve dependencies.
+/// A read-only view of a dependency container
 /// </summary>
 public interface IReadOnlyDependencyContainer
 {
@@ -12,14 +12,7 @@ public interface IReadOnlyDependencyContainer
     /// Retrieves a dependency of the specified type.
     /// </summary>
     /// <typeparam name="T">The type of the dependency to retrieve.</typeparam>
-    /// <returns>>The retrieved dependency, or null if not found.</returns>
+    /// <returns>The cached dependency instance.</returns>
+    /// <exception cref="System.InvalidOperationException">Thrown when the dependency is not found anywhere in the hierarchy.</exception>
     T Get<T>() where T : class;
-
-    /// <summary>
-    /// Inject dependencies into the field and properties of the given instance
-    /// that are marked with <see cref="ResolvedAttribute"/>.
-    /// </summary>
-    /// <param name="instance">Instance to inject dependencies into.</param>
-    /// <typeparam name="T">Type of the instance.</typeparam>
-    void Inject<T>(T instance) where T : class;
 }
