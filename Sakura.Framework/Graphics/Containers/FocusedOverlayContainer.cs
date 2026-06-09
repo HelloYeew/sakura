@@ -8,7 +8,7 @@ namespace Sakura.Framework.Graphics.Containers;
 /// <summary>
 /// An overlay container that eagerly holds keyboard focus and blocks key events from passing through.
 /// </summary>
-public abstract class FocusedOverlayContainer : OverlayContainer
+public abstract partial class FocusedOverlayContainer : OverlayContainer
 {
     public override bool RequestsFocus => State == Visibility.Visible;
     public override bool AcceptsFocus => State == Visibility.Visible;

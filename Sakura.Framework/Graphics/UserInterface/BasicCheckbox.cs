@@ -13,7 +13,7 @@ using Sakura.Framework.Reactive;
 
 namespace Sakura.Framework.Graphics.UserInterface;
 
-public class BasicCheckbox : ClickableContainer
+public partial class BasicCheckbox : ClickableContainer
 {
     private readonly Box background;
     private readonly Box fill;

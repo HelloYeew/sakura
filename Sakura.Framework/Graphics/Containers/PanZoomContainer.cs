@@ -12,7 +12,7 @@ namespace Sakura.Framework.Graphics.Containers;
 /// A container that allows panning and zooming of its content.
 /// Useful for things like node editors or maps.
 /// </summary>
-public class PanZoomContainer : Container
+public partial class PanZoomContainer : Container
 {
     /// <summary>
     /// The minimum zoom level. Values below this will be clamped. Default is 0.25 (25%).

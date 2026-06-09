@@ -25,7 +25,7 @@ using Vector2 = Sakura.Framework.Maths.Vector2;
 
 namespace Sakura.Framework.Testing;
 
-public class TestBrowserApp : App
+public partial class TestBrowserApp : App
 {
     private Container testContentContainer;
     private Container testSidebar;

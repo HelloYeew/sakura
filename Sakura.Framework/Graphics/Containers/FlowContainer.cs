@@ -13,7 +13,7 @@ namespace Sakura.Framework.Graphics.Containers;
 /// A container that arranges its children in a defined direction
 /// with wrapping them to a new line when reach the boundary.
 /// </summary>
-public class FlowContainer : Container
+public partial class FlowContainer : Container
 {
     private FlowDirection direction = FlowDirection.Horizontal;
     private Vector2 spacing = Vector2.Zero;

@@ -9,7 +9,7 @@ using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Graphics.Drawables;
 
-public class BezierCurve : Drawable
+public partial class BezierCurve : Drawable
 {
     private Vector2 p0 = Vector2.Zero;
     private Vector2 p1 = new Vector2(50, 0);

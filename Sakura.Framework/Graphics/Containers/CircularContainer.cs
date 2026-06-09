@@ -9,7 +9,7 @@ namespace Sakura.Framework.Graphics.Containers;
 /// <summary>
 /// A container that's round via automate <see cref="Container.CornerRadius"/> calculation.
 /// </summary>
-public class CircularContainer : Container
+public partial class CircularContainer : Container
 {
     public CircularContainer()
     {

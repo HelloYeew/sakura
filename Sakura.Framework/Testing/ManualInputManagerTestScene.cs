@@ -14,7 +14,7 @@ using Sakura.Framework.Testing.Input;
 
 namespace Sakura.Framework.Testing;
 
-public abstract class ManualInputManagerTestScene : TestScene
+public abstract partial class ManualInputManagerTestScene : TestScene
 {
     /// <summary>
     /// Tests should add their visual components to this container instead of directly to the scene.

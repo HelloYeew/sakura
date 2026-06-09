@@ -8,7 +8,7 @@ namespace Sakura.Framework.Graphics.Containers;
 /// <summary>
 /// A <see cref="Container"/> which adds a basic visibility state and animations.
 /// </summary>
-public abstract class VisibilityContainer : Container
+public abstract partial class VisibilityContainer : Container
 {
     private Visibility state = Visibility.Hidden;
 

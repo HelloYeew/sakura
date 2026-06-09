@@ -26,7 +26,7 @@ using Sakura.Framework.Timing;
 
 namespace Sakura.Framework;
 
-public class App : Container, IFocusManager, IDisposable
+public partial class App : Container, IFocusManager, IDisposable
 {
     public IWindow Window => Host?.Window;
 

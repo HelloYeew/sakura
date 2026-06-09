@@ -8,7 +8,7 @@ namespace Sakura.Framework.Graphics.Containers;
 /// <summary>
 /// An element which starts hidden and blocks input to drawables behind it when visible.
 /// </summary>
-public abstract class OverlayContainer : VisibilityContainer
+public abstract partial class OverlayContainer : VisibilityContainer
 {
     /// <summary>
     /// Whether we should block any mouse/touch input from interacting with things behind us.

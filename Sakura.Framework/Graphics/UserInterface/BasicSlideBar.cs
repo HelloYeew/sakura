@@ -12,7 +12,7 @@ using Vector2 = Sakura.Framework.Maths.Vector2;
 
 namespace Sakura.Framework.Graphics.UserInterface;
 
-public class BasicSliderBar<T> : Container where T : struct, INumber<T>
+public partial class BasicSliderBar<T> : Container where T : struct, INumber<T>
 {
     public Reactive<T> Current { get; } = new Reactive<T>(T.Zero);
 

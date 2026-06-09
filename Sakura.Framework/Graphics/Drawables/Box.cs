@@ -3,6 +3,6 @@
 
 namespace Sakura.Framework.Graphics.Drawables;
 
-public class Box : Drawable
+public partial class Box : Drawable
 {
 }

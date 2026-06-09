@@ -6,7 +6,7 @@ namespace Sakura.Framework.Graphics.Drawables;
 /// <summary>
 /// A drawable that renders an icon from the icon font.
 /// </summary>
-public class IconSprite : SpriteText
+public partial class IconSprite : SpriteText
 {
     private IconUsage icon;
     // TODO: If we have support for multiple icon library?

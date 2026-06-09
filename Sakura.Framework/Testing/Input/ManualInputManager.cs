@@ -8,7 +8,7 @@ using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Testing.Input;
 
-public class ManualInputManager : Container
+public partial class ManualInputManager : Container
 {
     /// <summary>
     /// If true, hardware inputs from the host/parent will be passed to children.

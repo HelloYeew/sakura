@@ -13,7 +13,7 @@ namespace Sakura.Framework.Graphics.Containers;
 /// <summary>
 /// A container that can set action on click events.
 /// </summary>
-public class ClickableContainer : Container
+public partial class ClickableContainer : Container
 {
     private Action action;
 

@@ -6,7 +6,7 @@ namespace Sakura.Framework.Graphics.Drawables;
 /// <summary>
 /// For drawing a 2D image (sprite).
 /// </summary>
-public class Sprite : Drawable
+public partial class Sprite : Drawable
 {
     // TODO: Implement image loading and rendering.
 }

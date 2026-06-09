@@ -79,7 +79,7 @@ public class GridContainerContent : ObservableArray<ObservableArray<Drawable?>>
 /// <summary>
 /// A container which allows laying out <see cref="Drawable"/>s in a grid.
 /// </summary>
-public class GridContainer : Container
+public partial class GridContainer : Container
 {
     private GridContainerContent? content;
     private bool contentReloadRequired = true;

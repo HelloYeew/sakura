@@ -13,7 +13,7 @@ using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Graphics.Containers;
 
-public class ScrollableContainer : Container
+public partial class ScrollableContainer : Container
 {
     protected override Container Content => ScrollContent;
 

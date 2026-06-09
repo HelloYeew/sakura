@@ -12,7 +12,7 @@ namespace Sakura.Framework.Graphics.Screens;
 /// A container that manages a stack of <see cref="Screen"/> drawables.
 /// Provides functionality for pushing new screens and exiting current ones.
 /// </summary>
-public class ScreenStack : Container
+public partial class ScreenStack : Container
 {
     private readonly Stack<Screen> screenStack = new();
 

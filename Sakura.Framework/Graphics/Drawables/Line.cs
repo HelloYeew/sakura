@@ -11,7 +11,7 @@ namespace Sakura.Framework.Graphics.Drawables;
 /// <summary>
 /// A drawable that render a line between two points with a specified thickness.
 /// </summary>
-public class Line : Drawable
+public partial class Line : Drawable
 {
     protected new readonly Vertex[] Vertices = new Vertex[6];
 

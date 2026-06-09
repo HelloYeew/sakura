@@ -7,7 +7,7 @@ namespace Sakura.Framework.Graphics.Drawables;
 /// Am updatable component that need to be inserted into the draw heirarchy.
 /// This inherited all from <see cref="Drawable"/> but to make things more clear visually.
 /// </summary>
-public class Component : Drawable
+public partial class Component : Drawable
 {
 
 }

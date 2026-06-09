@@ -5,7 +5,7 @@ using Sakura.Framework.Graphics.Containers;
 
 namespace Sakura.Framework.Graphics.UserInterface;
 
-public abstract class Button : ClickableContainer
+public abstract partial class Button : ClickableContainer
 {
 
 }

@@ -9,7 +9,7 @@ namespace Sakura.Framework.Graphics.Pooling;
 /// <summary>
 /// A drawable that is supported by <see cref="DrawablePool{T}"/>.
 /// </summary>
-public abstract class PoolableDrawable : Container
+public abstract partial class PoolableDrawable : Container
 {
     private IDrawablePool? pool;
 

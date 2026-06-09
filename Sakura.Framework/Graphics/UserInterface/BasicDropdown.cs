@@ -9,7 +9,7 @@ using Sakura.Framework.Reactive;
 
 namespace Sakura.Framework.Graphics.UserInterface;
 
-public class BasicDropdown<T> : Container
+public partial class BasicDropdown<T> : Container
 {
     public Reactive<T> Current { get; } = new Reactive<T>(default!);
 

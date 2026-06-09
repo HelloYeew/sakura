@@ -10,7 +10,7 @@ namespace Sakura.Framework.Graphics.Drawables;
 /// <summary>
 /// A circle drawable that uses masking to draw a circle shape.
 /// </summary>
-public class Circle : Drawable
+public partial class Circle : Drawable
 {
     protected override DrawNode CreateDrawNode() => new CircleDrawNode();
 

@@ -10,7 +10,7 @@ namespace Sakura.Framework.Graphics.Drawables;
 /// <summary>
 /// A drawable that renders a triangle defined by three points.
 /// </summary>
-public class Triangle : Drawable
+public partial class Triangle : Drawable
 {
     protected new readonly Vertex[] Vertices = new Vertex[3];
 

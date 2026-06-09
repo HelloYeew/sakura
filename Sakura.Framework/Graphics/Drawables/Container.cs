@@ -15,7 +15,7 @@ using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Graphics.Drawables;
 
-public class Container : Drawable
+public partial class Container : Drawable
 {
     /// <summary>
     /// A version number that is incremented whenever the topology of the container changes

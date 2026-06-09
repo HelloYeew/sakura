@@ -21,7 +21,7 @@ using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.Performance;
 
-public class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisualiser
+public partial class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisualiser
 {
     private Drawable targetRoot;
     private readonly Drawable absoluteRoot;
@@ -682,7 +682,7 @@ public class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisualiser
     }
 }
 
-public class VisualiserTreeItem : Container
+public partial class VisualiserTreeItem : Container
 {
     public Action ClickAction;
     private readonly Drawable trackedDrawable;

@@ -17,7 +17,7 @@ using Vector2 = Sakura.Framework.Maths.Vector2;
 namespace Sakura.Framework.Testing;
 
 [TestFixture]
-public abstract class TestScene : Container
+public abstract partial class TestScene : Container
 {
     /// <summary>
     /// Tells the TestScene to bypass spinning up a headless host because the visual is running it.

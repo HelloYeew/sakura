@@ -9,7 +9,7 @@ using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Graphics.Pooling;
 
-public class DrawablePool<T> : Container, IDrawablePool, IDisposable where T : PoolableDrawable, new()
+public partial class DrawablePool<T> : Container, IDrawablePool, IDisposable where T : PoolableDrawable, new()
 {
     private GlobalStatistic<DrawablePoolUsageStatistic>? statistic;
 

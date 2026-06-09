@@ -12,7 +12,7 @@ namespace Sakura.Framework.Graphics.Containers;
 /// A <see cref="Container"/> that fills its parent while preserving a given target virtual resolution
 /// according to a specific scaling strategy.
 /// </summary>
-public class DrawSizePreservingFillContainer : Container
+public partial class DrawSizePreservingFillContainer : Container
 {
     /// <summary>
     /// The target virtual resolution to be enforced.

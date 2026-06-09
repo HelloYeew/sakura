@@ -13,7 +13,7 @@ namespace Sakura.Framework.Audio;
 /// A component that monitors a source audio channel and duck the volume
 /// of a target audio channel based on the source's output level.
 /// </summary>
-public class AudioDucker : Component
+public partial class AudioDucker : Component
 {
     private readonly IAudioChannel source;
     private readonly IAudioChannel target;

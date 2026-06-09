@@ -10,7 +10,7 @@ using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Graphics.Drawables;
 
-public class Path : Drawable
+public partial class Path : Drawable
 {
     private readonly List<Vector2> vertices = new();
     public IReadOnlyList<Vector2> PathVertices => vertices;

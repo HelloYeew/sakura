@@ -14,7 +14,7 @@ using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.UserInterface;
 
-public class BasicButton : ClickableContainer
+public partial class BasicButton : ClickableContainer
 {
     private readonly Box background;
     private readonly SpriteText spriteText;

@@ -100,9 +100,14 @@ public static class DependencyActivator
         if (target is ISourceGeneratedDependencyActivator generated)
         {
             // The generated RegisterForDependencyActivation walks the full virtual chain
-            // and calls proxy.Register() for each type level. After this call the entire
-            // hierarchy is in the cache.
+            // and calls proxy.Register() for each type level that has generated code.
             generated.RegisterForDependencyActivation(proxy);
+
+            // Some levels in the hierarchy may not be partial (e.g. Container, TestScene,
+            // or concrete test classes), so the generated chain skips them. Fill in any
+            // gaps with the reflection fallback so [Resolved] members on those types are
+            // still injected.
+            registerReflectionFallback(type);
         }
         else
         {

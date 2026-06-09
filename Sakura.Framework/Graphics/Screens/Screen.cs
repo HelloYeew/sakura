@@ -11,7 +11,7 @@ namespace Sakura.Framework.Graphics.Screens;
 /// <summary>
 /// A container that can be managed by a <see cref="ScreenStack"/>.
 /// </summary>
-public class Screen : Container
+public partial class Screen : Container
 {
     /// <summary>
     /// The stack this screen belongs to.
