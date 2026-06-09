@@ -16,6 +16,12 @@
     <PackageReference Include="NUnit3TestAdapter" Version="5.2.0"/>
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="Sakura.Framework.SourceGenerators" Version="2026.609.1">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\Sakura.Framework\Sakura.Framework.csproj" />
   </ItemGroup>
 </Project>

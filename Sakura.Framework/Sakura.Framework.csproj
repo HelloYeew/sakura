@@ -25,9 +25,9 @@
     <PackageReference Include="FreeTypeSharp" Version="3.0.1" />
     <PackageReference Include="HarfBuzzSharp" Version="8.3.1.2" />
     <PackageReference Include="JetBrains.Annotations" Version="2025.2.2" />
-    <PackageReference Include="ManagedBass" Version="4.0.2" />
-    <PackageReference Include="ManagedBass.Fx" Version="4.0.2" />
-    <PackageReference Include="ManagedBass.Mix" Version="4.0.2" />
+    <PackageReference Include="ppy.ManagedBass" Version="2022.1216.0" />
+    <PackageReference Include="ppy.ManagedBass.Fx" Version="2022.1216.0" />
+    <PackageReference Include="ppy.ManagedBass.Mix" Version="2022.1216.0" />
     <PackageReference Include="NUnit" Version="4.4.0" />
     <PackageReference Include="Sakura.Framework.NativeLibraries" Version="2026.608.0" />
     <PackageReference Include="Sakura.Framework.SourceGenerators" Version="2026.609.1">
