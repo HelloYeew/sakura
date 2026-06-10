@@ -2,7 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System.Diagnostics.CodeAnalysis;
-using Silk.NET.SDL;
+using SDL;
 
 namespace Sakura.Framework.Input;
 
@@ -17,119 +17,119 @@ internal static class SDLEnumMapping
     /// </summary>
     /// <param name="scancode">The SDL scancode to convert.</param>
     /// <returns>The corresponding framework <see cref="Key"/>.</returns>
-    public static Key ToSakuraKey(Scancode scancode)
+    public static Key ToSakuraKey(SDL_Scancode scancode)
     {
         switch (scancode)
         {
-            case Scancode.ScancodeA: return Key.A;
-            case Scancode.ScancodeB: return Key.B;
-            case Scancode.ScancodeC: return Key.C;
-            case Scancode.ScancodeD: return Key.D;
-            case Scancode.ScancodeE: return Key.E;
-            case Scancode.ScancodeF: return Key.F;
-            case Scancode.ScancodeG: return Key.G;
-            case Scancode.ScancodeH: return Key.H;
-            case Scancode.ScancodeI: return Key.I;
-            case Scancode.ScancodeJ: return Key.J;
-            case Scancode.ScancodeK: return Key.K;
-            case Scancode.ScancodeL: return Key.L;
-            case Scancode.ScancodeM: return Key.M;
-            case Scancode.ScancodeN: return Key.N;
-            case Scancode.ScancodeO: return Key.O;
-            case Scancode.ScancodeP: return Key.P;
-            case Scancode.ScancodeQ: return Key.Q;
-            case Scancode.ScancodeR: return Key.R;
-            case Scancode.ScancodeS: return Key.S;
-            case Scancode.ScancodeT: return Key.T;
-            case Scancode.ScancodeU: return Key.U;
-            case Scancode.ScancodeV: return Key.V;
-            case Scancode.ScancodeW: return Key.W;
-            case Scancode.ScancodeX: return Key.X;
-            case Scancode.ScancodeY: return Key.Y;
-            case Scancode.ScancodeZ: return Key.Z;
-            case Scancode.Scancode1: return Key.Number1;
-            case Scancode.Scancode2: return Key.Number2;
-            case Scancode.Scancode3: return Key.Number3;
-            case Scancode.Scancode4: return Key.Number4;
-            case Scancode.Scancode5: return Key.Number5;
-            case Scancode.Scancode6: return Key.Number6;
-            case Scancode.Scancode7: return Key.Number7;
-            case Scancode.Scancode8: return Key.Number8;
-            case Scancode.Scancode9: return Key.Number9;
-            case Scancode.Scancode0: return Key.Number0;
-            case Scancode.ScancodeReturn: return Key.Enter;
-            case Scancode.ScancodeEscape: return Key.Escape;
-            case Scancode.ScancodeBackspace: return Key.BackSpace;
-            case Scancode.ScancodeTab: return Key.Tab;
-            case Scancode.ScancodeSpace: return Key.Space;
-            case Scancode.ScancodeMinus: return Key.Minus;
-            case Scancode.ScancodeEquals: return Key.Plus; // Often paired with Plus
-            case Scancode.ScancodeLeftbracket: return Key.BracketLeft;
-            case Scancode.ScancodeRightbracket: return Key.BracketRight;
-            case Scancode.ScancodeBackslash: return Key.BackSlash;
-            case Scancode.ScancodeSemicolon: return Key.Semicolon;
-            case Scancode.ScancodeApostrophe: return Key.Quote;
-            case Scancode.ScancodeGrave: return Key.Tilde;
-            case Scancode.ScancodeComma: return Key.Comma;
-            case Scancode.ScancodePeriod: return Key.Period;
-            case Scancode.ScancodeSlash: return Key.Slash;
-            case Scancode.ScancodeCapslock: return Key.CapsLock;
-            case Scancode.ScancodeF1: return Key.F1;
-            case Scancode.ScancodeF2: return Key.F2;
-            case Scancode.ScancodeF3: return Key.F3;
-            case Scancode.ScancodeF4: return Key.F4;
-            case Scancode.ScancodeF5: return Key.F5;
-            case Scancode.ScancodeF6: return Key.F6;
-            case Scancode.ScancodeF7: return Key.F7;
-            case Scancode.ScancodeF8: return Key.F8;
-            case Scancode.ScancodeF9: return Key.F9;
-            case Scancode.ScancodeF10: return Key.F10;
-            case Scancode.ScancodeF11: return Key.F11;
-            case Scancode.ScancodeF12: return Key.F12;
-            case Scancode.ScancodePrintscreen: return Key.PrintScreen;
-            case Scancode.ScancodeScrolllock: return Key.ScrollLock;
-            case Scancode.ScancodePause: return Key.Pause;
-            case Scancode.ScancodeInsert: return Key.Insert;
-            case Scancode.ScancodeHome: return Key.Home;
-            case Scancode.ScancodePageup: return Key.PageUp;
-            case Scancode.ScancodeDelete: return Key.Delete;
-            case Scancode.ScancodeEnd: return Key.End;
-            case Scancode.ScancodePagedown: return Key.PageDown;
-            case Scancode.ScancodeRight: return Key.Right;
-            case Scancode.ScancodeLeft: return Key.Left;
-            case Scancode.ScancodeDown: return Key.Down;
-            case Scancode.ScancodeUp: return Key.Up;
-            case Scancode.ScancodeNumlockclear: return Key.NumLock;
-            case Scancode.ScancodeKPDivide: return Key.KeypadDivide;
-            case Scancode.ScancodeKPMultiply: return Key.KeypadMultiply;
-            case Scancode.ScancodeKPMinus: return Key.KeypadSubtract;
-            case Scancode.ScancodeKPPlus: return Key.KeypadAdd;
-            case Scancode.ScancodeKPEnter: return Key.KeypadEnter;
-            case Scancode.ScancodeKP1: return Key.Keypad1;
-            case Scancode.ScancodeKP2: return Key.Keypad2;
-            case Scancode.ScancodeKP3: return Key.Keypad3;
-            case Scancode.ScancodeKP4: return Key.Keypad4;
-            case Scancode.ScancodeKP5: return Key.Keypad5;
-            case Scancode.ScancodeKP6: return Key.Keypad6;
-            case Scancode.ScancodeKP7: return Key.Keypad7;
-            case Scancode.ScancodeKP8: return Key.Keypad8;
-            case Scancode.ScancodeKP9: return Key.Keypad9;
-            case Scancode.ScancodeKP0: return Key.Keypad0;
-            case Scancode.ScancodeKPPeriod: return Key.KeypadDecimal;
-            case Scancode.ScancodeLctrl: return Key.ControlLeft;
-            case Scancode.ScancodeLshift: return Key.ShiftLeft;
-            case Scancode.ScancodeLalt: return Key.AltLeft;
-            case Scancode.ScancodeLgui: return Key.WinLeft;
-            case Scancode.ScancodeRctrl: return Key.ControlRight;
-            case Scancode.ScancodeRshift: return Key.ShiftRight;
-            case Scancode.ScancodeRalt: return Key.AltRight;
-            case Scancode.ScancodeRgui: return Key.WinRight;
+            case SDL_Scancode.SDL_SCANCODE_A: return Key.A;
+            case SDL_Scancode.SDL_SCANCODE_B: return Key.B;
+            case SDL_Scancode.SDL_SCANCODE_C: return Key.C;
+            case SDL_Scancode.SDL_SCANCODE_D: return Key.D;
+            case SDL_Scancode.SDL_SCANCODE_E: return Key.E;
+            case SDL_Scancode.SDL_SCANCODE_F: return Key.F;
+            case SDL_Scancode.SDL_SCANCODE_G: return Key.G;
+            case SDL_Scancode.SDL_SCANCODE_H: return Key.H;
+            case SDL_Scancode.SDL_SCANCODE_I: return Key.I;
+            case SDL_Scancode.SDL_SCANCODE_J: return Key.J;
+            case SDL_Scancode.SDL_SCANCODE_K: return Key.K;
+            case SDL_Scancode.SDL_SCANCODE_L: return Key.L;
+            case SDL_Scancode.SDL_SCANCODE_M: return Key.M;
+            case SDL_Scancode.SDL_SCANCODE_N: return Key.N;
+            case SDL_Scancode.SDL_SCANCODE_O: return Key.O;
+            case SDL_Scancode.SDL_SCANCODE_P: return Key.P;
+            case SDL_Scancode.SDL_SCANCODE_Q: return Key.Q;
+            case SDL_Scancode.SDL_SCANCODE_R: return Key.R;
+            case SDL_Scancode.SDL_SCANCODE_S: return Key.S;
+            case SDL_Scancode.SDL_SCANCODE_T: return Key.T;
+            case SDL_Scancode.SDL_SCANCODE_U: return Key.U;
+            case SDL_Scancode.SDL_SCANCODE_V: return Key.V;
+            case SDL_Scancode.SDL_SCANCODE_W: return Key.W;
+            case SDL_Scancode.SDL_SCANCODE_X: return Key.X;
+            case SDL_Scancode.SDL_SCANCODE_Y: return Key.Y;
+            case SDL_Scancode.SDL_SCANCODE_Z: return Key.Z;
+            case SDL_Scancode.SDL_SCANCODE_1: return Key.Number1;
+            case SDL_Scancode.SDL_SCANCODE_2: return Key.Number2;
+            case SDL_Scancode.SDL_SCANCODE_3: return Key.Number3;
+            case SDL_Scancode.SDL_SCANCODE_4: return Key.Number4;
+            case SDL_Scancode.SDL_SCANCODE_5: return Key.Number5;
+            case SDL_Scancode.SDL_SCANCODE_6: return Key.Number6;
+            case SDL_Scancode.SDL_SCANCODE_7: return Key.Number7;
+            case SDL_Scancode.SDL_SCANCODE_8: return Key.Number8;
+            case SDL_Scancode.SDL_SCANCODE_9: return Key.Number9;
+            case SDL_Scancode.SDL_SCANCODE_0: return Key.Number0;
+            case SDL_Scancode.SDL_SCANCODE_RETURN: return Key.Enter;
+            case SDL_Scancode.SDL_SCANCODE_ESCAPE: return Key.Escape;
+            case SDL_Scancode.SDL_SCANCODE_BACKSPACE: return Key.BackSpace;
+            case SDL_Scancode.SDL_SCANCODE_TAB: return Key.Tab;
+            case SDL_Scancode.SDL_SCANCODE_SPACE: return Key.Space;
+            case SDL_Scancode.SDL_SCANCODE_MINUS: return Key.Minus;
+            case SDL_Scancode.SDL_SCANCODE_EQUALS: return Key.Plus; // Often paired with Plus
+            case SDL_Scancode.SDL_SCANCODE_LEFTBRACKET: return Key.BracketLeft;
+            case SDL_Scancode.SDL_SCANCODE_RIGHTBRACKET: return Key.BracketRight;
+            case SDL_Scancode.SDL_SCANCODE_BACKSLASH: return Key.BackSlash;
+            case SDL_Scancode.SDL_SCANCODE_SEMICOLON: return Key.Semicolon;
+            case SDL_Scancode.SDL_SCANCODE_APOSTROPHE: return Key.Quote;
+            case SDL_Scancode.SDL_SCANCODE_GRAVE: return Key.Tilde;
+            case SDL_Scancode.SDL_SCANCODE_COMMA: return Key.Comma;
+            case SDL_Scancode.SDL_SCANCODE_PERIOD: return Key.Period;
+            case SDL_Scancode.SDL_SCANCODE_SLASH: return Key.Slash;
+            case SDL_Scancode.SDL_SCANCODE_CAPSLOCK: return Key.CapsLock;
+            case SDL_Scancode.SDL_SCANCODE_F1: return Key.F1;
+            case SDL_Scancode.SDL_SCANCODE_F2: return Key.F2;
+            case SDL_Scancode.SDL_SCANCODE_F3: return Key.F3;
+            case SDL_Scancode.SDL_SCANCODE_F4: return Key.F4;
+            case SDL_Scancode.SDL_SCANCODE_F5: return Key.F5;
+            case SDL_Scancode.SDL_SCANCODE_F6: return Key.F6;
+            case SDL_Scancode.SDL_SCANCODE_F7: return Key.F7;
+            case SDL_Scancode.SDL_SCANCODE_F8: return Key.F8;
+            case SDL_Scancode.SDL_SCANCODE_F9: return Key.F9;
+            case SDL_Scancode.SDL_SCANCODE_F10: return Key.F10;
+            case SDL_Scancode.SDL_SCANCODE_F11: return Key.F11;
+            case SDL_Scancode.SDL_SCANCODE_F12: return Key.F12;
+            case SDL_Scancode.SDL_SCANCODE_PRINTSCREEN: return Key.PrintScreen;
+            case SDL_Scancode.SDL_SCANCODE_SCROLLLOCK: return Key.ScrollLock;
+            case SDL_Scancode.SDL_SCANCODE_PAUSE: return Key.Pause;
+            case SDL_Scancode.SDL_SCANCODE_INSERT: return Key.Insert;
+            case SDL_Scancode.SDL_SCANCODE_HOME: return Key.Home;
+            case SDL_Scancode.SDL_SCANCODE_PAGEUP: return Key.PageUp;
+            case SDL_Scancode.SDL_SCANCODE_DELETE: return Key.Delete;
+            case SDL_Scancode.SDL_SCANCODE_END: return Key.End;
+            case SDL_Scancode.SDL_SCANCODE_PAGEDOWN: return Key.PageDown;
+            case SDL_Scancode.SDL_SCANCODE_RIGHT: return Key.Right;
+            case SDL_Scancode.SDL_SCANCODE_LEFT: return Key.Left;
+            case SDL_Scancode.SDL_SCANCODE_DOWN: return Key.Down;
+            case SDL_Scancode.SDL_SCANCODE_UP: return Key.Up;
+            case SDL_Scancode.SDL_SCANCODE_NUMLOCKCLEAR: return Key.NumLock;
+            case SDL_Scancode.SDL_SCANCODE_KP_DIVIDE: return Key.KeypadDivide;
+            case SDL_Scancode.SDL_SCANCODE_KP_MULTIPLY: return Key.KeypadMultiply;
+            case SDL_Scancode.SDL_SCANCODE_KP_MINUS: return Key.KeypadSubtract;
+            case SDL_Scancode.SDL_SCANCODE_KP_PLUS: return Key.KeypadAdd;
+            case SDL_Scancode.SDL_SCANCODE_KP_ENTER: return Key.KeypadEnter;
+            case SDL_Scancode.SDL_SCANCODE_KP_1: return Key.Keypad1;
+            case SDL_Scancode.SDL_SCANCODE_KP_2: return Key.Keypad2;
+            case SDL_Scancode.SDL_SCANCODE_KP_3: return Key.Keypad3;
+            case SDL_Scancode.SDL_SCANCODE_KP_4: return Key.Keypad4;
+            case SDL_Scancode.SDL_SCANCODE_KP_5: return Key.Keypad5;
+            case SDL_Scancode.SDL_SCANCODE_KP_6: return Key.Keypad6;
+            case SDL_Scancode.SDL_SCANCODE_KP_7: return Key.Keypad7;
+            case SDL_Scancode.SDL_SCANCODE_KP_8: return Key.Keypad8;
+            case SDL_Scancode.SDL_SCANCODE_KP_9: return Key.Keypad9;
+            case SDL_Scancode.SDL_SCANCODE_KP_0: return Key.Keypad0;
+            case SDL_Scancode.SDL_SCANCODE_KP_PERIOD: return Key.KeypadDecimal;
+            case SDL_Scancode.SDL_SCANCODE_LCTRL: return Key.ControlLeft;
+            case SDL_Scancode.SDL_SCANCODE_LSHIFT: return Key.ShiftLeft;
+            case SDL_Scancode.SDL_SCANCODE_LALT: return Key.AltLeft;
+            case SDL_Scancode.SDL_SCANCODE_LGUI: return Key.WinLeft;
+            case SDL_Scancode.SDL_SCANCODE_RCTRL: return Key.ControlRight;
+            case SDL_Scancode.SDL_SCANCODE_RSHIFT: return Key.ShiftRight;
+            case SDL_Scancode.SDL_SCANCODE_RALT: return Key.AltRight;
+            case SDL_Scancode.SDL_SCANCODE_RGUI: return Key.WinRight;
             default: return Key.Unknown;
         }
     }
 
     /// <summary>
-    /// Convert SDL MouseButtonFlags to framework <see cref="MouseButton"/>
+    /// Convert SDL mouse button index to framework <see cref="MouseButton"/>
     /// Reference : https://wiki.libsdl.org/SDL3/SDL_MouseButtonFlags
     /// </summary>
     /// <param name="sdlButton">The SDL mouse button to convert.</param>

@@ -6,32 +6,32 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Sakura.Framework.Configurations;
 using Sakura.Framework.Input;
-using Silk.NET.OpenGL;
-using Silk.NET.SDL;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Reactive;
-using Silk.NET.Maths;
-using SilkMouseButtonEvent = Silk.NET.SDL.MouseButtonEvent;
+using SDL;
+using static SDL.SDL3;
 using SakuraCursorState = Sakura.Framework.Input.CursorState;
 using SakuraMouseButtonEvent = Sakura.Framework.Input.MouseButtonEvent;
 using TextEditingEvent = Sakura.Framework.Input.TextEditingEvent;
 using TextInputEvent = Sakura.Framework.Input.TextInputEvent;
-using Version = Silk.NET.SDL.Version;
 
 namespace Sakura.Framework.Platform;
 
 [SuppressMessage("ReSharper", "InconsistentNaming")]
 public class SDLWindow : IWindow
 {
-    private static Sdl sdl;
-    private static unsafe void* glContext;
-    private static unsafe Window* window;
-    private PfnEventFilter resizeEventFilter;
+    private static unsafe SDL_Window* window;
+    private static unsafe SDL_GLContextState* glContext;
+
+    // The event watch callback is [UnmanagedCallersOnly] (static), so it reaches the
+    // window through this instance reference. The window is effectively a singleton.
+    private static SDLWindow instance;
 
     // Graphics surfaces — only one will be active depending on the selected renderer.
     private readonly SDLGraphicsSurface glSurface = new SDLGraphicsSurface();
@@ -53,6 +53,14 @@ public class SDLWindow : IWindow
     private int currentHeight;
     private int logicalWidth;
     private int logicalHeight;
+
+    // Tracks the last size for which Resized was fired (main-thread only).
+    // Separate from currentWidth/currentHeight which the watch callback updates
+    // mid-drag so the renderer can draw at the correct size before PollEvents runs.
+    private int lastNotifiedDrawW;
+    private int lastNotifiedDrawH;
+    private int lastNotifiedLogW;
+    private int lastNotifiedLogH;
     private bool? pendingTextInputState;
     private RectangleF? pendingTextInputRect;
     private readonly Lock textInputLock = new Lock();
@@ -60,7 +68,15 @@ public class SDLWindow : IWindow
     private WindowMode windowMode = WindowMode.Windowed;
 
     // Base flags — no graphics API flag yet; added by SetGraphicsApi() before Create().
-    private WindowFlags windowFlags = WindowFlags.AllowHighdpi;
+    private SDL_WindowFlags windowFlags = SDL_WindowFlags.SDL_WINDOW_HIGH_PIXEL_DENSITY;
+
+    // SDL_WINDOWPOS_CENTERED — kept as a local constant (it's a C macro: SDL_WINDOWPOS_CENTERED_MASK | 0).
+    private const int windowpos_centered = 0x2FFF0000;
+
+    public SDLWindow()
+    {
+        instance = this;
+    }
 
     public string Title
     {
@@ -117,21 +133,21 @@ public class SDLWindow : IWindow
         switch (type)
         {
             case RendererType.Metal:
-                // Metal windows need no special SDL window flag on SDL2.
+                windowFlags |= SDL_WindowFlags.SDL_WINDOW_METAL;
                 activeSurface = metalSurface;
                 break;
 
             default:
                 // OpenGL
-                windowFlags |= WindowFlags.Opengl;
+                windowFlags |= SDL_WindowFlags.SDL_WINDOW_OPENGL;
                 activeSurface = glSurface;
 
                 // SDL requires GL attributes to be set before SDL_CreateWindow.
-                sdl.GLSetAttribute(GLattr.ContextMajorVersion, 3);
-                sdl.GLSetAttribute(GLattr.ContextMinorVersion, 3);
-                sdl.GLSetAttribute(GLattr.ContextFlags, (int)ContextFlagMask.ForwardCompatibleBit);
-                sdl.GLSetAttribute(GLattr.ContextProfileMask, (int)GLprofile.Core);
-                sdl.GLSetAttribute(GLattr.FramebufferSrgbCapable, 1);
+                SDL_GL_SetAttribute(SDL_GLAttr.SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+                SDL_GL_SetAttribute(SDL_GLAttr.SDL_GL_CONTEXT_MINOR_VERSION, 3);
+                SDL_GL_SetAttribute(SDL_GLAttr.SDL_GL_CONTEXT_FLAGS, (int)SDL_GLContextFlag.SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
+                SDL_GL_SetAttribute(SDL_GLAttr.SDL_GL_CONTEXT_PROFILE_MASK, (int)SDL_GLProfile.SDL_GL_CONTEXT_PROFILE_CORE);
+                SDL_GL_SetAttribute(SDL_GLAttr.SDL_GL_FRAMEBUFFER_SRGB_CAPABLE, 1);
                 break;
         }
     }
@@ -191,37 +207,22 @@ public class SDLWindow : IWindow
 
     public unsafe void Initialize()
     {
-        sdl = Sdl.GetApi();
-
         setApplicationName(applicationName);
 
-        // On Windows, SDL requires DPI awareness hints to be set BEFORE SDL_Init so that
-        // GLGetDrawableSize returns physical pixels instead of DPI-virtualized logical pixels.
-        // Without this, Windows treats the app as DPI-unaware and reports scale=(1,1) even
-        // on high-DPI displays.
-        if (RuntimeInfo.IsWindows)
-        {
-            sdl.SetHint("SDL_WINDOWS_DPI_AWARENESS", "permonitorv2");
-            sdl.SetHint("SDL_WINDOWS_DPI_SCALING", "1");
-        }
-
+        // Note: SDL3 is always per-monitor DPI aware; the SDL2-era Windows DPI hints are gone.
         // Make sure SDL video backend is fully initialized
         // To make it support for OpenGL context and process advance hint like profile version
-        if (sdl.Init(Sdl.InitVideo) < 0)
+        if (!SDL_Init(SDL_InitFlags.SDL_INIT_VIDEO))
         {
-            throw new Exception($"Failed to initialize SDL: {sdl.GetErrorS()}");
+            throw new Exception($"Failed to initialize SDL: {SDL_GetError()}");
         }
 
-        Version sdlVersion = new Version();
-        sdl.GetVersion(ref sdlVersion);
-
-        byte* sdlRevision = sdl.GetRevision();
-        byte* videoDriver = sdl.GetCurrentVideoDriver();
+        int version = SDL_GetVersion();
 
         Logger.Verbose("🪟 SDL initialized");
-        Logger.Verbose($"SDL Version: {sdlVersion.Major}.{sdlVersion.Minor}.{sdlVersion.Patch}");
-        Logger.Verbose($"SDL Revision: {new string((sbyte*)sdlRevision)}");
-        Logger.Verbose($"SDL Video Driver: {new string((sbyte*)videoDriver)}");
+        Logger.Verbose($"SDL Version: {version / 1000000}.{version / 1000 % 1000}.{version % 1000}");
+        Logger.Verbose($"SDL Revision: {SDL_GetRevision()}");
+        Logger.Verbose($"SDL Video Driver: {SDL_GetCurrentVideoDriver()}");
 
         CursorState.ValueChanged += _ => updateSdlCursor();
 
@@ -232,7 +233,7 @@ public class SDLWindow : IWindow
     {
         if (Resizable)
         {
-            windowFlags |= WindowFlags.Resizable;
+            windowFlags |= SDL_WindowFlags.SDL_WINDOW_RESIZABLE;
         }
 
         if (RuntimeInfo.IsMacOS && windowMode == WindowMode.Fullscreen)
@@ -242,18 +243,14 @@ public class SDLWindow : IWindow
             windowMode = WindowMode.Borderless;
         }
 
-        switch (windowMode)
-        {
-            case WindowMode.Borderless:
-                windowFlags |= WindowFlags.FullscreenDesktop;
-                break;
-            case WindowMode.Fullscreen:
-                windowFlags |= WindowFlags.Fullscreen;
-                break;
-        }
+        // In SDL3 both borderless-desktop and exclusive fullscreen use SDL_WINDOW_FULLSCREEN;
+        // the distinction is made after creation via SDL_SetWindowFullscreenMode
+        // (null mode = borderless desktop, explicit mode = exclusive).
+        if (windowMode != WindowMode.Windowed)
+            windowFlags |= SDL_WindowFlags.SDL_WINDOW_FULLSCREEN;
 
-        int spawnX = Sdl.WindowposCentered;
-        int spawnY = Sdl.WindowposCentered;
+        int spawnX = windowpos_centered;
+        int spawnY = windowpos_centered;
         int spawnW = 800;
         int spawnH = 600;
 
@@ -283,36 +280,44 @@ public class SDLWindow : IWindow
             }
         }
 
-        window = sdl.CreateWindow(
-            title,
-            spawnX,
-            spawnY,
-            spawnW,
-            spawnH,
-            (uint)windowFlags
-        );
+        // SDL3's SDL_CreateWindow no longer takes a position; set it right after creation.
+        window = SDL_CreateWindow(title, spawnW, spawnH, windowFlags);
 
         if (window == null)
         {
-            Logger.Error("Failed to create SDL window: " + sdl.GetErrorS());
+            Logger.Error("Failed to create SDL window: " + SDL_GetError());
             throw new Exception("SDL window creation failed.");
         }
 
-        resizeEventFilter = new PfnEventFilter(resizeCallback);
-        sdl.AddEventWatch(resizeEventFilter, null);
+        SDL_SetWindowPosition(window, spawnX, spawnY);
+
+        if (windowMode == WindowMode.Fullscreen)
+        {
+            // Exclusive fullscreen: pin the window to the display's current mode.
+            var mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window));
+            SDL_SetWindowFullscreenMode(window, mode);
+            SDL_SetWindowFullscreen(window, true);
+        }
+
+        SDL_AddEventWatch(&resizeEventWatch, IntPtr.Zero);
 
         DisplayHz = getDisplayRefreshRate();
         Logger.Verbose($"Display refresh rate: {DisplayHz} Hz");
 
         int w, h;
-        sdl.GetWindowSize(window, &w, &h);
+        SDL_GetWindowSize(window, &w, &h);
         logicalWidth = w;
         logicalHeight = h;
 
-        // Physical size is resolved after the graphics context is initialised
-        // (GL: GLGetDrawableSize; Metal: GetDrawableSize falls back to logical).
+        // Physical size is resolved after the graphics context is initialised.
         currentWidth = w;
         currentHeight = h;
+
+        // Seed lastNotified* so the first real resize event isn't incorrectly suppressed.
+        lastNotifiedLogW = w;
+        lastNotifiedLogH = h;
+        // lastNotifiedDraw* will be updated in InitializeGLContext/InitializeMetalSurface
+        // once the true pixel size is known.
 
         Logger.Verbose("SDL window created successfully");
     }
@@ -323,25 +328,27 @@ public class SDLWindow : IWindow
     /// </summary>
     public unsafe void InitializeGLContext()
     {
-        glContext = sdl.GLCreateContext(window);
+        glContext = SDL_GL_CreateContext(window);
         if (glContext == null)
         {
-            Logger.Error("Failed to create OpenGL context: " + sdl.GetErrorS());
+            Logger.Error("Failed to create OpenGL context: " + SDL_GetError());
             throw new Exception("OpenGL context creation failed.");
         }
 
-        sdl.GLMakeCurrent(window, glContext);
+        SDL_GL_MakeCurrent(window, glContext);
 
         // Wire up the GL surface callbacks used by GLRenderer.
-        glSurface.GetFunctionAddress = proc => (nint)sdl.GLGetProcAddress(proc);
-        glSurface.MakeCurrent = () => sdl.GLMakeCurrent(window, glContext);
-        glSurface.ClearCurrent = () => sdl.GLMakeCurrent(window, null);
+        glSurface.GetFunctionAddress = proc => SDL_GL_GetProcAddress(proc);
+        glSurface.MakeCurrent = () => SDL_GL_MakeCurrent(window, glContext);
+        glSurface.ClearCurrent = () => SDL_GL_MakeCurrent(window, null);
 
-        // GL drawable size may differ from logical size on HiDPI displays.
+        // Pixel size may differ from logical size on HiDPI displays.
         int phyW, phyH;
-        sdl.GLGetDrawableSize(window, &phyW, &phyH);
+        SDL_GetWindowSizeInPixels(window, &phyW, &phyH);
         currentWidth = phyW;
         currentHeight = phyH;
+        lastNotifiedDrawW = phyW;
+        lastNotifiedDrawH = phyH;
 
         Logger.Verbose("OpenGL context created successfully");
     }
@@ -353,31 +360,25 @@ public class SDLWindow : IWindow
     /// </summary>
     public unsafe void InitializeMetalSurface()
     {
-        void* view = SDL_Metal_CreateView(window);
-        if (view == null)
+        // SDL3 exposes the Metal API directly — no manual P/Invoke required anymore.
+        IntPtr view = SDL_Metal_CreateView(window);
+        if (view == IntPtr.Zero)
         {
-            Logger.Error("Failed to create Metal view: " + sdl.GetErrorS());
+            Logger.Error("Failed to create Metal view: " + SDL_GetError());
             throw new Exception("Metal view creation failed.");
         }
 
-        void* layer = SDL_Metal_GetLayer(view);
-        if (layer == null)
+        IntPtr layer = SDL_Metal_GetLayer(view);
+        if (layer == IntPtr.Zero)
         {
             Logger.Error("Failed to get CAMetalLayer from Metal view.");
             throw new Exception("CAMetalLayer retrieval failed.");
         }
 
-        metalSurface.MetalLayer = (nint)layer;
+        metalSurface.MetalLayer = layer;
 
         Logger.Verbose("Metal surface initialised successfully");
     }
-
-    // SDL2 Metal API — not exposed by Silk.NET.SDL, so P/Invoke directly.
-    [DllImport("SDL2")]
-    private static extern unsafe void* SDL_Metal_CreateView(void* window);
-
-    [DllImport("SDL2")]
-    private static extern unsafe void* SDL_Metal_GetLayer(void* view);
 
     public void Close()
     {
@@ -393,17 +394,9 @@ public class SDLWindow : IWindow
             return;
         }
 
+        // SDL3 unifies this for all backends (SDL_GL_GetDrawableSize no longer exists).
         int drawableWidth, drawableHeight;
-
-        if (graphicsApi == RendererType.Metal)
-        {
-            // Metal: drawable size equals the window's pixel size on HiDPI.
-            sdl.GetWindowSizeInPixels(window, &drawableWidth, &drawableHeight);
-        }
-        else
-        {
-            sdl.GLGetDrawableSize(window, &drawableWidth, &drawableHeight);
-        }
+        SDL_GetWindowSizeInPixels(window, &drawableWidth, &drawableHeight);
 
         width = drawableWidth;
         height = drawableHeight;
@@ -417,41 +410,92 @@ public class SDLWindow : IWindow
 
     private unsafe (float scaleX, float scaleY) getDisplayScale()
     {
-        // On high DPI display, the drawable size's width and height
-        // and window size's width and height are different.
-        // This function returns the scale factor between them.
-        // to make the mouse position correct.
+        // On high DPI display, the pixel size and logical window size differ.
+        // This returns the scale factor between them so mouse positions can be corrected.
         if (window == null) return (1.0f, 1.0f);
 
         int windowWidth, windowHeight;
-        sdl.GetWindowSize(window, &windowWidth, &windowHeight);
+        SDL_GetWindowSize(window, &windowWidth, &windowHeight);
 
         if (windowWidth == 0 || windowHeight == 0) return (1.0f, 1.0f);
 
         int drawableWidth, drawableHeight;
-
-        if (graphicsApi == RendererType.Metal)
-            sdl.GetWindowSizeInPixels(window, &drawableWidth, &drawableHeight);
-        else
-            sdl.GLGetDrawableSize(window, &drawableWidth, &drawableHeight);
+        SDL_GetWindowSizeInPixels(window, &drawableWidth, &drawableHeight);
 
         return ((float)drawableWidth / windowWidth, (float)drawableHeight / windowHeight);
     }
 
-    private unsafe int resizeCallback(void* userData, Event* @event)
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static unsafe SDLBool resizeEventWatch(IntPtr userdata, SDL_Event* e)
     {
-        if (@event->Type == (uint)EventType.Windowevent)
+        var type = (SDL_EventType)e->type;
+
+        // During a live window resize the OS takes over the event loop, blocking PollEvents
+        // (this watch fires from inside SDL_PumpEvents on the thread running the modal loop).
+        // To keep the scene laid out and rendered at the new size mid-drag we must run the
+        // FULL size-change notification from here — cached sizes AND Resized. This is safe:
+        // AppHost's Resized subscriber only reads the published sizes and enqueues the actual
+        // onResize work onto a ConcurrentQueue drained by the update thread, and the renderer
+        // resize is marshalled via ScheduleToDrawThread. Deferring Resized until PollEvents
+        // would mean the root container keeps its old size for the whole drag (stretched frame).
+        if (type == SDL_EventType.SDL_EVENT_WINDOW_RESIZED ||
+            type == SDL_EventType.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED ||
+            type == SDL_EventType.SDL_EVENT_WINDOW_EXPOSED)
         {
-            if (@event->Window.Event == (byte)WindowEventID.Resized ||
-                @event->Window.Event == (byte)WindowEventID.SizeChanged ||
-                @event->Window.Event == (byte)WindowEventID.Exposed)
+            if (instance != null)
             {
-                handleWindowEvent(@event->Window);
-                RenderRequested.Invoke();
+                if (type != SDL_EventType.SDL_EVENT_WINDOW_EXPOSED)
+                    instance.handleSizeChanged();
+
+                instance.RenderRequested.Invoke();
             }
         }
 
-        return 1;
+        return true;
+    }
+
+    /// <summary>
+    /// Queries the current window sizes, publishes them, persists config and fires
+    /// <see cref="Resized"/> when the size actually changed since the last notification.
+    /// Called from both the event watch (mid-drag, possibly before PollEvents can run)
+    /// and the polled event path — the lastNotified* fields dedupe between the two so
+    /// every size change is notified exactly once.
+    /// </summary>
+    /// <returns>Whether the size had changed (and a notification was fired).</returns>
+    private unsafe bool handleSizeChanged()
+    {
+        if (window == null) return false;
+
+        int drawW, drawH, logW, logH;
+        SDL_GetWindowSizeInPixels(window, &drawW, &drawH);
+        SDL_GetWindowSize(window, &logW, &logH);
+
+        if (drawW == lastNotifiedDrawW && drawH == lastNotifiedDrawH &&
+            logW == lastNotifiedLogW && logH == lastNotifiedLogH)
+            return false;
+
+        // currentWidth/currentHeight are read from the update/draw threads via
+        // GetPhysicalSize, so publish them with Interlocked.
+        Interlocked.Exchange(ref currentWidth, drawW);
+        Interlocked.Exchange(ref currentHeight, drawH);
+        logicalWidth = logW;
+        logicalHeight = logH;
+
+        lastNotifiedDrawW = drawW;
+        lastNotifiedDrawH = drawH;
+        lastNotifiedLogW = logW;
+        lastNotifiedLogH = logH;
+
+        Logger.Verbose($"Window resized to {drawW}x{drawH} (logical size: {logW}x{logH})");
+
+        if (windowConfig != null && windowMode == WindowMode.Windowed)
+        {
+            windowConfig.Get<int>(FrameworkSetting.WindowWidth).Value = logW;
+            windowConfig.Get<int>(FrameworkSetting.WindowHeight).Value = logH;
+        }
+
+        Resized.Invoke(logicalWidth, logicalHeight);
+        return true;
     }
 
     private unsafe void setWindowMode(WindowMode newMode)
@@ -476,14 +520,13 @@ public class SDLWindow : IWindow
             Logger.Warning("windowConfig is null — WindowMode change will not be persisted.");
         }
 
-
         if (window == null) return;
 
         switch (newMode)
         {
             case WindowMode.Windowed:
-                sdl.SetWindowFullscreen(window, 0);
-                sdl.SetWindowBordered(window, SdlBool.True);
+                SDL_SetWindowFullscreen(window, false);
+                SDL_SetWindowBordered(window, true);
 
                 if (windowConfig != null)
                 {
@@ -493,135 +536,131 @@ public class SDLWindow : IWindow
                     int savedH = windowConfig.Get<int>(FrameworkSetting.WindowHeight).Value;
 
                     if (savedW > 0 && savedH > 0)
-                        sdl.SetWindowSize(window, savedW, savedH);
+                        SDL_SetWindowSize(window, savedW, savedH);
 
                     if (savedX != -1 && savedY != -1 && isPositionOnConnectedDisplay(savedX, savedY))
-                        sdl.SetWindowPosition(window, savedX, savedY);
+                        SDL_SetWindowPosition(window, savedX, savedY);
                     else
-                        sdl.SetWindowPosition(window, Sdl.WindowposCentered, Sdl.WindowposCentered);
+                        SDL_SetWindowPosition(window, windowpos_centered, windowpos_centered);
                 }
                 else
                 {
-                    sdl.SetWindowPosition(window, Sdl.WindowposCentered, Sdl.WindowposCentered);
+                    SDL_SetWindowPosition(window, windowpos_centered, windowpos_centered);
                 }
                 break;
 
             case WindowMode.Borderless:
-                sdl.SetWindowFullscreen(window, (uint)WindowFlags.FullscreenDesktop);
-                sdl.SetWindowFullscreen(window, (uint)WindowFlags.FullscreenDesktop);
+                // null fullscreen mode = borderless fullscreen desktop in SDL3.
+                SDL_SetWindowFullscreenMode(window, null);
+                SDL_SetWindowFullscreen(window, true);
                 break;
 
             case WindowMode.Fullscreen:
-                sdl.SetWindowFullscreen(window, (uint)WindowFlags.Fullscreen);
+                var mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window));
+                SDL_SetWindowFullscreenMode(window, mode);
+                SDL_SetWindowFullscreen(window, true);
                 break;
         }
 
-        int w, h, phyW, phyH;
-        sdl.GetWindowSize(window, &w, &h);
-
-        if (graphicsApi == RendererType.Metal)
-            sdl.GetWindowSizeInPixels(window, &phyW, &phyH);
-        else
-            sdl.GLGetDrawableSize(window, &phyW, &phyH);
-
-        logicalWidth = w;
-        logicalHeight = h;
-        currentWidth = phyW;
-        currentHeight = phyH;
-
-        Resized.Invoke(logicalWidth, logicalHeight);
+        // Mode changes usually generate RESIZED events as well; handleSizeChanged dedupes
+        // so whichever path runs first wins and the other is a no-op.
+        handleSizeChanged();
 
         Logger.Debug($"Window mode changed to {newMode}");
     }
 
     private unsafe void handleSdlEvents()
     {
-        Event sdlEvent;
-        while (sdl.PollEvent(&sdlEvent) != 0)
+        SDL_Event sdlEvent;
+        while (SDL_PollEvent(&sdlEvent))
         {
-            switch ((EventType)sdlEvent.Type)
+            var type = (SDL_EventType)sdlEvent.type;
+
+            switch (type)
             {
-                case EventType.Quit:
+                case SDL_EventType.SDL_EVENT_QUIT:
                     ExitRequested.Invoke();
                     IsExiting = true;
                     break;
 
-                case EventType.Windowevent:
-                    handleWindowEvent(sdlEvent.Window);
+                case SDL_EventType.SDL_EVENT_KEY_DOWN:
+                    handleKeyEvent(sdlEvent.key, OnKeyDown);
                     break;
 
-                case EventType.Keydown:
-                    handleKeyEvent(sdlEvent.Key, OnKeyDown);
+                case SDL_EventType.SDL_EVENT_KEY_UP:
+                    handleKeyEvent(sdlEvent.key, OnKeyUp);
                     break;
 
-                case EventType.Keyup:
-                    handleKeyEvent(sdlEvent.Key, OnKeyUp);
+                case SDL_EventType.SDL_EVENT_MOUSE_BUTTON_DOWN:
+                    handleMouseButtonEvent(sdlEvent.button, OnMouseDown);
                     break;
 
-                case EventType.Mousebuttondown:
-                    handleMouseButtonEvent(sdlEvent.Button, OnMouseDown);
+                case SDL_EventType.SDL_EVENT_MOUSE_BUTTON_UP:
+                    handleMouseButtonEvent(sdlEvent.button, OnMouseUp);
                     break;
 
-                case EventType.Mousebuttonup:
-                    handleMouseButtonEvent(sdlEvent.Button, OnMouseUp);
+                case SDL_EventType.SDL_EVENT_MOUSE_MOTION:
+                    handleMouseMotionEvent(sdlEvent.motion);
                     break;
 
-                case EventType.Mousemotion:
-                    handleMouseMotionEvent(sdlEvent.Motion);
+                case SDL_EventType.SDL_EVENT_MOUSE_WHEEL:
+                    handleMouseWheelEvent(sdlEvent.wheel);
                     break;
 
-                case EventType.Mousewheel:
-                    handleMouseWheelEvent(sdlEvent.Wheel);
+                case SDL_EventType.SDL_EVENT_DROP_FILE:
+                    handleDropFileEvent(sdlEvent.drop);
                     break;
 
-                case EventType.Dropfile:
-                    handleDropFileEvent(sdlEvent.Drop);
+                case SDL_EventType.SDL_EVENT_DROP_TEXT:
+                    handleDropTextEvent(sdlEvent.drop);
                     break;
 
-                case EventType.Droptext:
-                    handleDropTextEvent(sdlEvent.Drop);
+                case SDL_EventType.SDL_EVENT_TEXT_INPUT:
+                    handleTextInputEvent(sdlEvent.text);
                     break;
 
-                case EventType.Textinput:
-                    handleTextInputEvent(sdlEvent.Text);
+                case SDL_EventType.SDL_EVENT_TEXT_EDITING:
+                    handleTextEditingEvent(sdlEvent.edit);
                     break;
 
-                case EventType.Textediting:
-                    handleTextEditingEvent(sdlEvent.Edit);
+                default:
+                    // SDL3 promoted window events to first-class event types (no more SDL_WINDOWEVENT).
+                    if (type >= SDL_EventType.SDL_EVENT_WINDOW_FIRST && type <= SDL_EventType.SDL_EVENT_WINDOW_LAST)
+                        handleWindowEvent(type, sdlEvent.window);
                     break;
             }
         }
     }
 
-    private unsafe void handleWindowEvent(WindowEvent sdlWindowEvent)
+    private unsafe void handleWindowEvent(SDL_EventType type, SDL_WindowEvent sdlWindowEvent)
     {
-        switch ((WindowEventID)sdlWindowEvent.Event)
+        switch (type)
         {
-            case WindowEventID.FocusGained:
+            case SDL_EventType.SDL_EVENT_WINDOW_FOCUS_GAINED:
                 IsActive = true;
                 Logger.Debug("Window focus gained");
                 FocusGained.Invoke();
                 break;
 
-            case WindowEventID.FocusLost:
+            case SDL_EventType.SDL_EVENT_WINDOW_FOCUS_LOST:
                 IsActive = false;
                 Logger.Debug("Window focus lost");
                 FocusLost.Invoke();
                 break;
 
-            case WindowEventID.Minimized:
+            case SDL_EventType.SDL_EVENT_WINDOW_MINIMIZED:
                 IsActive = false;
                 Logger.Debug("Window minimized");
                 Minimized.Invoke();
                 break;
 
-            case WindowEventID.Restored:
+            case SDL_EventType.SDL_EVENT_WINDOW_RESTORED:
                 IsActive = true;
                 Logger.Debug("Window restored from minimized state");
                 Restored.Invoke();
                 break;
 
-            case WindowEventID.DisplayChanged:
+            case SDL_EventType.SDL_EVENT_WINDOW_DISPLAY_CHANGED:
                 int oldHz = DisplayHz;
                 DisplayHz = getDisplayRefreshRate();
 
@@ -630,181 +669,166 @@ public class SDLWindow : IWindow
                     Logger.Debug($"Display refresh rate changed from {oldHz} Hz to {DisplayHz} Hz");
                     DisplayChanged.Invoke(DisplayHz);
                 }
+
+                // When the window moves to a display with a different pixel density (e.g. from
+                // a non-HiDPI external monitor to the HiDPI MacBook screen), SDL may or may not
+                // fire SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED. Refresh the physical size here so
+                // the renderer always uses the correct DPI scale for the new display.
+                if (handleSizeChanged())
+                    RenderRequested.Invoke();
                 break;
 
-            case WindowEventID.SizeChanged:
-            case WindowEventID.Resized:
-                int drawableWidth, drawableHeight, windowWidth, windowHeight;
-                sdl.GetWindowSize(window, &windowWidth, &windowHeight);
-                if (graphicsApi == RendererType.Metal)
-                    sdl.GetWindowSizeInPixels(window, &drawableWidth, &drawableHeight);
-                else
-                    sdl.GLGetDrawableSize(window, &drawableWidth, &drawableHeight);
-                // SDL sometimes sends multiple resize events with the same size, ignore them
-                // to prevent resize event got invoke multiple times
-                if (drawableWidth == currentWidth && drawableHeight == currentHeight && windowWidth == logicalWidth && windowHeight == logicalHeight)
-                    break;
-                currentWidth = drawableWidth;
-                currentHeight = drawableHeight;
-                logicalWidth = windowWidth;
-                logicalHeight = windowHeight;
-                Logger.Verbose($"Window resized to {drawableWidth}x{drawableHeight} (logical size: {windowWidth}x{windowHeight})");
-
-                if (windowConfig != null && windowMode == WindowMode.Windowed)
-                {
-                    windowConfig.Get<int>(FrameworkSetting.WindowWidth).Value = windowWidth;
-                    windowConfig.Get<int>(FrameworkSetting.WindowHeight).Value = windowHeight;
-                }
-
-                Resized.Invoke(logicalWidth, logicalHeight);
+            case SDL_EventType.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+            case SDL_EventType.SDL_EVENT_WINDOW_RESIZED:
+                // The event watch usually handled this already mid-drag; handleSizeChanged
+                // dedupes via lastNotified*, so this only fires for size changes the watch
+                // didn't see and is a no-op for queued duplicates of watch-handled events.
+                handleSizeChanged();
                 break;
 
-            case WindowEventID.Moved:
+            case SDL_EventType.SDL_EVENT_WINDOW_MOVED:
                 if (windowConfig != null && windowMode == WindowMode.Windowed)
                 {
                     int posX, posY;
-                    sdl.GetWindowPosition(window, &posX, &posY);
+                    SDL_GetWindowPosition(window, &posX, &posY);
                     windowConfig.Get<int>(FrameworkSetting.WindowX).Value = posX;
                     windowConfig.Get<int>(FrameworkSetting.WindowY).Value = posY;
                 }
                 break;
 
-            case WindowEventID.Enter:
+            case SDL_EventType.SDL_EVENT_WINDOW_MOUSE_ENTER:
                 CursorInWindow = true;
                 break;
 
-            case WindowEventID.Leave:
+            case SDL_EventType.SDL_EVENT_WINDOW_MOUSE_LEAVE:
                 CursorInWindow = false;
                 break;
         }
     }
 
-    private void handleKeyEvent(KeyboardEvent keyboardEvent, Action<KeyEvent> action)
+    private void handleKeyEvent(SDL_KeyboardEvent keyboardEvent, Action<KeyEvent> action)
     {
-        var key = SDLEnumMapping.ToSakuraKey(keyboardEvent.Keysym.Scancode);
+        var key = SDLEnumMapping.ToSakuraKey(keyboardEvent.scancode);
         if (key == Key.Unknown)
             return;
 
+        // SDL3 carries the modifier state on the event itself — no SDL_GetModState round-trip.
         var modifiers = KeyModifiers.None;
-        var modState = sdl.GetModState();
+        var modState = keyboardEvent.mod;
 
-        if ((modState & Keymod.Ctrl) > 0) modifiers |= KeyModifiers.Control;
-        if ((modState & Keymod.Shift) > 0) modifiers |= KeyModifiers.Shift;
-        if ((modState & Keymod.Alt) > 0) modifiers |= KeyModifiers.Alt;
+        if ((modState & SDL_Keymod.SDL_KMOD_CTRL) != 0) modifiers |= KeyModifiers.Control;
+        if ((modState & SDL_Keymod.SDL_KMOD_SHIFT) != 0) modifiers |= KeyModifiers.Shift;
+        if ((modState & SDL_Keymod.SDL_KMOD_ALT) != 0) modifiers |= KeyModifiers.Alt;
 
-        bool isRepeat = keyboardEvent.Repeat != 0;
+        // Note: keyboardEvent.timestamp is nanosecond-resolution (SDL_GetTicksNS timeline).
+        // When the input pipeline gains timestamped events (see Docs/Clock-Timing-Review.md),
+        // this is the value to carry through.
+        bool isRepeat = keyboardEvent.repeat;
 
         action.Invoke(new KeyEvent(key, modifiers, isRepeat));
     }
 
-    private void handleMouseButtonEvent(SilkMouseButtonEvent buttonEvent, Action<SakuraMouseButtonEvent> action)
+    private void handleMouseButtonEvent(SDL_MouseButtonEvent buttonEvent, Action<SakuraMouseButtonEvent> action)
     {
-        var button = SDLEnumMapping.ToSakuraMouseButton(buttonEvent.Button);
+        var button = SDLEnumMapping.ToSakuraMouseButton(buttonEvent.button);
         if (button == MouseButton.Unknown) return;
-        mouseState.Position = new Vector2(buttonEvent.X, buttonEvent.Y);
-        mouseState.SetPressed(button, buttonEvent.State == 1);
-        action.Invoke(new Input.MouseButtonEvent(mouseState.Clone(), button, buttonEvent.Clicks));
+        // SDL3 reports mouse coordinates as floats (subpixel precision).
+        mouseState.Position = new Vector2(buttonEvent.x, buttonEvent.y);
+        mouseState.SetPressed(button, buttonEvent.down);
+        action.Invoke(new Input.MouseButtonEvent(mouseState.Clone(), button, buttonEvent.clicks));
     }
 
-    private void handleMouseMotionEvent(MouseMotionEvent motionEvent)
+    private void handleMouseMotionEvent(SDL_MouseMotionEvent motionEvent)
     {
-        mouseState.Position = new Vector2(motionEvent.X, motionEvent.Y);
-        var delta = new Vector2(motionEvent.Xrel, motionEvent.Yrel);
+        mouseState.Position = new Vector2(motionEvent.x, motionEvent.y);
+        var delta = new Vector2(motionEvent.xrel, motionEvent.yrel);
         OnMouseMove.Invoke(new MouseEvent(mouseState.Clone(), delta));
     }
 
-    private unsafe void handleMouseWheelEvent(MouseWheelEvent wheelEvent)
+    private void handleMouseWheelEvent(SDL_MouseWheelEvent wheelEvent)
     {
-        int x = 0;
-        int y = 0;
-        sdl.GetMouseState(&x, &y);
-        mouseState.Position = new Vector2(x, y);
-        OnScroll.Invoke(new ScrollEvent(mouseState, new Vector2(wheelEvent.X, wheelEvent.Y)));
+        // SDL3 wheel events carry the mouse position directly.
+        mouseState.Position = new Vector2(wheelEvent.mouse_x, wheelEvent.mouse_y);
+        OnScroll.Invoke(new ScrollEvent(mouseState, new Vector2(wheelEvent.x, wheelEvent.y)));
     }
 
-    private unsafe void handleDropFileEvent(DropEvent dropEvent)
+    private unsafe void handleDropFileEvent(SDL_DropEvent dropEvent)
     {
-        string filePath = Marshal.PtrToStringUTF8((nint)dropEvent.File);
-        sdl.Free(dropEvent.File);
+        // SDL3: drop event strings are owned by SDL (temporary memory) — do not free.
+        string filePath = Marshal.PtrToStringUTF8((nint)dropEvent.data);
         if (string.IsNullOrEmpty(filePath))
             return;
-        int x, y;
-        sdl.GetMouseState(&x, &y);
-        Vector2 position = new Vector2(x, y);
-        OnDragDropFile.Invoke(new DragDropFileEvent(filePath, position));
+        OnDragDropFile.Invoke(new DragDropFileEvent(filePath, new Vector2(dropEvent.x, dropEvent.y)));
     }
 
-    private unsafe void handleDropTextEvent(DropEvent dropEvent)
+    private unsafe void handleDropTextEvent(SDL_DropEvent dropEvent)
     {
-        string text = Marshal.PtrToStringUTF8((nint)dropEvent.File);
-        sdl.Free(dropEvent.File);
+        string text = Marshal.PtrToStringUTF8((nint)dropEvent.data);
         if (string.IsNullOrEmpty(text))
             return;
-        int x, y;
-        sdl.GetMouseState(&x, &y);
-        Vector2 position = new Vector2(x, y);
-        OnDragDropText.Invoke(new DragDropTextEvent(text, position));
+        OnDragDropText.Invoke(new DragDropTextEvent(text, new Vector2(dropEvent.x, dropEvent.y)));
     }
 
-    private unsafe void handleTextInputEvent(Silk.NET.SDL.TextInputEvent textEvent)
+    private unsafe void handleTextInputEvent(SDL_TextInputEvent textEvent)
     {
-        string text = Marshal.PtrToStringUTF8((nint)textEvent.Text);
+        string text = Marshal.PtrToStringUTF8((nint)textEvent.text);
         if (!string.IsNullOrEmpty(text))
         {
             OnTextInput.Invoke(new TextInputEvent(text));
         }
     }
 
-    private unsafe void handleTextEditingEvent(Silk.NET.SDL.TextEditingEvent editEvent)
+    private unsafe void handleTextEditingEvent(SDL_TextEditingEvent editEvent)
     {
-        string text = Marshal.PtrToStringUTF8((nint)editEvent.Text);
-        OnTextEditing.Invoke(new TextEditingEvent(text ?? string.Empty, editEvent.Start, editEvent.Length));
+        string text = Marshal.PtrToStringUTF8((nint)editEvent.text);
+        OnTextEditing.Invoke(new TextEditingEvent(text ?? string.Empty, editEvent.start, editEvent.length));
     }
 
-    public unsafe string GetClipboardText()
+    public string GetClipboardText()
     {
-        if (sdl.HasClipboardText() == SdlBool.False) return string.Empty;
+        if (!SDL_HasClipboardText()) return string.Empty;
 
-        byte* ptr = sdl.GetClipboardText();
-        if (ptr == null) return string.Empty;
-
-        try
-        {
-            return Marshal.PtrToStringUTF8((IntPtr)ptr) ?? string.Empty;
-        }
-        finally
-        {
-            sdl.Free(ptr);
-        }
+        return SDL_GetClipboardText() ?? string.Empty;
     }
 
     public void SetClipboardText(string text)
     {
-        sdl.SetClipboardText(text);
+        SDL_SetClipboardText(text);
     }
 
     /// <summary>
     /// Returns true if the given screen position falls within the bounds of any connected display.
     /// Used to detect whether a saved window position is still valid after monitor changes.
     /// </summary>
-    private static bool isPositionOnConnectedDisplay(int x, int y)
+    private static unsafe bool isPositionOnConnectedDisplay(int x, int y)
     {
-        int numDisplays = sdl.GetNumVideoDisplays();
+        int numDisplays;
+        var displays = SDL_GetDisplays(&numDisplays);
 
-        for (int i = 0; i < numDisplays; i++)
+        if (displays == null)
+            return false;
+
+        try
         {
-            Rectangle<int> bounds = default;
-            if (sdl.GetDisplayBounds(i, ref bounds) != 0)
-                continue;
+            for (int i = 0; i < numDisplays; i++)
+            {
+                SDL_Rect bounds;
+                if (!SDL_GetDisplayBounds(displays[i], &bounds))
+                    continue;
 
-            // Check if the position is within this display's bounds.
-            // Use a small margin (at least 64px of the title bar must be visible).
-            const int margin = 64;
-            if (x >= bounds.Origin.X - margin &&
-                x < bounds.Origin.X + bounds.Size.X &&
-                y >= bounds.Origin.Y - margin &&
-                y < bounds.Origin.Y + bounds.Size.Y)
-                return true;
+                // Check if the position is within this display's bounds.
+                // Use a small margin (at least 64px of the title bar must be visible).
+                const int margin = 64;
+                if (x >= bounds.x - margin &&
+                    x < bounds.x + bounds.w &&
+                    y >= bounds.y - margin &&
+                    y < bounds.y + bounds.h)
+                    return true;
+            }
+        }
+        finally
+        {
+            SDL_free((IntPtr)displays);
         }
 
         return false;
@@ -812,13 +836,10 @@ public class SDLWindow : IWindow
 
     private unsafe int getDisplayRefreshRate()
     {
-        DisplayMode mode = new DisplayMode();
-        int displayIndex = sdl.GetWindowDisplayIndex(window);
+        var mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window));
 
-        if (sdl.GetCurrentDisplayMode(displayIndex, &mode) == 0)
-        {
-            return mode.RefreshRate;
-        }
+        if (mode != null && mode->refresh_rate > 0)
+            return (int)Math.Round(mode->refresh_rate);
 
         return 60;
     }
@@ -841,22 +862,27 @@ public class SDLWindow : IWindow
             pendingTextInputRect = null;
         }
 
-        // apply text input state switches on the main thread
+        // apply text input state switches on the main thread (SDL3: per-window)
         if (targetState.HasValue)
         {
             if (targetState.Value)
-                sdl.StartTextInput();
+                SDL_StartTextInput(window);
             else
-                sdl.StopTextInput();
+                SDL_StopTextInput(window);
         }
 
         // apply IME composition box positions on the main thread
         if (targetRect.HasValue)
         {
             var rect = targetRect.Value;
-            var sdlRect = new Silk.NET.Maths.Rectangle<int>(
-                (int)rect.X, (int)rect.Y, (int)rect.Width, (int)rect.Height);
-            sdl.SetTextInputRect(ref sdlRect);
+            var sdlRect = new SDL_Rect
+            {
+                x = (int)rect.X,
+                y = (int)rect.Y,
+                w = (int)rect.Width,
+                h = (int)rect.Height
+            };
+            SDL_SetTextInputArea(window, &sdlRect, 0);
         }
 
         // normal OS message processing
@@ -873,7 +899,7 @@ public class SDLWindow : IWindow
         else
         {
             if (window != null)
-                sdl.GLSwapWindow(window);
+                SDL_GL_SwapWindow(window);
         }
     }
 
@@ -905,7 +931,7 @@ public class SDLWindow : IWindow
     public void SetVSync(bool enabled)
     {
         if (graphicsApi != RendererType.Metal)
-            sdl.GLSetSwapInterval(enabled ? 1 : 0);
+            SDL_GL_SetSwapInterval(enabled ? 1 : 0);
         // Metal VSync is controlled via CAMetalLayer.displaySyncEnabled, will handled in MetalRenderer.
     }
 
@@ -914,16 +940,16 @@ public class SDLWindow : IWindow
         title = newTitle;
 
         if (window != null)
-            sdl.SetWindowTitle(window, newTitle);
+            SDL_SetWindowTitle(window, newTitle);
     }
 
     private void setApplicationName(string newAppName)
     {
         applicationName = newAppName;
 
-        var result = sdl?.SetHintWithPriority("SDL_APP_NAME", newAppName, HintPriority.Override);
-        if (result == SdlBool.False)
-            Logger.Warning("Failed to set SDL application name hint to " + newAppName);
+        // SDL3 replaces the SDL_APP_NAME hint with first-class app metadata.
+        if (!SDL_SetAppMetadata(newAppName, null, null))
+            Logger.Warning("Failed to set SDL application name to " + newAppName);
     }
 
     private unsafe void setResizable(bool isResizable)
@@ -931,13 +957,13 @@ public class SDLWindow : IWindow
         resizable = isResizable;
 
         if (window != null)
-            sdl.SetWindowResizable(window, (SdlBool)(isResizable ? 1 : 0));
+            SDL_SetWindowResizable(window, isResizable);
     }
 
     #region Cursor
 
     private bool cursorVisible = true;
-    private readonly Dictionary<CursorState, IntPtr> sdlCursors = new Dictionary<CursorState, IntPtr>();
+    private readonly Dictionary<SakuraCursorState, IntPtr> sdlCursors = new Dictionary<SakuraCursorState, IntPtr>();
 
     public bool CursorVisible
     {
@@ -947,7 +973,10 @@ public class SDLWindow : IWindow
             cursorVisible = value;
             if (initialized)
             {
-                sdl.ShowCursor(value ? 1 : 0);
+                if (value)
+                    SDL_ShowCursor();
+                else
+                    SDL_HideCursor();
             }
         }
     }
@@ -963,60 +992,63 @@ public class SDLWindow : IWindow
 
         if (!sdlCursors.TryGetValue(cursorState, out IntPtr cursorPtr))
         {
-            SystemCursor sysCursor;
+            SDL_SystemCursor sysCursor;
             switch (cursorState)
             {
                 case SakuraCursorState.Pointer:
-                    sysCursor = SystemCursor.SystemCursorHand;
+                    sysCursor = SDL_SystemCursor.SDL_SYSTEM_CURSOR_POINTER;
                     break;
 
                 case SakuraCursorState.Text:
-                    sysCursor = SystemCursor.SystemCursorIbeam;
+                    sysCursor = SDL_SystemCursor.SDL_SYSTEM_CURSOR_TEXT;
                     break;
 
                 case SakuraCursorState.Wait:
-                    sysCursor = SystemCursor.SystemCursorWait;
+                    sysCursor = SDL_SystemCursor.SDL_SYSTEM_CURSOR_WAIT;
                     break;
 
                 case SakuraCursorState.Crosshair:
-                    sysCursor = SystemCursor.SystemCursorCrosshair;
+                    sysCursor = SDL_SystemCursor.SDL_SYSTEM_CURSOR_CROSSHAIR;
                     break;
+
                 case SakuraCursorState.NotAllowed:
-                    sysCursor = SystemCursor.SystemCursorNo;
+                    sysCursor = SDL_SystemCursor.SDL_SYSTEM_CURSOR_NOT_ALLOWED;
                     break;
 
                 default:
-                    sysCursor = SystemCursor.SystemCursorArrow;
+                    sysCursor = SDL_SystemCursor.SDL_SYSTEM_CURSOR_DEFAULT;
                     break;
             }
 
-            Cursor* newCursor = sdl.CreateSystemCursor(sysCursor);
+            SDL_Cursor* newCursor = SDL_CreateSystemCursor(sysCursor);
             cursorPtr = (IntPtr)newCursor;
             sdlCursors[cursorState] = cursorPtr;
         }
 
-        sdl.SetCursor((Cursor*)cursorPtr);
+        SDL_SetCursor((SDL_Cursor*)cursorPtr);
     }
 
     #endregion
 
     public unsafe void Dispose()
     {
+        SDL_RemoveEventWatch(&resizeEventWatch, IntPtr.Zero);
+
         foreach (IntPtr cursorPtr in sdlCursors.Values)
         {
-            sdl.FreeCursor((Cursor*)cursorPtr);
+            SDL_DestroyCursor((SDL_Cursor*)cursorPtr);
         }
         sdlCursors.Clear();
 
         if (glContext != null && graphicsApi != RendererType.Metal)
         {
-            sdl.GLDeleteContext(glContext);
+            SDL_GL_DestroyContext(glContext);
             glContext = null;
         }
 
         if (window != null)
         {
-            sdl.DestroyWindow(window);
+            SDL_DestroyWindow(window);
             window = null;
         }
     }
