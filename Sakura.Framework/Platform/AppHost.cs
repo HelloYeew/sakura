@@ -327,7 +327,7 @@ public abstract class AppHost : IDisposable
             {
                 Priority = ThreadPriority.Normal
             };
-            audioThread = new AppThread("AudioThread", PerformSoundUpdate, () => 1000)
+            audioThread = new AppThread("AudioThread", PerformSoundUpdate, getAudioTargetHz)
             {
                 Priority = ThreadPriority.Highest
             };
@@ -380,9 +380,8 @@ public abstract class AppHost : IDisposable
 
             long timestampFrequency = Stopwatch.Frequency;
             double msPerTick = 1000.0 / timestampFrequency;
-            long lastMainFrameTime = Stopwatch.GetTimestamp();
-            double mainSleepError = 0.0;
-            const double main_min_sleep_ms = 0.5;
+            long nextMainFrameTime = Stopwatch.GetTimestamp();
+            const double main_spin_guard_ms = 0.5;
 
             INativeSleep mainNativeSleep = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
                 ? new WindowsNativeSleep()
@@ -413,50 +412,45 @@ public abstract class AppHost : IDisposable
                         threadRunner.RunSingleThreadedFrame();
                     }
 
+                    // In single-threaded mode the main loop drives everything at the update rate.
+                    // In multi-threaded mode it only drives input, so it follows the input target Hz
+                    // (which throttles to 60 when the window is inactive, like the other threads).
                     double currentHz = ExecutionMode.Value == Threading.ExecutionMode.SingleThread
                         ? targetUpdateHz
-                        : 1000.0;
+                        : GetInputTargetHz();
 
                     if (currentHz > 0)
                     {
                         double targetMainFrameTimeMs = 1000.0 / currentHz;
                         long targetMainTicks = (long)(targetMainFrameTimeMs / msPerTick);
+                        
+                        nextMainFrameTime += targetMainTicks;
 
-                        long nowTicks = Stopwatch.GetTimestamp();
-                        double elapsedMs = (nowTicks - lastMainFrameTime) * msPerTick;
-                        double sleepMs = targetMainFrameTimeMs - elapsedMs + mainSleepError;
+                        long now = Stopwatch.GetTimestamp();
 
-                        if (sleepMs >= main_min_sleep_ms)
+                        if (now > nextMainFrameTime)
+                            nextMainFrameTime = now;
+
+                        double remainingMs = (nextMainFrameTime - now) * msPerTick;
+
+                        // Coarse phase: give the CPU back to the OS for the bulk of the wait.
+                        double sleepMs = remainingMs - main_spin_guard_ms;
+                        if (sleepMs > 0)
                         {
                             var sleepSpan = TimeSpan.FromMilliseconds(sleepMs);
-                            double beforeMs = Stopwatch.GetTimestamp() * msPerTick;
-
                             if (mainNativeSleep?.Sleep(sleepSpan) != true)
                                 Thread.Sleep(sleepSpan);
-
-                            double actualSleepMs = Stopwatch.GetTimestamp() * msPerTick - beforeMs;
-                            mainSleepError += sleepMs - actualSleepMs;
-                        }
-                        else
-                        {
-                            mainSleepError += sleepMs;
                         }
 
-                        mainSleepError = Math.Clamp(mainSleepError, -1000.0 / 30.0, 2.0);
-
-                        lastMainFrameTime += targetMainTicks;
-
-                        long currentAfterWait = Stopwatch.GetTimestamp();
-                        if ((currentAfterWait - lastMainFrameTime) * msPerTick > targetMainFrameTimeMs * 5)
-                        {
-                            lastMainFrameTime = currentAfterWait;
-                            mainSleepError = 0;
-                        }
+                        // Fine phase: tight bounded spin (~main_spin_guard_ms) to land exactly on the
+                        // deadline. Thread.SpinWait issues a CPU pause hint without yielding to sleep,
+                        // which would overshoot a sub-millisecond deadline.
+                        while (Stopwatch.GetTimestamp() < nextMainFrameTime)
+                            Thread.SpinWait(1);
                     }
                     else
                     {
-                        lastMainFrameTime = Stopwatch.GetTimestamp();
-                        mainSleepError = 0;
+                        nextMainFrameTime = Stopwatch.GetTimestamp();
                         Thread.Sleep(0);
                     }
                 }
@@ -664,10 +658,15 @@ public abstract class AppHost : IDisposable
     }
 
     private bool isMultiThread => ExecutionMode?.Value == Threading.ExecutionMode.MultiThread;
-    internal double GetInputTargetHz() => isMultiThread ? 1000.0 : targetUpdateHz;
-    internal double GetAudioTargetHz() => isMultiThread ? 1000.0 : targetUpdateHz;
+    internal double GetInputTargetHz() => isMultiThread ? getInputTargetHz() : targetUpdateHz;
+    internal double GetAudioTargetHz() => isMultiThread ? getAudioTargetHz() : targetUpdateHz;
     internal double GetUpdateTargetHz() => isMultiThread ? getUpdateTargetHz() : targetUpdateHz;
     internal double GetDrawTargetHz() => isMultiThread ? getDrawTargetHz() : targetUpdateHz;
+
+    // Input and audio run at 1000 Hz while the window is focused, and throttle to 60 Hz when it
+    // loses focus — matching the update/draw threads (and osu!framework's inactive behaviour).
+    private double getInputTargetHz() => Window != null && !Window.IsActive ? 60.0 : 1000.0;
+    private double getAudioTargetHz() => Window != null && !Window.IsActive ? 60.0 : 1000.0;
 
     private double getDrawTargetHz()
     {
