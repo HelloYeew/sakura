@@ -18,6 +18,23 @@ namespace Sakura.Framework.Threading;
 [SupportedOSPlatform("windows")]
 internal class WindowsNativeSleep : INativeSleep
 {
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileTime
+    {
+        public int dwLowDateTime;
+        public int dwHighDateTime;
+
+        public static FileTime FromTimeSpan(TimeSpan ts)
+        {
+            ulong ul = unchecked((ulong)-ts.Ticks);
+            return new FileTime
+            {
+                dwLowDateTime = (int)(ul & 0xFFFFFFFF),
+                dwHighDateTime = (int)(ul >> 32),
+            };
+        }
+    }
+
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr CreateWaitableTimerEx(
         IntPtr lpTimerAttributes,
@@ -28,7 +45,7 @@ internal class WindowsNativeSleep : INativeSleep
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool SetWaitableTimerEx(
         IntPtr hTimer,
-        in long lpDueTime,
+        in FileTime lpDueTime,
         int lPeriod,
         IntPtr pfnCompletionRoutine,
         IntPtr lpArgToCompletionRoutine,
@@ -43,7 +60,7 @@ internal class WindowsNativeSleep : INativeSleep
 
     private const uint create_waitable_timer_manual_reset = 0x00000001;
     private const uint create_waitable_timer_high_resolution = 0x00000002;
-    private const uint timer_all_access = 0x1F0003;
+    private const uint timer_all_access = 2031619U;
     private const uint infinite = 0xFFFFFFFF;
 
     private readonly IntPtr waitableTimer;
@@ -71,8 +88,7 @@ internal class WindowsNativeSleep : INativeSleep
         if (waitableTimer == IntPtr.Zero)
             return false;
 
-        // Negative 100-ns intervals = relative delay (same unit as FILETIME)
-        long dueTime = -duration.Ticks;
+        var dueTime = FileTime.FromTimeSpan(duration);
 
         if (!SetWaitableTimerEx(waitableTimer, in dueTime, 0, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, 0))
             return false;
@@ -84,6 +100,6 @@ internal class WindowsNativeSleep : INativeSleep
     public void Dispose()
     {
         if (waitableTimer != IntPtr.Zero)
-            CloseHandle(waitableTimer);
+            _ = CloseHandle(waitableTimer);
     }
 }
