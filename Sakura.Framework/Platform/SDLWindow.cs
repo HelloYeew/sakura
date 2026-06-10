@@ -195,6 +195,16 @@ public class SDLWindow : IWindow
 
         setApplicationName(applicationName);
 
+        // On Windows, SDL requires DPI awareness hints to be set BEFORE SDL_Init so that
+        // GLGetDrawableSize returns physical pixels instead of DPI-virtualized logical pixels.
+        // Without this, Windows treats the app as DPI-unaware and reports scale=(1,1) even
+        // on high-DPI displays.
+        if (RuntimeInfo.IsWindows)
+        {
+            sdl.SetHint("SDL_WINDOWS_DPI_AWARENESS", "permonitorv2");
+            sdl.SetHint("SDL_WINDOWS_DPI_SCALING", "1");
+        }
+
         // Make sure SDL video backend is fully initialized
         // To make it support for OpenGL context and process advance hint like profile version
         if (sdl.Init(Sdl.InitVideo) < 0)
