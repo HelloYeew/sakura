@@ -448,4 +448,214 @@ public class DependencyInjectionGeneratorTests
         var result = GeneratorTestHelper.RunGenerator<DependencyInjectionGenerator>(stubs, source);
         GeneratorTestHelper.AssertNoDiagnostics(result);
     }
+
+    // Nested class tests (EnclosingTypes support)
+    // A DI candidate nested inside a non-DI partial class should emit a file wrapped
+    // in an outer `partial class` block so the C# compiler can locate the type.
+
+    [Test]
+    public void Nested_class_generated_file_is_wrapped_in_enclosing_partial_class()
+    {
+        const string source = """
+            using Sakura.Framework.Allocation;
+            namespace WaguriApp
+            {
+                public abstract partial class Drawable : IDependencyInjectionCandidate { }
+
+                public partial class CursorContainer : Drawable
+                {
+                    public partial class DefaultCursor : Drawable
+                    {
+                        [Resolved]
+                        private IService service { get; set; } = null!;
+                    }
+                }
+
+                public interface IService { }
+            }
+            """;
+
+        var result = GeneratorTestHelper.RunGenerator<DependencyInjectionGenerator>(stubs, source);
+        // hint name: WaguriApp_CursorContainer_DefaultCursor.DI.g.cs
+        string generated = GeneratorTestHelper.GetGeneratedSource(result, "WaguriApp_CursorContainer_DefaultCursor.DI.g.cs");
+
+        Assert.Multiple(() =>
+        {
+            // Enclosing wrapper must be present
+            Assert.That(generated, Does.Contain("partial class CursorContainer"));
+            // Inner class declaration must be inside it
+            Assert.That(generated, Does.Contain("partial class DefaultCursor"));
+            // DI injection must still be emitted
+            Assert.That(generated, Does.Contain("self.service = deps.Get<global::WaguriApp.IService>()"));
+            // Namespace block should be outermost
+            Assert.That(generated, Does.Contain("namespace WaguriApp"));
+        });
+    }
+
+    // Verify correct brace nesting: namespace > outer class > inner class > generated method.
+
+    [Test]
+    public void Nested_class_generated_file_has_correct_indentation_and_braces()
+    {
+        const string source = """
+            using Sakura.Framework.Allocation;
+            namespace WaguriApp
+            {
+                public abstract partial class Drawable : IDependencyInjectionCandidate { }
+
+                public partial class Outer : Drawable
+                {
+                    public partial class Inner : Drawable
+                    {
+                        [BackgroundDependencyLoader]
+                        private void load(IService svc) { }
+                    }
+                }
+
+                public interface IService { }
+            }
+            """;
+
+        var result = GeneratorTestHelper.RunGenerator<DependencyInjectionGenerator>(stubs, source);
+        string generated = GeneratorTestHelper.GetGeneratedSource(result, "WaguriApp_Outer_Inner.DI.g.cs");
+
+        // Count opening vs closing braces — must be balanced.
+        int opens  = generated.Count(c => c == '{');
+        int closes = generated.Count(c => c == '}');
+        Assert.That(opens, Is.EqualTo(closes), "Generated file has unbalanced braces");
+    }
+
+    // Double nesting: Grandparent > Parent > Child, all partial DI candidates.
+
+    [Test]
+    public void Double_nested_class_wraps_two_enclosing_partial_classes()
+    {
+        const string source = """
+            using Sakura.Framework.Allocation;
+            namespace WaguriApp
+            {
+                public abstract partial class Drawable : IDependencyInjectionCandidate { }
+
+                public partial class GrandParent : Drawable
+                {
+                    public partial class Parent : Drawable
+                    {
+                        public partial class Child : Drawable
+                        {
+                            [Resolved]
+                            private IService service { get; set; } = null!;
+                        }
+                    }
+                }
+
+                public interface IService { }
+            }
+            """;
+
+        var result = GeneratorTestHelper.RunGenerator<DependencyInjectionGenerator>(stubs, source);
+        // hint name: WaguriApp_GrandParent_Parent_Child.DI.g.cs
+        string generated = GeneratorTestHelper.GetGeneratedSource(result, "WaguriApp_GrandParent_Parent_Child.DI.g.cs");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(generated, Does.Contain("partial class GrandParent"));
+            Assert.That(generated, Does.Contain("partial class Parent"));
+            Assert.That(generated, Does.Contain("partial class Child"));
+            Assert.That(generated, Does.Contain("self.service = deps.Get<global::WaguriApp.IService>()"));
+
+            int opens  = generated.Count(c => c == '{');
+            int closes = generated.Count(c => c == '}');
+            Assert.That(opens, Is.EqualTo(closes), "Generated file has unbalanced braces");
+        });
+    }
+
+    // Generic enclosing type: the wrapper must include the type parameter list.
+
+    [Test]
+    public void Generic_enclosing_type_includes_type_params_in_wrapper()
+    {
+        const string source = """
+            using Sakura.Framework.Allocation;
+            namespace WaguriApp
+            {
+                public abstract partial class Drawable : IDependencyInjectionCandidate { }
+
+                public partial class Container<T> : Drawable
+                {
+                    public partial class Inner : Drawable
+                    {
+                        [Resolved]
+                        private IService service { get; set; } = null!;
+                    }
+                }
+
+                public interface IService { }
+            }
+            """;
+
+        var result = GeneratorTestHelper.RunGenerator<DependencyInjectionGenerator>(stubs, source);
+        // hint name uses '<' → '_': WaguriApp_Container_T__Inner.DI.g.cs
+        var all = GeneratorTestHelper.GetAllGeneratedSources(result);
+        string? innerKey = all.Keys.FirstOrDefault(k => k.Contains("Inner") && k.EndsWith(".DI.g.cs"));
+
+        Assert.That(innerKey, Is.Not.Null, "No generated file found for Container<T>.Inner");
+
+        string generated = all[innerKey!];
+
+        Assert.Multiple(() =>
+        {
+            // Enclosing wrapper must carry the type parameter
+            Assert.That(generated, Does.Contain("partial class Container<T>"));
+            Assert.That(generated, Does.Contain("partial class Inner"));
+            Assert.That(generated, Does.Contain("self.service = deps.Get<global::WaguriApp.IService>()"));
+        });
+    }
+
+    // A relay type (no DI attrs, but sits between two DI types) should get its own
+    // generated file so that subclasses can safely emit `override`.
+
+    [Test]
+    public void Relay_nested_type_without_di_attrs_still_gets_generated_file()
+    {
+        const string source = """
+            using Sakura.Framework.Allocation;
+            namespace WaguriApp
+            {
+                public abstract partial class Drawable : IDependencyInjectionCandidate { }
+
+                // No DI attributes — relay only.
+                public partial class CursorContainer : Drawable
+                {
+                    public partial class RelayCursor : Drawable { }
+
+                    public partial class CursorZone : RelayCursor
+                    {
+                        [Resolved]
+                        private IService service { get; set; } = null!;
+                    }
+                }
+
+                public interface IService { }
+            }
+            """;
+
+        var result = GeneratorTestHelper.RunGenerator<DependencyInjectionGenerator>(stubs, source);
+        var all = GeneratorTestHelper.GetAllGeneratedSources(result);
+
+        // RelayCursor must have a file even though it has no DI attrs
+        Assert.That(all.Keys, Has.Some.EndsWith("WaguriApp_CursorContainer_RelayCursor.DI.g.cs"),
+            "Relay nested type should still produce a generated file");
+
+        string relaySrc = all.First(kv => kv.Key.EndsWith("WaguriApp_CursorContainer_RelayCursor.DI.g.cs")).Value;
+        // Its method must be override (base Drawable is a candidate) and call base
+        Assert.That(relaySrc, Does.Contain("public override void RegisterForDependencyActivation"));
+
+        // CursorZone must override and inject
+        string zoneSrc = all.First(kv => kv.Key.EndsWith("WaguriApp_CursorContainer_CursorZone.DI.g.cs")).Value;
+        Assert.Multiple(() =>
+        {
+            Assert.That(zoneSrc, Does.Contain("public override void RegisterForDependencyActivation"));
+            Assert.That(zoneSrc, Does.Contain("self.service = deps.Get<global::WaguriApp.IService>()"));
+        });
+    }
 }
