@@ -272,36 +272,24 @@ public partial class SpriteText : Drawable
         private int batchCount;
 
         private int textVertexCount;
-        private bool hasPreviousTextState;
 
-        private Vertex[] textPreviousVertices = Array.Empty<Vertex>();
-        private Vertex[] textCurrentVertices = Array.Empty<Vertex>();
+        protected override void ApplyVertices(Drawable source)
+        {
+            var text = (SpriteText)source;
+
+            textVertexCount = text.currentVertexCount;
+
+            // make it grow only, draw only reads up to textVertexCount via the glyph batches
+            if (Vertices.Length < textVertexCount)
+                Vertices = new Vertex[textVertexCount];
+
+            Array.Copy(text.textVertices, Vertices, textVertexCount);
+        }
 
         public override void ApplyState(Drawable source)
         {
             base.ApplyState(source);
             var text = (SpriteText)source;
-
-            textVertexCount = text.currentVertexCount;
-
-            // check our isolated array instead of the base class's CurrentVertices
-            if (textCurrentVertices.Length < textVertexCount)
-            {
-                textPreviousVertices = new Vertex[textVertexCount];
-                textCurrentVertices = new Vertex[textVertexCount];
-                Vertices = new Vertex[textVertexCount];
-                hasPreviousTextState = false; // reset to snap on resize
-            }
-
-            Array.Copy(textCurrentVertices, textPreviousVertices, textVertexCount);
-            Array.Copy(text.textVertices, textCurrentVertices, textVertexCount);
-
-            // prevent the text from flying in from (0,0) on the very first frame
-            if (!hasPreviousTextState)
-            {
-                Array.Copy(textCurrentVertices, textPreviousVertices, textVertexCount);
-                hasPreviousTextState = true;
-            }
 
             batchCount = 0;
 
@@ -343,25 +331,6 @@ public partial class SpriteText : Drawable
                     VertexStart = currentVertexStart,
                     VertexCount = currentBatchVertexCount
                 };
-            }
-        }
-
-        public override void PrepareForDraw(double lastUpdateTime, double currentUpdateTime, double drawTime)
-        {
-            float interpolationFactor = 1.0f;
-            if (currentUpdateTime > lastUpdateTime)
-            {
-                interpolationFactor = (float)((drawTime - lastUpdateTime) / (currentUpdateTime - lastUpdateTime));
-                interpolationFactor = Math.Clamp(interpolationFactor, 0f, 1f);
-            }
-
-            DrawAlpha = PreviousDrawAlpha + (CurrentDrawAlpha - PreviousDrawAlpha) * interpolationFactor;
-
-            for (int i = 0; i < textVertexCount; i++)
-            {
-                Vertices[i] = textCurrentVertices[i];
-                Vertices[i].Position.X = textPreviousVertices[i].Position.X + (textCurrentVertices[i].Position.X - textPreviousVertices[i].Position.X) * interpolationFactor;
-                Vertices[i].Position.Y = textPreviousVertices[i].Position.Y + (textCurrentVertices[i].Position.Y - textPreviousVertices[i].Position.Y) * interpolationFactor;
             }
         }
 
