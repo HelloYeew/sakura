@@ -58,27 +58,27 @@ internal class WindowsNativeSleep : INativeSleep
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr hObject);
 
-    private const uint create_waitable_timer_manual_reset = 0x00000001;
     private const uint create_waitable_timer_high_resolution = 0x00000002;
     private const uint timer_all_access = 2031619U;
     private const uint infinite = 0xFFFFFFFF;
+    private const uint wait_object_0 = 0x00000000;
 
     private readonly IntPtr waitableTimer;
 
     public WindowsNativeSleep()
     {
-        // Try high-resolution timer first (Windows 10 1803+).
+        // Try high-resolution timer first (Windows 10 1803+). Auto-reset (no manual-reset flag).
         waitableTimer = CreateWaitableTimerEx(
             IntPtr.Zero, null,
-            create_waitable_timer_manual_reset | create_waitable_timer_high_resolution,
+            create_waitable_timer_high_resolution,
             timer_all_access);
 
         if (waitableTimer == IntPtr.Zero)
         {
-            // Fall back to standard waitable timer — still more accurate than Thread.Sleep.
+            // Fall back to standard auto-reset waitable timer — still more accurate than Thread.Sleep.
             waitableTimer = CreateWaitableTimerEx(
                 IntPtr.Zero, null,
-                create_waitable_timer_manual_reset,
+                0,
                 timer_all_access);
         }
     }
@@ -88,13 +88,19 @@ internal class WindowsNativeSleep : INativeSleep
         if (waitableTimer == IntPtr.Zero)
             return false;
 
+        if (duration <= TimeSpan.Zero)
+            return true;
+
+        // Negative relative due time (100ns units). SetWaitableTimerEx interprets a negative
+        // FILETIME as "this many 100ns intervals from now".
         var dueTime = FileTime.FromTimeSpan(duration);
 
         if (!SetWaitableTimerEx(waitableTimer, in dueTime, 0, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, 0))
             return false;
 
-        _ = WaitForSingleObject(waitableTimer, infinite);
-        return true;
+        // Only treat the call as a successful precise sleep when the timer actually signaled.
+        // If the wait fails for any reason, report false so the caller falls back to Thread.Sleep.
+        return WaitForSingleObject(waitableTimer, infinite) == wait_object_0;
     }
 
     public void Dispose()

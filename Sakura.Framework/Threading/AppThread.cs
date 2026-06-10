@@ -95,11 +95,16 @@ public class AppThread
         long timestampFrequency = System.Diagnostics.Stopwatch.Frequency;
         double msPerTick = 1000.0 / timestampFrequency;
 
-        long lastFrameTime = System.Diagnostics.Stopwatch.GetTimestamp();
+        // Absolute next-frame deadline, expressed in stopwatch ticks. We advance it by exactly one
+        // frame quantum each iteration so cadence is locked to wall-clock time rather than drifting
+        // with however long each sleep happens to overshoot.
+        long nextFrameTime = System.Diagnostics.Stopwatch.GetTimestamp();
 
-        double accumulatedSleepError = 0.0;
-
-        const double min_sleep_ms = 0.5;
+        // Leave a small slice of the wait for a busy spin so we land on the deadline precisely.
+        // The OS sleep is only accurate to ~0.5-1ms even with a high-resolution timer, so we sleep
+        // for (remaining - guard) and spin the rest. This is what keeps a 1000 Hz thread sitting on
+        // 1.00 ms instead of overshooting and then "catching up" by running flat-out.
+        const double spin_guard_ms = 0.5;
 
         while (isRunning)
         {
@@ -114,59 +119,50 @@ public class AppThread
             if (currentHz > 0)
             {
                 double targetFrameTimeMs = 1000.0 / currentHz;
+                long targetTicks = (long)(targetFrameTimeMs / msPerTick);
 
-                // How much time has elapsed since the last frame started?
-                long nowTicks = System.Diagnostics.Stopwatch.GetTimestamp();
-                double elapsedMs = (nowTicks - lastFrameTime) * msPerTick;
+                // Advance the deadline by one quantum from the previous deadline (not from "now"),
+                // so transient overshoot on one frame is absorbed instead of compounding.
+                nextFrameTime += targetTicks;
 
-                // Excess = how long we should sleep (with drift correction).
-                double sleepMs = targetFrameTimeMs - elapsedMs + accumulatedSleepError;
+                long now = System.Diagnostics.Stopwatch.GetTimestamp();
 
-                if (sleepMs >= min_sleep_ms)
+                // If we've fallen more than ~5 frames behind (GC pause, window drag, scheduler
+                // starvation) snap the deadline to now so we don't fire an avalanche of catch-up
+                // frames. This is the only place the cadence is allowed to "reset".
+                double behindMs = (now - nextFrameTime) * msPerTick;
+                double maxBehindMs = Math.Max(targetFrameTimeMs * 5, 50.0);
+                if (behindMs > maxBehindMs)
+                {
+                    nextFrameTime = now + targetTicks;
+                    now = System.Diagnostics.Stopwatch.GetTimestamp();
+                }
+
+                double remainingMs = (nextFrameTime - now) * msPerTick;
+
+                // Coarse phase: hand the CPU back to the OS for the bulk of the wait.
+                double sleepMs = remainingMs - spin_guard_ms;
+                if (sleepMs > 0)
                 {
                     var sleepSpan = TimeSpan.FromMilliseconds(sleepMs);
-                    double beforeMs = System.Diagnostics.Stopwatch.GetTimestamp() * msPerTick;
-
                     if (nativeSleep?.Sleep(sleepSpan) != true)
                         Thread.Sleep(sleepSpan);
-
-                    double actualSleepMs = System.Diagnostics.Stopwatch.GetTimestamp() * msPerTick - beforeMs;
-
-                    // Fold overshoot/undershoot back into the accumulator.
-                    accumulatedSleepError += sleepMs - actualSleepMs;
-                }
-                else
-                {
-                    // Frame is late or remainder is below the sleep precision floor.
-                    // Carry the deficit forward so the next frame compensates, rather than discarding it.
-                    accumulatedSleepError += sleepMs;
                 }
 
-                // Clamp the accumulator: allow at most ~33 ms of catch-up debt (one missed 30fps frame),
-                // and allow up to +2 ms of credit (so a frame that finished early can donate it forward).
-                accumulatedSleepError = Math.Clamp(accumulatedSleepError, -1000.0 / 30.0, 2.0);
-
-                // Advance the frame anchor by one frame quantum (keeps cadence locked).
-                long targetTicks = (long)(targetFrameTimeMs / msPerTick);
-                lastFrameTime += targetTicks;
-
-                // If we've slipped more than 5 frames behind (e.g. after a GC pause or window drag),
-                // snap the anchor forward to avoid a long catch-up avalanche of back-to-back frames.
-                long currentAfterWait = System.Diagnostics.Stopwatch.GetTimestamp();
-                double thresholdMs = Math.Max(targetFrameTimeMs * 5, 50.0);
-                if ((currentAfterWait - lastFrameTime) * msPerTick > thresholdMs)
-                {
-                    lastFrameTime = currentAfterWait;
-                    accumulatedSleepError = 0;
-                }
+                // Fine phase: tight busy-wait until the deadline. This spin is bounded by
+                // spin_guard_ms (~0.5 ms), so it costs very little CPU while landing the frame on
+                // the exact deadline. We deliberately do NOT use SpinWait here because SpinWait
+                // escalates to Thread.Sleep(0/1) after a few iterations, which would overshoot a
+                // sub-millisecond deadline. Thread.SpinWait(0) just issues a pause hint to the CPU.
+                while (System.Diagnostics.Stopwatch.GetTimestamp() < nextFrameTime)
+                    Thread.SpinWait(1);
             }
             else
             {
                 // Truly unlimited — don't sleep or yield. The frame runs back-to-back as fast as
                 // the work allows. Users who want CPU relief in unlimited mode should enable
-                // LimitUnlimitedUpdateRate in HostOptions, which caps at 1000 Hz with nanosleep.
-                lastFrameTime = System.Diagnostics.Stopwatch.GetTimestamp();
-                accumulatedSleepError = 0;
+                // LimitUnlimitedUpdateRate in HostOptions, which caps at 1000 Hz.
+                nextFrameTime = System.Diagnostics.Stopwatch.GetTimestamp();
             }
         }
 
