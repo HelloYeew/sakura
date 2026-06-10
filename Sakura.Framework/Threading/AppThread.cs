@@ -121,22 +121,12 @@ public class AppThread
                 double targetFrameTimeMs = 1000.0 / currentHz;
                 long targetTicks = (long)(targetFrameTimeMs / msPerTick);
 
-                // Advance the deadline by one quantum from the previous deadline (not from "now"),
-                // so transient overshoot on one frame is absorbed instead of compounding.
                 nextFrameTime += targetTicks;
 
                 long now = System.Diagnostics.Stopwatch.GetTimestamp();
 
-                // If we've fallen more than ~5 frames behind (GC pause, window drag, scheduler
-                // starvation) snap the deadline to now so we don't fire an avalanche of catch-up
-                // frames. This is the only place the cadence is allowed to "reset".
-                double behindMs = (now - nextFrameTime) * msPerTick;
-                double maxBehindMs = Math.Max(targetFrameTimeMs * 5, 50.0);
-                if (behindMs > maxBehindMs)
-                {
-                    nextFrameTime = now + targetTicks;
-                    now = System.Diagnostics.Stopwatch.GetTimestamp();
-                }
+                if (now > nextFrameTime)
+                    nextFrameTime = now;
 
                 double remainingMs = (nextFrameTime - now) * msPerTick;
 
@@ -149,19 +139,11 @@ public class AppThread
                         Thread.Sleep(sleepSpan);
                 }
 
-                // Fine phase: tight busy-wait until the deadline. This spin is bounded by
-                // spin_guard_ms (~0.5 ms), so it costs very little CPU while landing the frame on
-                // the exact deadline. We deliberately do NOT use SpinWait here because SpinWait
-                // escalates to Thread.Sleep(0/1) after a few iterations, which would overshoot a
-                // sub-millisecond deadline. Thread.SpinWait(0) just issues a pause hint to the CPU.
                 while (System.Diagnostics.Stopwatch.GetTimestamp() < nextFrameTime)
                     Thread.SpinWait(1);
             }
             else
             {
-                // Truly unlimited — don't sleep or yield. The frame runs back-to-back as fast as
-                // the work allows. Users who want CPU relief in unlimited mode should enable
-                // LimitUnlimitedUpdateRate in HostOptions, which caps at 1000 Hz.
                 nextFrameTime = System.Diagnostics.Stopwatch.GetTimestamp();
             }
         }

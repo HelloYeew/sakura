@@ -423,21 +423,13 @@ public abstract class AppHost : IDisposable
                     {
                         double targetMainFrameTimeMs = 1000.0 / currentHz;
                         long targetMainTicks = (long)(targetMainFrameTimeMs / msPerTick);
-
-                        // Advance the deadline by one quantum from the previous deadline so a single
-                        // sleep overshoot is absorbed instead of compounding into a runaway spin.
+                        
                         nextMainFrameTime += targetMainTicks;
 
                         long now = Stopwatch.GetTimestamp();
 
-                        // Snap forward if we've fallen more than ~5 frames behind, to avoid a
-                        // back-to-back catch-up avalanche after a stall.
-                        double behindMs = (now - nextMainFrameTime) * msPerTick;
-                        if (behindMs > Math.Max(targetMainFrameTimeMs * 5, 50.0))
-                        {
-                            nextMainFrameTime = now + targetMainTicks;
-                            now = Stopwatch.GetTimestamp();
-                        }
+                        if (now > nextMainFrameTime)
+                            nextMainFrameTime = now;
 
                         double remainingMs = (nextMainFrameTime - now) * msPerTick;
 
