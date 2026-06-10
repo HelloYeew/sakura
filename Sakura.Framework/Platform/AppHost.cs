@@ -48,9 +48,6 @@ public abstract class AppHost : IDisposable
     private readonly ConcurrentQueue<Action> inputQueue = new ConcurrentQueue<Action>();
     private readonly ConcurrentQueue<Action> mainThreadActions = new ConcurrentQueue<Action>();
 
-    private double lastUpdateProcessTime;
-    private double currentUpdateProcessTime;
-
     private readonly FrameBufferManager frameBufferManager = new FrameBufferManager();
     private readonly DrawNode[] rootDrawNodes = new DrawNode[3];
     private DrawNode currentFrameDrawNode;
@@ -597,9 +594,6 @@ public abstract class AppHost : IDisposable
     /// </summary>
     protected virtual void PerformUpdate()
     {
-        lastUpdateProcessTime = currentUpdateProcessTime;
-        currentUpdateProcessTime = UpdateClock.CurrentTime;
-
         while (inputQueue.TryDequeue(out var inputAction))
         {
             inputAction.Invoke();
@@ -649,7 +643,6 @@ public abstract class AppHost : IDisposable
 
         if (currentFrameNode != null)
         {
-            currentFrameNode.PrepareForDraw(lastUpdateProcessTime, currentUpdateProcessTime, DrawClock.CurrentTime);
             Renderer?.SetRoot(currentFrameNode);
         }
 

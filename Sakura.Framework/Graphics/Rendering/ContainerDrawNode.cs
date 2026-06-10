@@ -37,16 +37,6 @@ public class ContainerDrawNode : DrawNode
         ModelMatrix = container.ModelMatrix;
     }
 
-    public override void PrepareForDraw(double lastUpdateTime, double currentUpdateTime, double drawTime)
-    {
-        base.PrepareForDraw(lastUpdateTime, currentUpdateTime, drawTime);
-
-        foreach (var child in Children)
-        {
-            child.PrepareForDraw(lastUpdateTime, currentUpdateTime, drawTime);
-        }
-    }
-
     public override void Draw(IRenderer renderer)
     {
         if (DrawAlpha <= 0) return;

@@ -314,6 +314,8 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
         private readonly AppHost host;
         private double lastRecordedTime;
         private double lastVisualUpdateTime;
+        private long dataVersion;
+        private long lastGraphVersion;
         private double bucketMaxTime;
         private double bucketSumTime;
         private int bucketFrameCount;
@@ -488,6 +490,7 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
 
                         currentIndex = (currentIndex + 1) % max_history;
                         if (currentCount < max_history) currentCount++;
+                        dataVersion++;
 
                         bucketMaxTime = 0;
                         bucketSumTime = 0;
@@ -496,16 +499,19 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
                     }
                 }
 
-                // throttle stats text to 10Hz (unreadable faster) and vertex rebuild to the same cadence
+                // Rebuild the graph whenever new data has been committed so it scrolls smoothly.
+                // propagateToParent is false because the graph's bounds never change with its data;
+                // only this drawable's vertices need regenerating.
+                if (currentState == PerformanceOverlayState.Expanded && dataVersion != lastGraphVersion)
+                {
+                    barGraph.Invalidate(InvalidationFlags.DrawInfo, false);
+                    lastGraphVersion = dataVersion;
+                }
+
+                // throttle stats text to 10Hz (unreadable faster)
                 if (Clock.CurrentTime - lastVisualUpdateTime >= 100.0)
                 {
                     updateStats();
-
-                    if (currentState == PerformanceOverlayState.Expanded)
-                    {
-                        barGraph.Invalidate(InvalidationFlags.DrawInfo);
-                    }
-
                     lastVisualUpdateTime = Clock.CurrentTime;
                 }
             }
@@ -557,8 +563,47 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
                 float w = DrawSize.X > 0 ? DrawSize.X : 1;
                 float h = DrawSize.Y > 0 ? DrawSize.Y : 1;
 
+                // rebuild runs once per committed data point (i.e. at update rate when expanded),
+                // so it must stay cheap. The model matrix is affine, so decompose it once:
+                // p' = origin + x * basisX + y * basisY — two multiply-adds per vertex instead of
+                // a full 4x4 matrix transform.
+                Vector2 origin = Vector2.Transform(new Vector2(0, 0), finalMatrix);
+                Vector2 unitX = Vector2.Transform(new Vector2(1, 0), finalMatrix);
+                Vector2 unitY = Vector2.Transform(new Vector2(0, 1), finalMatrix);
+                float bxX = unitX.X - origin.X, bxY = unitX.Y - origin.Y;
+                float byX = unitY.X - origin.X, byY = unitY.Y - origin.Y;
+
+                Vector2 map(float x, float y) => new Vector2(
+                    origin.X + x * bxX + y * byX,
+                    origin.Y + x * bxY + y * byY);
+
                 float barWidth = w / max_history;
                 int startIndex = display.currentCount == max_history ? display.currentIndex : 0;
+
+                // per-rebuild constants, hoisted out of the bar loop
+                var blueBgColor = new Vector4(0, 0, 0.5f, DrawAlpha * 0.4f);
+
+                Color color = display.baseColor;
+                var calculatedColor = new Vector4(
+                    ColorExtensions.SrgbToLinear(color.R),
+                    ColorExtensions.SrgbToLinear(color.G),
+                    ColorExtensions.SrgbToLinear(color.B),
+                    DrawAlpha * (color.A / 255f)
+                );
+
+                var gcYellow = new Vector4(
+                    ColorExtensions.SrgbToLinear(Color.Yellow.R),
+                    ColorExtensions.SrgbToLinear(Color.Yellow.G),
+                    ColorExtensions.SrgbToLinear(Color.Yellow.B),
+                    DrawAlpha);
+
+                var gcRed = new Vector4(
+                    ColorExtensions.SrgbToLinear(Color.Red.R),
+                    ColorExtensions.SrgbToLinear(Color.Red.G),
+                    ColorExtensions.SrgbToLinear(Color.Red.B),
+                    DrawAlpha);
+
+                float dotHeight = 3f / h;
 
                 float minX = float.MaxValue, minY = float.MaxValue;
                 float maxX = float.MinValue, maxY = float.MinValue;
@@ -582,11 +627,10 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
                     // inactive background
                     if (!frame.IsActive)
                     {
-                        var blueBgColor = new Vector4(0, 0, 0.5f, DrawAlpha * 0.4f);
-                        var bgTopLeft = Vector2.Transform(new Vector2(left / w, 0), finalMatrix);
-                        var bgTopRight = Vector2.Transform(new Vector2(right / w, 0), finalMatrix);
-                        var bgBottomLeft = Vector2.Transform(new Vector2(left / w, 1), finalMatrix);
-                        var bgBottomRight = Vector2.Transform(new Vector2(right / w, 1), finalMatrix);
+                        var bgTopLeft = map(left / w, 0);
+                        var bgTopRight = map(right / w, 0);
+                        var bgBottomLeft = map(left / w, 1);
+                        var bgBottomRight = map(right / w, 1);
 
                         Vertices[offset + 0] = new Vertex { Position = bgTopLeft, Color = blueBgColor };
                         Vertices[offset + 1] = new Vertex { Position = bgTopRight, Color = blueBgColor };
@@ -606,18 +650,10 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
                     float barHeight = barHeightRatio * h;
                     float top = h - barHeight;
 
-                    Color color = display.baseColor;
-                    var calculatedColor = new Vector4(
-                        ColorExtensions.SrgbToLinear(color.R),
-                        ColorExtensions.SrgbToLinear(color.G),
-                        ColorExtensions.SrgbToLinear(color.B),
-                        DrawAlpha * (color.A / 255f)
-                    );
-
-                    var pTopLeft = Vector2.Transform(new Vector2(left / w, top / h), finalMatrix);
-                    var pTopRight = Vector2.Transform(new Vector2(right / w, top / h), finalMatrix);
-                    var pBottomLeft = Vector2.Transform(new Vector2(left / w, 1), finalMatrix);
-                    var pBottomRight = Vector2.Transform(new Vector2(right / w, 1), finalMatrix);
+                    var pTopLeft = map(left / w, top / h);
+                    var pTopRight = map(right / w, top / h);
+                    var pBottomLeft = map(left / w, 1);
+                    var pBottomRight = map(right / w, 1);
 
                     minX = Math.Min(minX, Math.Min(pTopLeft.X, pBottomRight.X));
                     minY = Math.Min(minY, Math.Min(pTopLeft.Y, pBottomRight.Y));
@@ -634,20 +670,12 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
                     // GC event dt
                     if (frame.GcGeneration >= 0)
                     {
-                        Color gcColor = frame.GcGeneration == 2 ? Color.Red : Color.Yellow;
-                        var calcGcColor = new Vector4(
-                            ColorExtensions.SrgbToLinear(gcColor.R),
-                            ColorExtensions.SrgbToLinear(gcColor.G),
-                            ColorExtensions.SrgbToLinear(gcColor.B),
-                            DrawAlpha
-                        );
+                        var calcGcColor = frame.GcGeneration == 2 ? gcRed : gcYellow;
 
-                        float dotHeight = 3f / h;
-
-                        var gcTopLeft = Vector2.Transform(new Vector2(left / w, 0), finalMatrix);
-                        var gcTopRight = Vector2.Transform(new Vector2(right / w, 0), finalMatrix);
-                        var gcBottomLeft = Vector2.Transform(new Vector2(left / w, dotHeight), finalMatrix);
-                        var gcBottomRight = Vector2.Transform(new Vector2(right / w, dotHeight), finalMatrix);
+                        var gcTopLeft = map(left / w, 0);
+                        var gcTopRight = map(right / w, 0);
+                        var gcBottomLeft = map(left / w, dotHeight);
+                        var gcBottomRight = map(right / w, dotHeight);
 
                         Vertices[offset + 12] = new Vertex { Position = gcTopLeft, Color = calcGcColor };
                         Vertices[offset + 13] = new Vertex { Position = gcTopRight, Color = calcGcColor };
