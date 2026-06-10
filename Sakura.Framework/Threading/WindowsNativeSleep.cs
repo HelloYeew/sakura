@@ -17,30 +17,26 @@ namespace Sakura.Framework.Threading;
 [SupportedOSPlatform("windows")]
 internal class WindowsNativeSleep : INativeSleep
 {
-    // Raises/lowers the system timer resolution (100-ns units).
     [DllImport("ntdll.dll", SetLastError = false)]
     private static extern int NtSetTimerResolution(uint desiredResolution, bool setResolution, out uint currentResolution);
 
-    // Relative sleep in 100-ns units (negative value = relative delay).
     [DllImport("ntdll.dll", SetLastError = false)]
     private static extern int NtDelayExecution(bool alertable, ref long delayInterval);
 
-    // Raises the multimedia timer resolution to 1 ms system-wide.
-    // This is necessary in addition to NtSetTimerResolution to ensure
-    // NtDelayExecution actually wakes up on time.
     [DllImport("winmm.dll", SetLastError = false)]
     private static extern uint timeBeginPeriod(uint uPeriod);
 
     [DllImport("winmm.dll", SetLastError = false)]
     private static extern uint timeEndPeriod(uint uPeriod);
 
-    // 1 ms in 100-ns units.
     private const uint resolution1_ms = 10_000;
 
-    // Leave this many ticks at the end for the spin phase.
-    // Must be less than one frame at the highest target rate (1ms at 1000 Hz).
-    // 0.5 ms gives NtDelay time to wake and leaves a short spin window.
-    private static readonly long spin_ticks = (long)(Stopwatch.Frequency * 0.0005);
+    // Initial conservative overshoot estimate: 0.2 ms.
+    // This will be adapted downward rapidly after the first few sleeps.
+    private double overshootEstimateSeconds = 0.0002;
+
+    // EMA smoothing factor — higher = faster adaptation, more jitter.
+    private const double ema_alpha = 0.1;
 
     public WindowsNativeSleep()
     {
@@ -50,22 +46,38 @@ internal class WindowsNativeSleep : INativeSleep
 
     public bool Sleep(TimeSpan duration)
     {
-        long targetTick = Stopwatch.GetTimestamp() + (long)(duration.TotalSeconds * Stopwatch.Frequency);
+        long freq = Stopwatch.Frequency;
+        long targetTick = Stopwatch.GetTimestamp() + (long)(duration.TotalSeconds * freq);
 
-        // Use NtDelayExecution for everything except the last 0.5 ms.
-        long spinStartTick = targetTick - spin_ticks;
-        long now = Stopwatch.GetTimestamp();
+        // Ask NtDelayExecution to sleep up to (target - overshoot estimate).
+        // If the requested sleep is already shorter than our estimate, skip it.
+        double sleepSeconds = duration.TotalSeconds - overshootEstimateSeconds;
 
-        if (spinStartTick > now)
+        if (sleepSeconds > 0)
         {
-            // Convert remaining ticks to 100-ns units for NtDelayExecution.
-            long delayTicks100Ns = -(long)((spinStartTick - now) * 10_000_000L / Stopwatch.Frequency);
-            _ = NtDelayExecution(false, ref delayTicks100Ns);
+            long now = Stopwatch.GetTimestamp();
+            long spinStartTick = targetTick - (long)(overshootEstimateSeconds * freq);
+
+            if (spinStartTick > now)
+            {
+                long delayTicks100Ns = -(long)((spinStartTick - now) * 10_000_000L / freq);
+                _ = NtDelayExecution(false, ref delayTicks100Ns);
+            }
         }
 
-        // Busy-spin for the final 0.5 ms to land precisely on targetTick.
-        // Thread.SpinWait(1) burns a very small number of cycles without yielding
-        // to the scheduler, giving sub-100us precision.
+        // Measure actual overshoot: how early/late did NtDelay wake us?
+        long afterSleep = Stopwatch.GetTimestamp();
+        long spinStartTarget = targetTick - (long)(overshootEstimateSeconds * freq);
+        double actualOvershootSeconds = Math.Max(0, (afterSleep - spinStartTarget) / (double)freq);
+
+        // Update the rolling EMA estimate, but never let it go below 0 or above 2 ms.
+        overshootEstimateSeconds = Math.Clamp(
+            overshootEstimateSeconds + ema_alpha * (actualOvershootSeconds - overshootEstimateSeconds),
+            0.0,
+            0.002
+        );
+
+        // Busy-spin the remaining ticks — this is now as short as possible.
         while (Stopwatch.GetTimestamp() < targetTick)
             Thread.SpinWait(1);
 
