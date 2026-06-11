@@ -14,6 +14,7 @@ using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Reactive;
+using Sakura.Framework.Timing;
 using SDL;
 using static SDL.SDL3;
 using SakuraCursorState = Sakura.Framework.Input.CursorState;
@@ -72,6 +73,9 @@ public class SDLWindow : IWindow
 
     // SDL_WINDOWPOS_CENTERED — kept as a local constant (it's a C macro: SDL_WINDOWPOS_CENTERED_MASK | 0).
     private const int windowpos_centered = 0x2FFF0000;
+
+    // Offset mapping SDL's event timestamp timeline onto the shared TimeSource timeline (ms).
+    private double sdlTimestampOffset;
 
     public SDLWindow()
     {
@@ -218,6 +222,11 @@ public class SDLWindow : IWindow
         }
 
         int version = SDL_GetVersion();
+
+        // Anchor SDL's event timestamp timeline (SDL_GetTicksNS, ns since SDL init) onto the
+        // framework's shared TimeSource timeline so input event timestamps are directly
+        // comparable with every framework clock.
+        sdlTimestampOffset = TimeSource.CurrentTime - SDL_GetTicksNS() / 1_000_000.0;
 
         Logger.Verbose("🪟 SDL initialized");
         Logger.Verbose($"SDL Version: {version / 1000000}.{version / 1000 % 1000}.{version % 1000}");
@@ -720,12 +729,12 @@ public class SDLWindow : IWindow
         if ((modState & SDL_Keymod.SDL_KMOD_SHIFT) != 0) modifiers |= KeyModifiers.Shift;
         if ((modState & SDL_Keymod.SDL_KMOD_ALT) != 0) modifiers |= KeyModifiers.Alt;
 
-        // Note: keyboardEvent.timestamp is nanosecond-resolution (SDL_GetTicksNS timeline).
-        // When the input pipeline gains timestamped events (see Docs/Clock-Timing-Review.md),
-        // this is the value to carry through.
         bool isRepeat = keyboardEvent.repeat;
 
-        action.Invoke(new KeyEvent(key, modifiers, isRepeat));
+        // The event carries a nanosecond hardware/OS timestamp — far closer to the physical
+        // press than our processing time. Mapped onto the shared TimeSource timeline so
+        // gameplay can judge against it (see GameplayClock.GetTimeAt).
+        action.Invoke(new KeyEvent(key, modifiers, isRepeat, convertEventTimestamp(keyboardEvent.timestamp)));
     }
 
     private void handleMouseButtonEvent(SDL_MouseButtonEvent buttonEvent, Action<SakuraMouseButtonEvent> action)
@@ -735,8 +744,14 @@ public class SDLWindow : IWindow
         // SDL3 reports mouse coordinates as floats (subpixel precision).
         mouseState.Position = new Vector2(buttonEvent.x, buttonEvent.y);
         mouseState.SetPressed(button, buttonEvent.down);
-        action.Invoke(new Input.MouseButtonEvent(mouseState.Clone(), button, buttonEvent.clicks));
+        action.Invoke(new SakuraMouseButtonEvent(mouseState.Clone(), button, buttonEvent.clicks, convertEventTimestamp(buttonEvent.timestamp)));
     }
+
+    /// <summary>
+    /// Converts an SDL event timestamp (nanoseconds on the SDL_GetTicksNS timeline)
+    /// onto the shared <see cref="TimeSource"/> timeline in milliseconds.
+    /// </summary>
+    private double convertEventTimestamp(ulong timestampNs) => timestampNs / 1_000_000.0 + sdlTimestampOffset;
 
     private void handleMouseMotionEvent(SDL_MouseMotionEvent motionEvent)
     {

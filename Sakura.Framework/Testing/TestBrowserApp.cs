@@ -37,10 +37,18 @@ public partial class TestBrowserApp : App
     private Container headerContainer;
     private ScrollableContainer stepScrollContainer;
     private BasicSliderBar<double> volumeSlider;
+    private BasicSliderBar<double> clockRateSlider;
+    private SpriteText clockRateLabel;
     private BasicCheckbox autoRunCheckbox;
     private BasicTextBox searchTextBox;
 
     private readonly Assembly testAssembly;
+
+    /// <summary>
+    /// A rate-adjustable clock that drives all test content.
+    /// Wraps the app clock so the sidebars and header are unaffected by rate changes.
+    /// </summary>
+    private FramedClock testClock = null!;
 
     private const int sidebar_width = 150;
 
@@ -50,6 +58,19 @@ public partial class TestBrowserApp : App
 
     private bool isWaitingForStep;
     private double stepWaitStartTime;
+
+    /// <summary>
+    /// Incremented every time a new test is loaded. Stale <see cref="runNextStep"/>
+    /// callbacks captured an older generation and exit immediately, preventing
+    /// double-speed execution when a test is switched mid-run.
+    /// </summary>
+    private int runGeneration;
+
+    /// <summary>
+    /// Initial rate for the test clock. Useful for headless CI runs where you want
+    /// tests to execute faster than real-time (e.g. pass 2.0 for 2× speed).
+    /// </summary>
+    public double InitialClockRate { get; init; } = 1.0;
 
     public TestBrowserApp(Assembly testAssembly = null!)
     {
@@ -61,6 +82,9 @@ public partial class TestBrowserApp : App
         TestScene.IsVisualRunner = true;
         base.Load();
 
+        // Build the rate-adjustable clock that drives test content only.
+        // InitialClockRate can be set to >1 for headless/CI runs to speed up tests.
+        testClock = new FramedClock(Clock) { Rate = InitialClockRate };
         testContentContainer = new Container
         {
             RelativeSizeAxes = Axes.Both,
@@ -128,7 +152,7 @@ public partial class TestBrowserApp : App
             if (e.NewValue)
             {
                 currentAutoRunStep = 0;
-                runNextStep();
+                runNextStep(runGeneration);
             }
         };
 
@@ -162,6 +186,43 @@ public partial class TestBrowserApp : App
         volumeSlider.Current.Value = volumeReactive.Value;
 
         volumeReactive.BindTo(volumeSlider.Current);
+
+        headerFlow.Add(new SpriteText
+        {
+            Anchor = Anchor.CentreLeft,
+            Origin = Anchor.CentreLeft,
+            Text = "Rate",
+            Font = FontUsage.Default.With(size: 15),
+            Margin = new MarginPadding { Left = 10, Right = 10 }
+        });
+
+        headerFlow.Add(clockRateSlider = new BasicSliderBar<double>
+        {
+            Anchor = Anchor.CentreLeft,
+            Origin = Anchor.CentreLeft,
+            Size = new Vector2(120, 20),
+            MinValue = 0.0,
+            MaxValue = 4.0
+        });
+
+        clockRateSlider.Current.Value = InitialClockRate;
+
+        headerFlow.Add(clockRateLabel = new SpriteText
+        {
+            Anchor = Anchor.CentreLeft,
+            Origin = Anchor.CentreLeft,
+            Text = "1.00×",
+            Font = FontUsage.Default.With(size: 14),
+            Color = Color.LightGreen,
+            Margin = new MarginPadding { Left = 4 },
+            Width = 45
+        });
+
+        clockRateSlider.Current.ValueChanged += e =>
+        {
+            testClock.Rate = e.NewValue;
+            clockRateLabel.Text = $"{e.NewValue:F2}×";
+        };
 
         headerContainer.Add(headerFlow);
         Add(headerContainer);
@@ -314,6 +375,12 @@ public partial class TestBrowserApp : App
         };
     }
 
+    public override void Update()
+    {
+        base.Update();
+        testClock.ProcessFrame();
+    }
+
     private void loadTestClasses(string searchQuery = "")
     {
         var testGroups = testAssembly.GetTypes()
@@ -376,10 +443,15 @@ public partial class TestBrowserApp : App
             stepsFlow.Remove(child);
         }
 
+        // cancel any in-flight runNextStep callbacks from the previous test.
+        runGeneration++;
+        isWaitingForStep = false;
+        currentAutoRunStep = 0;
+
         currentTest = (TestScene)Activator.CreateInstance(testSceneType);
         testContentContainer.Add(currentTest);
 
-        currentTest.Clock = new FramedClock(Clock, true);
+        currentTest.Clock = new FramedClock(testClock, true);
         currentTest.CurrentStepContext = StepContext.OneTimeSetUp;
         currentTest.RunOneTimeSetUpMethods();
 
@@ -470,7 +542,7 @@ public partial class TestBrowserApp : App
         if (autoRunEnabled)
         {
             currentAutoRunStep = 0;
-            Scheduler.AddDelayed(runNextStep, 200);
+            scheduleNextStep(200, runGeneration);
         }
     }
 
@@ -513,8 +585,17 @@ public partial class TestBrowserApp : App
         }
     }
 
-    private void runNextStep()
+    private void scheduleNextStep(double delayMs, int generation)
     {
+        double rate = testClock.Rate > 0 ? testClock.Rate : 1.0;
+        Scheduler?.AddDelayed(() => runNextStep(generation), delayMs / rate);
+    }
+
+    private void runNextStep(int generation)
+    {
+        // Stale callback — a new test was loaded after this was scheduled.
+        if (generation != runGeneration) return;
+
         if (!autoRunEnabled || currentTest == null || currentAutoRunStep >= currentTest.Steps.Count)
             return;
 
@@ -530,14 +611,14 @@ public partial class TestBrowserApp : App
         if (step.IsLabel)
         {
             currentAutoRunStep++;
-            Scheduler.AddDelayed(runNextStep, 10);
+            scheduleNextStep(10, generation);
             return;
         }
 
         if (step.GetType().IsGenericType && step.GetType().GetGenericTypeDefinition() == typeof(SliderStep<>))
         {
             currentAutoRunStep++;
-            Scheduler.AddDelayed(runNextStep, 10);
+            scheduleNextStep(10, generation);
             return;
         }
 
@@ -556,7 +637,7 @@ public partial class TestBrowserApp : App
 
                     if (repeatStep.CurrentIteration < repeatStep.RepeatCount)
                     {
-                        Scheduler?.AddDelayed(runNextStep, 10);
+                        scheduleNextStep(10, generation);
                         return;
                     }
 
@@ -595,7 +676,7 @@ public partial class TestBrowserApp : App
 
             if (currentWaitStep.WaitTime > 0 && elapsed < currentWaitStep.WaitTime)
             {
-                Scheduler?.AddDelayed(runNextStep, 10);
+                scheduleNextStep(10, generation);
                 return;
             }
 
@@ -608,7 +689,7 @@ public partial class TestBrowserApp : App
                     autoRunEnabled.Value = false;
                     return;
                 }
-                Scheduler?.AddDelayed(runNextStep, 10);
+                scheduleNextStep(10, generation);
                 return;
             }
 
@@ -617,7 +698,7 @@ public partial class TestBrowserApp : App
         }
 
         currentAutoRunStep++;
-        Scheduler?.AddDelayed(runNextStep, 200);
+        scheduleNextStep(200, generation);
     }
 
     private void generateStepVisual(ActionStep step)

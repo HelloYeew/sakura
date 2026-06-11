@@ -4,42 +4,23 @@
 namespace Sakura.Framework.Timing;
 
 /// <summary>
-/// Interface for a clock that provides high-precision timing.
+/// The minimal read-only contract for a clock.
+/// All times in the framework are expressed in <b>milliseconds</b>.
 /// </summary>
 public interface IClock
 {
     /// <summary>
-    /// The current time in seconds since the clock was started.
+    /// The current time of this clock in milliseconds.
     /// </summary>
     double CurrentTime { get; }
 
     /// <summary>
-    /// The time in seconds that has elapsed since the last frame.
+    /// The rate this clock is running at, relative to real time. 1.0 is real time.
     /// </summary>
-    double ElapsedFrameTime { get; }
-
-    /// <summary>
-    /// The number of frames that have been processed since the clock was started.
-    /// </summary>
-    double FramesPerSecond { get; }
+    double Rate { get; }
 
     /// <summary>
     /// Whether the clock is currently running.
     /// </summary>
     bool IsRunning { get; }
-
-    /// <summary>
-    /// Start the clock.
-    /// </summary>
-    void Start();
-
-    /// <summary>
-    /// Stop the clock.
-    /// </summary>
-    void Stop();
-
-    /// <summary>
-    /// Update the clock's state. This should be called once per frame.
-    /// </summary>
-    void Update();
 }
