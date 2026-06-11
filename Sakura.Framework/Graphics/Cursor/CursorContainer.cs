@@ -82,12 +82,9 @@ public partial class CursorContainer : Container, IRemoveFromDrawVisualiser
 
         Vector2 localPosition;
 
-        if (Matrix4x4.Invert(ModelMatrix, out var inverse))
+        if (Matrix3x2.Invert(ModelMatrix, out var inverse))
         {
-            var localNormalized = Vector4.Transform(
-                new Vector4(lastScreenSpaceMousePosition.X, lastScreenSpaceMousePosition.Y, 0, 1),
-                inverse
-            );
+            var localNormalized = Vector2.Transform(lastScreenSpaceMousePosition, inverse);
 
             localPosition = new Vector2(localNormalized.X * DrawSize.X, localNormalized.Y * DrawSize.Y);
         }

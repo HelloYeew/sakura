@@ -263,10 +263,38 @@ public partial class Container : Drawable
             InvalidateLayout();
     }
 
-    internal void InvalidateTopology() => TopologyVersion++;
+    internal void InvalidateTopology()
+    {
+        TopologyVersion++;
+        MarkSubtreeDrawStateDirty();
+    }
+
+    // Bumped whenever any descendant's drawn state, topology, lifetime or masking state
+    // changes. Draw nodes store the version they were generated against, letting fully
+    // clean subtrees skip draw-node regeneration entirely.
+    private long subtreeDrawVersion = 1;
+    private bool subtreeDirtyNotified;
+
+    /// <summary>
+    /// Marks this container's (and all ancestors') cached draw-node subtree as stale.
+    /// The walk up the parent chain short-circuits once per frame per container.
+    /// </summary>
+    internal void MarkSubtreeDrawStateDirty()
+    {
+        subtreeDrawVersion++;
+
+        if (subtreeDirtyNotified)
+            return;
+
+        subtreeDirtyNotified = true;
+        Parent?.MarkSubtreeDrawStateDirty();
+    }
 
     public override void Update()
     {
+        // Allow a fresh subtree-dirty notification walk this frame.
+        subtreeDirtyNotified = false;
+
         // Check whether our layout was dirty before base.Update() is called, as it will clear our invalidation flags.
         bool layoutWasInvalidated = (Invalidation & InvalidationFlags.DrawInfo) != 0;
         bool colourWasInvalidated = (Invalidation & InvalidationFlags.Colour) != 0;
@@ -289,6 +317,15 @@ public partial class Container : Drawable
         for (int i = children.Count - 1; i >= 0; i--)
         {
             var child = children[i];
+
+            // Lifetime crossings change draw-tree membership without any invalidation,
+            // so the cached draw-node subtree must be refreshed when one occurs.
+            bool alive = child.IsAlive;
+            if (alive != child.WasAlive)
+            {
+                child.WasAlive = alive;
+                MarkSubtreeDrawStateDirty();
+            }
 
             if (Clock.CurrentTime >= child.LifetimeEnd && child.RemoveWhenNotAlive)
             {
@@ -348,6 +385,8 @@ public partial class Container : Drawable
             var child = children[i];
             child.CurrentMaskingBounds = maskToApply;
 
+            bool maskedAway = false;
+
             if (maskToApply.HasValue)
             {
                 if ((child.Invalidation & InvalidationFlags.DrawInfo) != 0)
@@ -363,11 +402,15 @@ public partial class Container : Drawable
                                   childRect.Y <= maskToApply.Value.Y + maskToApply.Value.Height + leniency &&
                                   childRect.Y + childRect.Height >= maskToApply.Value.Y - leniency;
 
-                child.IsMaskedAway = !intersects;
+                maskedAway = !intersects;
             }
-            else
+
+            if (child.IsMaskedAway != maskedAway)
             {
-                child.IsMaskedAway = false;
+                child.IsMaskedAway = maskedAway;
+
+                // Masking transitions change draw-tree membership without an invalidation.
+                MarkSubtreeDrawStateDirty();
             }
         }
     }
@@ -443,6 +486,13 @@ public partial class Container : Drawable
     public override DrawNode GenerateDrawNodeSubtree(int frameIndex)
     {
         var node = (ContainerDrawNode)base.GenerateDrawNodeSubtree(frameIndex);
+
+        // If nothing in this subtree changed since this buffer's node was last generated
+        // (no invalidations, topology, lifetime or masking transitions), the cached child
+        // node list is still valid and the entire subtree walk can be skipped.
+        if (node.AppliedSubtreeVersion == subtreeDrawVersion)
+            return node;
+
         node.Children.Clear();
 
         var sorted = getSortedChildren();
@@ -456,6 +506,8 @@ public partial class Container : Drawable
                 node.Children.Add(child.GenerateDrawNodeSubtree(frameIndex));
             }
         }
+
+        node.AppliedSubtreeVersion = subtreeDrawVersion;
 
         return node;
     }

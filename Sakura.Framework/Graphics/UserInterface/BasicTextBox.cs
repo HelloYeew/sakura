@@ -470,7 +470,7 @@ public partial class BasicTextBox : Container
             if (window != null)
             {
                 float normalizedX = DrawSize.X > 0 ? (textContainer.X + caretTargetX) / DrawSize.X : 0;
-                var screenPos = Vector4.Transform(new Vector4(normalizedX, 0, 0, 1), ModelMatrix);
+                var screenPos = Vector2.Transform(new Vector2(normalizedX, 0), ModelMatrix);
                 window.SetTextInputRect(new RectangleF(screenPos.X, screenPos.Y, 0, DrawSize.Y));
             }
         }

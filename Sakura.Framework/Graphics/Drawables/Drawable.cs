@@ -42,6 +42,12 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
     /// </summary>
     internal long ChildInsertionOrder;
 
+    /// <summary>
+    /// The last observed aliveness state, used by the parent to detect lifetime transitions
+    /// (which change draw-tree membership without raising any invalidation).
+    /// </summary>
+    internal bool WasAlive = true;
+
     public Container? Parent
     {
         get => parent;
@@ -453,7 +459,12 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
 
     public RectangleF DrawRectangle { get; protected set; }
     public Vector2 DrawSize { get; private set; }
-    public Matrix4x4 ModelMatrix = Matrix4x4.Identity;
+
+    /// <summary>
+    /// The affine screen-space transform of this drawable. 2D rendering never needs a full
+    /// 4x4 matrix; a 3x2 affine matrix is roughly half the storage and FLOPs per concatenation.
+    /// </summary>
+    public Matrix3x2 ModelMatrix = Matrix3x2.Identity;
 
     #region Calculation of Draw Info
 
@@ -461,7 +472,7 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
     {
         DrawAlpha = (Parent?.DrawAlpha ?? 1f) * Alpha;
 
-        Matrix4x4 localMatrix;
+        Matrix3x2 localMatrix;
         Vector2 finalDrawSize;
         Vector2 originVector = GetAnchorOriginVector(Origin);
 
@@ -470,23 +481,20 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
             // This is the root drawable.
             finalDrawSize = Size;
 
-            var finalScale = new Vector3(finalDrawSize.X * Scale.X, finalDrawSize.Y * Scale.Y, 1);
-            var finalPosition = new Vector3(Position.X, Position.Y, 0);
-
             // Transform order: Origin Translation -> Scale -> Shear -> Rotation -> Position Translation
-            var m = Matrix4x4.CreateTranslation(-originVector.X, -originVector.Y, 0); // Translate so origin is at (0,0)
-            m *= Matrix4x4.CreateScale(finalScale); // Scale around (0,0)
+            var m = Matrix3x2.CreateTranslation(-originVector.X, -originVector.Y); // Translate so origin is at (0,0)
+            m *= Matrix3x2.CreateScale(finalDrawSize.X * Scale.X, finalDrawSize.Y * Scale.Y); // Scale around (0,0)
 
             if (Shear != Vector2.Zero)
             {
-                var shearMatrix = Matrix4x4.Identity;
+                var shearMatrix = Matrix3x2.Identity;
                 shearMatrix.M21 = Shear.X; // X shear factor (x' = x + m21*y)
                 shearMatrix.M12 = Shear.Y; // Y shear factor (y' = y + m12*x)
                 m *= shearMatrix;
             }
 
-            m *= Matrix4x4.CreateRotationZ((float)(Rotation * Math.PI / 180.0f)); // Rotate around (0,0)
-            m *= Matrix4x4.CreateTranslation(finalPosition); // Translate to final position
+            m *= Matrix3x2.CreateRotation((float)(Rotation * Math.PI / 180.0f)); // Rotate around (0,0)
+            m *= Matrix3x2.CreateTranslation(Position.X, Position.Y); // Translate to final position
 
             ModelMatrix = m;
 
@@ -536,24 +544,22 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
             pixelPosition.X += Parent.Padding.Left;
             pixelPosition.Y += Parent.Padding.Top;
 
-            var finalScale = new Vector3(finalDrawSize.X * Scale.X, finalDrawSize.Y * Scale.Y, 1);
-
-            var m = Matrix4x4.CreateTranslation(-originVector.X, -originVector.Y, 0);
-            m *= Matrix4x4.CreateScale(finalScale);
+            var m = Matrix3x2.CreateTranslation(-originVector.X, -originVector.Y);
+            m *= Matrix3x2.CreateScale(finalDrawSize.X * Scale.X, finalDrawSize.Y * Scale.Y);
 
             if (Shear != Vector2.Zero)
             {
-                var shearMatrix = Matrix4x4.Identity;
+                var shearMatrix = Matrix3x2.Identity;
                 shearMatrix.M21 = Shear.X; // X shear factor
                 shearMatrix.M12 = Shear.Y; // Y shear factor
                 m *= shearMatrix;
             }
 
-            m *= Matrix4x4.CreateRotationZ((float)(Rotation * Math.PI / 180.0f));
-            m *= Matrix4x4.CreateTranslation(pixelPosition.X, pixelPosition.Y, 0);
+            m *= Matrix3x2.CreateRotation((float)(Rotation * Math.PI / 180.0f));
+            m *= Matrix3x2.CreateTranslation(pixelPosition.X, pixelPosition.Y);
 
             // Normalize to Parent's 0..1 space so Parent.ModelMatrix applies correctly
-            m *= Matrix4x4.CreateScale(1.0f / parentDrawSize.X, 1.0f / parentDrawSize.Y, 1.0f);
+            m *= Matrix3x2.CreateScale(1.0f / parentDrawSize.X, 1.0f / parentDrawSize.Y);
 
             localMatrix = m;
             ModelMatrix = localMatrix * Parent.ModelMatrix;
@@ -645,10 +651,10 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
         }
 
         // Apply model matrix to the calculated local draw area
-        var vTopLeft = Vector4.Transform(new Vector4(drawTopLeft.X, drawTopLeft.Y, 0, 1), ModelMatrix);
-        var vTopRight = Vector4.Transform(new Vector4(drawBottomRight.X, drawTopLeft.Y, 0, 1), ModelMatrix);
-        var vBottomLeft = Vector4.Transform(new Vector4(drawTopLeft.X, drawBottomRight.Y, 0, 1), ModelMatrix);
-        var vBottomRight = Vector4.Transform(new Vector4(drawBottomRight.X, drawBottomRight.Y, 0, 1), ModelMatrix);
+        var vTopLeft = Vector2.Transform(new Vector2(drawTopLeft.X, drawTopLeft.Y), ModelMatrix);
+        var vTopRight = Vector2.Transform(new Vector2(drawBottomRight.X, drawTopLeft.Y), ModelMatrix);
+        var vBottomLeft = Vector2.Transform(new Vector2(drawTopLeft.X, drawBottomRight.Y), ModelMatrix);
+        var vBottomRight = Vector2.Transform(new Vector2(drawBottomRight.X, drawBottomRight.Y), ModelMatrix);
 
         Vertices[0] = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = calculatedColor };
         Vertices[1] = new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(uvBottomRight.X, uvTopLeft.Y), Color = calculatedColor };
@@ -870,6 +876,9 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
         if ((flags & (InvalidationFlags.DrawInfo | InvalidationFlags.Colour)) != 0)
         {
             DrawNodeInvalidationId++;
+
+            // The drawn state changed, so every ancestor's cached draw-node subtree is stale.
+            Parent?.MarkSubtreeDrawStateDirty();
         }
 
         if (dirtiesGeometry)
@@ -890,6 +899,7 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
         stat_invalidations.Value++;
         Invalidation |= InvalidationFlags.DrawInfo;
         DrawNodeInvalidationId++;
+        Parent?.MarkSubtreeDrawStateDirty();
     }
 
     #region Dependency Injection

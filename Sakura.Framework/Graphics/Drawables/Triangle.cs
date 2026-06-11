@@ -25,13 +25,9 @@ public partial class Triangle : Drawable
 
         var calculatedColor = new System.Numerics.Vector4(rLinear, gLinear, bLinear, DrawAlpha);
 
-        var localP1 = new Vector4(0.5f, 0, 0, 1);
-        var localP2 = new Vector4(0, 1, 0, 1);
-        var localP3 = new Vector4(1, 1, 0, 1);
-
-        var screenP1 = Vector4.Transform(localP1, ModelMatrix);
-        var screenP2 = Vector4.Transform(localP2, ModelMatrix);
-        var screenP3 = Vector4.Transform(localP3, ModelMatrix);
+        var screenP1 = Vector2.Transform(new Vector2(0.5f, 0), ModelMatrix);
+        var screenP2 = Vector2.Transform(new Vector2(0, 1), ModelMatrix);
+        var screenP3 = Vector2.Transform(new Vector2(1, 1), ModelMatrix);
 
         Vertices[0] = new Vertex
         {

@@ -16,6 +16,12 @@ public class ContainerDrawNode : DrawNode
 
     public long TopologyInvalidationID { get; internal set; }
 
+    /// <summary>
+    /// The container's subtree-draw version this node's child list was generated against.
+    /// When it still matches, the whole subtree generation is skipped.
+    /// </summary>
+    public long AppliedSubtreeVersion { get; internal set; } = -1;
+
     public List<DrawNode> Children { get; } = new();
     public bool Masking { get; private set; }
     public float CornerRadius { get; private set; }
@@ -24,7 +30,7 @@ public class ContainerDrawNode : DrawNode
 
     public float ShearX { get; private set; }
     public Vector2 DrawSize { get; private set; }
-    public Matrix4x4 ModelMatrix { get; private set; }
+    public Matrix3x2 ModelMatrix { get; private set; }
 
     public override void ApplyState(Drawable source)
     {
@@ -43,15 +49,14 @@ public class ContainerDrawNode : DrawNode
     {
         if (DrawAlpha <= 0) return;
 
-        Vector3 screenCenter3 = Vector3.Transform(new Vector3(0.5f, 0.5f, 0), ModelMatrix);
-        Vector2 screenCenter = new Vector2(screenCenter3.X, screenCenter3.Y);
+        Vector2 screenCenter = Vector2.Transform(new Vector2(0.5f, 0.5f), ModelMatrix);
 
-        Vector3 topLeft = Vector3.Transform(new Vector3(0, 0, 0), ModelMatrix);
-        Vector3 topRight = Vector3.Transform(new Vector3(1, 0, 0), ModelMatrix);
-        Vector3 bottomLeft = Vector3.Transform(new Vector3(0, 1, 0), ModelMatrix);
+        Vector2 topLeft = Vector2.Transform(new Vector2(0, 0), ModelMatrix);
+        Vector2 topRight = Vector2.Transform(new Vector2(1, 0), ModelMatrix);
+        Vector2 bottomLeft = Vector2.Transform(new Vector2(0, 1), ModelMatrix);
 
         Vector2 screenHalfSize = new Vector2(
-            Vector2.Distance(new Vector2(topLeft.X, topLeft.Y), new Vector2(topRight.X, topRight.Y)) / 2f,
+            Vector2.Distance(topLeft, topRight) / 2f,
             Math.Abs(bottomLeft.Y - topLeft.Y) / 2f
         );
 

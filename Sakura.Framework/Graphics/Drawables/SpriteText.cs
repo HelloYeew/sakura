@@ -186,10 +186,10 @@ public partial class SpriteText : Drawable
             float w = size.X * normalizationScale.X;
             float h = size.Y * normalizationScale.Y;
 
-            var vTopLeft = Vector4.Transform(new Vector4(x, y, 0, 1), ModelMatrix);
-            var vTopRight = Vector4.Transform(new Vector4(x + w, y, 0, 1), ModelMatrix);
-            var vBottomLeft = Vector4.Transform(new Vector4(x, y + h, 0, 1), ModelMatrix);
-            var vBottomRight = Vector4.Transform(new Vector4(x + w, y + h, 0, 1), ModelMatrix);
+            var vTopLeft = Vector2.Transform(new Vector2(x, y), ModelMatrix);
+            var vTopRight = Vector2.Transform(new Vector2(x + w, y), ModelMatrix);
+            var vBottomLeft = Vector2.Transform(new Vector2(x, y + h), ModelMatrix);
+            var vBottomRight = Vector2.Transform(new Vector2(x + w, y + h), ModelMatrix);
 
             minX = Math.Min(minX, Math.Min(vTopLeft.X, Math.Min(vTopRight.X, Math.Min(vBottomLeft.X, vBottomRight.X))));
             minY = Math.Min(minY, Math.Min(vTopLeft.Y, Math.Min(vTopRight.Y, Math.Min(vBottomLeft.Y, vBottomRight.Y))));
