@@ -101,6 +101,15 @@ public partial class Container : Drawable
         AddInternal(drawable);
     }
 
+    /// <summary>
+    /// Adds a collection of drawables to this container.
+    /// </summary>
+    public void AddRange(IEnumerable<Drawable> drawables)
+    {
+        foreach (var drawable in drawables)
+            Add(drawable);
+    }
+
     public virtual void Remove(Drawable drawable)
     {
         if (Content != this)
