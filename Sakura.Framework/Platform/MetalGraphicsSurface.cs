@@ -4,7 +4,7 @@
 namespace Sakura.Framework.Platform;
 
 /// <summary>
-/// <see cref="IMetalGraphicsSurface"/> implementation backed by an SDL2 window.
+/// <see cref="IMetalGraphicsSurface"/> implementation backed by an SDL3 window.
 /// The <see cref="MetalLayer"/> pointer is set by <see cref="SDLWindow.InitializeMetalSurface"/>.
 /// </summary>
 public class MetalGraphicsSurface : IMetalGraphicsSurface
