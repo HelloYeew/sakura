@@ -47,6 +47,28 @@ public partial class TestVideoSprite : TestScene
     }
 
     [Test]
+    public void TestSyncToClock()
+    {
+        createVideo();
+
+        AddStep("Enable SyncToClock", () => videoSprite.SyncToClock = true);
+        AddAssert("SyncToClock is on", () => videoSprite.SyncToClock);
+
+        // When SyncToClock is true, CurrentTime IS Clock.CurrentTime by definition —
+        // no accumulator, no drift. The delta must be exactly 0.
+        AddAssert("Video time equals sprite's own clock time",
+            () => videoSprite.CurrentTime == videoSprite.Clock.CurrentTime);
+
+        // Seek re-anchors the decoder but CurrentTime still tracks the clock in sync mode.
+        AddStep("Seek via VideoSprite.Seek(0)", () => videoSprite.Seek(0));
+        AddAssert("CurrentTime still equals clock after seek",
+            () => videoSprite.CurrentTime == videoSprite.Clock.CurrentTime);
+
+        AddStep("Disable SyncToClock", () => videoSprite.SyncToClock = false);
+        AddAssert("SyncToClock is off", () => !videoSprite.SyncToClock);
+    }
+
+    [Test]
     public void TestPlaybackControls()
     {
         createVideo();
