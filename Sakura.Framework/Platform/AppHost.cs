@@ -663,8 +663,6 @@ public abstract class AppHost : IDisposable
     internal double GetUpdateTargetHz() => isMultiThread ? getUpdateTargetHz() : targetUpdateHz;
     internal double GetDrawTargetHz() => isMultiThread ? getDrawTargetHz() : targetUpdateHz;
 
-    // Input and audio run at 1000 Hz while the window is focused, and throttle to 60 Hz when it
-    // loses focus — matching the update/draw threads (and osu!framework's inactive behaviour).
     private double getInputTargetHz() => Window != null && !Window.IsActive ? 60.0 : 1000.0;
     private double getAudioTargetHz() => Window != null && !Window.IsActive ? 60.0 : 1000.0;
 
