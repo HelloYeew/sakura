@@ -111,20 +111,29 @@ public unsafe class VideoDecoder : IDisposable
 
     public void Start()
     {
-        prepareDecoding();
+        State = DecoderState.Preparing;
         texturePoolWarmed = false;
 
-        // Subscribe to live hardware acceleration toggle.
-        // The handler enqueues a codec-recreation command into the decode loop's
-        // command queue so it is applied safely between frames — never mid-decode.
         HardwareAcceleration.ValueChanged += onHardwareAccelerationChanged;
 
         cts = new CancellationTokenSource();
-        decodeTask = Task.Factory.StartNew(
-            () => decodeLoop(cts.Token),
-            cts.Token,
-            TaskCreationOptions.LongRunning,
-            TaskScheduler.Default);
+
+        decodeTask = Task.Factory.StartNew(() =>
+        {
+            try
+            {
+                prepareDecoding();
+                State = DecoderState.Ready;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"[VideoDecoder] prepareDecoding failed: {ex}");
+                State = DecoderState.Faulted;
+                return;
+            }
+
+            decodeLoop(cts.Token);
+        }, cts.Token, TaskCreationOptions.LongRunning, TaskScheduler.Default);
     }
 
     private void onHardwareAccelerationChanged(ValueChangedEvent<bool> e)
@@ -664,6 +673,7 @@ public unsafe class VideoDecoder : IDisposable
 
     public enum DecoderState
     {
+        Preparing = -1,
         Ready = 0,
         Running = 1,
         Faulted = 2,

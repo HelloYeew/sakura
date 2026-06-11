@@ -185,7 +185,7 @@ public partial class VideoSprite : Drawable, IDisposable
 
     private void seekTo(double absoluteMs)
     {
-        if (decoder == null)
+        if (decoder == null || decoder.State == VideoDecoder.DecoderState.Preparing)
             return;
 
         // seekBaseMs records where in the video we seeked to.
@@ -230,7 +230,7 @@ public partial class VideoSprite : Drawable, IDisposable
     {
         base.Update();
 
-        if (!IsLoaded || decoder == null) return;
+        if (!IsLoaded || decoder == null || decoder.State == VideoDecoder.DecoderState.Preparing) return;
 
         if (syncToClock)
         {
