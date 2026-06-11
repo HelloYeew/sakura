@@ -7,6 +7,7 @@ using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
+using Sakura.Framework.Graphics.Rendering.Vertex;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Timing;
@@ -21,10 +22,14 @@ namespace Sakura.Framework.Tests.Graphics;
 [TestFixture]
 public class InvalidationCascadeTest
 {
-    /// <summary>Counts geometry recomputations for cascade assertions.</summary>
+    /// <summary>
+    /// Counts geometry recomputations for cascade assertions.
+    /// </summary>
     private partial class CountingBox : Box
     {
         public int TransformUpdates;
+
+        public Vertex[] VerticesForAssert => Vertices;
 
         // From outside the framework assembly, `protected internal` members are
         // overridden as `protected`.
@@ -334,7 +339,7 @@ public class InvalidationCascadeTest
     [Test]
     public void TestAutoSizeReactsToChildVisibilityChange()
     {
-        // The dropdown pattern: an auto-size container with a hidden child (menu).
+        // this test came from dropdown regression: an auto-size container with a hidden child (menu).
         // UpdateAutoSize skips hidden children, so showing/hiding the child must
         // re-trigger the parent's layout.
         var dropdown = new Container { AutoSizeAxes = Axes.Y, Size = new Vector2(200, 0) };
@@ -381,6 +386,31 @@ public class InvalidationCascadeTest
         {
             Assert.That(item.DrawRectangle.X, Is.EqualTo(100).Within(0.01f), "Items added while hidden must position correctly on show.");
             Assert.That(item.DrawRectangle.Y, Is.EqualTo(80).Within(0.01f));
+        });
+    }
+
+    [Test]
+    public void TestFadeUsesColourFastPathWithoutGeometryRegeneration()
+    {
+        var box = new CountingBox
+        {
+            Position = new Vector2(40, 30),
+            Size = new Vector2(50)
+        };
+        root.Add(box);
+        settle();
+
+        box.TransformUpdates = 0;
+
+        box.Alpha = 0.5f;
+        frame();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(box.TransformUpdates, Is.Zero, "A colour-only change must not regenerate geometry.");
+            Assert.That(box.DrawAlpha, Is.EqualTo(0.5f).Within(0.001f), "DrawAlpha must still update on the colour fast path.");
+            Assert.That(box.VerticesForAssert[0].Color.W, Is.EqualTo(0.5f).Within(0.001f), "Vertex alpha must be rewritten on the colour fast path.");
+            Assert.That(box.DrawRectangle.X, Is.EqualTo(40).Within(0.01f), "Geometry must be untouched by a colour-only change.");
         });
     }
 
