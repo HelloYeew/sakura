@@ -179,7 +179,15 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
     /// </summary>
     protected internal InvalidationFlags Invalidation = InvalidationFlags.All;
 
-    protected internal Vertex[] Vertices = new Vertex[6];
+    protected internal Vertex[] Vertices = new Vertex[4];
+
+    /// <summary>
+    /// How <see cref="Vertices"/> is interpreted by the renderer. The base drawable produces
+    /// an indexed quad (4 vertices, ordered TL, TR, BR, BL); drawables that generate arbitrary
+    /// triangle lists in <see cref="GenerateVertices"/> must override this to
+    /// <see cref="VertexTopology.Triangles"/>.
+    /// </summary>
+    protected internal virtual VertexTopology Topology => VertexTopology.Quads;
 
     public Anchor Anchor
     {
@@ -642,21 +650,10 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
         var vBottomLeft = Vector4.Transform(new Vector4(drawTopLeft.X, drawBottomRight.Y, 0, 1), ModelMatrix);
         var vBottomRight = Vector4.Transform(new Vector4(drawBottomRight.X, drawBottomRight.Y, 0, 1), ModelMatrix);
 
-        // Assign to vertices
-        var topLeft = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = calculatedColor };
-        var topRight = new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(uvBottomRight.X, uvTopLeft.Y), Color = calculatedColor };
-        var bottomLeft = new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(uvTopLeft.X, uvBottomRight.Y), Color = calculatedColor };
-        var bottomRight = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight, Color = calculatedColor };
-
-        // Triangle 1
-        Vertices[0] = topLeft;
-        Vertices[1] = topRight;
-        Vertices[2] = bottomRight;
-
-        // Triangle 2
-        Vertices[3] = bottomRight;
-        Vertices[4] = bottomLeft;
-        Vertices[5] = topLeft;
+        Vertices[0] = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = calculatedColor };
+        Vertices[1] = new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(uvBottomRight.X, uvTopLeft.Y), Color = calculatedColor };
+        Vertices[2] = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight, Color = calculatedColor };
+        Vertices[3] = new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(uvTopLeft.X, uvBottomRight.Y), Color = calculatedColor };
 
         // Calculate DrawRectangle in screen space
         float minX = Math.Min(vTopLeft.X, Math.Min(vTopRight.X, Math.Min(vBottomLeft.X, vBottomRight.X)));

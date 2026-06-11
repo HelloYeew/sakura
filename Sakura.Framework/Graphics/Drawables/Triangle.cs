@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using Sakura.Framework.Extensions.ColorExtensions;
+using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Rendering.Vertex;
 using Sakura.Framework.Maths;
 
@@ -13,6 +14,8 @@ namespace Sakura.Framework.Graphics.Drawables;
 public partial class Triangle : Drawable
 {
     protected new readonly Vertex[] Vertices = new Vertex[3];
+
+    protected internal override VertexTopology Topology => VertexTopology.Triangles;
 
     protected override void GenerateVertices()
     {

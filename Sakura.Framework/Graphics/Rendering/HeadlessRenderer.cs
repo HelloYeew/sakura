@@ -57,6 +57,12 @@ public class HeadlessRenderer : IRenderer
     {
 
     }
+
+    public void DrawQuads(ReadOnlySpan<Vertex.Vertex> vertices, Texture textureGl)
+    {
+
+    }
+
     public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius)
     {
         throw new NotImplementedException();

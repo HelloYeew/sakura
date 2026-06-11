@@ -22,6 +22,7 @@ public class DrawNode
     public float DrawAlpha { get; protected set; }
     public TextureFillMode FillMode { get; protected set; }
     public RectangleF DrawRectangle { get; protected set; }
+    public VertexTopology Topology { get; protected set; }
 
     /// <summary>
     /// Copies the required visual state from the source drawable.
@@ -36,6 +37,7 @@ public class DrawNode
         Blending = source.Blending;
         DrawRectangle = source.DrawRectangle;
         FillMode = source.FillMode;
+        Topology = source.Topology;
 
         ApplyVertices(source);
     }
@@ -63,6 +65,10 @@ public class DrawNode
 
         stat_drawn_last_frame.Value++;
         renderer.SetBlendMode(Blending);
-        renderer.DrawVertices(Vertices, Texture ?? renderer.WhitePixel);
+
+        if (Topology == VertexTopology.Quads)
+            renderer.DrawQuads(Vertices, Texture ?? renderer.WhitePixel);
+        else
+            renderer.DrawVertices(Vertices, Texture ?? renderer.WhitePixel);
     }
 }

@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
@@ -28,6 +29,21 @@ public partial class GLShader : IShader
     private readonly GL gl;
     private readonly uint handle;
     private bool disposed;
+
+    // glGetUniformLocation is a string lookup inside the driver; caching locations keeps
+    // per-frame SetUniform calls (projection, masking state, ...) cheap.
+    private readonly Dictionary<string, int> uniformLocations = new Dictionary<string, int>();
+
+    private int getUniformLocation(string name)
+    {
+        if (!uniformLocations.TryGetValue(name, out int location))
+        {
+            location = gl.GetUniformLocation(handle, name);
+            uniformLocations[name] = location;
+        }
+
+        return location;
+    }
 
     /// <summary>
     /// Creates a shader from a specified <see cref="Storage"/>
@@ -94,7 +110,7 @@ public partial class GLShader : IShader
 
     public void SetUniform(string name, int value)
     {
-        int loc = gl.GetUniformLocation(handle, name);
+        int loc = getUniformLocation(name);
         if (loc != -1)
         {
             gl.Uniform1(loc, value);
@@ -103,7 +119,7 @@ public partial class GLShader : IShader
 
     public void SetUniform(string name, float value)
     {
-        int loc = gl.GetUniformLocation(handle, name);
+        int loc = getUniformLocation(name);
         if (loc != -1)
         {
             gl.Uniform1(loc, value);
@@ -112,7 +128,7 @@ public partial class GLShader : IShader
 
     public void SetUniform(string name, bool value)
     {
-        int loc = gl.GetUniformLocation(handle, name);
+        int loc = getUniformLocation(name);
         if (loc != -1)
         {
             gl.Uniform1(loc, value ? 1 : 0);
@@ -121,7 +137,7 @@ public partial class GLShader : IShader
 
     public void SetUniform(string name, Matrix4x4 value)
     {
-        int loc = gl.GetUniformLocation(handle, name);
+        int loc = getUniformLocation(name);
         if (loc != -1)
         {
             unsafe
@@ -134,7 +150,7 @@ public partial class GLShader : IShader
 
     public void SetUniform(string name, Vector2 value)
     {
-        int loc = gl.GetUniformLocation(handle, name);
+        int loc = getUniformLocation(name);
         if (loc != -1)
         {
             gl.Uniform2(loc, value.X, value.Y);
@@ -143,7 +159,7 @@ public partial class GLShader : IShader
 
     public void SetUniform(string name, Vector4 value)
     {
-        int loc = gl.GetUniformLocation(handle, name);
+        int loc = getUniformLocation(name);
         if (loc != -1)
         {
             gl.Uniform4(loc, value.X, value.Y, value.Z, value.W);
@@ -152,7 +168,7 @@ public partial class GLShader : IShader
 
     public void SetUniform(string name, Color value)
     {
-        int loc = gl.GetUniformLocation(handle, name);
+        int loc = getUniformLocation(name);
         if (loc != -1)
         {
             gl.Uniform4(loc, value.R / 255f, value.G / 255f, value.B / 255f, value.A / 255f);
@@ -161,7 +177,7 @@ public partial class GLShader : IShader
 
     public void SetUniformIntArray(string name, int[] values)
     {
-        int loc = gl.GetUniformLocation(handle, name);
+        int loc = getUniformLocation(name);
         if (loc != -1)
         {
             unsafe { fixed (int* p = values) gl.Uniform1(loc, (uint)values.Length, p); }
@@ -170,7 +186,7 @@ public partial class GLShader : IShader
 
     public void SetUniform(string name, float[] mat3x3)
     {
-        int loc = gl.GetUniformLocation(handle, name);
+        int loc = getUniformLocation(name);
         if (loc == -1) return;
         unsafe { fixed (float* p = mat3x3) gl.UniformMatrix3(loc, 1, false, p); }
     }

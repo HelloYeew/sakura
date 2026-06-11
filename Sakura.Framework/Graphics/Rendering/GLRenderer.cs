@@ -8,7 +8,6 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
-using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Rendering.Batches;
 using Sakura.Framework.Graphics.Textures;
 using Silk.NET.OpenGL;
@@ -76,6 +75,8 @@ public class GLRenderer : IGLRenderer
 
     private readonly ConcurrentQueue<Action> drawThreadQueue = new ConcurrentQueue<Action>();
 
+    private static readonly int[] texture_samplers = { 0, 1, 2, 3, 4, 5, 6, 7 };
+
     private struct ClipState
     {
         public Vector4 ClipData;
@@ -122,6 +123,7 @@ public class GLRenderer : IGLRenderer
 
         GLTexture.CreateWhitePixel(gl);
         WhitePixel = new Texture(GLTexture.WhitePixel);
+        prefillTextureSlots();
         resetTextureSlots();
 
         shader = new GLShader(gl, ShaderStorage, "shader.vert", "shader.frag");
@@ -177,8 +179,7 @@ public class GLRenderer : IGLRenderer
     {
         shader.Use();
         shader.SetUniform("u_Projection", projectionMatrix);
-        int[] samplers = new int[] { 0, 1, 2, 3, 4, 5, 6, 7 };
-        shader.SetUniformIntArray("u_Textures", samplers);
+        shader.SetUniformIntArray("u_Textures", texture_samplers);
         shader.SetUniform("u_IsMasking", false);
         shader.SetUniform("u_IsBorder", false);
     }
@@ -192,6 +193,19 @@ public class GLRenderer : IGLRenderer
 
     public void DrawVerticesRaw(ReadOnlySpan<Vertex.Vertex> vertices)
     {
+        if (vertices.Length == 4)
+        {
+            Span<SakuraVertex> expanded = stackalloc SakuraVertex[6];
+            expanded[0] = vertices[0];
+            expanded[1] = vertices[1];
+            expanded[2] = vertices[2];
+            expanded[3] = vertices[2];
+            expanded[4] = vertices[3];
+            expanded[5] = vertices[0];
+            triangleBatch.DrawRaw(expanded);
+            return;
+        }
+
         triangleBatch.DrawRaw(vertices);
     }
 
@@ -216,8 +230,7 @@ public class GLRenderer : IGLRenderer
 
         shader.Use();
         shader.SetUniform("u_Projection", projectionMatrix);
-        int[] samplers = new int[] { 0, 1, 2, 3, 4, 5, 6, 7 };
-        shader.SetUniformIntArray("u_Textures", samplers);
+        shader.SetUniformIntArray("u_Textures", texture_samplers);
 
         stencilLevel = 0;
         scissorStack.Clear();
@@ -238,6 +251,44 @@ public class GLRenderer : IGLRenderer
         triangleBatch.Draw();
     }
 
+    /// <summary>
+    /// Resolves a texture to a batch slot index, binding it (and flushing on slot
+    /// exhaustion) as required.
+    /// </summary>
+    private float prepareTexture(Texture texture)
+    {
+        // Inside GLRenderer it's safe to cast to GLTexture for the raw uint handle.
+        var glTexture = (GLTexture)texture.BackendTexture!;
+        uint handle = glTexture.GLHandle;
+
+        for (int i = 0; i < boundTextureCount; i++)
+        {
+            if (boundTextureHandles[i] == handle)
+                return i;
+        }
+
+        if (boundTextureCount < 8)
+        {
+            int slot = boundTextureCount;
+            glTexture.Bind(slot);
+            boundTextureHandles[slot] = handle;
+            boundTextureCount++;
+            stat_texture_binds.Value++;
+            return slot;
+        }
+
+        // All slots taken, flush and start a fresh slot set.
+        stat_slot_exhaustion_flushes.Value++;
+        triangleBatch.Draw();
+        resetTextureSlots();
+
+        glTexture.Bind(0);
+        boundTextureHandles[0] = handle;
+        boundTextureCount = 1;
+        stat_texture_binds.Value++;
+        return 0;
+    }
+
     public void DrawVertices(ReadOnlySpan<SakuraVertex> vertices, Texture texture)
     {
         // Video textures (VideoGLTexture) are handled by VideoDrawNode directly —
@@ -245,61 +296,20 @@ public class GLRenderer : IGLRenderer
         if (texture.BackendTexture == null)
             texture = WhitePixel;
 
-        // Inside GLRenderer it's safe to cast to GLTexture for the raw uint handle.
-        var glTexture = (GLTexture)texture.BackendTexture!;
-        uint handle = glTexture.GLHandle;
-        float textureIndex = -1;
-
-        for (int i = 0; i < boundTextureCount; i++)
-        {
-            if (boundTextureHandles[i] == handle)
-            {
-                textureIndex = i;
-                break;
-            }
-        }
-
-        if (textureIndex == -1 && boundTextureCount < 8)
-        {
-            textureIndex = boundTextureCount;
-            glTexture.Bind(boundTextureCount);
-            boundTextureHandles[boundTextureCount] = handle;
-            boundTextureCount++;
-            stat_texture_binds.Value++;
-        }
-
-        if (textureIndex == -1)
-        {
-            stat_slot_exhaustion_flushes.Value++;
-
-            triangleBatch.Draw();
-
-            // Reset slots
-            resetTextureSlots();
-
-            // Bind to slot 0
-            textureIndex = 0;
-            glTexture.Bind();
-            boundTextureHandles[0] = handle;
-            boundTextureCount++;
-            stat_texture_binds.Value++;
-        }
+        float textureIndex = prepareTexture(texture);
 
         triangleBatch.AddRange(vertices, textureIndex, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
     }
 
-    private void drawMaskShape(Drawable maskDrawable, float cornerRadius)
+    public void DrawQuads(ReadOnlySpan<SakuraVertex> vertices, Texture texture)
     {
-        if (boundTextureCount == 0 || whiteGLTexture.GLHandle != boundTextureHandles[0])
-        {
-            triangleBatch.Draw();
-            whiteGLTexture.Bind(0);
-            boundTextureHandles[0] = whiteGLTexture.GLHandle;
-            if (boundTextureCount == 0) boundTextureCount = 1;
-        }
+        if (texture.BackendTexture == null)
+            texture = WhitePixel;
 
-        triangleBatch.AddRange(maskDrawable.Vertices, 0f, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
-        triangleBatch.Draw();
+        float textureIndex = prepareTexture(texture);
+
+        for (int i = 0; i + 4 <= vertices.Length; i += 4)
+            triangleBatch.AddQuad(vertices.Slice(i, 4), textureIndex, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
     }
 
     private void drawBorder(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<SakuraVertex> vertices)
@@ -327,7 +337,10 @@ public class GLRenderer : IGLRenderer
             if (boundTextureCount == 0) boundTextureCount = 1;
         }
 
-        triangleBatch.AddRange(vertices, 0f, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
+        // The mask geometry is a single quad (TL, TR, BR, BL).
+        if (vertices.Length >= 4)
+            triangleBatch.AddQuad(vertices.Slice(0, 4), 0f, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
+
         triangleBatch.Draw();
 
         shader.SetUniform("u_IsBorder", false);
@@ -430,11 +443,17 @@ public class GLRenderer : IGLRenderer
 
     private void resetTextureSlots()
     {
+        // Only the CPU-side slot tracking needs resetting: textures stay bound on the GPU
+        // and will simply be re-tracked (or replaced) on their next use. All units are
+        // pre-filled with the white pixel once at initialization for strict drivers.
         boundTextureCount = 0;
         Array.Clear(boundTextureHandles, 0, boundTextureHandles.Length);
+    }
 
+    private void prefillTextureSlots()
+    {
         // Pre-fill all OpenGL texture units with a valid texture (WhitePixel)
-        // to fix some strict driver that will complain about "unloadable texture"
+        // to fix some strict drivers that complain about "unloadable texture".
         if (WhitePixel?.BackendTexture != null)
         {
             for (int i = 0; i < 8; i++)

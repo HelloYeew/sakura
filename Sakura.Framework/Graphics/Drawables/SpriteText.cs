@@ -135,7 +135,7 @@ public partial class SpriteText : Drawable
             return;
         }
 
-        currentVertexCount = shapedText.Glyphs.Count * 6;
+        currentVertexCount = shapedText.Glyphs.Count * 4;
 
         if (textVertices.Length < currentVertexCount)
         {
@@ -200,13 +200,11 @@ public partial class SpriteText : Drawable
             var uvTopLeft = new Vector2(uv.X, uv.Y);
             var uvBottomRight = new Vector2(uv.X + uv.Width, uv.Y + uv.Height);
 
+            // One indexed quad per glyph (TL, TR, BR, BL).
             vertices[vIndex++] = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = drawColor };
             vertices[vIndex++] = new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(uvBottomRight.X, uvTopLeft.Y), Color = drawColor };
             vertices[vIndex++] = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight, Color = drawColor };
-
-            vertices[vIndex++] = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight, Color = drawColor };
             vertices[vIndex++] = new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(uvTopLeft.X, uvBottomRight.Y), Color = drawColor };
-            vertices[vIndex++] = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = drawColor };
         }
 
         DrawRectangle = new RectangleF(minX, minY, maxX - minX, maxY - minY);
@@ -214,12 +212,12 @@ public partial class SpriteText : Drawable
 
     private void flushBatch(IRenderer renderer, Texture texture, int glyphStart, int glyphCount)
     {
-        // 6 vertices per glyph (2 triangles)
-        int vertexStart = glyphStart * 6;
-        int vertexCount = glyphCount * 6;
+        // 4 vertices per glyph (one indexed quad)
+        int vertexStart = glyphStart * 4;
+        int vertexCount = glyphCount * 4;
 
         var slice = textVertices.AsSpan(vertexStart, vertexCount);
-        renderer.DrawVertices(slice, texture);
+        renderer.DrawQuads(slice, texture);
     }
 
     protected override DrawNode CreateDrawNode() => new SpriteTextDrawNode();
@@ -321,7 +319,7 @@ public partial class SpriteText : Drawable
                 }
 
                 currentTexture = glyph.Texture;
-                currentBatchVertexCount += 6;
+                currentBatchVertexCount += 4;
             }
 
             if (currentTexture != null && currentBatchVertexCount > 0)
@@ -345,7 +343,7 @@ public partial class SpriteText : Drawable
             {
                 var batch = batches[i];
                 var slice = Vertices.AsSpan(batch.VertexStart, batch.VertexCount);
-                renderer.DrawVertices(slice, batch.Texture);
+                renderer.DrawQuads(slice, batch.Texture);
             }
         }
     }

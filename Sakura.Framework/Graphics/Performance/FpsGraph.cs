@@ -557,6 +557,8 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
                 Vertices = new Vertex[max_history * 18];
             }
 
+            protected internal override VertexTopology Topology => VertexTopology.Triangles;
+
             protected override void GenerateVertices()
             {
                 var finalMatrix = ModelMatrix;
