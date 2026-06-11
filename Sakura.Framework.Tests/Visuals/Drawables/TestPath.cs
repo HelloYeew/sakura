@@ -95,9 +95,9 @@ public partial class TestPath : TestScene
         private Vector2 getLocalPosition(Vector2 screenSpacePos)
         {
             // TODO: We have a lot of class like this? Should we create a global helper for this?
-            if (Matrix4x4.Invert(ModelMatrix, out var inverse))
+            if (Matrix3x2.Invert(ModelMatrix, out var inverse))
             {
-                var localNormalized = Vector4.Transform(new Vector4(screenSpacePos.X, screenSpacePos.Y, 0, 1), inverse);
+                var localNormalized = Vector2.Transform(screenSpacePos, inverse);
                 return new Vector2(localNormalized.X * DrawSize.X, localNormalized.Y * DrawSize.Y);
             }
             return screenSpacePos;
