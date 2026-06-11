@@ -5,9 +5,10 @@ namespace Sakura.Framework.Timing;
 
 /// <summary>
 /// A clock that is "framed" to a source clock.
-/// It processes time from its source, allow for local time manipulations like rate changes and pauses.
+/// It processes time from its source once per frame, allowing local time manipulations
+/// like rate changes and pauses. All times are in milliseconds.
 /// </summary>
-public class FramedClock : IClock
+public class FramedClock : IFrameBasedClock, ISourceChangeableClock
 {
     private IClock source;
     private double lastSourceTime;
@@ -22,12 +23,14 @@ public class FramedClock : IClock
         }
     }
 
-    public double CurrentTime { get; set; }
+    public void ChangeSource(IClock newSource) => Source = newSource;
+
+    public double CurrentTime { get; private set; }
     public double ElapsedFrameTime { get; private set; }
     public double Rate { get; set; } = 1.0;
     public bool IsRunning { get; private set; } = true;
 
-    public double FramesPerSecond => source.FramesPerSecond;
+    public double FramesPerSecond => (source as IFrameBasedClock)?.FramesPerSecond ?? 0;
 
     public FramedClock(IClock source, bool startFromZero = false)
     {
@@ -43,7 +46,7 @@ public class FramedClock : IClock
     /// Updates the clock's current time based on the source clock.
     /// This should be called once per frame.
     /// </summary>
-    public void Update()
+    public void ProcessFrame()
     {
         if (IsRunning)
         {
@@ -58,7 +61,10 @@ public class FramedClock : IClock
         lastSourceTime = source.CurrentTime;
     }
 
-    public void ProcessFrame() => Update();
+    /// <summary>
+    /// Alias of <see cref="ProcessFrame"/>, kept for existing call sites.
+    /// </summary>
+    public void Update() => ProcessFrame();
 
     public override string ToString() => $"FramedClock: {CurrentTime:F2}ms (Rate: {Rate}, Running: {IsRunning})";
 }

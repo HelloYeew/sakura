@@ -38,10 +38,10 @@ public abstract class AppHost : IDisposable
 
     public Reactive<FrameSync> FrameLimiter { get; set; }
     public Reactive<ExecutionMode> ExecutionMode { get; set; }
-    protected internal IClock UpdateClock { get; private set; }
-    protected internal IClock DrawClock { get; private set; }
-    protected internal IClock AudioClock { get; private set; }
-    public IClock InputClock { get; private set; }
+    protected internal IFrameBasedClock UpdateClock { get; private set; }
+    protected internal IFrameBasedClock DrawClock { get; private set; }
+    protected internal IFrameBasedClock AudioClock { get; private set; }
+    public IFrameBasedClock InputClock { get; private set; }
     private readonly ThrottledFrameClock soundClock = new ThrottledFrameClock(1000);
     private double lastUpdateTime;
     private readonly Stopwatch appLoopStopwatch = new Stopwatch();
@@ -569,7 +569,7 @@ public abstract class AppHost : IDisposable
     /// </summary>
     protected virtual void PerformInput()
     {
-        InputClock.Update();
+        InputClock.ProcessFrame();
     }
 
     /// <summary>

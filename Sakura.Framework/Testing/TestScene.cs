@@ -12,6 +12,7 @@ using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
+using Sakura.Framework.Timing;
 using Vector2 = Sakura.Framework.Maths.Vector2;
 
 namespace Sakura.Framework.Testing;
@@ -23,6 +24,14 @@ public abstract partial class TestScene : Container
     /// Tells the TestScene to bypass spinning up a headless host because the visual is running it.
     /// </summary>
     public static bool IsVisualRunner { get; set; }
+
+    /// <summary>
+    /// Clock rate multiplier used by the headless NUnit runner.
+    /// The entire test clock runs at this rate, so transforms, waits, and all drawable
+    /// timing are uniformly scaled. Set to 2.0 to run tests at 2× speed.
+    /// Default is 2.0.
+    /// </summary>
+    public static double HeadlessClockRate { get; set; } = 2.0;
 
     public IReadOnlyList<TestStep> Steps => steps;
     private readonly List<TestStep> steps = new List<TestStep>();
@@ -244,6 +253,10 @@ public abstract partial class TestScene : Container
 
         private bool isExecutingStep;
         private double currentStepStartTime;
+        private FramedClock? scaledClock;
+
+        // The clock used to measure WaitStep elapsed time, same as scaledClock when rate != 1.
+        private IFrameBasedClock stepClock = null!;
 
         public Exception? TestException { get; private set; }
 
@@ -263,11 +276,28 @@ public abstract partial class TestScene : Container
             Logger.Debug($"Starting test scene: {testScene.GetType().Name}");
             Logger.Debug($"Resource assembly: {ResourceAssembly.FullName}");
             Logger.Debug($"Resource root namespace: {ResourceRootNamespace}");
+
+            // Wrap the app clock in a rate-scaled FramedClock and assign it to the
+            // test scene only. The app's own clock is left alone so base.Update() and
+            // the host loop continue to work normally. stepClock is used to measure
+            // WaitStep elapsed time so it matches the scene's scaled time.
+            if (HeadlessClockRate != 1.0)
+            {
+                scaledClock = new FramedClock(Clock) { Rate = HeadlessClockRate };
+                testScene.Clock = scaledClock;
+                stepClock = scaledClock;
+            }
+            else
+            {
+                stepClock = Clock;
+            }
+
             Add(testScene);
         }
 
         public override void Update()
         {
+            scaledClock?.ProcessFrame();
             base.Update();
 
             if (TestException != null) return;
@@ -285,7 +315,7 @@ public abstract partial class TestScene : Container
             if (!isExecutingStep)
             {
                 isExecutingStep = true;
-                currentStepStartTime = Clock.CurrentTime;
+                currentStepStartTime = stepClock.CurrentTime;
 
                 Logger.Verbose($"Executing test step {currentStepIndex + 1}/{testScene.Steps.Count}: {step.Description}");
 
@@ -317,7 +347,7 @@ public abstract partial class TestScene : Container
                 }
             }
 
-            double elapsed = Clock.CurrentTime - currentStepStartTime;
+            double elapsed = stepClock.CurrentTime - currentStepStartTime;
 
             if (step is WaitStep waitStep)
             {

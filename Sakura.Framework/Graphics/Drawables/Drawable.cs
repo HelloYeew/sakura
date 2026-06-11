@@ -91,12 +91,13 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
     private bool alwaysPresent;
     private Texture? texture;
     private TextureFillMode fillMode = TextureFillMode.Stretch;
-    private IClock clock = null!;
+    private IFrameBasedClock clock = null!;
 
     /// <summary>
-    /// A clock for this drawable, time is relative to the parent's clock
+    /// A clock for this drawable, time is relative to the parent's clock.
+    /// All times are in milliseconds.
     /// </summary>
-    public virtual IClock Clock
+    public virtual IFrameBasedClock Clock
     {
         get => clock;
         set

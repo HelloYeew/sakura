@@ -307,7 +307,7 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
         private readonly IWindow window;
 
         private readonly string name;
-        private readonly IClock clock;
+        private readonly IFrameBasedClock clock;
         private readonly Color baseColor;
         private readonly Func<double> getTargetHz;
 
@@ -334,7 +334,7 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
 
         private PerformanceOverlayState currentState;
 
-        public ThreadStatisticsDisplay(string name, IClock clock, Color baseColor, AppHost host, Func<double> getTargetHz)
+        public ThreadStatisticsDisplay(string name, IFrameBasedClock clock, Color baseColor, AppHost host, Func<double> getTargetHz)
         {
             this.name = name;
             this.clock = clock;
