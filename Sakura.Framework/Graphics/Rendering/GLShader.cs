@@ -23,6 +23,8 @@ namespace Sakura.Framework.Graphics.Rendering;
 [SuppressMessage("ReSharper", "InconsistentNaming")]
 public partial class GLShader : IShader
 {
+    private static readonly GlobalStatistic<int> stat_shader_binds = GlobalStatistics.Get<int>("Renderer", "Shader Binds");
+
     private readonly GL gl;
     private readonly uint handle;
     private bool disposed;
@@ -87,7 +89,7 @@ public partial class GLShader : IShader
     public void Use()
     {
         gl.UseProgram(handle);
-        GlobalStatistics.Get<int>("Renderer", "Shader Binds").Value++;
+        stat_shader_binds.Value++;
     }
 
     public void SetUniform(string name, int value)

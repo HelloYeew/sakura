@@ -10,7 +10,6 @@ using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
-using Sakura.Framework.Timing;
 using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Graphics.Drawables;
@@ -158,10 +157,9 @@ public partial class Container : Drawable
 
         InvalidateTopology();
 
-        if (drawable.Clock is FramedClock framedClock)
-            framedClock.Source = Clock;
-        else
-            drawable.Clock = new FramedClock(Clock, true);
+        // Share our clock by reference (unless the child has an explicitly-assigned clock).
+        // This must happen before Load() so anything scheduled during load uses the right timeline.
+        drawable.InheritClock(Clock);
 
         Invalidate(InvalidationFlags.DrawInfo);
 
@@ -430,12 +428,7 @@ public partial class Container : Drawable
         base.OnClockChanged();
 
         foreach (var child in children)
-        {
-            if (child.Clock is FramedClock framedClock)
-                framedClock.Source = Clock;
-            else
-                child.Clock = new FramedClock(Clock);
-        }
+            child.InheritClock(Clock);
     }
 
     #region Event Propagation

@@ -12,6 +12,8 @@ namespace Sakura.Framework.Graphics.Rendering;
 
 public class ContainerDrawNode : DrawNode
 {
+    private static readonly GlobalStatistic<int> stat_culled = GlobalStatistics.Get<int>("Drawables", "Culled");
+
     public long TopologyInvalidationID { get; internal set; }
 
     public List<DrawNode> Children { get; } = new();
@@ -70,7 +72,7 @@ public class ContainerDrawNode : DrawNode
 
                 if (!isVisible)
                 {
-                    GlobalStatistics.Get<int>("Drawables", "Culled").Value++;
+                    stat_culled.Value++;
                     continue;
                 }
             }

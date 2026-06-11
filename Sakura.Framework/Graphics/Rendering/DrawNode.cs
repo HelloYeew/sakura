@@ -12,6 +12,8 @@ namespace Sakura.Framework.Graphics.Rendering;
 
 public class DrawNode
 {
+    private static readonly GlobalStatistic<int> stat_drawn_last_frame = GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame");
+
     public long InvalidationID { get; internal set; }
 
     public Vertex.Vertex[] Vertices { get; protected set; } = Array.Empty<Vertex.Vertex>();
@@ -59,7 +61,7 @@ public class DrawNode
         if (DrawAlpha <= 0 || Vertices.Length == 0)
             return;
 
-        GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame").Value++;
+        stat_drawn_last_frame.Value++;
         renderer.SetBlendMode(Blending);
         renderer.DrawVertices(Vertices, Texture ?? renderer.WhitePixel);
     }

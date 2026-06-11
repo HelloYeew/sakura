@@ -12,6 +12,8 @@ namespace Sakura.Framework.Timing;
 /// </summary>
 public class Scheduler
 {
+    private static readonly GlobalStatistic<int> stat_pending_tasks = GlobalStatistics.Get<int>("Scheduler", "Pending Tasks");
+
     private readonly List<ScheduledTask> tasks = new List<ScheduledTask>();
     private readonly List<ScheduledTask> tasksToAdd = new List<ScheduledTask>();
     private IClock? clock;
@@ -22,6 +24,23 @@ public class Scheduler
     }
 
     public void SetClock(IClock newClock) => clock = newClock;
+
+    /// <summary>
+    /// Shifts all pending task execution times by <paramref name="delta"/> milliseconds.
+    /// Used when the owning drawable's clock is replaced (e.g. on being added to a container)
+    /// so tasks scheduled on the old timeline keep their intended relative delays.
+    /// </summary>
+    internal void Rebase(double delta)
+    {
+        if (delta == 0)
+            return;
+
+        foreach (var task in tasks)
+            task.ExecutionTime += delta;
+
+        foreach (var task in tasksToAdd)
+            task.ExecutionTime += delta;
+    }
 
     /// <summary>
     /// Schedules a single action to be performed as soon as possible.
@@ -100,7 +119,7 @@ public class Scheduler
     {
         if (clock == null) return;
 
-        GlobalStatistics.Get<int>("Scheduler", "Pending Tasks").Value = tasks.Count + tasksToAdd.Count;
+        stat_pending_tasks.Value = tasks.Count + tasksToAdd.Count;
 
         double currentTime = clock.CurrentTime;
 

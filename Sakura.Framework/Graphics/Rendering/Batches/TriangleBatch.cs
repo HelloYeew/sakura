@@ -16,6 +16,10 @@ namespace Sakura.Framework.Graphics.Rendering.Batches;
 /// </summary>
 public class TriangleBatch
 {
+    private static readonly GlobalStatistic<int> stat_buffer_full_flushes = GlobalStatistics.Get<int>("Renderer", "Buffer Full Flushes");
+    private static readonly GlobalStatistic<int> stat_draw_calls = GlobalStatistics.Get<int>("Renderer", "Draw Calls");
+    private static readonly GlobalStatistic<int> stat_vertices_drawn = GlobalStatistics.Get<int>("Renderer", "Vertices Drawn");
+
     private readonly GL gl;
     private readonly uint vao;
     private readonly uint vbo;
@@ -79,7 +83,7 @@ public class TriangleBatch
         // If the batch is full, automatically flush it to make room.
         if (vertexCount >= maxVertices)
         {
-            GlobalStatistics.Get<int>("Renderer", "Buffer Full Flushes").Value++;
+            stat_buffer_full_flushes.Value++;
             Draw();
         }
         vertices[vertexCount++] = vertex;
@@ -120,8 +124,8 @@ public class TriangleBatch
 
         gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)rawVertices.Length);
 
-        GlobalStatistics.Get<int>("Renderer", "Draw Calls").Value++;
-        GlobalStatistics.Get<int>("Renderer", "Vertices Drawn").Value += rawVertices.Length;
+        stat_draw_calls.Value++;
+        stat_vertices_drawn.Value += rawVertices.Length;
     }
 
     /// <summary>
@@ -146,8 +150,8 @@ public class TriangleBatch
         // Issue the draw call to render the vertices as triangles.
         gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)vertexCount);
 
-        GlobalStatistics.Get<int>("Renderer", "Draw Calls").Value++;
-        GlobalStatistics.Get<int>("Renderer", "Vertices Drawn").Value += vertexCount;
+        stat_draw_calls.Value++;
+        stat_vertices_drawn.Value += vertexCount;
 
         int count = vertexCount;
         vertexCount = 0; // Reset for the next frame.

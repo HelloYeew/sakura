@@ -2,8 +2,8 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
@@ -29,6 +29,11 @@ namespace Sakura.Framework.Graphics.Drawables;
 /// </summary>
 public abstract partial class Drawable : Allocation.IDependencyInjectionCandidate
 {
+    private static readonly GlobalStatistic<int> stat_updated_last_frame = GlobalStatistics.Get<int>("Drawables", "Updated Last Frame");
+    private static readonly GlobalStatistic<int> stat_invalidations = GlobalStatistics.Get<int>("Drawables", "Invalidations");
+    private static readonly GlobalStatistic<int> stat_draw_node_applied = GlobalStatistics.Get<int>("DrawNodes", "State Applied");
+    private static readonly GlobalStatistic<int> stat_draw_node_reused = GlobalStatistics.Get<int>("DrawNodes", "State Reused (Clean)");
+
     private Container? parent;
 
     public Container? Parent
@@ -91,29 +96,69 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
     private bool alwaysPresent;
     private Texture? texture;
     private TextureFillMode fillMode = TextureFillMode.Stretch;
-    private IFrameBasedClock clock = null!;
+    private IFrameBasedClock? clock;
+    private bool hasCustomClock;
 
     /// <summary>
-    /// A clock for this drawable, time is relative to the parent's clock.
+    /// The clock driving this drawable's time. By default this is the parent's clock,
+    /// shared by reference all the way down the hierarchy (so all drawables report the
+    /// same timeline). Assigning a clock explicitly marks it as custom: it is preserved
+    /// when the drawable is added to a container, and if it is a <see cref="FramedClock"/>
+    /// it is processed once per frame by <see cref="UpdateSubTree"/>.
     /// All times are in milliseconds.
     /// </summary>
     public virtual IFrameBasedClock Clock
     {
-        get => clock;
+        get => clock ??= new Clock(true);
         set
         {
             if (clock == value) return;
             clock = value;
+            hasCustomClock = true;
             OnClockChanged();
         }
     }
 
     /// <summary>
-    /// The scheduler for this drawable, used for delaying and scheduling tasks.
+    /// Adopts the parent's clock by reference without marking it as custom.
+    /// Pending transform and scheduler times are rebased onto the new clock's timeline
+    /// so work scheduled before the drawable was added behaves as if scheduled at add time.
     /// </summary>
-    public Scheduler? Scheduler { get; }
+    internal void InheritClock(IFrameBasedClock parentClock)
+    {
+        if (hasCustomClock || ReferenceEquals(clock, parentClock))
+            return;
 
-    private readonly List<ITransform> transforms = new();
+        double oldTime = clock?.CurrentTime ?? parentClock.CurrentTime;
+        clock = parentClock;
+
+        double delta = parentClock.CurrentTime - oldTime;
+        if (delta != 0)
+        {
+            if (transforms != null)
+            {
+                foreach (var t in transforms)
+                {
+                    t.StartTime += delta;
+                    t.EndTime += delta;
+                }
+            }
+
+            scheduler?.Rebase(delta);
+        }
+
+        OnClockChanged();
+    }
+
+    private Scheduler? scheduler;
+
+    /// <summary>
+    /// The scheduler for this drawable, used for delaying and scheduling tasks.
+    /// Created lazily on first access; most drawables never need one.
+    /// </summary>
+    public Scheduler Scheduler => scheduler ??= new Scheduler(Clock);
+
+    private List<Transform>? transforms;
 
     /// <summary>
     /// An internal property used by the transform extension methods to sequence animations.
@@ -627,6 +672,13 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
 
     #endregion
 
+    // Attribute reflection is too slow to run on every load (e.g. when spawning pooled
+    // gameplay objects), so the result is cached per type.
+    private static readonly ConcurrentDictionary<Type, bool> long_running_type_cache = new ConcurrentDictionary<Type, bool>();
+
+    private static bool isLongRunningType(Type type)
+        => long_running_type_cache.GetOrAdd(type, static t => t.GetCustomAttribute<LongRunningLoadAttribute>(true) != null);
+
     /// <summary>
     /// Called to perform loading tasks to load required resources and dependencies.
     /// Called once before the first update.
@@ -648,7 +700,7 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
         {
             if (LoadState >= LoadState.Ready) return;
 
-            bool isLongRunning = GetType().GetCustomAttribute<LongRunningLoadAttribute>(true) != null;
+            bool isLongRunning = isLongRunningType(GetType());
             if (isLongRunning && !isTopLevelAsyncLoad)
             {
                 throw new InvalidOperationException(
@@ -696,9 +748,9 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
             component.asyncParentDependencies = Dependencies;
             component.isTopLevelAsyncLoad = true;
 
-            bool isLongRunning = component.GetType().GetCustomAttribute<LongRunningLoadAttribute>(true) != null;
+            bool isLongRunning = isLongRunningType(component.GetType());
             var creationOptions = isLongRunning ? TaskCreationOptions.LongRunning : TaskCreationOptions.None;
-            var scheduler = Scheduler; // capture the parent's scheduler
+            var parentScheduler = Scheduler; // capture the parent's scheduler
 
             component.loadTask = Task.Factory.StartNew(() =>
             {
@@ -714,7 +766,7 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
                 if (onLoaded != null && !cancellationToken.IsCancellationRequested)
                 {
                     // the callback must be executed on the target's update thread.
-                    scheduler?.Add(() => onLoaded(component));
+                    parentScheduler.Add(() => onLoaded(component));
                 }
             }, cancellationToken, TaskContinuationOptions.None, TaskScheduler.Default);
         }
@@ -757,11 +809,11 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
         {
             node.ApplyState(this);
             node.InvalidationID = DrawNodeInvalidationId;
-            GlobalStatistics.Get<int>("DrawNodes", "State Applied").Value++;
+            stat_draw_node_applied.Value++;
         }
         else
         {
-            GlobalStatistics.Get<int>("DrawNodes", "State Reused (Clean)").Value++;
+            stat_draw_node_reused.Value++;
         }
 
         return node;
@@ -777,7 +829,7 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
         if ((Invalidation & flags) == flags)
             return; // Already invalidated for these flags.
 
-        GlobalStatistics.Get<int>("Drawables", "Invalidations").Value++;
+        stat_invalidations.Value++;
 
         // Logger.Debug($"Invalidating {GetType().Name} (Parent: {Parent?.GetType().Name ?? "null"}, Flags: {flags})");
 
@@ -844,12 +896,6 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
 
     #endregion
 
-    public Drawable()
-    {
-        Clock = new Clock(true);
-        Scheduler = new Scheduler(Clock);
-    }
-
     /// <summary>
     /// Whether this drawable is currently fully outside the masking bounds of its parents.
     /// </summary>
@@ -865,7 +911,10 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
     /// </summary>
     public virtual void UpdateSubTree()
     {
-        (Clock as FramedClock)?.Update();
+        // inherited clocks are shared by reference and processed once by their owner
+        // (e.g. the update thread); only an explicitly-assigned framed clock is ours to process.
+        if (hasCustomClock && clock is FramedClock framedClock)
+            framedClock.ProcessFrame();
 
         if ((IsMaskedAway || !IsAlive) && !AlwaysPresent)
             return;
@@ -877,9 +926,9 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
     {
         if (!IsLoaded) return;
 
-        GlobalStatistics.Get<int>("Drawables", "Updated Last Frame").Value++;
+        stat_updated_last_frame.Value++;
 
-        Scheduler?.Update();
+        scheduler?.Update();
         applyTransforms();
 
         if (Invalidation == InvalidationFlags.None)
@@ -905,14 +954,14 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
     /// </summary>
     protected virtual void OnClockChanged()
     {
-        Scheduler?.SetClock(clock);
+        scheduler?.SetClock(Clock);
     }
 
     #region Transformation Management
 
     private void applyTransforms()
     {
-        if (transforms.Count == 0)
+        if (transforms == null || transforms.Count == 0)
             return;
 
         double currentTime = Clock.CurrentTime;
@@ -939,14 +988,26 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
 
     internal void AddTransform(Transform transform)
     {
-        transforms.Add(transform);
-        // We don't sort here for performance; looping backwards in ApplyTransforms handles completed transforms.
+        // don't sort here for performance, looping backwards in ApplyTransforms handles completed transforms
+        (transforms ??= new List<Transform>()).Add(transform);
     }
 
     /// <summary>
     /// Gets the end time of the latest-finishing transformation on this drawable.
     /// </summary>
-    public double GetLatestTransformEndTime() => transforms.Count > 0 ? transforms.Max(t => t.EndTime) : Clock.CurrentTime;
+    public double GetLatestTransformEndTime()
+    {
+        if (transforms == null || transforms.Count == 0)
+            return Clock.CurrentTime;
+
+        double latest = double.MinValue;
+        for (int i = 0; i < transforms.Count; i++)
+        {
+            if (transforms[i].EndTime > latest)
+                latest = transforms[i].EndTime;
+        }
+        return latest;
+    }
 
     /// <summary>
     /// Removes all transformations from this drawable.
@@ -954,7 +1015,7 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
     /// <param name="propagateToChildren">Whether to also clear transformations on all children.</param>
     public void ClearTransforms(bool propagateToChildren = false)
     {
-        transforms.Clear();
+        transforms?.Clear();
         TimeUntilTransformsCanStart = 0;
 
         if (propagateToChildren && this is Container c)
@@ -966,7 +1027,7 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
 
     internal void LoopLatestTransforms()
     {
-        if (!transforms.Any())
+        if (transforms == null || transforms.Count == 0)
             return;
 
         double latestEndTime = GetLatestTransformEndTime();
@@ -984,8 +1045,11 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
     /// <param name="propagateToChildren">Whether to also finish transformations on all children.</param>
     public void FinishTransforms(bool propagateToChildren = false)
     {
-        foreach (var t in transforms)
-            t.Apply(this, t.EndTime);
+        if (transforms != null)
+        {
+            foreach (var t in transforms)
+                t.Apply(this, t.EndTime);
+        }
 
         ClearTransforms(propagateToChildren);
     }
@@ -1153,7 +1217,7 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
 
     #region Naming
 
-    private Guid internalId = Guid.NewGuid();
+    private Guid? internalId;
 
     public string Name { get; set; } = string.Empty;
 
@@ -1163,9 +1227,11 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
     /// <returns>A display name string.</returns>
     public string GetDisplayName()
     {
+        string id = (internalId ??= Guid.NewGuid()).ToString().Substring(0, 4);
+
         return !string.IsNullOrEmpty(Name) ?
-            $"{Name} ({GetType().Name}#{internalId.ToString().Substring(0, 4)})" :
-            $"{GetType().Name}#{internalId.ToString().Substring(0, 4)}";
+            $"{Name} ({GetType().Name}#{id})" :
+            $"{GetType().Name}#{id}";
     }
 
     public override string ToString() => GetDisplayName();

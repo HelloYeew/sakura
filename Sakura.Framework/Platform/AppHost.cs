@@ -31,6 +31,13 @@ namespace Sakura.Framework.Platform;
 
 public abstract class AppHost : IDisposable
 {
+    private static readonly GlobalStatistic<int> stat_gc_gen0 = GlobalStatistics.Get<int>("GC", "Gen 0 Collections");
+    private static readonly GlobalStatistic<int> stat_gc_gen1 = GlobalStatistics.Get<int>("GC", "Gen 1 Collections");
+    private static readonly GlobalStatistic<int> stat_gc_gen2 = GlobalStatistics.Get<int>("GC", "Gen 2 Collections");
+    private static readonly GlobalStatistic<double> stat_uptime = GlobalStatistics.Get<double>("Host", "Uptime (ms)");
+    private static readonly GlobalStatistic<double> stat_target_update_hz = GlobalStatistics.Get<double>("Host", "Target Update Hz");
+    private static readonly GlobalStatistic<int> stat_drawn_last_frame = GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame");
+
     public IWindow Window { get; private set; }
     public IRenderer Renderer { get; private set; }
 
@@ -388,9 +395,9 @@ public abstract class AppHost : IDisposable
             {
                 while (executionState == ExecutionState.Running)
                 {
-                    GlobalStatistics.Get<int>("GC", "Gen 0 Collections").Value = GC.CollectionCount(0);
-                    GlobalStatistics.Get<int>("GC", "Gen 1 Collections").Value = GC.CollectionCount(1);
-                    GlobalStatistics.Get<int>("GC", "Gen 2 Collections").Value = GC.CollectionCount(2);
+                    stat_gc_gen0.Value = GC.CollectionCount(0);
+                    stat_gc_gen1.Value = GC.CollectionCount(1);
+                    stat_gc_gen2.Value = GC.CollectionCount(2);
 
                     while (mainThreadActions.TryDequeue(out var action))
                     {
@@ -420,7 +427,7 @@ public abstract class AppHost : IDisposable
                     {
                         double targetMainFrameTimeMs = 1000.0 / currentHz;
                         long targetMainTicks = (long)(targetMainFrameTimeMs / msPerTick);
-                        
+
                         nextMainFrameTime += targetMainTicks;
 
                         long now = Stopwatch.GetTimestamp();
@@ -599,8 +606,8 @@ public abstract class AppHost : IDisposable
             inputAction.Invoke();
         }
 
-        GlobalStatistics.Get<double>("Host", "Uptime (ms)").Value = UpdateClock.CurrentTime;
-        GlobalStatistics.Get<double>("Host", "Target Update Hz").Value = targetUpdateHz;
+        stat_uptime.Value = UpdateClock.CurrentTime;
+        stat_target_update_hz.Value = targetUpdateHz;
 
         if (targetUpdateHz == 0) // Unlimited mode
         {
@@ -634,7 +641,7 @@ public abstract class AppHost : IDisposable
     /// </summary>
     protected virtual void PerformDraw()
     {
-        GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame").Value = 0;
+        stat_drawn_last_frame.Value = 0;
         Renderer?.Clear();
         Renderer?.StartFrame();
 

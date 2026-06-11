@@ -26,6 +26,18 @@ namespace Sakura.Framework.Graphics.Rendering;
 [SuppressMessage("ReSharper", "InconsistentNaming")]
 public class GLRenderer : IGLRenderer
 {
+    private static readonly GlobalStatistic<int> stat_draw_calls = GlobalStatistics.Get<int>("Renderer", "Draw Calls");
+    private static readonly GlobalStatistic<int> stat_vertices_drawn = GlobalStatistics.Get<int>("Renderer", "Vertices Drawn");
+    private static readonly GlobalStatistic<int> stat_shader_binds = GlobalStatistics.Get<int>("Renderer", "Shader Binds");
+    private static readonly GlobalStatistic<int> stat_texture_binds = GlobalStatistics.Get<int>("Renderer", "Texture Binds");
+    private static readonly GlobalStatistic<int> stat_slot_exhaustion_flushes = GlobalStatistics.Get<int>("Renderer", "Slot Exhaustion Flushes");
+    private static readonly GlobalStatistic<int> stat_state_change_flushes = GlobalStatistics.Get<int>("Renderer", "State Change Flushes");
+    private static readonly GlobalStatistic<int> stat_buffer_full_flushes = GlobalStatistics.Get<int>("Renderer", "Buffer Full Flushes");
+    private static readonly GlobalStatistic<int> stat_drawables_updated = GlobalStatistics.Get<int>("Drawables", "Updated Last Frame");
+    private static readonly GlobalStatistic<int> stat_drawables_invalidations = GlobalStatistics.Get<int>("Drawables", "Invalidations");
+    private static readonly GlobalStatistic<int> stat_drawables_culled = GlobalStatistics.Get<int>("Drawables", "Culled");
+    private static readonly GlobalStatistic<int> stat_drawables_drawn = GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame");
+
     private static GL gl;
 
     internal static GL GL => gl;
@@ -189,18 +201,18 @@ public class GLRenderer : IGLRenderer
 
         resetTextureSlots();
 
-        GlobalStatistics.Get<int>("Renderer", "Draw Calls").Value = 0;
-        GlobalStatistics.Get<int>("Renderer", "Vertices Drawn").Value = 0;
-        GlobalStatistics.Get<int>("Renderer", "Shader Binds").Value = 0;
-        GlobalStatistics.Get<int>("Renderer", "Texture Binds").Value = 0;
+        stat_draw_calls.Value = 0;
+        stat_vertices_drawn.Value = 0;
+        stat_shader_binds.Value = 0;
+        stat_texture_binds.Value = 0;
 
-        GlobalStatistics.Get<int>("Renderer", "Slot Exhaustion Flushes").Value = 0;
-        GlobalStatistics.Get<int>("Renderer", "State Change Flushes").Value = 0;
-        GlobalStatistics.Get<int>("Renderer", "Buffer Full Flushes").Value = 0;
-        GlobalStatistics.Get<int>("Drawables", "Updated Last Frame").Value = 0;
-        GlobalStatistics.Get<int>("Drawables", "Invalidations").Value = 0;
-        GlobalStatistics.Get<int>("Drawables", "Culled").Value = 0;
-        GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame").Value = 0;
+        stat_slot_exhaustion_flushes.Value = 0;
+        stat_state_change_flushes.Value = 0;
+        stat_buffer_full_flushes.Value = 0;
+        stat_drawables_updated.Value = 0;
+        stat_drawables_invalidations.Value = 0;
+        stat_drawables_culled.Value = 0;
+        stat_drawables_drawn.Value = 0;
 
         shader.Use();
         shader.SetUniform("u_Projection", projectionMatrix);
@@ -253,12 +265,12 @@ public class GLRenderer : IGLRenderer
             glTexture.Bind(boundTextureCount);
             boundTextureHandles[boundTextureCount] = handle;
             boundTextureCount++;
-            GlobalStatistics.Get<int>("Renderer", "Texture Binds").Value++;
+            stat_texture_binds.Value++;
         }
 
         if (textureIndex == -1)
         {
-            GlobalStatistics.Get<int>("Renderer", "Slot Exhaustion Flushes").Value++;
+            stat_slot_exhaustion_flushes.Value++;
 
             triangleBatch.Draw();
 
@@ -270,7 +282,7 @@ public class GLRenderer : IGLRenderer
             glTexture.Bind();
             boundTextureHandles[0] = handle;
             boundTextureCount++;
-            GlobalStatistics.Get<int>("Renderer", "Texture Binds").Value++;
+            stat_texture_binds.Value++;
         }
 
         triangleBatch.AddRange(vertices, textureIndex, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
@@ -382,7 +394,7 @@ public class GLRenderer : IGLRenderer
         if (blendingMode == currentBlendMode)
             return;
 
-        GlobalStatistics.Get<int>("Renderer", "State Change Flushes").Value++;
+        stat_state_change_flushes.Value++;
         triangleBatch.Draw();
 
         currentBlendMode = blendingMode;
