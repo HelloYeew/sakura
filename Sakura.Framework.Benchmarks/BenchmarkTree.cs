@@ -103,7 +103,7 @@ public static class BenchmarkTree
         {
             var next = new Container
             {
-                Position = new Vector2(1, 1),
+                Position = new Vector2(1),
                 Size = new Vector2(1280 - i, 720 - i),
             };
             current.Add(next);
@@ -112,8 +112,8 @@ public static class BenchmarkTree
 
         var leaf = new Box
         {
-            Position = new Vector2(10, 10),
-            Size = new Vector2(16, 16),
+            Position = new Vector2(10),
+            Size = new Vector2(16),
         };
         current.Add(leaf);
 
