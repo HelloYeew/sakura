@@ -220,6 +220,21 @@ public partial class SpriteText : Drawable
         renderer.DrawQuads(slice, texture);
     }
 
+    protected override void UpdateDrawColour()
+    {
+        DrawAlpha = (Parent?.DrawAlpha ?? 1f) * Alpha;
+
+        var drawColor = new Vector4(
+            ColorExtensions.SrgbToLinear(Color.R),
+            ColorExtensions.SrgbToLinear(Color.G),
+            ColorExtensions.SrgbToLinear(Color.B),
+            DrawAlpha
+        );
+
+        for (int i = 0; i < currentVertexCount; i++)
+            textVertices[i].Color = drawColor;
+    }
+
     protected override DrawNode CreateDrawNode() => new SpriteTextDrawNode();
 
     /// <summary>

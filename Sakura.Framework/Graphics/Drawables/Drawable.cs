@@ -172,7 +172,7 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
     /// </summary>
     internal double TimeUntilTransformsCanStart { get; set; }
 
-    public float DrawAlpha { get; private set; }
+    public float DrawAlpha { get; private protected set; }
 
     /// <summary>
     /// An invalidation flag representing which aspects of the drawable need to be recomputed.
@@ -998,13 +998,38 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
             return;
         }
 
-        if ((Invalidation & (InvalidationFlags.DrawInfo | InvalidationFlags.Colour)) != 0)
+        if ((Invalidation & InvalidationFlags.DrawInfo) != 0)
         {
             UpdateTransforms();
+        }
+        else if ((Invalidation & InvalidationFlags.Colour) != 0)
+        {
+            // Colour-only change (fades are the common case in gameplay): rewrite the
+            // vertex colours without redoing matrix and vertex-position work.
+            UpdateDrawColour();
         }
 
         Invalidation = InvalidationFlags.None;
         OwnGeometryInvalidated = false;
+    }
+
+    /// <summary>
+    /// Recomputes <see cref="DrawAlpha"/> and rewrites the color of the existing vertices
+    /// without regenerating geometry. Called for color-only invalidations.
+    /// Drawables whose vertices carry non-uniform colors must override this
+    /// (falling back to <see cref="UpdateTransforms"/> is always correct).
+    /// </summary>
+    protected virtual void UpdateDrawColour()
+    {
+        DrawAlpha = (Parent?.DrawAlpha ?? 1f) * Alpha;
+
+        float rLinear = ColorExtensions.SrgbToLinear(Color.R);
+        float gLinear = ColorExtensions.SrgbToLinear(Color.G);
+        float bLinear = ColorExtensions.SrgbToLinear(Color.B);
+        var calculatedColor = new Vector4(rLinear, gLinear, bLinear, DrawAlpha * (Color.A / 255f));
+
+        for (int i = 0; i < Vertices.Length; i++)
+            Vertices[i].Color = calculatedColor;
     }
 
     /// <summary>

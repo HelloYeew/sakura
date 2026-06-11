@@ -50,10 +50,96 @@ public abstract class AppHost : IDisposable
     protected internal IFrameBasedClock AudioClock { get; private set; }
     public IFrameBasedClock InputClock { get; private set; }
     private readonly ThrottledFrameClock soundClock = new ThrottledFrameClock(1000);
-    private double lastUpdateTime;
     private readonly Stopwatch appLoopStopwatch = new Stopwatch();
-    private readonly ConcurrentQueue<Action> inputQueue = new ConcurrentQueue<Action>();
+    private readonly ConcurrentQueue<PendingInput> inputQueue = new ConcurrentQueue<PendingInput>();
     private readonly ConcurrentQueue<Action> mainThreadActions = new ConcurrentQueue<Action>();
+
+    private enum PendingInputType : byte
+    {
+        KeyDown,
+        KeyUp,
+        MouseDown,
+        MouseUp,
+        MouseMove,
+        Scroll,
+        DragDropFile,
+        DragDropText,
+        TextInput,
+        TextEditing,
+        Resize
+    }
+
+    /// <summary>
+    /// A queued window event as a plain struct. Events can arrive at up to 1000 Hz;
+    /// queuing them as structs (instead of closure + delegate pairs) keeps the input
+    /// path allocation-free.
+    /// </summary>
+    private struct PendingInput
+    {
+        public PendingInputType Type;
+        public KeyEvent Key;
+        public MouseButtonEvent MouseButton;
+        public MouseEvent Mouse;
+        public ScrollEvent Scroll;
+        public TextInputEvent TextInput;
+        public TextEditingEvent TextEditing;
+        public DragDropFileEvent DragDropFile;
+        public DragDropTextEvent DragDropText;
+        public int ResizePhysicalWidth;
+        public int ResizePhysicalHeight;
+        public int ResizeLogicalWidth;
+        public int ResizeLogicalHeight;
+    }
+
+    private void dispatchInput(in PendingInput input)
+    {
+        switch (input.Type)
+        {
+            case PendingInputType.KeyDown:
+                OnKeyDown(input.Key);
+                break;
+
+            case PendingInputType.KeyUp:
+                OnKeyUp(input.Key);
+                break;
+
+            case PendingInputType.MouseDown:
+                OnMouseDown(input.MouseButton);
+                break;
+
+            case PendingInputType.MouseUp:
+                OnMouseUp(input.MouseButton);
+                break;
+
+            case PendingInputType.MouseMove:
+                OnMouseMove(input.Mouse);
+                break;
+
+            case PendingInputType.Scroll:
+                OnScroll(input.Scroll);
+                break;
+
+            case PendingInputType.DragDropFile:
+                onDragDropFile(input.DragDropFile);
+                break;
+
+            case PendingInputType.DragDropText:
+                onDragDropText(input.DragDropText);
+                break;
+
+            case PendingInputType.TextInput:
+                OnTextInput(input.TextInput);
+                break;
+
+            case PendingInputType.TextEditing:
+                OnTextEditing(input.TextEditing);
+                break;
+
+            case PendingInputType.Resize:
+                onResize(input.ResizePhysicalWidth, input.ResizePhysicalHeight, input.ResizeLogicalWidth, input.ResizeLogicalHeight);
+                break;
+        }
+    }
 
     private readonly FrameBufferManager frameBufferManager = new FrameBufferManager();
     private readonly DrawNode[] rootDrawNodes = new DrawNode[3];
@@ -282,20 +368,27 @@ public abstract class AppHost : IDisposable
             Window.Title = Options.FriendlyAppName;
             Window.ApplicationName = Name;
 
-            Window.OnKeyDown += e => inputQueue.Enqueue(() => OnKeyDown(e));
-            Window.OnKeyUp += e => inputQueue.Enqueue(() => OnKeyUp(e));
-            Window.OnMouseDown += e => inputQueue.Enqueue(() => OnMouseDown(e));
-            Window.OnMouseUp += e => inputQueue.Enqueue(() => OnMouseUp(e));
-            Window.OnMouseMove += e => inputQueue.Enqueue(() => OnMouseMove(e));
-            Window.OnScroll += e => inputQueue.Enqueue(() => OnScroll(e));
-            Window.OnDragDropFile += e => inputQueue.Enqueue(() => onDragDropFile(e));
-            Window.OnDragDropText += e => inputQueue.Enqueue(() => onDragDropText(e));
-            Window.OnTextInput += e => inputQueue.Enqueue(() => OnTextInput(e));
-            Window.OnTextEditing += e => inputQueue.Enqueue(() => OnTextEditing(e));
+            Window.OnKeyDown += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.KeyDown, Key = e });
+            Window.OnKeyUp += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.KeyUp, Key = e });
+            Window.OnMouseDown += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.MouseDown, MouseButton = e });
+            Window.OnMouseUp += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.MouseUp, MouseButton = e });
+            Window.OnMouseMove += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.MouseMove, Mouse = e });
+            Window.OnScroll += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.Scroll, Scroll = e });
+            Window.OnDragDropFile += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.DragDropFile, DragDropFile = e });
+            Window.OnDragDropText += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.DragDropText, DragDropText = e });
+            Window.OnTextInput += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.TextInput, TextInput = e });
+            Window.OnTextEditing += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.TextEditing, TextEditing = e });
             Window.Resized += (w, h) =>
             {
                 Window.GetPhysicalSize(out int pw, out int ph);
-                inputQueue.Enqueue(() => onResize(pw, ph, w, h));
+                inputQueue.Enqueue(new PendingInput
+                {
+                    Type = PendingInputType.Resize,
+                    ResizePhysicalWidth = pw,
+                    ResizePhysicalHeight = ph,
+                    ResizeLogicalWidth = w,
+                    ResizeLogicalHeight = h
+                });
             };
             Window.FocusLost += updateTargetUpdateHz;
             Window.FocusGained += updateTargetUpdateHz;
@@ -379,7 +472,6 @@ public abstract class AppHost : IDisposable
                 threadRunner.SetExecutionMode(Threading.ExecutionMode.MultiThread);
             }
 
-            lastUpdateTime = UpdateClock.CurrentTime;
             appLoopStopwatch.Start();
 
             long timestampFrequency = Stopwatch.Frequency;
@@ -601,34 +693,19 @@ public abstract class AppHost : IDisposable
     /// </summary>
     protected virtual void PerformUpdate()
     {
-        while (inputQueue.TryDequeue(out var inputAction))
+        while (inputQueue.TryDequeue(out var input))
         {
-            inputAction.Invoke();
+            dispatchInput(in input);
         }
 
         stat_uptime.Value = UpdateClock.CurrentTime;
         stat_target_update_hz.Value = targetUpdateHz;
 
-        if (targetUpdateHz == 0) // Unlimited mode
-        {
-            // In unlimited mode, we just update once per loop iteration.
-            app?.UpdateSubTree();
-            lastUpdateTime = UpdateClock.CurrentTime;
-            int unlimitedUpdateIndex = frameBufferManager.GetUpdateIndex();
-            rootDrawNodes[unlimitedUpdateIndex] = app?.GenerateDrawNodeSubtree(unlimitedUpdateIndex);
-            frameBufferManager.FinishUpdate();
-            return;
-        }
-
-        double timeStep = 1000.0 / targetUpdateHz;
-
-        // Run as many updates as needed to catch up with the current time.
-        while (UpdateClock.CurrentTime - lastUpdateTime >= timeStep)
-        {
-            // The update that happened in the drawable need to be aware of the timeStep.
-            app?.UpdateSubTree();
-            lastUpdateTime += timeStep;
-        }
+        // One update per update-thread frame. Drawables advance by their clock's elapsed
+        // time, so a fixed-timestep catch-up loop only multiplied full-tree traversals
+        // (and risked a death spiral whenever one update exceeded its own timestep).
+        // The thread's pacing (AppThread) already drives this method at the target rate.
+        app?.UpdateSubTree();
 
         int updateIndex = frameBufferManager.GetUpdateIndex();
         rootDrawNodes[updateIndex] = app?.GenerateDrawNodeSubtree(updateIndex);

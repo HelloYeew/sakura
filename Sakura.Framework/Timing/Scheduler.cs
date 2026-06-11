@@ -112,6 +112,24 @@ public class Scheduler
     }
 
 
+    private void insertSorted(ScheduledTask task)
+    {
+        // binary insertion keeps the list sorted without re-sorting everything on each add.
+        int low = 0;
+        int high = tasks.Count;
+
+        while (low < high)
+        {
+            int mid = (low + high) / 2;
+            if (tasks[mid].ExecutionTime <= task.ExecutionTime)
+                low = mid + 1;
+            else
+                high = mid;
+        }
+
+        tasks.Insert(low, task);
+    }
+
     /// <summary>
     /// Updates the scheduler, running all actions that are due.
     /// </summary>
@@ -125,48 +143,32 @@ public class Scheduler
 
         if (tasksToAdd.Count > 0)
         {
-            tasks.AddRange(tasksToAdd);
+            for (int i = 0; i < tasksToAdd.Count; i++)
+                insertSorted(tasksToAdd[i]);
             tasksToAdd.Clear();
-            tasks.Sort((a, b) => a.ExecutionTime.CompareTo(b.ExecutionTime));
         }
 
-        List<ScheduledTask>? toRemove = null;
-        List<ScheduledTask>? toReAdd = null;
+        // The list is sorted by execution time: run due tasks from the front, then remove
+        // them in one range operation. Index-based iteration tolerates a task action
+        // mutating the scheduler (e.g. cancelling another task) without throwing.
+        int executed = 0;
 
-        foreach (var task in tasks)
+        while (executed < tasks.Count && currentTime >= tasks[executed].ExecutionTime)
         {
-            if (currentTime >= task.ExecutionTime)
-            {
-                task.Action();
+            var task = tasks[executed];
+            executed++;
 
-                if (toRemove == null) toRemove = new List<ScheduledTask>();
-                toRemove.Add(task);
+            task.Action();
 
-                if (task.RepeatInterval > 0)
-                {
-                    task.ExecutionTime += task.RepeatInterval;
-                    if (toReAdd == null) toReAdd = new List<ScheduledTask>();
-                    toReAdd.Add(task);
-                }
-            }
-            else
+            if (task.RepeatInterval > 0)
             {
-                // Since the list is sorted by execution time, we can stop checking.
-                break;
+                task.ExecutionTime += task.RepeatInterval;
+                tasksToAdd.Add(task);
             }
         }
 
-        if (toRemove != null)
-        {
-            foreach (var task in toRemove)
-                tasks.Remove(task);
-        }
-
-        if (toReAdd != null)
-        {
-            // Re-add repeating tasks to the pending list to be sorted in next frame.
-            tasksToAdd.AddRange(toReAdd);
-        }
+        if (executed > 0)
+            tasks.RemoveRange(0, Math.Min(executed, tasks.Count));
     }
 }
 
