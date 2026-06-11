@@ -50,6 +50,12 @@ public partial class FlowContainer : Container
         }
     }
 
+    /// <summary>
+    /// A flow container's layout always depends on its children's geometry,
+    /// regardless of whether it is auto-sizing.
+    /// </summary>
+    protected internal override void OnChildGeometryInvalidated() => InvalidateLayout();
+
     public override void Update()
     {
         bool layoutWasInvalidated = (Invalidation & InvalidationFlags.DrawInfo) != 0;

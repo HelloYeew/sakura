@@ -342,5 +342,13 @@ public partial class GridContainer : Container
                 GridParent?.InvalidateCellLayout();
             }
         }
+
+        protected internal override void OnChildGeometryInvalidated()
+        {
+            base.OnChildGeometryInvalidated();
+
+            // cell content geometry affects grid cell layout (e.g. content-sized dimensions).
+            GridParent?.InvalidateCellLayout();
+        }
     }
 }

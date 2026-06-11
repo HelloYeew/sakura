@@ -22,7 +22,36 @@ public partial class Container : Drawable
     /// </summary>
     internal long TopologyVersion { get; private set; } = 1;
 
-    private readonly List<Drawable> children = new();
+    private readonly List<Drawable> children = new List<Drawable>();
+
+    private readonly List<Drawable> sortedChildren = new List<Drawable>();
+    private long sortedChildrenVersion = -1;
+    private long childInsertionCounter;
+
+    private static readonly Comparison<Drawable> compare_depth = static (a, b) =>
+    {
+        int result = a.Depth.CompareTo(b.Depth);
+        return result != 0 ? result : a.ChildInsertionOrder.CompareTo(b.ChildInsertionOrder);
+    };
+
+    /// <summary>
+    /// The children of this container sorted by depth (back-to-front draw order).
+    /// The list is cached and only re-sorted when children are added/removed or depths change.
+    /// </summary>
+    internal IReadOnlyList<Drawable> SortedChildren => getSortedChildren();
+
+    private List<Drawable> getSortedChildren()
+    {
+        if (sortedChildrenVersion != TopologyVersion)
+        {
+            sortedChildren.Clear();
+            sortedChildren.AddRange(children);
+            sortedChildren.Sort(compare_depth);
+            sortedChildrenVersion = TopologyVersion;
+        }
+
+        return sortedChildren;
+    }
 
     /// <summary>
     /// The container that actually holds the children. By default, it is this container.
@@ -153,6 +182,7 @@ public partial class Container : Drawable
         }
 
         drawable.Parent = this;
+        drawable.ChildInsertionOrder = ++childInsertionCounter;
         children.Add(drawable);
 
         InvalidateTopology();
@@ -161,7 +191,12 @@ public partial class Container : Drawable
         // This must happen before Load() so anything scheduled during load uses the right timeline.
         drawable.InheritClock(Clock);
 
-        Invalidate(InvalidationFlags.DrawInfo);
+        // The (possibly re-added, previously clean) drawable needs a full geometry pass
+        // relative to its new parent; its own Update cascades this through its subtree.
+        drawable.Invalidate(InvalidationFlags.DrawInfo, false);
+
+        // A new child only affects us if we layout around children (auto-size / flow).
+        OnChildGeometryInvalidated();
 
         if (IsLoaded)
         {
@@ -169,7 +204,7 @@ public partial class Container : Drawable
             {
                 drawable.Load();
                 drawable.LoadComplete();
-                drawable.Invalidate(InvalidationFlags.DrawInfo);
+                drawable.Invalidate(InvalidationFlags.DrawInfo, false);
             }
             catch
             {
@@ -193,7 +228,7 @@ public partial class Container : Drawable
         if (children.Remove(drawable))
         {
             drawable.Parent = null;
-            Invalidate(InvalidationFlags.DrawInfo);
+            OnChildGeometryInvalidated();
             InvalidateTopology();
 
             if (drawable.DisposeOnRemoval && drawable is IDisposable disposable)
@@ -211,8 +246,21 @@ public partial class Container : Drawable
                 disposable.Dispose();
         }
         children.Clear();
-        Invalidate(InvalidationFlags.DrawInfo);
+        OnChildGeometryInvalidated();
         InvalidateTopology();
+    }
+
+    /// <summary>
+    /// Invoked when a direct child's geometry has been invalidated (or children were added/removed).
+    /// The default implementation only reacts when this container lays out around its children
+    /// (<see cref="AutoSizeAxes"/>); other containers ignore the notification entirely, which is
+    /// what prevents one moving drawable from re-invalidating the whole tree.
+    /// Subclasses whose layout depends on children (e.g. flow containers) should override this.
+    /// </summary>
+    protected internal virtual void OnChildGeometryInvalidated()
+    {
+        if (AutoSizeAxes != Axes.None)
+            InvalidateLayout();
     }
 
     internal void InvalidateTopology() => TopologyVersion++;
@@ -227,6 +275,11 @@ public partial class Container : Drawable
         {
             UpdateAutoSize();
         }
+
+        // Captured after auto-size so a size change resulting from layout is included.
+        // Children only need re-invalidation when our own geometry changed — a child merely
+        // notifying us for layout purposes must not cascade to its siblings.
+        bool ownGeometryWasInvalidated = OwnGeometryInvalidated;
 
         base.Update();
 
@@ -243,7 +296,7 @@ public partial class Container : Drawable
             }
         }
 
-        if (layoutWasInvalidated)
+        if (ownGeometryWasInvalidated)
         {
             foreach (var child in children)
             {
@@ -378,14 +431,11 @@ public partial class Container : Drawable
         if ((AutoSizeAxes & Axes.Y) != 0)
             currentSize.Y = maxBound.Y;
 
-        // Only assign if changed to prevent constant invalidation
+        // Only assign if changed to prevent constant invalidation.
+        // The Size setter raises the own-geometry invalidation (cascading to children)
+        // and notifies an interested parent, so no explicit invalidation is needed here.
         if (Size != currentSize)
-        {
             Size = currentSize;
-            // We changed size, so we must invalidate ourselves so `base.Update()` recalculates matrices
-            Invalidate(InvalidationFlags.DrawInfo);
-            Parent?.Invalidate(InvalidationFlags.DrawInfo);
-        }
     }
 
     protected override DrawNode CreateDrawNode() => new ContainerDrawNode();
@@ -394,8 +444,13 @@ public partial class Container : Drawable
     {
         var node = (ContainerDrawNode)base.GenerateDrawNodeSubtree(frameIndex);
         node.Children.Clear();
-        foreach (var child in children.OrderBy(c => c.Depth))
+
+        var sorted = getSortedChildren();
+
+        for (int i = 0; i < sorted.Count; i++)
         {
+            var child = sorted[i];
+
             if ((!child.IsMaskedAway && child.IsAlive) || child.AlwaysPresent)
             {
                 node.Children.Add(child.GenerateDrawNodeSubtree(frameIndex));
@@ -435,8 +490,15 @@ public partial class Container : Drawable
 
     public override bool OnMouseDown(MouseButtonEvent e)
     {
-        foreach (var c in children.OrderBy(d => d.Depth).Reverse())
+        var sorted = getSortedChildren();
+
+        // Iterate front-to-back (highest depth first).
+        for (int i = sorted.Count - 1; i >= 0; i--)
         {
+            if (i >= sorted.Count) continue; // handler may have mutated the hierarchy
+
+            var c = sorted[i];
+
             if (c.IsLoaded && c.IsAlive && !c.IsHidden && c.Contains(e.ScreenSpaceMousePosition) && c.OnMouseDown(e))
             {
                 draggedChild = c;
@@ -459,8 +521,14 @@ public partial class Container : Drawable
             return result;
         }
 
-        foreach (var c in children.OrderBy(d => d.Depth).Reverse())
+        var sorted = getSortedChildren();
+
+        for (int i = sorted.Count - 1; i >= 0; i--)
         {
+            if (i >= sorted.Count) continue;
+
+            var c = sorted[i];
+
             if (c.IsLoaded && c.IsAlive && !c.IsHidden && c.Contains(e.ScreenSpaceMousePosition) && c.OnMouseUp(e))
                 return true;
         }
@@ -478,9 +546,15 @@ public partial class Container : Drawable
             handled = draggedChild.OnMouseMove(e);
         }
 
-        // Continue routing to other children
-        foreach (var c in children.OrderBy(d => d.Depth).Reverse())
+        // Continue routing to other children, front-to-back.
+        var sorted = getSortedChildren();
+
+        for (int i = sorted.Count - 1; i >= 0; i--)
         {
+            if (i >= sorted.Count) continue;
+
+            var c = sorted[i];
+
             if (c == draggedChild)
                 continue;
 
@@ -502,9 +576,15 @@ public partial class Container : Drawable
 
     public override bool OnScroll(ScrollEvent e)
     {
-        // Propagate to the first child that contains the mouse position.
-        foreach (var c in children.OrderBy(d => d.Depth).Reverse())
+        // Propagate to the first child that contains the mouse position, front-to-back.
+        var sorted = getSortedChildren();
+
+        for (int i = sorted.Count - 1; i >= 0; i--)
         {
+            if (i >= sorted.Count) continue;
+
+            var c = sorted[i];
+
             if (c.IsLoaded && c.IsAlive && !c.IsHidden && c.Contains(e.ScreenSpaceMousePosition) && c.OnScroll(e))
                 return true;
         }
@@ -514,18 +594,36 @@ public partial class Container : Drawable
 
     public override bool OnKeyDown(KeyEvent e)
     {
-        return children.Any(c => c.OnKeyDown(e));
+        for (int i = 0; i < children.Count; i++)
+        {
+            if (children[i].OnKeyDown(e))
+                return true;
+        }
+
+        return false;
     }
 
     public override bool OnKeyUp(KeyEvent e)
     {
-        return children.Any(c => c.OnKeyUp(e));
+        for (int i = 0; i < children.Count; i++)
+        {
+            if (children[i].OnKeyUp(e))
+                return true;
+        }
+
+        return false;
     }
 
     public override bool OnDragDropFile(DragDropFileEvent e)
     {
-        foreach (var c in children.OrderBy(d => d.Depth).Reverse())
+        var sorted = getSortedChildren();
+
+        for (int i = sorted.Count - 1; i >= 0; i--)
         {
+            if (i >= sorted.Count) continue;
+
+            var c = sorted[i];
+
             if (c.IsLoaded && !c.IsHidden && c.Contains(e.Position))
             {
                 if (c.OnDragDropFile(e))
@@ -538,8 +636,14 @@ public partial class Container : Drawable
 
     public override bool OnDragDropText(DragDropTextEvent e)
     {
-        foreach (var c in children.OrderBy(d => d.Depth).Reverse())
+        var sorted = getSortedChildren();
+
+        for (int i = sorted.Count - 1; i >= 0; i--)
         {
+            if (i >= sorted.Count) continue;
+
+            var c = sorted[i];
+
             if (c.IsLoaded && !c.IsHidden && c.Contains(e.Position))
             {
                 if (c.OnDragDropText(e))
@@ -552,12 +656,24 @@ public partial class Container : Drawable
 
     public override bool OnTextInput(TextInputEvent e)
     {
-        return children.Any(c => c.OnTextInput(e));
+        for (int i = 0; i < children.Count; i++)
+        {
+            if (children[i].OnTextInput(e))
+                return true;
+        }
+
+        return false;
     }
 
     public override bool OnTextEditing(TextEditingEvent e)
     {
-        return children.Any(c => c.OnTextEditing(e));
+        for (int i = 0; i < children.Count; i++)
+        {
+            if (children[i].OnTextEditing(e))
+                return true;
+        }
+
+        return false;
     }
 
     #endregion

@@ -118,8 +118,9 @@ public partial class SpriteText : Drawable
 
         if (Math.Abs(Size.X - ContentSize.X) > 1.0f || Math.Abs(Size.Y - ContentSize.Y) > 1.0f)
         {
+            // The Size setter invalidates our geometry and notifies an interested parent
+            // (auto-size / flow), so no explicit parent invalidation is needed.
             Size = ContentSize;
-            Parent?.Invalidate(InvalidationFlags.DrawInfo);
         }
 
         layoutInvalidated = false;

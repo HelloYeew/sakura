@@ -36,6 +36,12 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
 
     private Container? parent;
 
+    /// <summary>
+    /// Monotonic sequence number assigned by the parent container on add, used as a stable
+    /// tie-breaker when sorting children by depth.
+    /// </summary>
+    internal long ChildInsertionOrder;
+
     public Container? Parent
     {
         get => parent;
@@ -300,8 +306,18 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
         set
         {
             if (Math.Abs(alpha - value) < 0.0001f) return;
+
+            bool wasVisible = alpha > 0;
             alpha = Math.Clamp(value, 0f, 1f);
+            bool isVisible = alpha > 0;
+
             Invalidate(InvalidationFlags.Colour);
+
+            // Visibility is a layout input: auto-size containers skip hidden children
+            // (e.g. a dropdown grows only while its menu is shown), so crossing the
+            // visible/hidden boundary must notify an interested parent.
+            if (wasVisible != isVisible)
+                Parent?.OnChildGeometryInvalidated();
         }
     }
 
@@ -312,9 +328,9 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
         {
             if (Math.Abs(depth - value) < 0.0001f) return;
             depth = value;
-            // Re-sort children in parent required
+            // Bumping the topology version re-sorts the parent's children (and thus draw order)
+            // on the next frame; no geometry recomputation is required for a depth change.
             Parent?.InvalidateTopology();
-            Parent?.Invalidate(InvalidationFlags.DrawInfo);
         }
     }
 
@@ -820,18 +836,37 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
     }
 
     /// <summary>
+    /// Set when this drawable's own geometry inputs (position, size, rotation, parent geometry, ...)
+    /// have changed — as opposed to merely being flagged for a layout pass by a child notification.
+    /// Containers use this to decide whether their children's matrices need recomputation.
+    /// </summary>
+    protected internal bool OwnGeometryInvalidated;
+
+    /// <summary>
     /// Marks all or part of this drawable as requiring re-computation.
+    /// A <see cref="InvalidationFlags.DrawInfo"/> invalidation means this drawable's own geometry
+    /// changed; parents are only notified when they declare interest (auto-size / flow layouts),
+    /// which keeps a single moving drawable from re-invalidating the whole tree.
     /// </summary>
     /// <param name="flags">An <see cref="InvalidationFlags"/> flag representing which aspects of the drawable need to be recomputed.</param>
-    /// <param name="propagateToParent">Whether this invalidation should also invalidate this drawable's parent.</param>
+    /// <param name="propagateToParent">Whether this invalidation should also notify this drawable's parent.</param>
     public virtual void Invalidate(InvalidationFlags flags = InvalidationFlags.All, bool propagateToParent = true)
     {
-        if ((Invalidation & flags) == flags)
-            return; // Already invalidated for these flags.
+        bool dirtiesGeometry = (flags & InvalidationFlags.DrawInfo) != 0;
+
+        // The parent must be notified even when this drawable is already dirty itself.
+        // A drawable that measures and resizes itself during its own update pass (e.g.
+        // SpriteText computing its layout) carries set flags at that moment — but its
+        // parent may have already finished its layout this frame and still needs to learn
+        // about the change. The notification receiver is idempotent, so this is cheap.
+        if (dirtiesGeometry && propagateToParent)
+            Parent?.OnChildGeometryInvalidated();
+
+        // Already invalidated in all requested ways — nothing else to do.
+        if ((Invalidation & flags) == flags && (!dirtiesGeometry || OwnGeometryInvalidated))
+            return;
 
         stat_invalidations.Value++;
-
-        // Logger.Debug($"Invalidating {GetType().Name} (Parent: {Parent?.GetType().Name ?? "null"}, Flags: {flags})");
 
         Invalidation |= flags;
 
@@ -840,8 +875,24 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
             DrawNodeInvalidationId++;
         }
 
-        if (propagateToParent && (flags & InvalidationFlags.DrawInfo) != 0)
-            Parent?.Invalidate(InvalidationFlags.DrawInfo);
+        if (dirtiesGeometry)
+            OwnGeometryInvalidated = true;
+    }
+
+    /// <summary>
+    /// Flags this drawable as requiring an update/layout pass without treating its own geometry
+    /// as changed. Used when a child notifies an interested parent: the parent re-runs layout,
+    /// and only if that layout actually changes its geometry (e.g. auto-size changes Size) does a
+    /// real invalidation cascade to its children.
+    /// </summary>
+    protected internal void InvalidateLayout()
+    {
+        if ((Invalidation & InvalidationFlags.DrawInfo) != 0)
+            return;
+
+        stat_invalidations.Value++;
+        Invalidation |= InvalidationFlags.DrawInfo;
+        DrawNodeInvalidationId++;
     }
 
     #region Dependency Injection
@@ -919,6 +970,16 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
         if ((IsMaskedAway || !IsAlive) && !AlwaysPresent)
             return;
 
+        // Scheduler tasks and transforms must run BEFORE Update() so that any invalidations
+        // they raise (e.g. a FadeIn/MoveTo on a container changing Alpha/Position) are visible
+        // to Update's dirty-state checks. Container.Update captures these flags to decide
+        // whether to cascade to children — raising them mid-Update would lose that cascade.
+        if (IsLoaded)
+        {
+            scheduler?.Update();
+            applyTransforms();
+        }
+
         Update();
     }
 
@@ -928,16 +989,15 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
 
         stat_updated_last_frame.Value++;
 
-        scheduler?.Update();
-        applyTransforms();
-
         if (Invalidation == InvalidationFlags.None)
             return;
 
         if (!AlwaysPresent && Precision.AlmostEqualZero(Alpha))
         {
             DrawAlpha = 0;
-            Invalidation = InvalidationFlags.None;
+            // Keep pending geometry invalidation (and the own-geometry marker) so a drawable
+            // that moved while hidden recomputes — and cascades to children — once shown again.
+            Invalidation &= ~InvalidationFlags.Colour;
             return;
         }
 
@@ -947,6 +1007,7 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
         }
 
         Invalidation = InvalidationFlags.None;
+        OwnGeometryInvalidated = false;
     }
 
     /// <summary>
