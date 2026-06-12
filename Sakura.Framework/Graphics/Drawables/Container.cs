@@ -10,7 +10,6 @@ using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
-using Sakura.Framework.Timing;
 using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Graphics.Drawables;
@@ -23,7 +22,36 @@ public partial class Container : Drawable
     /// </summary>
     internal long TopologyVersion { get; private set; } = 1;
 
-    private readonly List<Drawable> children = new();
+    private readonly List<Drawable> children = new List<Drawable>();
+
+    private readonly List<Drawable> sortedChildren = new List<Drawable>();
+    private long sortedChildrenVersion = -1;
+    private long childInsertionCounter;
+
+    private static readonly Comparison<Drawable> compare_depth = static (a, b) =>
+    {
+        int result = a.Depth.CompareTo(b.Depth);
+        return result != 0 ? result : a.ChildInsertionOrder.CompareTo(b.ChildInsertionOrder);
+    };
+
+    /// <summary>
+    /// The children of this container sorted by depth (back-to-front draw order).
+    /// The list is cached and only re-sorted when children are added/removed or depths change.
+    /// </summary>
+    internal IReadOnlyList<Drawable> SortedChildren => getSortedChildren();
+
+    private List<Drawable> getSortedChildren()
+    {
+        if (sortedChildrenVersion != TopologyVersion)
+        {
+            sortedChildren.Clear();
+            sortedChildren.AddRange(children);
+            sortedChildren.Sort(compare_depth);
+            sortedChildrenVersion = TopologyVersion;
+        }
+
+        return sortedChildren;
+    }
 
     /// <summary>
     /// The container that actually holds the children. By default, it is this container.
@@ -43,15 +71,37 @@ public partial class Container : Drawable
     /// </summary>
     public float CornerRadius { get; set; }
 
+    private float borderThickness;
+
     /// <summary>
     /// The thickness of the border when masking.
     /// </summary>
-    public float BorderThickness { get; set; }
+    public float BorderThickness
+    {
+        get => borderThickness;
+        set
+        {
+            if (borderThickness == value) return;
+            borderThickness = value;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+    }
+
+    private Color borderColor = Color.White;
 
     /// <summary>
     /// The color of the border when masking.
     /// </summary>
-    public Color BorderColor { get; set; } = Color.White;
+    public Color BorderColor
+    {
+        get => borderColor;
+        set
+        {
+            if (borderColor == value) return;
+            borderColor = value;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+    }
 
     /// <summary>
     /// Control which axes that this container automatically sized based on its children's sizes.
@@ -154,16 +204,21 @@ public partial class Container : Drawable
         }
 
         drawable.Parent = this;
+        drawable.ChildInsertionOrder = ++childInsertionCounter;
         children.Add(drawable);
 
         InvalidateTopology();
 
-        if (drawable.Clock is FramedClock framedClock)
-            framedClock.Source = Clock;
-        else
-            drawable.Clock = new FramedClock(Clock, true);
+        // Share our clock by reference (unless the child has an explicitly-assigned clock).
+        // This must happen before Load() so anything scheduled during load uses the right timeline.
+        drawable.InheritClock(Clock);
 
-        Invalidate(InvalidationFlags.DrawInfo);
+        // The (possibly re-added, previously clean) drawable needs a full geometry pass
+        // relative to its new parent; its own Update cascades this through its subtree.
+        drawable.Invalidate(InvalidationFlags.DrawInfo, false);
+
+        // A new child only affects us if we layout around children (auto-size / flow).
+        OnChildGeometryInvalidated();
 
         if (IsLoaded)
         {
@@ -171,7 +226,7 @@ public partial class Container : Drawable
             {
                 drawable.Load();
                 drawable.LoadComplete();
-                drawable.Invalidate(InvalidationFlags.DrawInfo);
+                drawable.Invalidate(InvalidationFlags.DrawInfo, false);
             }
             catch
             {
@@ -195,7 +250,7 @@ public partial class Container : Drawable
         if (children.Remove(drawable))
         {
             drawable.Parent = null;
-            Invalidate(InvalidationFlags.DrawInfo);
+            OnChildGeometryInvalidated();
             InvalidateTopology();
 
             if (drawable.DisposeOnRemoval && drawable is IDisposable disposable)
@@ -213,14 +268,55 @@ public partial class Container : Drawable
                 disposable.Dispose();
         }
         children.Clear();
-        Invalidate(InvalidationFlags.DrawInfo);
+        OnChildGeometryInvalidated();
         InvalidateTopology();
     }
 
-    internal void InvalidateTopology() => TopologyVersion++;
+    /// <summary>
+    /// Invoked when a direct child's geometry has been invalidated (or children were added/removed).
+    /// The default implementation only reacts when this container lays out around its children
+    /// (<see cref="AutoSizeAxes"/>); other containers ignore the notification entirely, which is
+    /// what prevents one moving drawable from re-invalidating the whole tree.
+    /// Subclasses whose layout depends on children (e.g. flow containers) should override this.
+    /// </summary>
+    protected internal virtual void OnChildGeometryInvalidated()
+    {
+        if (AutoSizeAxes != Axes.None)
+            InvalidateLayout();
+    }
+
+    internal void InvalidateTopology()
+    {
+        TopologyVersion++;
+        MarkSubtreeDrawStateDirty();
+    }
+
+    // Bumped whenever any descendant's drawn state, topology, lifetime or masking state
+    // changes. Draw nodes store the version they were generated against, letting fully
+    // clean subtrees skip draw-node regeneration entirely.
+    private long subtreeDrawVersion = 1;
+    private bool subtreeDirtyNotified;
+
+    /// <summary>
+    /// Marks this container's (and all ancestors') cached draw-node subtree as stale.
+    /// The walk up the parent chain short-circuits once per frame per container.
+    /// </summary>
+    internal void MarkSubtreeDrawStateDirty()
+    {
+        subtreeDrawVersion++;
+
+        if (subtreeDirtyNotified)
+            return;
+
+        subtreeDirtyNotified = true;
+        Parent?.MarkSubtreeDrawStateDirty();
+    }
 
     public override void Update()
     {
+        // Allow a fresh subtree-dirty notification walk this frame.
+        subtreeDirtyNotified = false;
+
         // Check whether our layout was dirty before base.Update() is called, as it will clear our invalidation flags.
         bool layoutWasInvalidated = (Invalidation & InvalidationFlags.DrawInfo) != 0;
         bool colourWasInvalidated = (Invalidation & InvalidationFlags.Colour) != 0;
@@ -229,6 +325,11 @@ public partial class Container : Drawable
         {
             UpdateAutoSize();
         }
+
+        // Captured after auto-size so a size change resulting from layout is included.
+        // Children only need re-invalidation when our own geometry changed — a child merely
+        // notifying us for layout purposes must not cascade to its siblings.
+        bool ownGeometryWasInvalidated = OwnGeometryInvalidated;
 
         base.Update();
 
@@ -239,13 +340,22 @@ public partial class Container : Drawable
         {
             var child = children[i];
 
+            // Lifetime crossings change draw-tree membership without any invalidation,
+            // so the cached draw-node subtree must be refreshed when one occurs.
+            bool alive = child.IsAlive;
+            if (alive != child.WasAlive)
+            {
+                child.WasAlive = alive;
+                MarkSubtreeDrawStateDirty();
+            }
+
             if (Clock.CurrentTime >= child.LifetimeEnd && child.RemoveWhenNotAlive)
             {
                 Remove(child);
             }
         }
 
-        if (layoutWasInvalidated)
+        if (ownGeometryWasInvalidated)
         {
             foreach (var child in children)
             {
@@ -297,6 +407,8 @@ public partial class Container : Drawable
             var child = children[i];
             child.CurrentMaskingBounds = maskToApply;
 
+            bool maskedAway = false;
+
             if (maskToApply.HasValue)
             {
                 if ((child.Invalidation & InvalidationFlags.DrawInfo) != 0)
@@ -312,11 +424,15 @@ public partial class Container : Drawable
                                   childRect.Y <= maskToApply.Value.Y + maskToApply.Value.Height + leniency &&
                                   childRect.Y + childRect.Height >= maskToApply.Value.Y - leniency;
 
-                child.IsMaskedAway = !intersects;
+                maskedAway = !intersects;
             }
-            else
+
+            if (child.IsMaskedAway != maskedAway)
             {
-                child.IsMaskedAway = false;
+                child.IsMaskedAway = maskedAway;
+
+                // Masking transitions change draw-tree membership without an invalidation.
+                MarkSubtreeDrawStateDirty();
             }
         }
     }
@@ -380,14 +496,11 @@ public partial class Container : Drawable
         if ((AutoSizeAxes & Axes.Y) != 0)
             currentSize.Y = maxBound.Y;
 
-        // Only assign if changed to prevent constant invalidation
+        // Only assign if changed to prevent constant invalidation.
+        // The Size setter raises the own-geometry invalidation (cascading to children)
+        // and notifies an interested parent, so no explicit invalidation is needed here.
         if (Size != currentSize)
-        {
             Size = currentSize;
-            // We changed size, so we must invalidate ourselves so `base.Update()` recalculates matrices
-            Invalidate(InvalidationFlags.DrawInfo);
-            Parent?.Invalidate(InvalidationFlags.DrawInfo);
-        }
     }
 
     protected override DrawNode CreateDrawNode() => new ContainerDrawNode();
@@ -395,14 +508,28 @@ public partial class Container : Drawable
     public override DrawNode GenerateDrawNodeSubtree(int frameIndex)
     {
         var node = (ContainerDrawNode)base.GenerateDrawNodeSubtree(frameIndex);
+
+        // If nothing in this subtree changed since this buffer's node was last generated
+        // (no invalidations, topology, lifetime or masking transitions), the cached child
+        // node list is still valid and the entire subtree walk can be skipped.
+        if (node.AppliedSubtreeVersion == subtreeDrawVersion)
+            return node;
+
         node.Children.Clear();
-        foreach (var child in children.OrderBy(c => c.Depth))
+
+        var sorted = getSortedChildren();
+
+        for (int i = 0; i < sorted.Count; i++)
         {
+            var child = sorted[i];
+
             if ((!child.IsMaskedAway && child.IsAlive) || child.AlwaysPresent)
             {
                 node.Children.Add(child.GenerateDrawNodeSubtree(frameIndex));
             }
         }
+
+        node.AppliedSubtreeVersion = subtreeDrawVersion;
 
         return node;
     }
@@ -430,20 +557,22 @@ public partial class Container : Drawable
         base.OnClockChanged();
 
         foreach (var child in children)
-        {
-            if (child.Clock is FramedClock framedClock)
-                framedClock.Source = Clock;
-            else
-                child.Clock = new FramedClock(Clock);
-        }
+            child.InheritClock(Clock);
     }
 
     #region Event Propagation
 
     public override bool OnMouseDown(MouseButtonEvent e)
     {
-        foreach (var c in children.OrderBy(d => d.Depth).Reverse())
+        var sorted = getSortedChildren();
+
+        // Iterate front-to-back (highest depth first).
+        for (int i = sorted.Count - 1; i >= 0; i--)
         {
+            if (i >= sorted.Count) continue; // handler may have mutated the hierarchy
+
+            var c = sorted[i];
+
             if (c.IsLoaded && c.IsAlive && !c.IsHidden && c.Contains(e.ScreenSpaceMousePosition) && c.OnMouseDown(e))
             {
                 draggedChild = c;
@@ -466,8 +595,14 @@ public partial class Container : Drawable
             return result;
         }
 
-        foreach (var c in children.OrderBy(d => d.Depth).Reverse())
+        var sorted = getSortedChildren();
+
+        for (int i = sorted.Count - 1; i >= 0; i--)
         {
+            if (i >= sorted.Count) continue;
+
+            var c = sorted[i];
+
             if (c.IsLoaded && c.IsAlive && !c.IsHidden && c.Contains(e.ScreenSpaceMousePosition) && c.OnMouseUp(e))
                 return true;
         }
@@ -485,9 +620,15 @@ public partial class Container : Drawable
             handled = draggedChild.OnMouseMove(e);
         }
 
-        // Continue routing to other children
-        foreach (var c in children.OrderBy(d => d.Depth).Reverse())
+        // Continue routing to other children, front-to-back.
+        var sorted = getSortedChildren();
+
+        for (int i = sorted.Count - 1; i >= 0; i--)
         {
+            if (i >= sorted.Count) continue;
+
+            var c = sorted[i];
+
             if (c == draggedChild)
                 continue;
 
@@ -509,9 +650,15 @@ public partial class Container : Drawable
 
     public override bool OnScroll(ScrollEvent e)
     {
-        // Propagate to the first child that contains the mouse position.
-        foreach (var c in children.OrderBy(d => d.Depth).Reverse())
+        // Propagate to the first child that contains the mouse position, front-to-back.
+        var sorted = getSortedChildren();
+
+        for (int i = sorted.Count - 1; i >= 0; i--)
         {
+            if (i >= sorted.Count) continue;
+
+            var c = sorted[i];
+
             if (c.IsLoaded && c.IsAlive && !c.IsHidden && c.Contains(e.ScreenSpaceMousePosition) && c.OnScroll(e))
                 return true;
         }
@@ -521,18 +668,36 @@ public partial class Container : Drawable
 
     public override bool OnKeyDown(KeyEvent e)
     {
-        return children.Any(c => c.OnKeyDown(e));
+        for (int i = 0; i < children.Count; i++)
+        {
+            if (children[i].OnKeyDown(e))
+                return true;
+        }
+
+        return false;
     }
 
     public override bool OnKeyUp(KeyEvent e)
     {
-        return children.Any(c => c.OnKeyUp(e));
+        for (int i = 0; i < children.Count; i++)
+        {
+            if (children[i].OnKeyUp(e))
+                return true;
+        }
+
+        return false;
     }
 
     public override bool OnDragDropFile(DragDropFileEvent e)
     {
-        foreach (var c in children.OrderBy(d => d.Depth).Reverse())
+        var sorted = getSortedChildren();
+
+        for (int i = sorted.Count - 1; i >= 0; i--)
         {
+            if (i >= sorted.Count) continue;
+
+            var c = sorted[i];
+
             if (c.IsLoaded && !c.IsHidden && c.Contains(e.Position))
             {
                 if (c.OnDragDropFile(e))
@@ -545,8 +710,14 @@ public partial class Container : Drawable
 
     public override bool OnDragDropText(DragDropTextEvent e)
     {
-        foreach (var c in children.OrderBy(d => d.Depth).Reverse())
+        var sorted = getSortedChildren();
+
+        for (int i = sorted.Count - 1; i >= 0; i--)
         {
+            if (i >= sorted.Count) continue;
+
+            var c = sorted[i];
+
             if (c.IsLoaded && !c.IsHidden && c.Contains(e.Position))
             {
                 if (c.OnDragDropText(e))
@@ -559,12 +730,24 @@ public partial class Container : Drawable
 
     public override bool OnTextInput(TextInputEvent e)
     {
-        return children.Any(c => c.OnTextInput(e));
+        for (int i = 0; i < children.Count; i++)
+        {
+            if (children[i].OnTextInput(e))
+                return true;
+        }
+
+        return false;
     }
 
     public override bool OnTextEditing(TextEditingEvent e)
     {
-        return children.Any(c => c.OnTextEditing(e));
+        for (int i = 0; i < children.Count; i++)
+        {
+            if (children[i].OnTextEditing(e))
+                return true;
+        }
+
+        return false;
     }
 
     #endregion

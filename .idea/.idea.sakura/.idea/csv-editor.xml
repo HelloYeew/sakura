@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CsvFileAttributes">
+    <option name="attributeMap">
+      <map>
+        <entry key="/Sakura.Framework.Benchmarks/BenchmarkDotNet.Artifacts/results-before/Sakura.Framework.Benchmarks.Benchmarks.ConstructionBenchmarks-report.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
+        <entry key="/Sakura.Framework.Benchmarks/BenchmarkDotNet.Artifacts/results-before/Sakura.Framework.Benchmarks.Benchmarks.RhythmGameFrameBenchmarks-report.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
+        <entry key="/Sakura.Framework.Benchmarks/BenchmarkDotNet.Artifacts/results-before/Sakura.Framework.Benchmarks.Benchmarks.SchedulerBenchmarks-report.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
+        <entry key="/Sakura.Framework.Benchmarks/BenchmarkDotNet.Artifacts/results-before/Sakura.Framework.Benchmarks.Benchmarks.VertexGenerationBenchmarks-report.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+</project>

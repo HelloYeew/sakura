@@ -31,6 +31,15 @@ namespace Sakura.Framework.Platform;
 
 public abstract class AppHost : IDisposable
 {
+    private static readonly int frame_sync_value_count = Enum.GetValues<FrameSync>().Length;
+
+    private static readonly GlobalStatistic<int> stat_gc_gen0 = GlobalStatistics.Get<int>("GC", "Gen 0 Collections");
+    private static readonly GlobalStatistic<int> stat_gc_gen1 = GlobalStatistics.Get<int>("GC", "Gen 1 Collections");
+    private static readonly GlobalStatistic<int> stat_gc_gen2 = GlobalStatistics.Get<int>("GC", "Gen 2 Collections");
+    private static readonly GlobalStatistic<double> stat_uptime = GlobalStatistics.Get<double>("Host", "Uptime (ms)");
+    private static readonly GlobalStatistic<double> stat_target_update_hz = GlobalStatistics.Get<double>("Host", "Target Update Hz");
+    private static readonly GlobalStatistic<int> stat_drawn_last_frame = GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame");
+
     public IWindow Window { get; private set; }
     public IRenderer Renderer { get; private set; }
 
@@ -43,10 +52,96 @@ public abstract class AppHost : IDisposable
     protected internal IFrameBasedClock AudioClock { get; private set; }
     public IFrameBasedClock InputClock { get; private set; }
     private readonly ThrottledFrameClock soundClock = new ThrottledFrameClock(1000);
-    private double lastUpdateTime;
     private readonly Stopwatch appLoopStopwatch = new Stopwatch();
-    private readonly ConcurrentQueue<Action> inputQueue = new ConcurrentQueue<Action>();
+    private readonly ConcurrentQueue<PendingInput> inputQueue = new ConcurrentQueue<PendingInput>();
     private readonly ConcurrentQueue<Action> mainThreadActions = new ConcurrentQueue<Action>();
+
+    private enum PendingInputType : byte
+    {
+        KeyDown,
+        KeyUp,
+        MouseDown,
+        MouseUp,
+        MouseMove,
+        Scroll,
+        DragDropFile,
+        DragDropText,
+        TextInput,
+        TextEditing,
+        Resize
+    }
+
+    /// <summary>
+    /// A queued window event as a plain struct. Events can arrive at up to 1000 Hz;
+    /// queuing them as structs (instead of closure + delegate pairs) keeps the input
+    /// path allocation-free.
+    /// </summary>
+    private struct PendingInput
+    {
+        public PendingInputType Type;
+        public KeyEvent Key;
+        public MouseButtonEvent MouseButton;
+        public MouseEvent Mouse;
+        public ScrollEvent Scroll;
+        public TextInputEvent TextInput;
+        public TextEditingEvent TextEditing;
+        public DragDropFileEvent DragDropFile;
+        public DragDropTextEvent DragDropText;
+        public int ResizePhysicalWidth;
+        public int ResizePhysicalHeight;
+        public int ResizeLogicalWidth;
+        public int ResizeLogicalHeight;
+    }
+
+    private void dispatchInput(in PendingInput input)
+    {
+        switch (input.Type)
+        {
+            case PendingInputType.KeyDown:
+                OnKeyDown(input.Key);
+                break;
+
+            case PendingInputType.KeyUp:
+                OnKeyUp(input.Key);
+                break;
+
+            case PendingInputType.MouseDown:
+                OnMouseDown(input.MouseButton);
+                break;
+
+            case PendingInputType.MouseUp:
+                OnMouseUp(input.MouseButton);
+                break;
+
+            case PendingInputType.MouseMove:
+                OnMouseMove(input.Mouse);
+                break;
+
+            case PendingInputType.Scroll:
+                OnScroll(input.Scroll);
+                break;
+
+            case PendingInputType.DragDropFile:
+                onDragDropFile(input.DragDropFile);
+                break;
+
+            case PendingInputType.DragDropText:
+                onDragDropText(input.DragDropText);
+                break;
+
+            case PendingInputType.TextInput:
+                OnTextInput(input.TextInput);
+                break;
+
+            case PendingInputType.TextEditing:
+                OnTextEditing(input.TextEditing);
+                break;
+
+            case PendingInputType.Resize:
+                onResize(input.ResizePhysicalWidth, input.ResizePhysicalHeight, input.ResizeLogicalWidth, input.ResizeLogicalHeight);
+                break;
+        }
+    }
 
     private readonly FrameBufferManager frameBufferManager = new FrameBufferManager();
     private readonly DrawNode[] rootDrawNodes = new DrawNode[3];
@@ -275,20 +370,27 @@ public abstract class AppHost : IDisposable
             Window.Title = Options.FriendlyAppName;
             Window.ApplicationName = Name;
 
-            Window.OnKeyDown += e => inputQueue.Enqueue(() => OnKeyDown(e));
-            Window.OnKeyUp += e => inputQueue.Enqueue(() => OnKeyUp(e));
-            Window.OnMouseDown += e => inputQueue.Enqueue(() => OnMouseDown(e));
-            Window.OnMouseUp += e => inputQueue.Enqueue(() => OnMouseUp(e));
-            Window.OnMouseMove += e => inputQueue.Enqueue(() => OnMouseMove(e));
-            Window.OnScroll += e => inputQueue.Enqueue(() => OnScroll(e));
-            Window.OnDragDropFile += e => inputQueue.Enqueue(() => onDragDropFile(e));
-            Window.OnDragDropText += e => inputQueue.Enqueue(() => onDragDropText(e));
-            Window.OnTextInput += e => inputQueue.Enqueue(() => OnTextInput(e));
-            Window.OnTextEditing += e => inputQueue.Enqueue(() => OnTextEditing(e));
+            Window.OnKeyDown += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.KeyDown, Key = e });
+            Window.OnKeyUp += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.KeyUp, Key = e });
+            Window.OnMouseDown += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.MouseDown, MouseButton = e });
+            Window.OnMouseUp += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.MouseUp, MouseButton = e });
+            Window.OnMouseMove += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.MouseMove, Mouse = e });
+            Window.OnScroll += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.Scroll, Scroll = e });
+            Window.OnDragDropFile += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.DragDropFile, DragDropFile = e });
+            Window.OnDragDropText += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.DragDropText, DragDropText = e });
+            Window.OnTextInput += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.TextInput, TextInput = e });
+            Window.OnTextEditing += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.TextEditing, TextEditing = e });
             Window.Resized += (w, h) =>
             {
                 Window.GetPhysicalSize(out int pw, out int ph);
-                inputQueue.Enqueue(() => onResize(pw, ph, w, h));
+                inputQueue.Enqueue(new PendingInput
+                {
+                    Type = PendingInputType.Resize,
+                    ResizePhysicalWidth = pw,
+                    ResizePhysicalHeight = ph,
+                    ResizeLogicalWidth = w,
+                    ResizeLogicalHeight = h
+                });
             };
             Window.FocusLost += updateTargetUpdateHz;
             Window.FocusGained += updateTargetUpdateHz;
@@ -316,17 +418,24 @@ public abstract class AppHost : IDisposable
             Window.GetPhysicalSize(out int initialPhysicalWidth, out int initialPhysicalHeight);
             onResize(initialPhysicalWidth, initialPhysicalHeight, Window.Width, Window.Height);
 
+            // Precision busy-spinning is only worthwhile while the window is focused (and may
+            // be disabled entirely via HostOptions for battery-constrained targets).
+            Func<bool> usePreciseTiming = () => Options.AllowThreadSpinning && Window?.IsActive != false;
+
             updateThread = new AppThread("UpdateThread", PerformUpdate, getUpdateTargetHz)
             {
-                Priority = ThreadPriority.AboveNormal
+                Priority = ThreadPriority.AboveNormal,
+                UsePreciseTiming = usePreciseTiming
             };
             drawThread = new AppThread("DrawThread", PerformDraw, getDrawTargetHz)
             {
-                Priority = ThreadPriority.Normal
+                Priority = ThreadPriority.Normal,
+                UsePreciseTiming = usePreciseTiming
             };
             audioThread = new AppThread("AudioThread", PerformSoundUpdate, getAudioTargetHz)
             {
-                Priority = ThreadPriority.Highest
+                Priority = ThreadPriority.Highest,
+                UsePreciseTiming = usePreciseTiming
             };
 
             drawThread.OnInitialize = () => Window.MakeCurrent();
@@ -372,7 +481,6 @@ public abstract class AppHost : IDisposable
                 threadRunner.SetExecutionMode(Threading.ExecutionMode.MultiThread);
             }
 
-            lastUpdateTime = UpdateClock.CurrentTime;
             appLoopStopwatch.Start();
 
             long timestampFrequency = Stopwatch.Frequency;
@@ -388,9 +496,9 @@ public abstract class AppHost : IDisposable
             {
                 while (executionState == ExecutionState.Running)
                 {
-                    GlobalStatistics.Get<int>("GC", "Gen 0 Collections").Value = GC.CollectionCount(0);
-                    GlobalStatistics.Get<int>("GC", "Gen 1 Collections").Value = GC.CollectionCount(1);
-                    GlobalStatistics.Get<int>("GC", "Gen 2 Collections").Value = GC.CollectionCount(2);
+                    stat_gc_gen0.Value = GC.CollectionCount(0);
+                    stat_gc_gen1.Value = GC.CollectionCount(1);
+                    stat_gc_gen2.Value = GC.CollectionCount(2);
 
                     while (mainThreadActions.TryDequeue(out var action))
                     {
@@ -420,7 +528,7 @@ public abstract class AppHost : IDisposable
                     {
                         double targetMainFrameTimeMs = 1000.0 / currentHz;
                         long targetMainTicks = (long)(targetMainFrameTimeMs / msPerTick);
-                        
+
                         nextMainFrameTime += targetMainTicks;
 
                         long now = Stopwatch.GetTimestamp();
@@ -430,8 +538,13 @@ public abstract class AppHost : IDisposable
 
                         double remainingMs = (nextMainFrameTime - now) * msPerTick;
 
+                        // Same spin policy as the app threads: skip precision spinning when
+                        // disabled or while the window is inactive (battery savings).
+                        bool mainPreciseTiming = Options.AllowThreadSpinning && Window?.IsActive != false;
+                        double mainGuardMs = mainPreciseTiming ? main_spin_guard_ms : 0;
+
                         // Coarse phase: give the CPU back to the OS for the bulk of the wait.
-                        double sleepMs = remainingMs - main_spin_guard_ms;
+                        double sleepMs = remainingMs - mainGuardMs;
                         if (sleepMs > 0)
                         {
                             var sleepSpan = TimeSpan.FromMilliseconds(sleepMs);
@@ -442,8 +555,11 @@ public abstract class AppHost : IDisposable
                         // Fine phase: tight bounded spin (~main_spin_guard_ms) to land exactly on the
                         // deadline. Thread.SpinWait issues a CPU pause hint without yielding to sleep,
                         // which would overshoot a sub-millisecond deadline.
-                        while (Stopwatch.GetTimestamp() < nextMainFrameTime)
-                            Thread.SpinWait(1);
+                        if (mainPreciseTiming)
+                        {
+                            while (Stopwatch.GetTimestamp() < nextMainFrameTime)
+                                Thread.SpinWait(1);
+                        }
                     }
                     else
                     {
@@ -492,7 +608,7 @@ public abstract class AppHost : IDisposable
         if (!e.IsRepeat && e.Key == Key.F10 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
             int currentValue = (int)FrameLimiter.Value;
-            int nextValue = (currentValue + 1) % Enum.GetValues(typeof(FrameSync)).Length;
+            int nextValue = (currentValue + 1) % frame_sync_value_count;
             FrameLimiter.Value = (FrameSync)nextValue;
         }
 
@@ -594,34 +710,19 @@ public abstract class AppHost : IDisposable
     /// </summary>
     protected virtual void PerformUpdate()
     {
-        while (inputQueue.TryDequeue(out var inputAction))
+        while (inputQueue.TryDequeue(out var input))
         {
-            inputAction.Invoke();
+            dispatchInput(in input);
         }
 
-        GlobalStatistics.Get<double>("Host", "Uptime (ms)").Value = UpdateClock.CurrentTime;
-        GlobalStatistics.Get<double>("Host", "Target Update Hz").Value = targetUpdateHz;
+        stat_uptime.Value = UpdateClock.CurrentTime;
+        stat_target_update_hz.Value = targetUpdateHz;
 
-        if (targetUpdateHz == 0) // Unlimited mode
-        {
-            // In unlimited mode, we just update once per loop iteration.
-            app?.UpdateSubTree();
-            lastUpdateTime = UpdateClock.CurrentTime;
-            int unlimitedUpdateIndex = frameBufferManager.GetUpdateIndex();
-            rootDrawNodes[unlimitedUpdateIndex] = app?.GenerateDrawNodeSubtree(unlimitedUpdateIndex);
-            frameBufferManager.FinishUpdate();
-            return;
-        }
-
-        double timeStep = 1000.0 / targetUpdateHz;
-
-        // Run as many updates as needed to catch up with the current time.
-        while (UpdateClock.CurrentTime - lastUpdateTime >= timeStep)
-        {
-            // The update that happened in the drawable need to be aware of the timeStep.
-            app?.UpdateSubTree();
-            lastUpdateTime += timeStep;
-        }
+        // One update per update-thread frame. Drawables advance by their clock's elapsed
+        // time, so a fixed-timestep catch-up loop only multiplied full-tree traversals
+        // (and risked a death spiral whenever one update exceeded its own timestep).
+        // The thread's pacing (AppThread) already drives this method at the target rate.
+        app?.UpdateSubTree();
 
         int updateIndex = frameBufferManager.GetUpdateIndex();
         rootDrawNodes[updateIndex] = app?.GenerateDrawNodeSubtree(updateIndex);
@@ -634,7 +735,7 @@ public abstract class AppHost : IDisposable
     /// </summary>
     protected virtual void PerformDraw()
     {
-        GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame").Value = 0;
+        stat_drawn_last_frame.Value = 0;
         Renderer?.Clear();
         Renderer?.StartFrame();
 
@@ -656,8 +757,6 @@ public abstract class AppHost : IDisposable
     internal double GetUpdateTargetHz() => isMultiThread ? getUpdateTargetHz() : targetUpdateHz;
     internal double GetDrawTargetHz() => isMultiThread ? getDrawTargetHz() : targetUpdateHz;
 
-    // Input and audio run at 1000 Hz while the window is focused, and throttle to 60 Hz when it
-    // loses focus — matching the update/draw threads (and osu!framework's inactive behaviour).
     private double getInputTargetHz() => Window != null && !Window.IsActive ? 60.0 : 1000.0;
     private double getAudioTargetHz() => Window != null && !Window.IsActive ? 60.0 : 1000.0;
 

@@ -6,6 +6,7 @@ using Sakura.Framework.Graphics.Rendering.Vertex;
 using Sakura.Framework.Maths;
 using System;
 using System.Collections.Generic;
+using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Graphics.Drawables;
@@ -82,6 +83,8 @@ public partial class Path : Drawable
         vertices[^1] = position;
         updateBounds();
     }
+
+    protected internal override VertexTopology Topology => VertexTopology.Triangles;
 
     protected override void GenerateVertices()
     {

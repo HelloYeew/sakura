@@ -6,7 +6,7 @@ namespace Sakura.Framework.Timing;
 /// <summary>
 /// A clock that can be used to limit a process to a specific frequency.
 /// </summary>
-public class ThrottledFrameClock
+public sealed class ThrottledFrameClock
 {
     private readonly double timeBetweenUpdates;
     private double lastProcessTime;

@@ -11,10 +11,18 @@ public readonly struct MouseEvent : IMouseEvent
     public Vector2 ScreenSpaceMousePosition => MouseState.Position;
     public Vector2 Delta { get; }
 
-    public MouseEvent(MouseState mouseState, Vector2 delta = default)
+    /// <summary>
+    /// The time the motion physically happened, on the shared <see cref="Sakura.Framework.Timing.TimeSource"/>
+    /// timeline in milliseconds. <see cref="double.NaN"/> when the source provides no timestamp
+    /// (e.g. synthetic events from tests).
+    /// </summary>
+    public double Timestamp { get; }
+
+    public MouseEvent(MouseState mouseState, Vector2 delta = default, double timestamp = double.NaN)
     {
         MouseState = mouseState;
         Delta = delta;
+        Timestamp = timestamp;
     }
 
     public override string ToString()

@@ -10,6 +10,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Sakura.Framework.Configurations;
+using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
@@ -114,6 +115,91 @@ public class SDLWindow : IWindow
     public bool CursorInWindow { get; private set; }
     public IGraphicsSurface GraphicsSurface => activeSurface;
 
+    private bool relativeMouseMode;
+    private double cursorSensitivity = 1.0;
+
+    /// <summary>
+    /// Whether the mouse is captured in relative (raw input) mode.
+    /// SDL reports unaccelerated hardware deltas (Raw Input / evdev underneath) and the window
+    /// maintains a virtual cursor from them, scaled by <see cref="CursorSensitivity"/> and
+    /// clamped to the window bounds.
+    /// </summary>
+    // Mode switches can be requested from any thread (e.g. a config change on the update
+    // thread), but SDL window calls must run on the main thread — applied in PollEvents.
+    private volatile bool pendingRelativeModeChange;
+
+    public bool RelativeMouseMode
+    {
+        get => relativeMouseMode;
+        set
+        {
+            if (relativeMouseMode == value)
+                return;
+
+            relativeMouseMode = value;
+
+            if (initialized)
+                pendingRelativeModeChange = true;
+        }
+    }
+
+    /// <summary>
+    /// Scale applied to raw mouse deltas while <see cref="RelativeMouseMode"/> is active.
+    /// </summary>
+    public double CursorSensitivity
+    {
+        get => cursorSensitivity;
+        set => cursorSensitivity = value;
+    }
+
+    /// <summary>
+    /// The device safe-area insets in window coordinates, kept up to date from SDL.
+    /// </summary>
+    public Reactive<MarginPadding> SafeAreaPadding { get; } = new Reactive<MarginPadding>(new MarginPadding());
+
+    private unsafe void updateSafeArea()
+    {
+        if (window == null)
+            return;
+
+        SDL_Rect safeRect;
+        if (!SDL_GetWindowSafeArea(window, &safeRect))
+            return;
+
+        int windowW, windowH;
+        SDL_GetWindowSize(window, &windowW, &windowH);
+
+        SafeAreaPadding.Value = new MarginPadding
+        {
+            Left = Math.Max(0, safeRect.x),
+            Top = Math.Max(0, safeRect.y),
+            Right = Math.Max(0, windowW - (safeRect.x + safeRect.w)),
+            Bottom = Math.Max(0, windowH - (safeRect.y + safeRect.h)),
+        };
+    }
+
+    private unsafe void applyRelativeMouseMode()
+    {
+        if (!initialized || window == null)
+            return;
+
+        if (relativeMouseMode)
+        {
+            // The virtual cursor continues from wherever the OS cursor currently is
+            // (mouseState.Position is already tracking it).
+            SDL_SetWindowRelativeMouseMode(window, true);
+            Logger.Debug("Relative (raw input) mouse mode enabled");
+        }
+        else
+        {
+            SDL_SetWindowRelativeMouseMode(window, false);
+            // Hand the virtual cursor position back to the OS cursor so leaving
+            // relative mode doesn't make the pointer jump.
+            SDL_WarpMouseInWindow(window, mouseState.Position.X, mouseState.Position.Y);
+            Logger.Debug("Relative (raw input) mouse mode disabled");
+        }
+    }
+
     /// <summary>
     /// Provides the config manager so the window can persist and restore its position, size and mode.
     /// Must be called before <see cref="Create()"/>.
@@ -124,6 +210,16 @@ public class SDLWindow : IWindow
 
         var savedMode = config.Get<WindowMode>(FrameworkSetting.WindowMode).Value;
         WindowModeReactive.Value = savedMode;
+
+        // Relative (raw input) mouse mode and sensitivity follow the config both at startup
+        // and live (e.g. from a game's settings screen).
+        var relativeModeConfig = config.Get<bool>(FrameworkSetting.RelativeMouseMode);
+        relativeMouseMode = relativeModeConfig.Value;
+        relativeModeConfig.ValueChanged += e => RelativeMouseMode = e.NewValue;
+
+        var sensitivityConfig = config.Get<double>(FrameworkSetting.CursorSensitivity);
+        cursorSensitivity = sensitivityConfig.Value;
+        sensitivityConfig.ValueChanged += e => cursorSensitivity = e.NewValue;
     }
 
     /// <summary>
@@ -297,6 +393,11 @@ public class SDLWindow : IWindow
             Logger.Error("Failed to create SDL window: " + SDL_GetError());
             throw new Exception("SDL window creation failed.");
         }
+
+        if (relativeMouseMode)
+            SDL_SetWindowRelativeMouseMode(window, true);
+
+        updateSafeArea();
 
         SDL_SetWindowPosition(window, spawnX, spawnY);
 
@@ -648,6 +749,11 @@ public class SDLWindow : IWindow
             case SDL_EventType.SDL_EVENT_WINDOW_FOCUS_GAINED:
                 IsActive = true;
                 Logger.Debug("Window focus gained");
+
+                // Some platforms drop relative capture while unfocused — re-assert it.
+                if (relativeMouseMode)
+                    SDL_SetWindowRelativeMouseMode(window, true);
+
                 FocusGained.Invoke();
                 break;
 
@@ -693,6 +799,13 @@ public class SDLWindow : IWindow
                 // dedupes via lastNotified*, so this only fires for size changes the watch
                 // didn't see and is a no-op for queued duplicates of watch-handled events.
                 handleSizeChanged();
+                // The safe area is reported relative to the window, so a resize (or moving
+                // between displays, e.g. onto a notched laptop screen) can change it.
+                updateSafeArea();
+                break;
+
+            case SDL_EventType.SDL_EVENT_WINDOW_SAFE_AREA_CHANGED:
+                updateSafeArea();
                 break;
 
             case SDL_EventType.SDL_EVENT_WINDOW_MOVED:
@@ -741,8 +854,12 @@ public class SDLWindow : IWindow
     {
         var button = SDLEnumMapping.ToSakuraMouseButton(buttonEvent.button);
         if (button == MouseButton.Unknown) return;
+
         // SDL3 reports mouse coordinates as floats (subpixel precision).
-        mouseState.Position = new Vector2(buttonEvent.x, buttonEvent.y);
+        // In relative mode the OS position is meaningless (cursor is captured) —
+        // the virtual cursor maintained by motion events is authoritative.
+        if (!relativeMouseMode)
+            mouseState.Position = new Vector2(buttonEvent.x, buttonEvent.y);
         mouseState.SetPressed(button, buttonEvent.down);
         action.Invoke(new SakuraMouseButtonEvent(mouseState.Clone(), button, buttonEvent.clicks, convertEventTimestamp(buttonEvent.timestamp)));
     }
@@ -755,15 +872,33 @@ public class SDLWindow : IWindow
 
     private void handleMouseMotionEvent(SDL_MouseMotionEvent motionEvent)
     {
-        mouseState.Position = new Vector2(motionEvent.x, motionEvent.y);
-        var delta = new Vector2(motionEvent.xrel, motionEvent.yrel);
-        OnMouseMove.Invoke(new MouseEvent(mouseState.Clone(), delta));
+        Vector2 delta;
+
+        if (relativeMouseMode)
+        {
+            // Relative mode: xrel/yrel are unaccelerated hardware counts. Advance the
+            // virtual cursor by the scaled delta, clamped to the window bounds.
+            float sensitivity = (float)cursorSensitivity;
+            delta = new Vector2(motionEvent.xrel * sensitivity, motionEvent.yrel * sensitivity);
+
+            mouseState.Position = new Vector2(
+                Math.Clamp(mouseState.Position.X + delta.X, 0, logicalWidth),
+                Math.Clamp(mouseState.Position.Y + delta.Y, 0, logicalHeight));
+        }
+        else
+        {
+            mouseState.Position = new Vector2(motionEvent.x, motionEvent.y);
+            delta = new Vector2(motionEvent.xrel, motionEvent.yrel);
+        }
+
+        OnMouseMove.Invoke(new MouseEvent(mouseState.Clone(), delta, convertEventTimestamp(motionEvent.timestamp)));
     }
 
     private void handleMouseWheelEvent(SDL_MouseWheelEvent wheelEvent)
     {
-        // SDL3 wheel events carry the mouse position directly.
-        mouseState.Position = new Vector2(wheelEvent.mouse_x, wheelEvent.mouse_y);
+        // SDL3 wheel events carry the mouse position directly (meaningless in relative mode).
+        if (!relativeMouseMode)
+            mouseState.Position = new Vector2(wheelEvent.mouse_x, wheelEvent.mouse_y);
         OnScroll.Invoke(new ScrollEvent(mouseState, new Vector2(wheelEvent.x, wheelEvent.y)));
     }
 
@@ -864,6 +999,13 @@ public class SDLWindow : IWindow
     /// </summary>
     public unsafe void PollEvents()
     {
+        // Apply relative mouse mode switches on the main thread (SDL window calls are not thread-safe).
+        if (pendingRelativeModeChange)
+        {
+            pendingRelativeModeChange = false;
+            applyRelativeMouseMode();
+        }
+
         bool? targetState;
         RectangleF? targetRect;
 

@@ -9,7 +9,7 @@ using Sakura.Framework.Statistic;
 namespace Sakura.Framework.Graphics.Video;
 
 /// <summary>
-/// A YUV420P video texture following the osu!framework upload pattern:
+/// A YUV420P video texture.
 /// <see cref="SetData"/> stores the upload request on the decode thread (no render-thread calls).
 /// The actual upload is performed lazily on the render thread the first time this texture
 /// is about to be drawn. <see cref="UploadComplete"/> becomes true after the upload.

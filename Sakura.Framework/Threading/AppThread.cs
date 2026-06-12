@@ -19,6 +19,14 @@ public class AppThread
     public Action FrameAction { get; }
     public Func<double> GetTargetHz { get; }
 
+    /// <summary>
+    /// Whether the final ~0.5ms of each frame wait may busy-spin for precise pacing.
+    /// When it returns false the thread sleeps for the full remaining time instead,
+    /// trading sub-millisecond timing jitter for CPU/battery savings.
+    /// Defaults to always spinning.
+    /// </summary>
+    public Func<bool> UsePreciseTiming { get; set; } = static () => true;
+
     private Thread? internalThread;
     private readonly ManualResetEventSlim pauseEvent = new ManualResetEventSlim(true);
     private volatile bool isRunning;
@@ -130,8 +138,13 @@ public class AppThread
 
                 double remainingMs = (nextFrameTime - now) * msPerTick;
 
+                // Precision spinning may be disabled (battery-constrained targets, inactive
+                // window): sleep the entire remaining time and accept sub-ms pacing jitter.
+                bool preciseTiming = UsePreciseTiming();
+                double guardMs = preciseTiming ? spin_guard_ms : 0;
+
                 // Coarse phase: hand the CPU back to the OS for the bulk of the wait.
-                double sleepMs = remainingMs - spin_guard_ms;
+                double sleepMs = remainingMs - guardMs;
                 if (sleepMs > 0)
                 {
                     var sleepSpan = TimeSpan.FromMilliseconds(sleepMs);
@@ -139,8 +152,11 @@ public class AppThread
                         Thread.Sleep(sleepSpan);
                 }
 
-                while (System.Diagnostics.Stopwatch.GetTimestamp() < nextFrameTime)
-                    Thread.SpinWait(1);
+                if (preciseTiming)
+                {
+                    while (System.Diagnostics.Stopwatch.GetTimestamp() < nextFrameTime)
+                        Thread.SpinWait(1);
+                }
             }
             else
             {

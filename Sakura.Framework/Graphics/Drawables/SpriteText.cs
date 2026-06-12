@@ -118,8 +118,9 @@ public partial class SpriteText : Drawable
 
         if (Math.Abs(Size.X - ContentSize.X) > 1.0f || Math.Abs(Size.Y - ContentSize.Y) > 1.0f)
         {
+            // The Size setter invalidates our geometry and notifies an interested parent
+            // (auto-size / flow), so no explicit parent invalidation is needed.
             Size = ContentSize;
-            Parent?.Invalidate(InvalidationFlags.DrawInfo);
         }
 
         layoutInvalidated = false;
@@ -134,7 +135,7 @@ public partial class SpriteText : Drawable
             return;
         }
 
-        currentVertexCount = shapedText.Glyphs.Count * 6;
+        currentVertexCount = shapedText.Glyphs.Count * 4;
 
         if (textVertices.Length < currentVertexCount)
         {
@@ -185,10 +186,10 @@ public partial class SpriteText : Drawable
             float w = size.X * normalizationScale.X;
             float h = size.Y * normalizationScale.Y;
 
-            var vTopLeft = Vector4.Transform(new Vector4(x, y, 0, 1), ModelMatrix);
-            var vTopRight = Vector4.Transform(new Vector4(x + w, y, 0, 1), ModelMatrix);
-            var vBottomLeft = Vector4.Transform(new Vector4(x, y + h, 0, 1), ModelMatrix);
-            var vBottomRight = Vector4.Transform(new Vector4(x + w, y + h, 0, 1), ModelMatrix);
+            var vTopLeft = Vector2.Transform(new Vector2(x, y), ModelMatrix);
+            var vTopRight = Vector2.Transform(new Vector2(x + w, y), ModelMatrix);
+            var vBottomLeft = Vector2.Transform(new Vector2(x, y + h), ModelMatrix);
+            var vBottomRight = Vector2.Transform(new Vector2(x + w, y + h), ModelMatrix);
 
             minX = Math.Min(minX, Math.Min(vTopLeft.X, Math.Min(vTopRight.X, Math.Min(vBottomLeft.X, vBottomRight.X))));
             minY = Math.Min(minY, Math.Min(vTopLeft.Y, Math.Min(vTopRight.Y, Math.Min(vBottomLeft.Y, vBottomRight.Y))));
@@ -199,13 +200,11 @@ public partial class SpriteText : Drawable
             var uvTopLeft = new Vector2(uv.X, uv.Y);
             var uvBottomRight = new Vector2(uv.X + uv.Width, uv.Y + uv.Height);
 
+            // One indexed quad per glyph (TL, TR, BR, BL).
             vertices[vIndex++] = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = drawColor };
             vertices[vIndex++] = new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(uvBottomRight.X, uvTopLeft.Y), Color = drawColor };
             vertices[vIndex++] = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight, Color = drawColor };
-
-            vertices[vIndex++] = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight, Color = drawColor };
             vertices[vIndex++] = new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(uvTopLeft.X, uvBottomRight.Y), Color = drawColor };
-            vertices[vIndex++] = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = drawColor };
         }
 
         DrawRectangle = new RectangleF(minX, minY, maxX - minX, maxY - minY);
@@ -213,12 +212,27 @@ public partial class SpriteText : Drawable
 
     private void flushBatch(IRenderer renderer, Texture texture, int glyphStart, int glyphCount)
     {
-        // 6 vertices per glyph (2 triangles)
-        int vertexStart = glyphStart * 6;
-        int vertexCount = glyphCount * 6;
+        // 4 vertices per glyph (one indexed quad)
+        int vertexStart = glyphStart * 4;
+        int vertexCount = glyphCount * 4;
 
         var slice = textVertices.AsSpan(vertexStart, vertexCount);
-        renderer.DrawVertices(slice, texture);
+        renderer.DrawQuads(slice, texture);
+    }
+
+    protected override void UpdateDrawColour()
+    {
+        DrawAlpha = (Parent?.DrawAlpha ?? 1f) * Alpha;
+
+        var drawColor = new Vector4(
+            ColorExtensions.SrgbToLinear(Color.R),
+            ColorExtensions.SrgbToLinear(Color.G),
+            ColorExtensions.SrgbToLinear(Color.B),
+            DrawAlpha
+        );
+
+        for (int i = 0; i < currentVertexCount; i++)
+            textVertices[i].Color = drawColor;
     }
 
     protected override DrawNode CreateDrawNode() => new SpriteTextDrawNode();
@@ -229,6 +243,12 @@ public partial class SpriteText : Drawable
     /// </summary>
     public Vector2 GetCharacterPosition(int index)
     {
+        // Parents (e.g. a text box positioning its caret) update before this drawable does,
+        // so a query arriving right after a text change would otherwise read the previous
+        // frame's shaping. Shape on demand so callers always get fresh metrics.
+        if (layoutInvalidated)
+            computeLayout();
+
         // If there is no text yet, return the starting text offset.
         if (shapedText == null || shapedText.Glyphs.Count == 0 || index < 0)
         {
@@ -320,7 +340,7 @@ public partial class SpriteText : Drawable
                 }
 
                 currentTexture = glyph.Texture;
-                currentBatchVertexCount += 6;
+                currentBatchVertexCount += 4;
             }
 
             if (currentTexture != null && currentBatchVertexCount > 0)
@@ -344,7 +364,7 @@ public partial class SpriteText : Drawable
             {
                 var batch = batches[i];
                 var slice = Vertices.AsSpan(batch.VertexStart, batch.VertexCount);
-                renderer.DrawVertices(slice, batch.Texture);
+                renderer.DrawQuads(slice, batch.Texture);
             }
         }
     }

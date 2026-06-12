@@ -8,7 +8,6 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
-using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Rendering.Batches;
 using Sakura.Framework.Graphics.Textures;
 using Silk.NET.OpenGL;
@@ -26,9 +25,48 @@ namespace Sakura.Framework.Graphics.Rendering;
 [SuppressMessage("ReSharper", "InconsistentNaming")]
 public class GLRenderer : IGLRenderer
 {
+    private static readonly GlobalStatistic<int> stat_draw_calls = GlobalStatistics.Get<int>("Renderer", "Draw Calls");
+    private static readonly GlobalStatistic<int> stat_vertices_drawn = GlobalStatistics.Get<int>("Renderer", "Vertices Drawn");
+    private static readonly GlobalStatistic<int> stat_shader_binds = GlobalStatistics.Get<int>("Renderer", "Shader Binds");
+    private static readonly GlobalStatistic<int> stat_texture_binds = GlobalStatistics.Get<int>("Renderer", "Texture Binds");
+    private static readonly GlobalStatistic<int> stat_slot_exhaustion_flushes = GlobalStatistics.Get<int>("Renderer", "Slot Exhaustion Flushes");
+    private static readonly GlobalStatistic<int> stat_state_change_flushes = GlobalStatistics.Get<int>("Renderer", "State Change Flushes");
+    private static readonly GlobalStatistic<int> stat_buffer_full_flushes = GlobalStatistics.Get<int>("Renderer", "Buffer Full Flushes");
+    private static readonly GlobalStatistic<int> stat_drawables_updated = GlobalStatistics.Get<int>("Drawables", "Updated Last Frame");
+    private static readonly GlobalStatistic<int> stat_drawables_invalidations = GlobalStatistics.Get<int>("Drawables", "Invalidations");
+    private static readonly GlobalStatistic<int> stat_drawables_culled = GlobalStatistics.Get<int>("Drawables", "Culled");
+    private static readonly GlobalStatistic<int> stat_drawables_drawn = GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame");
+
     private static GL gl;
 
     internal static GL GL => gl;
+
+    // The live renderer instance, for static notifications (e.g. texture deletion).
+    // Effectively a singleton: only one GL renderer exists per process.
+    private static GLRenderer instance;
+
+    /// <summary>
+    /// Must be called whenever a GL texture is deleted. GL recycles deleted handle IDs,
+    /// so a new texture (e.g. a glyph atlas page or a recreated framebuffer attachment)
+    /// can receive the same numeric handle as a deleted one — if the CPU-side slot
+    /// tracking still maps that handle to a slot, the renderer would skip binding and
+    /// draw with whatever texture happens to occupy the slot.
+    /// </summary>
+    internal static void NotifyTextureDeleted(uint handle)
+    {
+        var renderer = instance;
+        if (renderer == null || handle == 0)
+            return;
+
+        for (int i = 0; i < renderer.boundTextureHandles.Length; i++)
+        {
+            if (renderer.boundTextureHandles[i] == handle)
+                renderer.boundTextureHandles[i] = uint.MaxValue; // never matches a live handle
+        }
+
+        if (renderer.lastBoundTextureHandle == handle)
+            renderer.lastBoundTextureHandle = uint.MaxValue;
+    }
 
     public Texture WhitePixel { get; private set; }
     public Matrix4x4 ProjectionMatrix => projectionMatrix;
@@ -64,6 +102,24 @@ public class GLRenderer : IGLRenderer
 
     private readonly ConcurrentQueue<Action> drawThreadQueue = new ConcurrentQueue<Action>();
 
+    private uint currentFrameBufferHandle;
+    private int currentViewportWidth = 1;
+    private int currentViewportHeight = 1;
+    private int windowViewportWidth = 1;
+    private int windowViewportHeight = 1;
+    private readonly Stack<FrameBufferState> frameBufferStack = new Stack<FrameBufferState>();
+
+    private struct FrameBufferState
+    {
+        public uint Handle;
+        public int ViewportWidth;
+        public int ViewportHeight;
+        public Matrix4x4 Projection;
+        public ClipState Clip;
+    }
+
+    private static readonly int[] texture_samplers = { 0, 1, 2, 3, 4, 5, 6, 7 };
+
     private struct ClipState
     {
         public Vector4 ClipData;
@@ -73,6 +129,8 @@ public class GLRenderer : IGLRenderer
 
     public unsafe void Initialize(IGraphicsSurface graphicsSurface)
     {
+        instance = this;
+
         var glSurface = (IOpenGLGraphicsSurface)graphicsSurface;
 
         gl = GL.GetApi(glSurface.GetFunctionAddress);
@@ -110,6 +168,7 @@ public class GLRenderer : IGLRenderer
 
         GLTexture.CreateWhitePixel(gl);
         WhitePixel = new Texture(GLTexture.WhitePixel);
+        prefillTextureSlots();
         resetTextureSlots();
 
         shader = new GLShader(gl, ShaderStorage, "shader.vert", "shader.frag");
@@ -128,6 +187,10 @@ public class GLRenderer : IGLRenderer
     {
         gl.Viewport(0, 0, (uint)physicalWidth, (uint)physicalHeight);
         viewportHeight = physicalHeight;
+        windowViewportWidth = physicalWidth;
+        windowViewportHeight = physicalHeight;
+        currentViewportWidth = physicalWidth;
+        currentViewportHeight = physicalHeight;
         projectionMatrix = Matrix4x4.CreateOrthographicOffCenter(0, logicalWidth, logicalHeight, 0, -1, 1);
         renderScaleX = (float)physicalWidth / logicalWidth;
         renderScaleY = (float)physicalHeight / logicalHeight;
@@ -165,8 +228,7 @@ public class GLRenderer : IGLRenderer
     {
         shader.Use();
         shader.SetUniform("u_Projection", projectionMatrix);
-        int[] samplers = new int[] { 0, 1, 2, 3, 4, 5, 6, 7 };
-        shader.SetUniformIntArray("u_Textures", samplers);
+        shader.SetUniformIntArray("u_Textures", texture_samplers);
         shader.SetUniform("u_IsMasking", false);
         shader.SetUniform("u_IsBorder", false);
     }
@@ -180,6 +242,19 @@ public class GLRenderer : IGLRenderer
 
     public void DrawVerticesRaw(ReadOnlySpan<Vertex.Vertex> vertices)
     {
+        if (vertices.Length == 4)
+        {
+            Span<SakuraVertex> expanded = stackalloc SakuraVertex[6];
+            expanded[0] = vertices[0];
+            expanded[1] = vertices[1];
+            expanded[2] = vertices[2];
+            expanded[3] = vertices[2];
+            expanded[4] = vertices[3];
+            expanded[5] = vertices[0];
+            triangleBatch.DrawRaw(expanded);
+            return;
+        }
+
         triangleBatch.DrawRaw(vertices);
     }
 
@@ -189,23 +264,22 @@ public class GLRenderer : IGLRenderer
 
         resetTextureSlots();
 
-        GlobalStatistics.Get<int>("Renderer", "Draw Calls").Value = 0;
-        GlobalStatistics.Get<int>("Renderer", "Vertices Drawn").Value = 0;
-        GlobalStatistics.Get<int>("Renderer", "Shader Binds").Value = 0;
-        GlobalStatistics.Get<int>("Renderer", "Texture Binds").Value = 0;
+        stat_draw_calls.Value = 0;
+        stat_vertices_drawn.Value = 0;
+        stat_shader_binds.Value = 0;
+        stat_texture_binds.Value = 0;
 
-        GlobalStatistics.Get<int>("Renderer", "Slot Exhaustion Flushes").Value = 0;
-        GlobalStatistics.Get<int>("Renderer", "State Change Flushes").Value = 0;
-        GlobalStatistics.Get<int>("Renderer", "Buffer Full Flushes").Value = 0;
-        GlobalStatistics.Get<int>("Drawables", "Updated Last Frame").Value = 0;
-        GlobalStatistics.Get<int>("Drawables", "Invalidations").Value = 0;
-        GlobalStatistics.Get<int>("Drawables", "Culled").Value = 0;
-        GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame").Value = 0;
+        stat_slot_exhaustion_flushes.Value = 0;
+        stat_state_change_flushes.Value = 0;
+        stat_buffer_full_flushes.Value = 0;
+        stat_drawables_updated.Value = 0;
+        stat_drawables_invalidations.Value = 0;
+        stat_drawables_culled.Value = 0;
+        stat_drawables_drawn.Value = 0;
 
         shader.Use();
         shader.SetUniform("u_Projection", projectionMatrix);
-        int[] samplers = new int[] { 0, 1, 2, 3, 4, 5, 6, 7 };
-        shader.SetUniformIntArray("u_Textures", samplers);
+        shader.SetUniformIntArray("u_Textures", texture_samplers);
 
         stencilLevel = 0;
         scissorStack.Clear();
@@ -222,8 +296,133 @@ public class GLRenderer : IGLRenderer
         lastBoundTextureHandle = uint.MaxValue;
         SetBlendMode(BlendingMode.Alpha);
 
+        // Defensive: if a previous frame aborted mid-offscreen-pass, don't leak its state.
+        if (frameBufferStack.Count > 0)
+        {
+            frameBufferStack.Clear();
+            currentFrameBufferHandle = 0;
+            gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+            gl.Viewport(0, 0, (uint)windowViewportWidth, (uint)windowViewportHeight);
+            currentViewportWidth = windowViewportWidth;
+            currentViewportHeight = windowViewportHeight;
+        }
+
         rootNode.Draw(this);
         triangleBatch.Draw();
+    }
+
+    public Vector2 RenderScale => new Vector2(renderScaleX, renderScaleY);
+
+    /// <summary>
+    /// Creates an offscreen render target. Must be called on the draw thread.
+    /// </summary>
+    public IFrameBuffer CreateFrameBuffer(int width, int height, bool pixelSnapping = false) => new GLFrameBuffer(gl, width, height, pixelSnapping);
+
+    public void BindFrameBuffer(IFrameBuffer frameBuffer, RectangleF sourceRect, Color clearColour = default)
+    {
+        var glFrameBuffer = (GLFrameBuffer)frameBuffer;
+
+        // Anything batched so far targets the previous render target — flush it there first.
+        triangleBatch.Draw();
+        resetTextureSlots();
+
+        frameBufferStack.Push(new FrameBufferState
+        {
+            Handle = currentFrameBufferHandle,
+            ViewportWidth = currentViewportWidth,
+            ViewportHeight = currentViewportHeight,
+            Projection = projectionMatrix,
+            Clip = currentClip
+        });
+
+        currentFrameBufferHandle = glFrameBuffer.Handle;
+        gl.BindFramebuffer(FramebufferTarget.Framebuffer, glFrameBuffer.Handle);
+        gl.Viewport(0, 0, (uint)glFrameBuffer.Width, (uint)glFrameBuffer.Height);
+        currentViewportWidth = glFrameBuffer.Width;
+        currentViewportHeight = glFrameBuffer.Height;
+
+        // Map the captured logical screen-space rect onto the buffer using the same
+        // top-left-origin convention as the main projection, so draw nodes render with
+        // their unchanged screen-space coordinates.
+        projectionMatrix = Matrix4x4.CreateOrthographicOffCenter(
+            sourceRect.X, sourceRect.X + sourceRect.Width,
+            sourceRect.Y + sourceRect.Height, sourceRect.Y,
+            -1, 1);
+        shader.SetUniform("u_Projection", projectionMatrix);
+
+        // Content inside the buffer starts from a clean clip state; the outer clip applies
+        // to the final composited quad instead.
+        currentClip = new ClipState
+        {
+            ClipData = new Vector4(0, 0, -1, -1),
+            ShearX = 0,
+            Radius = 0
+        };
+
+        gl.ClearColor(clearColour.R / 255f, clearColour.G / 255f, clearColour.B / 255f, clearColour.A / 255f);
+        gl.Clear(ClearBufferMask.ColorBufferBit);
+        gl.ClearColor(Color.Black);
+    }
+
+    public void UnbindFrameBuffer()
+    {
+        if (frameBufferStack.Count == 0)
+            throw new InvalidOperationException($"{nameof(UnbindFrameBuffer)} was called without a matching {nameof(BindFrameBuffer)}.");
+
+        // Flush geometry rendered into the framebuffer before switching away from it.
+        triangleBatch.Draw();
+        resetTextureSlots();
+
+        var state = frameBufferStack.Pop();
+
+        currentFrameBufferHandle = state.Handle;
+        gl.BindFramebuffer(FramebufferTarget.Framebuffer, state.Handle);
+        gl.Viewport(0, 0, (uint)state.ViewportWidth, (uint)state.ViewportHeight);
+        currentViewportWidth = state.ViewportWidth;
+        currentViewportHeight = state.ViewportHeight;
+
+        projectionMatrix = state.Projection;
+        shader.SetUniform("u_Projection", projectionMatrix);
+
+        currentClip = state.Clip;
+    }
+
+    /// <summary>
+    /// Resolves a texture to a batch slot index, binding it (and flushing on slot
+    /// exhaustion) as required.
+    /// </summary>
+    private float prepareTexture(Texture texture)
+    {
+        // Inside GLRenderer it's safe to cast to GLTexture for the raw uint handle.
+        var glTexture = (GLTexture)texture.BackendTexture!;
+        uint handle = glTexture.GLHandle;
+
+        for (int i = 0; i < boundTextureCount; i++)
+        {
+            if (boundTextureHandles[i] == handle)
+                return i;
+        }
+
+        if (boundTextureCount < 8)
+        {
+            int slot = boundTextureCount;
+            glTexture.Bind(slot);
+            boundTextureHandles[slot] = handle;
+            boundTextureCount++;
+            stat_texture_binds.Value++;
+            return slot;
+        }
+
+        // All slots taken, flush and start a fresh slot set.
+        stat_slot_exhaustion_flushes.Value++;
+        triangleBatch.Draw();
+        resetTextureSlots();
+
+        glTexture.Bind(0);
+        boundTextureHandles[0] = handle;
+        boundTextureCount = 1;
+        stat_texture_binds.Value++;
+        return 0;
     }
 
     public void DrawVertices(ReadOnlySpan<SakuraVertex> vertices, Texture texture)
@@ -233,61 +432,20 @@ public class GLRenderer : IGLRenderer
         if (texture.BackendTexture == null)
             texture = WhitePixel;
 
-        // Inside GLRenderer it's safe to cast to GLTexture for the raw uint handle.
-        var glTexture = (GLTexture)texture.BackendTexture!;
-        uint handle = glTexture.GLHandle;
-        float textureIndex = -1;
-
-        for (int i = 0; i < boundTextureCount; i++)
-        {
-            if (boundTextureHandles[i] == handle)
-            {
-                textureIndex = i;
-                break;
-            }
-        }
-
-        if (textureIndex == -1 && boundTextureCount < 8)
-        {
-            textureIndex = boundTextureCount;
-            glTexture.Bind(boundTextureCount);
-            boundTextureHandles[boundTextureCount] = handle;
-            boundTextureCount++;
-            GlobalStatistics.Get<int>("Renderer", "Texture Binds").Value++;
-        }
-
-        if (textureIndex == -1)
-        {
-            GlobalStatistics.Get<int>("Renderer", "Slot Exhaustion Flushes").Value++;
-
-            triangleBatch.Draw();
-
-            // Reset slots
-            resetTextureSlots();
-
-            // Bind to slot 0
-            textureIndex = 0;
-            glTexture.Bind();
-            boundTextureHandles[0] = handle;
-            boundTextureCount++;
-            GlobalStatistics.Get<int>("Renderer", "Texture Binds").Value++;
-        }
+        float textureIndex = prepareTexture(texture);
 
         triangleBatch.AddRange(vertices, textureIndex, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
     }
 
-    private void drawMaskShape(Drawable maskDrawable, float cornerRadius)
+    public void DrawQuads(ReadOnlySpan<SakuraVertex> vertices, Texture texture)
     {
-        if (boundTextureCount == 0 || whiteGLTexture.GLHandle != boundTextureHandles[0])
-        {
-            triangleBatch.Draw();
-            whiteGLTexture.Bind(0);
-            boundTextureHandles[0] = whiteGLTexture.GLHandle;
-            if (boundTextureCount == 0) boundTextureCount = 1;
-        }
+        if (texture.BackendTexture == null)
+            texture = WhitePixel;
 
-        triangleBatch.AddRange(maskDrawable.Vertices, 0f, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
-        triangleBatch.Draw();
+        float textureIndex = prepareTexture(texture);
+
+        for (int i = 0; i + 4 <= vertices.Length; i += 4)
+            triangleBatch.AddQuad(vertices.Slice(i, 4), textureIndex, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
     }
 
     private void drawBorder(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<SakuraVertex> vertices)
@@ -315,7 +473,10 @@ public class GLRenderer : IGLRenderer
             if (boundTextureCount == 0) boundTextureCount = 1;
         }
 
-        triangleBatch.AddRange(vertices, 0f, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
+        // The mask geometry is a single quad (TL, TR, BR, BL).
+        if (vertices.Length >= 4)
+            triangleBatch.AddQuad(vertices.Slice(0, 4), 0f, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
+
         triangleBatch.Draw();
 
         shader.SetUniform("u_IsBorder", false);
@@ -382,7 +543,7 @@ public class GLRenderer : IGLRenderer
         if (blendingMode == currentBlendMode)
             return;
 
-        GlobalStatistics.Get<int>("Renderer", "State Change Flushes").Value++;
+        stat_state_change_flushes.Value++;
         triangleBatch.Draw();
 
         currentBlendMode = blendingMode;
@@ -418,11 +579,17 @@ public class GLRenderer : IGLRenderer
 
     private void resetTextureSlots()
     {
+        // Only the CPU-side slot tracking needs resetting: textures stay bound on the GPU
+        // and will simply be re-tracked (or replaced) on their next use. All units are
+        // pre-filled with the white pixel once at initialization for strict drivers.
         boundTextureCount = 0;
         Array.Clear(boundTextureHandles, 0, boundTextureHandles.Length);
+    }
 
+    private void prefillTextureSlots()
+    {
         // Pre-fill all OpenGL texture units with a valid texture (WhitePixel)
-        // to fix some strict driver that will complain about "unloadable texture"
+        // to fix some strict drivers that complain about "unloadable texture".
         if (WhitePixel?.BackendTexture != null)
         {
             for (int i = 0; i < 8; i++)

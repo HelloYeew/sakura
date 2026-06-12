@@ -3,6 +3,7 @@
 
 using System;
 using Sakura.Framework.Extensions.ColorExtensions;
+using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Rendering.Vertex;
 using Sakura.Framework.Maths;
 
@@ -61,6 +62,8 @@ public partial class Line : Drawable
         Size = new Vector2(Math.Max(startPoint.X, endPoint.X), Math.Max(startPoint.Y, endPoint.Y));
         Invalidate(InvalidationFlags.DrawInfo);
     }
+
+    protected internal override VertexTopology Topology => VertexTopology.Triangles;
 
     protected override void GenerateVertices()
     {

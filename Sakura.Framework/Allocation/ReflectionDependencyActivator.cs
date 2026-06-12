@@ -5,6 +5,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Reflection;
 
 namespace Sakura.Framework.Allocation;
@@ -12,8 +13,11 @@ namespace Sakura.Framework.Allocation;
 /// <summary>
 /// Fallback DI activator used for types that were not processed by the source generator
 /// (e.g., types in assemblies that don't reference the generator, or during hot reload).
-/// Uses reflection to build inject/cache delegates, caching them per type so the reflection
-/// cost is paid only once.
+/// <para>
+/// Builds inject/cache delegates by compiling expression trees once per type, so the
+/// steady-state cost is a single delegate call with direct (JIT-compiled) member access —
+/// no <see cref="MethodInfo.Invoke"/>, boxing or argument arrays per activation.
+/// </para>
 /// </summary>
 internal static class ReflectionDependencyActivator
 {
@@ -23,6 +27,14 @@ internal static class ReflectionDependencyActivator
     private static readonly MethodInfo get_method =
         typeof(IReadOnlyDependencyContainer).GetMethod(nameof(IReadOnlyDependencyContainer.Get), BindingFlags.Public | BindingFlags.Instance)
         ?? throw new InvalidOperationException($"Could not find '{nameof(IReadOnlyDependencyContainer.Get)}' on {nameof(IReadOnlyDependencyContainer)}.");
+
+    private static readonly MethodInfo cache_as_method =
+        typeof(DependencyContainer).GetMethod(nameof(DependencyContainer.CacheAs), BindingFlags.Public | BindingFlags.Instance)
+        ?? throw new InvalidOperationException($"Could not find '{nameof(DependencyContainer.CacheAs)}' on {nameof(DependencyContainer)}.");
+
+    private static readonly ConstructorInfo container_ctor =
+        typeof(DependencyContainer).GetConstructor(new[] { typeof(IReadOnlyDependencyContainer) })
+        ?? throw new InvalidOperationException($"Could not find the parent constructor on {nameof(DependencyContainer)}.");
 
     /// <summary>
     /// Clears all cached reflection delegates. Called on hot reload.
@@ -37,9 +49,19 @@ internal static class ReflectionDependencyActivator
     /// Returns (or builds and caches) an inject delegate for <paramref name="type"/>.
     /// The delegate fills all <see cref="ResolvedAttribute"/> members and invokes the
     /// <see cref="BackgroundDependencyLoaderAttribute"/> method if present.
+    /// Returns null if this type level has no inject work, so empty levels cost nothing.
     /// </summary>
-    internal static InjectDependenciesDelegate GetInjectDelegate(Type type)
-        => inject_cache.GetOrAdd(type, buildInjectDelegate);
+    internal static InjectDependenciesDelegate? GetInjectDelegate(Type type)
+    {
+        if (inject_cache.TryGetValue(type, out var d))
+            return d;
+
+        var built = buildInjectDelegate(type);
+        if (built != null)
+            inject_cache[type] = built;
+
+        return built;
+    }
 
     /// <summary>
     /// Returns (or builds and caches) a cache delegate for <paramref name="type"/>.
@@ -59,13 +81,24 @@ internal static class ReflectionDependencyActivator
     }
 
     /// <summary>
+    /// Builds an expression that resolves <paramref name="dependencyType"/> from the container parameter.
+    /// </summary>
+    private static Expression resolveExpression(ParameterExpression depsParam, Type dependencyType)
+        => Expression.Call(depsParam, get_method.MakeGenericMethod(dependencyType));
+
+    /// <summary>
     /// Builds an inject delegate that handles only members <b>declared directly on <paramref name="type"/></b>
     /// (i.e. <c>BindingFlags.DeclaredOnly</c>). <see cref="DependencyActivator"/> walks the full hierarchy
     /// by calling per-level delegates, so we must not re-walk ancestors here.
+    /// All member injections and the loader invocation are compiled into one delegate.
     /// </summary>
-    private static InjectDependenciesDelegate buildInjectDelegate(Type type)
+    private static InjectDependenciesDelegate? buildInjectDelegate(Type type)
     {
-        var steps = new List<Action<object, IReadOnlyDependencyContainer>>();
+        var instanceParam = Expression.Parameter(typeof(object), "instance");
+        var depsParam = Expression.Parameter(typeof(IReadOnlyDependencyContainer), "deps");
+        var typedInstance = Expression.Convert(instanceParam, type);
+
+        var body = new List<Expression>();
 
         // Only members declared at this exact type level.
         foreach (var member in type.GetMembers(
@@ -82,15 +115,13 @@ internal static class ReflectionDependencyActivator
                     throw new InvalidOperationException(
                         $"Member {type.Name}.{property.Name} is marked [Resolved] but has no setter.");
 
-                var getter = get_method.MakeGenericMethod(property.PropertyType);
-                steps.Add((instance, deps) =>
-                    setter.Invoke(instance, new[] { getter.Invoke(deps, null) }));
+                body.Add(Expression.Call(typedInstance, setter, resolveExpression(depsParam, property.PropertyType)));
             }
             else if (member is FieldInfo field)
             {
-                var getter = get_method.MakeGenericMethod(field.FieldType);
-                steps.Add((instance, deps) =>
-                    field.SetValue(instance, getter.Invoke(deps, null)));
+                body.Add(Expression.Assign(
+                    Expression.Field(typedInstance, field),
+                    resolveExpression(depsParam, field.FieldType)));
             }
         }
 
@@ -102,46 +133,45 @@ internal static class ReflectionDependencyActivator
 
         if (loaderMethod != null)
         {
-            var parameters = loaderMethod.GetParameters();
-            var paramGetters = parameters
-                .Select(p => get_method.MakeGenericMethod(p.ParameterType))
+            var args = loaderMethod.GetParameters()
+                .Select(p => resolveExpression(depsParam, p.ParameterType))
                 .ToArray();
 
-            steps.Add((instance, deps) =>
-            {
-                object?[] args = new object?[paramGetters.Length];
-                for (int i = 0; i < paramGetters.Length; i++)
-                    args[i] = paramGetters[i].Invoke(deps, null);
-                loaderMethod.Invoke(instance, args);
-            });
+            body.Add(Expression.Call(typedInstance, loaderMethod, args));
         }
 
-        return (instance, deps) =>
-        {
-            foreach (var step in steps)
-                step(instance, deps);
-        };
+        if (body.Count == 0)
+            return null;
+
+        return Expression.Lambda<InjectDependenciesDelegate>(
+            Expression.Block(body), instanceParam, depsParam).Compile();
     }
 
     /// <summary>
     /// Builds a cache delegate for members <b>declared directly on <paramref name="type"/></b> only.
     /// Returns null if this type level has no [Cached] members.
+    /// The container construction and all CacheAs calls are compiled into one delegate.
     /// </summary>
     private static CacheDependenciesDelegate? buildCacheDelegate(Type type)
     {
-        var steps = new List<Action<object, DependencyContainer>>();
+        var targetParam = Expression.Parameter(typeof(object), "target");
+        var parentParam = Expression.Parameter(typeof(IReadOnlyDependencyContainer), "parent");
+        var containerVar = Expression.Variable(typeof(DependencyContainer), "container");
+        var typedTarget = Expression.Convert(targetParam, type);
+
+        var steps = new List<Expression>();
+
+        // container.CacheAs<cacheType>(value)
+        void addCacheStep(Type cacheType, Expression value) =>
+            steps.Add(Expression.Call(
+                containerVar,
+                cache_as_method.MakeGenericMethod(cacheType),
+                Expression.Convert(value, typeof(object))));
 
         // Class-level [Cached] attributes — cache `this` under the specified type(s).
         // GetCustomAttributes with inherit:false so we only see attributes declared on this type.
         foreach (CachedAttribute attr in type.GetCustomAttributes(typeof(CachedAttribute), inherit: false))
-        {
-            var cacheType = attr.CacheAs ?? type;
-            var cacheMethod = typeof(DependencyContainer)
-                .GetMethod(nameof(DependencyContainer.CacheAs), BindingFlags.Public | BindingFlags.Instance)!
-                .MakeGenericMethod(cacheType);
-
-            steps.Add((instance, container) => cacheMethod.Invoke(container, new[] { instance }));
-        }
+            addCacheStep(attr.CacheAs ?? type, targetParam);
 
         // Member-level [Cached] — DeclaredOnly, base levels handled by their own per-level delegates.
         foreach (var member in type.GetMembers(
@@ -152,26 +182,13 @@ internal static class ReflectionDependencyActivator
             {
                 if (member is PropertyInfo property)
                 {
-                    var getter = property.GetGetMethod(true);
-                    if (getter == null) continue;
+                    if (property.GetGetMethod(true) == null) continue;
 
-                    var cacheType = attr.CacheAs ?? property.PropertyType;
-                    var cacheMethod = typeof(DependencyContainer)
-                        .GetMethod(nameof(DependencyContainer.CacheAs), BindingFlags.Public | BindingFlags.Instance)!
-                        .MakeGenericMethod(cacheType);
-
-                    steps.Add((instance, container) =>
-                        cacheMethod.Invoke(container, new[] { getter.Invoke(instance, null) }));
+                    addCacheStep(attr.CacheAs ?? property.PropertyType, Expression.Property(typedTarget, property));
                 }
                 else if (member is FieldInfo field)
                 {
-                    var cacheType = attr.CacheAs ?? field.FieldType;
-                    var cacheMethod = typeof(DependencyContainer)
-                        .GetMethod(nameof(DependencyContainer.CacheAs), BindingFlags.Public | BindingFlags.Instance)!
-                        .MakeGenericMethod(cacheType);
-
-                    steps.Add((instance, container) =>
-                        cacheMethod.Invoke(container, new[] { field.GetValue(instance) }));
+                    addCacheStep(attr.CacheAs ?? field.FieldType, Expression.Field(typedTarget, field));
                 }
             }
         }
@@ -179,12 +196,16 @@ internal static class ReflectionDependencyActivator
         if (steps.Count == 0)
             return null;
 
-        return (instance, parent) =>
+        // (target, parent) => { var container = new DependencyContainer(parent); ...steps...; return container; }
+        var body = new List<Expression>
         {
-            var container = new DependencyContainer(parent);
-            foreach (var step in steps)
-                step(instance, container);
-            return container;
+            Expression.Assign(containerVar, Expression.New(container_ctor, parentParam))
         };
+        body.AddRange(steps);
+        body.Add(Expression.Convert(containerVar, typeof(IReadOnlyDependencyContainer)));
+
+        return Expression.Lambda<CacheDependenciesDelegate>(
+            Expression.Block(typeof(IReadOnlyDependencyContainer), new[] { containerVar }, body),
+            targetParam, parentParam).Compile();
     }
 }

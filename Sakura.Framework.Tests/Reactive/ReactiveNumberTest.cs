@@ -94,8 +94,57 @@ public class ReactiveNumberTest
         reactive.Value = 12;
         Assert.That(reactive.Value, Is.EqualTo(12), "value changed when set within range");
         Assert.That(eventCalled, Is.EqualTo(1), "ValueChanged should be called when the value is set within range");
-        Assert.Throws<ArgumentOutOfRangeException>(() => reactive.Value = 4, "setting value below MinValue should throw an exception");
-        Assert.Throws<ArgumentOutOfRangeException>(() => reactive.Value = 100, "setting value above MaxValue should throw an exception");
+
+        // Out-of-range values clamp to the nearest bound
+        reactive.Value = 4;
+        Assert.That(reactive.Value, Is.EqualTo(5), "setting value below MinValue should clamp to min");
+        reactive.Value = 100;
+        Assert.That(reactive.Value, Is.EqualTo(15), "setting value above MaxValue should clamp to max");
+    }
+
+    [Test]
+    public void TestPrecisionIsAppliedToValue()
+    {
+        // Regression: the Precision setter previously fired its event without ever
+        // assigning the field, so precision never took effect.
+        var reactive = new ReactiveNumber<float>(0)
+        {
+            MinValue = 0,
+            MaxValue = 100
+        };
+
+        reactive.Precision = 0.5f;
+        Assert.That(reactive.Precision, Is.EqualTo(0.5f), "Precision must actually change when set");
+
+        reactive.Value = 10.34f;
+        Assert.That(reactive.Value, Is.EqualTo(10.5f).Within(0.0001f), "Value must snap to the precision step");
+
+        reactive.Value = 10.1f;
+        Assert.That(reactive.Value, Is.EqualTo(10f).Within(0.0001f));
+    }
+
+    [Test]
+    public void TestShrinkingRangeReclampsCurrentValue()
+    {
+        var upper = new ReactiveNumber<int>(50)
+        {
+            MinValue = 0,
+            MaxValue = 100
+        };
+
+        upper.Value = 90;
+        upper.MaxValue = 60;
+        Assert.That(upper.Value, Is.EqualTo(60), "shrinking the max bound must clamp the current value");
+
+        var lower = new ReactiveNumber<int>(10)
+        {
+            MinValue = 0,
+            MaxValue = 100
+        };
+
+        lower.Value = 10;
+        lower.MinValue = 30;
+        Assert.That(lower.Value, Is.EqualTo(30), "raising the min bound must clamp the current value");
     }
 
     [Test]

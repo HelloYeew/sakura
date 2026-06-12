@@ -64,7 +64,10 @@ public partial class App : Container, IFocusManager, IDisposable
 
     public override void Load()
     {
-        Clock = new FramedClock(Host.UpdateClock, true);
+        // Continue from the update clock's current (shared) timeline rather than starting
+        // at zero: all default clocks then report directly comparable times, so transforms
+        // and scheduler tasks created before a drawable is added still behave correctly.
+        Clock = new FramedClock(Host.UpdateClock);
 
         base.Load();
 

@@ -3,17 +3,14 @@
 
 using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Colors;
-using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Transforms;
-using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
-using Sakura.Framework.Reactive;
 
 namespace Sakura.Framework.Graphics.UserInterface;
 
-public partial class BasicCheckbox : ClickableContainer
+public partial class BasicCheckbox : Checkbox
 {
     private readonly Box background;
     private readonly Box fill;
@@ -22,19 +19,13 @@ public partial class BasicCheckbox : ClickableContainer
     private Color uncheckedColor = Color.DarkGreen;
     private Color hoverColor = Color.Green;
 
-    /// <summary>
-    /// Current value of the checkbox
-    /// </summary>
-    public ReactiveBool Current { get; } = new ReactiveBool(false);
-
     public Color CheckedColor
     {
         get => checkedColor;
         set
         {
             checkedColor = value;
-            if (Current.Value)
-                fill.Color = value;
+            if (Current.Value) fill.Color = value;
         }
     }
 
@@ -44,8 +35,7 @@ public partial class BasicCheckbox : ClickableContainer
         set
         {
             uncheckedColor = value;
-            if (!Current.Value)
-                background.Color = value;
+            if (!Current.Value) background.Color = value;
         }
     }
 
@@ -66,11 +56,7 @@ public partial class BasicCheckbox : ClickableContainer
             Origin = Anchor.CentreLeft,
             Children = new Drawable[]
             {
-                background = new Box
-                {
-                    RelativeSizeAxes = Axes.Both,
-                    Color = UncheckedColor
-                },
+                background = new Box { RelativeSizeAxes = Axes.Both, Color = UncheckedColor },
                 fill = new Box
                 {
                     RelativeSizeAxes = Axes.Both,
@@ -81,38 +67,21 @@ public partial class BasicCheckbox : ClickableContainer
                 }
             }
         };
-
-        Action = () => Current.Value = !Current.Value;
-
-        Current.ValueChanged += e =>
-        {
-            if (e.NewValue)
-                fill.FadeIn(100, Easing.OutQuint);
-            else
-                fill.FadeOut(100, Easing.OutQuint);
-        };
-
-        Enabled.ValueChanged += enabled =>
-        {
-            this.FadeTo(enabled.NewValue ? 1 : 0.5f, 100, Easing.OutQuint);
-        };
     }
 
-    public override bool OnHover(MouseEvent e)
+    protected override void OnCheckChanged(bool isChecked)
     {
-        if (!Enabled.Value)
-            return false;
+        if (isChecked)
+            fill.FadeIn(100, Easing.OutQuint);
+        else
+            fill.FadeOut(100, Easing.OutQuint);
+    }
 
+    protected override void OnHovered() =>
         background.FadeToColour(HoverColor, 100, Easing.OutQuint);
-        return base.OnHover(e);
-    }
 
-    public override bool OnHoverLost(MouseEvent e)
-    {
-        if (!Enabled.Value)
-            return false;
-
+    protected override void OnHoverLost() =>
         background.FadeToColour(UncheckedColor, 100, Easing.OutQuint);
-        return base.OnHoverLost(e);
-    }
+
+    protected override void OnEnabledChanged(bool enabled) => this.FadeTo(enabled ? 1 : 0.5f, 100, Easing.OutQuint);
 }

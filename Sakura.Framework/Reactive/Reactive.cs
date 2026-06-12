@@ -17,10 +17,11 @@ namespace Sakura.Framework.Reactive;
 /// <typeparam name="T">The type of the <see cref="Value"/> that this reactive object holds.</typeparam>
 public class Reactive<T> : IReactive<T>
 {
-    public event Action<ValueChangedEvent<T>> ValueChanged = delegate { };
+    public event Action<ValueChangedEvent<T>> ValueChanged;
 
     private T value;
-    private readonly List<IReactive<T>> bindings = new List<IReactive<T>>();
+
+    private List<IReactive<T>> bindings;
     private readonly T defaultValue;
 
     public T Default => defaultValue;
@@ -65,6 +66,9 @@ public class Reactive<T> : IReactive<T>
             throw new ArgumentNullException(nameof(other));
         if (other == this)
             throw new InvalidOperationException("Cannot bind the reactive object to itself.");
+
+        bindings ??= new List<IReactive<T>>();
+
         if (bindings.Contains(other))
             return; // Already bound to this source.
 
@@ -74,14 +78,34 @@ public class Reactive<T> : IReactive<T>
         setValueFromBinding(other.Value);
     }
 
+    /// <summary>
+    /// Subscribes to <see cref="ValueChanged"/>, optionally invoking the callback immediately
+    /// with the current value (with <c>OldValue == NewValue</c>).
+    /// </summary>
+    /// <param name="onChange">The callback to run on changes.</param>
+    /// <param name="runOnceImmediately">Whether to invoke the callback right away with the current value.</param>
+    public void BindValueChanged(Action<ValueChangedEvent<T>> onChange, bool runOnceImmediately = false)
+    {
+        if (onChange == null)
+            throw new ArgumentNullException(nameof(onChange));
+
+        ValueChanged += onChange;
+
+        if (runOnceImmediately)
+            onChange(new ValueChangedEvent<T>(value, value));
+    }
+
     public void UnbindFrom(IReactive<T> other)
     {
         other.ValueChanged -= OnBoundValueChanged;
-        bindings.Remove(other);
+        bindings?.Remove(other);
     }
 
     public void UnbindAll()
     {
+        if (bindings == null)
+            return;
+
         foreach (var binding in bindings)
         {
             binding.ValueChanged -= OnBoundValueChanged;
@@ -143,7 +167,7 @@ public class Reactive<T> : IReactive<T>
 
     protected virtual void TriggerValueChanged(T oldValue, T newValue)
     {
-        ValueChanged.Invoke(new ValueChangedEvent<T>(oldValue, newValue));
+        ValueChanged?.Invoke(new ValueChangedEvent<T>(oldValue, newValue));
     }
 
     public override string ToString()

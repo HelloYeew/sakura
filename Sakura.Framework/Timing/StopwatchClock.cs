@@ -8,7 +8,7 @@ namespace Sakura.Framework.Timing;
 /// Supports start/stop, seeking and rate adjustment with no accumulation error:
 /// the current time is always derived directly from the time source.
 /// </summary>
-public class StopwatchClock : IAdjustableClock
+public sealed class StopwatchClock : IAdjustableClock
 {
     private double accumulated;
     private double lastReferenceTime;

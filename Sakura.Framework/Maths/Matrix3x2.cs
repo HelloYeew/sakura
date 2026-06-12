@@ -53,6 +53,8 @@ public partial struct Matrix3x2
         set => Value.M32 = value;
     }
 
+    public static Matrix3x2 Identity => new Matrix3x2(1, 0, 0, 1, 0, 0);
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static implicit operator Matrix3x2(SystemMatrix3x2 v) => new Matrix3x2(v.M11, v.M12, v.M21, v.M22, v.M31, v.M32);
 

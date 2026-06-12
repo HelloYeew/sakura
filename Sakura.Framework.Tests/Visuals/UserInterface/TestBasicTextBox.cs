@@ -149,7 +149,8 @@ public partial class TestBasicTextBox : ManualInputManagerTestScene
             InputManager.TypeText("Testing Framework");
         });
 
-        AddStep("Double click textbox", () => InputManager.DoubleClick(MouseButton.Left));
+        // Double-click now selects a word; select-all via Ctrl+A for a full cut.
+        AddStep("Select all with Ctrl+A", () => InputManager.PressKey(Key.A, KeyModifiers.Control));
 
         AddStep("Press Ctrl+X", () => InputManager.PressKey(Key.X, KeyModifiers.Control));
         AddAssert("Textbox is empty after cut", () => textBox.Text.Value == "");
@@ -175,5 +176,130 @@ public partial class TestBasicTextBox : ManualInputManagerTestScene
             AddStep("Press Backspace on drag selection", () => InputManager.PressKey(Key.BackSpace));
             AddAssert("Dragged text was deleted", () => !textBox.Text.Value.Contains("New Text"));
         }
+    }
+
+    [Test]
+    public void TestWordNavigationAndDeletion()
+    {
+        AddStep("Focus and type words", () =>
+        {
+            InputManager.MoveMouseTo(textBox);
+            InputManager.Click(MouseButton.Left);
+            InputManager.TypeText("one two three");
+        });
+
+        AddStep("Ctrl+Left", () => InputManager.PressKey(Key.Left, KeyModifiers.Control));
+        AddStep("Type 'x' before last word", () => InputManager.TypeText("x"));
+        AddAssert("Caret jumped to start of 'three'", () => textBox.Text.Value == "one two xthree");
+
+        AddStep("Ctrl+Backspace", () => InputManager.PressKey(Key.BackSpace, KeyModifiers.Control));
+        AddAssert("Word-fragment before caret deleted", () => textBox.Text.Value == "one two three");
+
+        AddStep("Press Home", () => InputManager.PressKey(Key.Home));
+        AddStep("Ctrl+Delete", () => InputManager.PressKey(Key.Delete, KeyModifiers.Control));
+        AddAssert("First word deleted", () => textBox.Text.Value == " two three");
+
+        AddStep("Ctrl+Shift+Right selects a word", () =>
+            InputManager.PressKey(Key.Right, KeyModifiers.Control | KeyModifiers.Shift));
+        AddStep("Type replacement", () => InputManager.TypeText("1"));
+        AddAssert("Selected word replaced", () => textBox.Text.Value == "1 three");
+    }
+
+    [Test]
+    public void TestDoubleClickSelectsWord()
+    {
+        AddStep("Focus and type words", () =>
+        {
+            InputManager.MoveMouseTo(textBox);
+            InputManager.Click(MouseButton.Left);
+            InputManager.TypeText("alpha beta");
+        });
+
+        // The mouse sits at the textbox centre; with default sizing this lands within the text.
+        AddStep("Double click", () => InputManager.DoubleClick(MouseButton.Left));
+        AddStep("Type replacement", () => InputManager.TypeText("_"));
+        AddAssert("Only one word was replaced", () =>
+            textBox.Text.Value.Contains('_') && textBox.Text.Value.Length < "alpha beta".Length + 1);
+    }
+
+    [Test]
+    public void TestCommitEvent()
+    {
+        string? committed = null;
+
+        AddStep("Listen for commit", () => textBox.OnCommit += text => committed = text);
+
+        AddStep("Focus and type", () =>
+        {
+            InputManager.MoveMouseTo(textBox);
+            InputManager.Click(MouseButton.Left);
+            InputManager.TypeText("done");
+        });
+
+        AddStep("Press Enter", () => InputManager.PressKey(Key.Enter));
+        AddAssert("Commit event fired with text", () => committed == "done");
+        AddAssert("Focus released on commit", () => !textBox.HasFocus);
+    }
+
+    [Test]
+    public void TestLengthLimit()
+    {
+        AddStep("Set length limit 5", () => textBox.LengthLimit = 5);
+
+        AddStep("Focus and type beyond limit", () =>
+        {
+            InputManager.MoveMouseTo(textBox);
+            InputManager.Click(MouseButton.Left);
+            InputManager.TypeText("abcdefgh");
+        });
+
+        AddAssert("Text truncated to limit", () => textBox.Text.Value == "abcde");
+    }
+
+    [Test]
+    public void TestPlaceholder()
+    {
+        AddStep("Set placeholder", () => textBox.PlaceholderText = "Enter name...");
+        AddAssert("Placeholder set while empty", () => textBox.PlaceholderText == "Enter name...");
+
+        AddStep("Focus and type", () =>
+        {
+            InputManager.MoveMouseTo(textBox);
+            InputManager.Click(MouseButton.Left);
+            InputManager.TypeText("a");
+        });
+
+        AddAssert("Text entered", () => textBox.Text.Value == "a");
+
+        AddStep("Clear via Backspace", () => InputManager.PressKey(Key.BackSpace));
+        AddAssert("Text empty again (placeholder visible in visual runner)", () => textBox.Text.Value == "");
+    }
+
+    [Test]
+    public void TestEmptyCopyDoesNotClobberClipboard()
+    {
+        AddStep("Focus and type", () =>
+        {
+            InputManager.MoveMouseTo(textBox);
+            InputManager.Click(MouseButton.Left);
+            InputManager.TypeText("keepme");
+        });
+
+        AddStep("Select all and copy", () =>
+        {
+            InputManager.PressKey(Key.A, KeyModifiers.Control);
+            InputManager.PressKey(Key.C, KeyModifiers.Control);
+        });
+
+        AddStep("Collapse selection", () => InputManager.PressKey(Key.End));
+        AddStep("Copy with no selection", () => InputManager.PressKey(Key.C, KeyModifiers.Control));
+
+        AddStep("Select all and paste", () =>
+        {
+            InputManager.PressKey(Key.A, KeyModifiers.Control);
+            InputManager.PressKey(Key.V, KeyModifiers.Control);
+        });
+
+        AddAssert("Clipboard kept earlier copy", () => textBox.Text.Value == "keepme");
     }
 }

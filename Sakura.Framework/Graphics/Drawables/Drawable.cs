@@ -2,8 +2,8 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
@@ -27,9 +27,26 @@ namespace Sakura.Framework.Graphics.Drawables;
 /// <summary>
 /// A lowest level of the component hierarchy. All drawable components should be inherited from this class.
 /// </summary>
-public abstract partial class Drawable : Allocation.IDependencyInjectionCandidate
+public abstract partial class Drawable : IDependencyInjectionCandidate
 {
+    private static readonly GlobalStatistic<int> stat_updated_last_frame = GlobalStatistics.Get<int>("Drawables", "Updated Last Frame");
+    private static readonly GlobalStatistic<int> stat_invalidations = GlobalStatistics.Get<int>("Drawables", "Invalidations");
+    private static readonly GlobalStatistic<int> stat_draw_node_applied = GlobalStatistics.Get<int>("DrawNodes", "State Applied");
+    private static readonly GlobalStatistic<int> stat_draw_node_reused = GlobalStatistics.Get<int>("DrawNodes", "State Reused (Clean)");
+
     private Container? parent;
+
+    /// <summary>
+    /// Monotonic sequence number assigned by the parent container on add, used as a stable
+    /// tie-breaker when sorting children by depth.
+    /// </summary>
+    internal long ChildInsertionOrder;
+
+    /// <summary>
+    /// The last observed aliveness state, used by the parent to detect lifetime transitions
+    /// (which change draw-tree membership without raising any invalidation).
+    /// </summary>
+    internal bool WasAlive = true;
 
     public Container? Parent
     {
@@ -91,29 +108,69 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
     private bool alwaysPresent;
     private Texture? texture;
     private TextureFillMode fillMode = TextureFillMode.Stretch;
-    private IFrameBasedClock clock = null!;
+    private IFrameBasedClock? clock;
+    private bool hasCustomClock;
 
     /// <summary>
-    /// A clock for this drawable, time is relative to the parent's clock.
+    /// The clock driving this drawable's time. By default this is the parent's clock,
+    /// shared by reference all the way down the hierarchy (so all drawables report the
+    /// same timeline). Assigning a clock explicitly marks it as custom: it is preserved
+    /// when the drawable is added to a container, and if it is a <see cref="FramedClock"/>
+    /// it is processed once per frame by <see cref="UpdateSubTree"/>.
     /// All times are in milliseconds.
     /// </summary>
     public virtual IFrameBasedClock Clock
     {
-        get => clock;
+        get => clock ??= new Clock(true);
         set
         {
             if (clock == value) return;
             clock = value;
+            hasCustomClock = true;
             OnClockChanged();
         }
     }
 
     /// <summary>
-    /// The scheduler for this drawable, used for delaying and scheduling tasks.
+    /// Adopts the parent's clock by reference without marking it as custom.
+    /// Pending transform and scheduler times are rebased onto the new clock's timeline
+    /// so work scheduled before the drawable was added behaves as if scheduled at add time.
     /// </summary>
-    public Scheduler? Scheduler { get; }
+    internal void InheritClock(IFrameBasedClock parentClock)
+    {
+        if (hasCustomClock || ReferenceEquals(clock, parentClock))
+            return;
 
-    private readonly List<ITransform> transforms = new();
+        double oldTime = clock?.CurrentTime ?? parentClock.CurrentTime;
+        clock = parentClock;
+
+        double delta = parentClock.CurrentTime - oldTime;
+        if (delta != 0)
+        {
+            if (transforms != null)
+            {
+                foreach (var t in transforms)
+                {
+                    t.StartTime += delta;
+                    t.EndTime += delta;
+                }
+            }
+
+            scheduler?.Rebase(delta);
+        }
+
+        OnClockChanged();
+    }
+
+    private Scheduler? scheduler;
+
+    /// <summary>
+    /// The scheduler for this drawable, used for delaying and scheduling tasks.
+    /// Created lazily on first access; most drawables never need one.
+    /// </summary>
+    public Scheduler Scheduler => scheduler ??= new Scheduler(Clock);
+
+    private List<Transform>? transforms;
 
     /// <summary>
     /// An internal property used by the transform extension methods to sequence animations.
@@ -121,14 +178,22 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
     /// </summary>
     internal double TimeUntilTransformsCanStart { get; set; }
 
-    public float DrawAlpha { get; private set; }
+    public float DrawAlpha { get; private protected set; }
 
     /// <summary>
     /// An invalidation flag representing which aspects of the drawable need to be recomputed.
     /// </summary>
     protected internal InvalidationFlags Invalidation = InvalidationFlags.All;
 
-    protected internal Vertex[] Vertices = new Vertex[6];
+    protected internal Vertex[] Vertices = new Vertex[4];
+
+    /// <summary>
+    /// How <see cref="Vertices"/> is interpreted by the renderer. The base drawable produces
+    /// an indexed quad (4 vertices, ordered TL, TR, BR, BL); drawables that generate arbitrary
+    /// triangle lists in <see cref="GenerateVertices"/> must override this to
+    /// <see cref="VertexTopology.Triangles"/>.
+    /// </summary>
+    protected internal virtual VertexTopology Topology => VertexTopology.Quads;
 
     public Anchor Anchor
     {
@@ -255,8 +320,18 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
         set
         {
             if (Math.Abs(alpha - value) < 0.0001f) return;
+
+            bool wasVisible = alpha > 0;
             alpha = Math.Clamp(value, 0f, 1f);
+            bool isVisible = alpha > 0;
+
             Invalidate(InvalidationFlags.Colour);
+
+            // Visibility is a layout input: auto-size containers skip hidden children
+            // (e.g. a dropdown grows only while its menu is shown), so crossing the
+            // visible/hidden boundary must notify an interested parent.
+            if (wasVisible != isVisible)
+                Parent?.OnChildGeometryInvalidated();
         }
     }
 
@@ -267,9 +342,9 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
         {
             if (Math.Abs(depth - value) < 0.0001f) return;
             depth = value;
-            // Re-sort children in parent required
+            // Bumping the topology version re-sorts the parent's children (and thus draw order)
+            // on the next frame; no geometry recomputation is required for a depth change.
             Parent?.InvalidateTopology();
-            Parent?.Invalidate(InvalidationFlags.DrawInfo);
         }
     }
 
@@ -384,7 +459,12 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
 
     public RectangleF DrawRectangle { get; protected set; }
     public Vector2 DrawSize { get; private set; }
-    public Matrix4x4 ModelMatrix = Matrix4x4.Identity;
+
+    /// <summary>
+    /// The affine screen-space transform of this drawable. 2D rendering never needs a full
+    /// 4x4 matrix; a 3x2 affine matrix is roughly half the storage and FLOPs per concatenation.
+    /// </summary>
+    public Matrix3x2 ModelMatrix = Matrix3x2.Identity;
 
     #region Calculation of Draw Info
 
@@ -392,7 +472,7 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
     {
         DrawAlpha = (Parent?.DrawAlpha ?? 1f) * Alpha;
 
-        Matrix4x4 localMatrix;
+        Matrix3x2 localMatrix;
         Vector2 finalDrawSize;
         Vector2 originVector = GetAnchorOriginVector(Origin);
 
@@ -401,23 +481,20 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
             // This is the root drawable.
             finalDrawSize = Size;
 
-            var finalScale = new Vector3(finalDrawSize.X * Scale.X, finalDrawSize.Y * Scale.Y, 1);
-            var finalPosition = new Vector3(Position.X, Position.Y, 0);
-
             // Transform order: Origin Translation -> Scale -> Shear -> Rotation -> Position Translation
-            var m = Matrix4x4.CreateTranslation(-originVector.X, -originVector.Y, 0); // Translate so origin is at (0,0)
-            m *= Matrix4x4.CreateScale(finalScale); // Scale around (0,0)
+            var m = Matrix3x2.CreateTranslation(-originVector.X, -originVector.Y); // Translate so origin is at (0,0)
+            m *= Matrix3x2.CreateScale(finalDrawSize.X * Scale.X, finalDrawSize.Y * Scale.Y); // Scale around (0,0)
 
             if (Shear != Vector2.Zero)
             {
-                var shearMatrix = Matrix4x4.Identity;
+                var shearMatrix = Matrix3x2.Identity;
                 shearMatrix.M21 = Shear.X; // X shear factor (x' = x + m21*y)
                 shearMatrix.M12 = Shear.Y; // Y shear factor (y' = y + m12*x)
                 m *= shearMatrix;
             }
 
-            m *= Matrix4x4.CreateRotationZ((float)(Rotation * Math.PI / 180.0f)); // Rotate around (0,0)
-            m *= Matrix4x4.CreateTranslation(finalPosition); // Translate to final position
+            m *= Matrix3x2.CreateRotation((float)(Rotation * Math.PI / 180.0f)); // Rotate around (0,0)
+            m *= Matrix3x2.CreateTranslation(Position.X, Position.Y); // Translate to final position
 
             ModelMatrix = m;
 
@@ -467,24 +544,22 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
             pixelPosition.X += Parent.Padding.Left;
             pixelPosition.Y += Parent.Padding.Top;
 
-            var finalScale = new Vector3(finalDrawSize.X * Scale.X, finalDrawSize.Y * Scale.Y, 1);
-
-            var m = Matrix4x4.CreateTranslation(-originVector.X, -originVector.Y, 0);
-            m *= Matrix4x4.CreateScale(finalScale);
+            var m = Matrix3x2.CreateTranslation(-originVector.X, -originVector.Y);
+            m *= Matrix3x2.CreateScale(finalDrawSize.X * Scale.X, finalDrawSize.Y * Scale.Y);
 
             if (Shear != Vector2.Zero)
             {
-                var shearMatrix = Matrix4x4.Identity;
+                var shearMatrix = Matrix3x2.Identity;
                 shearMatrix.M21 = Shear.X; // X shear factor
                 shearMatrix.M12 = Shear.Y; // Y shear factor
                 m *= shearMatrix;
             }
 
-            m *= Matrix4x4.CreateRotationZ((float)(Rotation * Math.PI / 180.0f));
-            m *= Matrix4x4.CreateTranslation(pixelPosition.X, pixelPosition.Y, 0);
+            m *= Matrix3x2.CreateRotation((float)(Rotation * Math.PI / 180.0f));
+            m *= Matrix3x2.CreateTranslation(pixelPosition.X, pixelPosition.Y);
 
             // Normalize to Parent's 0..1 space so Parent.ModelMatrix applies correctly
-            m *= Matrix4x4.CreateScale(1.0f / parentDrawSize.X, 1.0f / parentDrawSize.Y, 1.0f);
+            m *= Matrix3x2.CreateScale(1.0f / parentDrawSize.X, 1.0f / parentDrawSize.Y);
 
             localMatrix = m;
             ModelMatrix = localMatrix * Parent.ModelMatrix;
@@ -576,26 +651,15 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
         }
 
         // Apply model matrix to the calculated local draw area
-        var vTopLeft = Vector4.Transform(new Vector4(drawTopLeft.X, drawTopLeft.Y, 0, 1), ModelMatrix);
-        var vTopRight = Vector4.Transform(new Vector4(drawBottomRight.X, drawTopLeft.Y, 0, 1), ModelMatrix);
-        var vBottomLeft = Vector4.Transform(new Vector4(drawTopLeft.X, drawBottomRight.Y, 0, 1), ModelMatrix);
-        var vBottomRight = Vector4.Transform(new Vector4(drawBottomRight.X, drawBottomRight.Y, 0, 1), ModelMatrix);
+        var vTopLeft = Vector2.Transform(new Vector2(drawTopLeft.X, drawTopLeft.Y), ModelMatrix);
+        var vTopRight = Vector2.Transform(new Vector2(drawBottomRight.X, drawTopLeft.Y), ModelMatrix);
+        var vBottomLeft = Vector2.Transform(new Vector2(drawTopLeft.X, drawBottomRight.Y), ModelMatrix);
+        var vBottomRight = Vector2.Transform(new Vector2(drawBottomRight.X, drawBottomRight.Y), ModelMatrix);
 
-        // Assign to vertices
-        var topLeft = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = calculatedColor };
-        var topRight = new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(uvBottomRight.X, uvTopLeft.Y), Color = calculatedColor };
-        var bottomLeft = new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(uvTopLeft.X, uvBottomRight.Y), Color = calculatedColor };
-        var bottomRight = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight, Color = calculatedColor };
-
-        // Triangle 1
-        Vertices[0] = topLeft;
-        Vertices[1] = topRight;
-        Vertices[2] = bottomRight;
-
-        // Triangle 2
-        Vertices[3] = bottomRight;
-        Vertices[4] = bottomLeft;
-        Vertices[5] = topLeft;
+        Vertices[0] = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = calculatedColor };
+        Vertices[1] = new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(uvBottomRight.X, uvTopLeft.Y), Color = calculatedColor };
+        Vertices[2] = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight, Color = calculatedColor };
+        Vertices[3] = new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(uvTopLeft.X, uvBottomRight.Y), Color = calculatedColor };
 
         // Calculate DrawRectangle in screen space
         float minX = Math.Min(vTopLeft.X, Math.Min(vTopRight.X, Math.Min(vBottomLeft.X, vBottomRight.X)));
@@ -606,7 +670,60 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
         DrawRectangle = new RectangleF(minX, minY, maxX - minX, maxY - minY);
     }
 
-    public bool Contains(Vector2 screenSpacePos) => DrawRectangle.Contains(screenSpacePos);
+    public bool Contains(Vector2 screenSpacePos)
+    {
+        // Fast rejection against the screen-space AABB.
+        if (!DrawRectangle.Contains(screenSpacePos))
+            return false;
+
+        // The AABB over-covers rotated/sheared drawables (including children of rotated
+        // ancestors), so confirm via the exact inverse transform into local 0..1 space.
+        // For axis-aligned drawables the local test passes trivially.
+        if (Matrix3x2.Invert(ModelMatrix, out var inverse))
+        {
+            var local = Vector2.Transform(screenSpacePos, inverse);
+
+            // Allow half a pixel of leniency so edge coordinates (e.g. X + Width, which the
+            // inclusive AABB accepts) aren't rejected by floating-point error in the
+            // round-trip through the inverse transform.
+            float epsX = DrawSize.X > 0 ? 0.5f / DrawSize.X : 0.001f;
+            float epsY = DrawSize.Y > 0 ? 0.5f / DrawSize.Y : 0.001f;
+
+            return local.X >= -epsX && local.X <= 1 + epsX &&
+                   local.Y >= -epsY && local.Y <= 1 + epsY;
+        }
+
+        // Degenerate (non-invertible) transform: fall back to the AABB result.
+        return true;
+    }
+
+    /// <summary>
+    /// Converts a screen-space position into this drawable's local pixel space.
+    /// The result is in the same coordinate system as <see cref="Position"/> and <see cref="DrawSize"/>.
+    /// Falls back to a simple AABB offset when the transform is non-invertible.
+    /// </summary>
+    public Vector2 ToLocalSpace(Vector2 screenSpacePos)
+    {
+        if (Matrix3x2.Invert(ModelMatrix, out var inverse))
+        {
+            var normalised = System.Numerics.Vector2.Transform(screenSpacePos, inverse);
+            return new Vector2(normalised.X * DrawSize.X, normalised.Y * DrawSize.Y);
+        }
+
+        return screenSpacePos - new Vector2(DrawRectangle.X, DrawRectangle.Y);
+    }
+
+    /// <summary>
+    /// Converts a local pixel-space position into screen space.
+    /// </summary>
+    public Vector2 ToScreenSpace(Vector2 localPos)
+    {
+        var normalised = DrawSize.X > 0 && DrawSize.Y > 0
+            ? new System.Numerics.Vector2(localPos.X / DrawSize.X, localPos.Y / DrawSize.Y)
+            : (System.Numerics.Vector2)localPos;
+
+        return System.Numerics.Vector2.Transform(normalised, ModelMatrix);
+    }
 
     public static Vector2 GetAnchorOriginVector(Anchor anchor)
     {
@@ -626,6 +743,13 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
     }
 
     #endregion
+
+    // Attribute reflection is too slow to run on every load (e.g. when spawning pooled
+    // gameplay objects), so the result is cached per type.
+    private static readonly ConcurrentDictionary<Type, bool> long_running_type_cache = new ConcurrentDictionary<Type, bool>();
+
+    private static bool isLongRunningType(Type type)
+        => long_running_type_cache.GetOrAdd(type, static t => t.GetCustomAttribute<LongRunningLoadAttribute>(true) != null);
 
     /// <summary>
     /// Called to perform loading tasks to load required resources and dependencies.
@@ -648,7 +772,7 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
         {
             if (LoadState >= LoadState.Ready) return;
 
-            bool isLongRunning = GetType().GetCustomAttribute<LongRunningLoadAttribute>(true) != null;
+            bool isLongRunning = isLongRunningType(GetType());
             if (isLongRunning && !isTopLevelAsyncLoad)
             {
                 throw new InvalidOperationException(
@@ -696,9 +820,9 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
             component.asyncParentDependencies = Dependencies;
             component.isTopLevelAsyncLoad = true;
 
-            bool isLongRunning = component.GetType().GetCustomAttribute<LongRunningLoadAttribute>(true) != null;
+            bool isLongRunning = isLongRunningType(component.GetType());
             var creationOptions = isLongRunning ? TaskCreationOptions.LongRunning : TaskCreationOptions.None;
-            var scheduler = Scheduler; // capture the parent's scheduler
+            var parentScheduler = Scheduler; // capture the parent's scheduler
 
             component.loadTask = Task.Factory.StartNew(() =>
             {
@@ -714,7 +838,7 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
                 if (onLoaded != null && !cancellationToken.IsCancellationRequested)
                 {
                     // the callback must be executed on the target's update thread.
-                    scheduler?.Add(() => onLoaded(component));
+                    parentScheduler.Add(() => onLoaded(component));
                 }
             }, cancellationToken, TaskContinuationOptions.None, TaskScheduler.Default);
         }
@@ -757,39 +881,78 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
         {
             node.ApplyState(this);
             node.InvalidationID = DrawNodeInvalidationId;
-            GlobalStatistics.Get<int>("DrawNodes", "State Applied").Value++;
+            stat_draw_node_applied.Value++;
         }
         else
         {
-            GlobalStatistics.Get<int>("DrawNodes", "State Reused (Clean)").Value++;
+            stat_draw_node_reused.Value++;
         }
 
         return node;
     }
 
     /// <summary>
+    /// Set when this drawable's own geometry inputs (position, size, rotation, parent geometry, ...)
+    /// have changed — as opposed to merely being flagged for a layout pass by a child notification.
+    /// Containers use this to decide whether their children's matrices need recomputation.
+    /// </summary>
+    protected internal bool OwnGeometryInvalidated;
+
+    /// <summary>
     /// Marks all or part of this drawable as requiring re-computation.
+    /// A <see cref="InvalidationFlags.DrawInfo"/> invalidation means this drawable's own geometry
+    /// changed; parents are only notified when they declare interest (auto-size / flow layouts),
+    /// which keeps a single moving drawable from re-invalidating the whole tree.
     /// </summary>
     /// <param name="flags">An <see cref="InvalidationFlags"/> flag representing which aspects of the drawable need to be recomputed.</param>
-    /// <param name="propagateToParent">Whether this invalidation should also invalidate this drawable's parent.</param>
+    /// <param name="propagateToParent">Whether this invalidation should also notify this drawable's parent.</param>
     public virtual void Invalidate(InvalidationFlags flags = InvalidationFlags.All, bool propagateToParent = true)
     {
-        if ((Invalidation & flags) == flags)
-            return; // Already invalidated for these flags.
+        bool dirtiesGeometry = (flags & InvalidationFlags.DrawInfo) != 0;
 
-        GlobalStatistics.Get<int>("Drawables", "Invalidations").Value++;
+        // The parent must be notified even when this drawable is already dirty itself.
+        // A drawable that measures and resizes itself during its own update pass (e.g.
+        // SpriteText computing its layout) carries set flags at that moment — but its
+        // parent may have already finished its layout this frame and still needs to learn
+        // about the change. The notification receiver is idempotent, so this is cheap.
+        if (dirtiesGeometry && propagateToParent)
+            Parent?.OnChildGeometryInvalidated();
 
-        // Logger.Debug($"Invalidating {GetType().Name} (Parent: {Parent?.GetType().Name ?? "null"}, Flags: {flags})");
+        // Already invalidated in all requested ways — nothing else to do.
+        if ((Invalidation & flags) == flags && (!dirtiesGeometry || OwnGeometryInvalidated))
+            return;
+
+        stat_invalidations.Value++;
 
         Invalidation |= flags;
 
         if ((flags & (InvalidationFlags.DrawInfo | InvalidationFlags.Colour)) != 0)
         {
             DrawNodeInvalidationId++;
+
+            // The drawn state changed, so every ancestor's cached draw-node subtree is stale.
+            Parent?.MarkSubtreeDrawStateDirty();
         }
 
-        if (propagateToParent && (flags & InvalidationFlags.DrawInfo) != 0)
-            Parent?.Invalidate(InvalidationFlags.DrawInfo);
+        if (dirtiesGeometry)
+            OwnGeometryInvalidated = true;
+    }
+
+    /// <summary>
+    /// Flags this drawable as requiring an update/layout pass without treating its own geometry
+    /// as changed. Used when a child notifies an interested parent: the parent re-runs layout,
+    /// and only if that layout actually changes its geometry (e.g. auto-size changes Size) does a
+    /// real invalidation cascade to its children.
+    /// </summary>
+    protected internal void InvalidateLayout()
+    {
+        if ((Invalidation & InvalidationFlags.DrawInfo) != 0)
+            return;
+
+        stat_invalidations.Value++;
+        Invalidation |= InvalidationFlags.DrawInfo;
+        DrawNodeInvalidationId++;
+        Parent?.MarkSubtreeDrawStateDirty();
     }
 
     #region Dependency Injection
@@ -844,12 +1007,6 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
 
     #endregion
 
-    public Drawable()
-    {
-        Clock = new Clock(true);
-        Scheduler = new Scheduler(Clock);
-    }
-
     /// <summary>
     /// Whether this drawable is currently fully outside the masking bounds of its parents.
     /// </summary>
@@ -865,10 +1022,23 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
     /// </summary>
     public virtual void UpdateSubTree()
     {
-        (Clock as FramedClock)?.Update();
+        // inherited clocks are shared by reference and processed once by their owner
+        // (e.g. the update thread); only an explicitly-assigned framed clock is ours to process.
+        if (hasCustomClock && clock is FramedClock framedClock)
+            framedClock.ProcessFrame();
 
         if ((IsMaskedAway || !IsAlive) && !AlwaysPresent)
             return;
+
+        // Scheduler tasks and transforms must run BEFORE Update() so that any invalidations
+        // they raise (e.g. a FadeIn/MoveTo on a container changing Alpha/Position) are visible
+        // to Update's dirty-state checks. Container.Update captures these flags to decide
+        // whether to cascade to children — raising them mid-Update would lose that cascade.
+        if (IsLoaded)
+        {
+            scheduler?.Update();
+            applyTransforms();
+        }
 
         Update();
     }
@@ -877,10 +1047,7 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
     {
         if (!IsLoaded) return;
 
-        GlobalStatistics.Get<int>("Drawables", "Updated Last Frame").Value++;
-
-        Scheduler?.Update();
-        applyTransforms();
+        stat_updated_last_frame.Value++;
 
         if (Invalidation == InvalidationFlags.None)
             return;
@@ -888,16 +1055,44 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
         if (!AlwaysPresent && Precision.AlmostEqualZero(Alpha))
         {
             DrawAlpha = 0;
-            Invalidation = InvalidationFlags.None;
+            // Keep pending geometry invalidation (and the own-geometry marker) so a drawable
+            // that moved while hidden recomputes — and cascades to children — once shown again.
+            Invalidation &= ~InvalidationFlags.Colour;
             return;
         }
 
-        if ((Invalidation & (InvalidationFlags.DrawInfo | InvalidationFlags.Colour)) != 0)
+        if ((Invalidation & InvalidationFlags.DrawInfo) != 0)
         {
             UpdateTransforms();
         }
+        else if ((Invalidation & InvalidationFlags.Colour) != 0)
+        {
+            // Colour-only change (fades are the common case in gameplay): rewrite the
+            // vertex colours without redoing matrix and vertex-position work.
+            UpdateDrawColour();
+        }
 
         Invalidation = InvalidationFlags.None;
+        OwnGeometryInvalidated = false;
+    }
+
+    /// <summary>
+    /// Recomputes <see cref="DrawAlpha"/> and rewrites the color of the existing vertices
+    /// without regenerating geometry. Called for color-only invalidations.
+    /// Drawables whose vertices carry non-uniform colors must override this
+    /// (falling back to <see cref="UpdateTransforms"/> is always correct).
+    /// </summary>
+    protected virtual void UpdateDrawColour()
+    {
+        DrawAlpha = (Parent?.DrawAlpha ?? 1f) * Alpha;
+
+        float rLinear = ColorExtensions.SrgbToLinear(Color.R);
+        float gLinear = ColorExtensions.SrgbToLinear(Color.G);
+        float bLinear = ColorExtensions.SrgbToLinear(Color.B);
+        var calculatedColor = new Vector4(rLinear, gLinear, bLinear, DrawAlpha * (Color.A / 255f));
+
+        for (int i = 0; i < Vertices.Length; i++)
+            Vertices[i].Color = calculatedColor;
     }
 
     /// <summary>
@@ -905,14 +1100,14 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
     /// </summary>
     protected virtual void OnClockChanged()
     {
-        Scheduler?.SetClock(clock);
+        scheduler?.SetClock(Clock);
     }
 
     #region Transformation Management
 
     private void applyTransforms()
     {
-        if (transforms.Count == 0)
+        if (transforms == null || transforms.Count == 0)
             return;
 
         double currentTime = Clock.CurrentTime;
@@ -939,14 +1134,26 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
 
     internal void AddTransform(Transform transform)
     {
-        transforms.Add(transform);
-        // We don't sort here for performance; looping backwards in ApplyTransforms handles completed transforms.
+        // don't sort here for performance, looping backwards in ApplyTransforms handles completed transforms
+        (transforms ??= new List<Transform>()).Add(transform);
     }
 
     /// <summary>
     /// Gets the end time of the latest-finishing transformation on this drawable.
     /// </summary>
-    public double GetLatestTransformEndTime() => transforms.Count > 0 ? transforms.Max(t => t.EndTime) : Clock.CurrentTime;
+    public double GetLatestTransformEndTime()
+    {
+        if (transforms == null || transforms.Count == 0)
+            return Clock.CurrentTime;
+
+        double latest = double.MinValue;
+        for (int i = 0; i < transforms.Count; i++)
+        {
+            if (transforms[i].EndTime > latest)
+                latest = transforms[i].EndTime;
+        }
+        return latest;
+    }
 
     /// <summary>
     /// Removes all transformations from this drawable.
@@ -954,7 +1161,7 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
     /// <param name="propagateToChildren">Whether to also clear transformations on all children.</param>
     public void ClearTransforms(bool propagateToChildren = false)
     {
-        transforms.Clear();
+        transforms?.Clear();
         TimeUntilTransformsCanStart = 0;
 
         if (propagateToChildren && this is Container c)
@@ -966,7 +1173,7 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
 
     internal void LoopLatestTransforms()
     {
-        if (!transforms.Any())
+        if (transforms == null || transforms.Count == 0)
             return;
 
         double latestEndTime = GetLatestTransformEndTime();
@@ -984,8 +1191,11 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
     /// <param name="propagateToChildren">Whether to also finish transformations on all children.</param>
     public void FinishTransforms(bool propagateToChildren = false)
     {
-        foreach (var t in transforms)
-            t.Apply(this, t.EndTime);
+        if (transforms != null)
+        {
+            foreach (var t in transforms)
+                t.Apply(this, t.EndTime);
+        }
 
         ClearTransforms(propagateToChildren);
     }
@@ -1153,7 +1363,7 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
 
     #region Naming
 
-    private Guid internalId = Guid.NewGuid();
+    private Guid? internalId;
 
     public string Name { get; set; } = string.Empty;
 
@@ -1163,9 +1373,11 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
     /// <returns>A display name string.</returns>
     public string GetDisplayName()
     {
+        string id = (internalId ??= Guid.NewGuid()).ToString().Substring(0, 4);
+
         return !string.IsNullOrEmpty(Name) ?
-            $"{Name} ({GetType().Name}#{internalId.ToString().Substring(0, 4)})" :
-            $"{GetType().Name}#{internalId.ToString().Substring(0, 4)}";
+            $"{Name} ({GetType().Name}#{id})" :
+            $"{GetType().Name}#{id}";
     }
 
     public override string ToString() => GetDisplayName();

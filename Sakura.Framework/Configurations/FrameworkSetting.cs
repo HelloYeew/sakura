@@ -18,5 +18,7 @@ public enum FrameworkSetting
     WindowX,
     WindowY,
     WindowWidth,
-    WindowHeight
+    WindowHeight,
+    RelativeMouseMode,
+    CursorSensitivity
 }

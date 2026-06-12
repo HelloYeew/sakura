@@ -8,7 +8,7 @@ namespace Sakura.Framework.Timing;
 /// Used as the default real-time reference for interpolating and decoupling clocks;
 /// tests can substitute a <see cref="ManualClock"/> to make those clocks fully deterministic.
 /// </summary>
-public class TimeSourceClock : IClock
+public sealed class TimeSourceClock : IClock
 {
     public double CurrentTime => TimeSource.CurrentTime;
 

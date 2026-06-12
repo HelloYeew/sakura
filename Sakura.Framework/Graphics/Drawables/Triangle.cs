@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using Sakura.Framework.Extensions.ColorExtensions;
+using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Rendering.Vertex;
 using Sakura.Framework.Maths;
 
@@ -14,6 +15,8 @@ public partial class Triangle : Drawable
 {
     protected new readonly Vertex[] Vertices = new Vertex[3];
 
+    protected internal override VertexTopology Topology => VertexTopology.Triangles;
+
     protected override void GenerateVertices()
     {
         float rLinear = ColorExtensions.SrgbToLinear(Color.R);
@@ -22,13 +25,9 @@ public partial class Triangle : Drawable
 
         var calculatedColor = new System.Numerics.Vector4(rLinear, gLinear, bLinear, DrawAlpha);
 
-        var localP1 = new Vector4(0.5f, 0, 0, 1);
-        var localP2 = new Vector4(0, 1, 0, 1);
-        var localP3 = new Vector4(1, 1, 0, 1);
-
-        var screenP1 = Vector4.Transform(localP1, ModelMatrix);
-        var screenP2 = Vector4.Transform(localP2, ModelMatrix);
-        var screenP3 = Vector4.Transform(localP3, ModelMatrix);
+        var screenP1 = Vector2.Transform(new Vector2(0.5f, 0), ModelMatrix);
+        var screenP2 = Vector2.Transform(new Vector2(0, 1), ModelMatrix);
+        var screenP3 = Vector2.Transform(new Vector2(1, 1), ModelMatrix);
 
         Vertices[0] = new Vertex
         {

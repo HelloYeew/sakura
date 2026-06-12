@@ -108,11 +108,48 @@ public class GLTexture : INativeTexture
         gl.BindTexture(TextureTarget.Texture2D, GLHandle);
     }
 
+    /// <summary>
+    /// Creates a texture suitable as a framebuffer color attachment: storage allocated up
+    /// front, linear filtering without mipmaps (render targets have none), clamped wrapping.
+    /// Must be called on the draw thread.
+    /// </summary>
+    internal static unsafe GLTexture CreateRenderTarget(GL gl, int width, int height, bool pixelSnapping = false)
+    {
+        var texture = new GLTexture(gl, width, height);
+        texture.GLHandle = gl.GenTexture();
+
+        gl.GetInteger(GLEnum.TextureBinding2D, out int previouslyBound);
+
+        gl.ActiveTexture(TextureUnit.Texture0);
+        gl.BindTexture(TextureTarget.Texture2D, texture.GLHandle);
+
+        gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Srgb8Alpha8, (uint)width, (uint)height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, (void*)null);
+
+        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, pixelSnapping ? (int)TextureMinFilter.Nearest : (int)TextureMinFilter.Linear);
+        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, pixelSnapping ? (int)TextureMagFilter.Nearest : (int)TextureMagFilter.Linear);
+        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+
+        texture.Available = true;
+
+        if (previouslyBound > 0)
+            gl.BindTexture(TextureTarget.Texture2D, (uint)previouslyBound);
+
+        return texture;
+    }
+
     public void Dispose()
     {
         if (disposed) return;
+
         if (GLHandle != 0)
+        {
+            // Scrub the renderer's slot tracking first: GL recycles handle IDs, so a
+            // future texture could alias this handle and be mistaken for already-bound.
+            Rendering.GLRenderer.NotifyTextureDeleted(GLHandle);
             gl.DeleteTexture(GLHandle);
+        }
+
         disposed = true;
         GC.SuppressFinalize(this);
     }

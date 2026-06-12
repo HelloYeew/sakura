@@ -17,7 +17,7 @@ public partial class DrawSizePreservingFillContainer : Container
     /// <summary>
     /// The target virtual resolution to be enforced.
     /// </summary>
-    public Vector2 TargetDrawSize { get; set; } = new Vector2(1024, 768);
+    public Vector2 TargetDrawSize { get; set; } = new Vector2(1920, 1080);
 
     /// <summary>
     /// The strategy to be used for enforcing the <see cref="TargetDrawSize"/>

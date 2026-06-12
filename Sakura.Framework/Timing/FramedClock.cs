@@ -48,17 +48,22 @@ public class FramedClock : IFrameBasedClock, ISourceChangeableClock
     /// </summary>
     public void ProcessFrame()
     {
+        // Read the source exactly once per frame: live sources (stopwatch, audio track)
+        // pay a time-source or audio-engine query per read, and a single snapshot also
+        // guarantees the elapsed computation and the stored baseline can't tear.
+        double sourceTime = source.CurrentTime;
+
         if (IsRunning)
         {
-            double sourceElapsed = source.CurrentTime - lastSourceTime;
-            ElapsedFrameTime = sourceElapsed * Rate;
+            ElapsedFrameTime = (sourceTime - lastSourceTime) * Rate;
             CurrentTime += ElapsedFrameTime;
         }
         else
         {
             ElapsedFrameTime = 0;
         }
-        lastSourceTime = source.CurrentTime;
+
+        lastSourceTime = sourceTime;
     }
 
     /// <summary>

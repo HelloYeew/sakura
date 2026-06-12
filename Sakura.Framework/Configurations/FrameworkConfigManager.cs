@@ -29,5 +29,7 @@ public class FrameworkConfigManager : ConfigManager<FrameworkSetting>
         Get(FrameworkSetting.WindowY, -1);
         Get(FrameworkSetting.WindowWidth, -1);
         Get(FrameworkSetting.WindowHeight, -1);
+        Get(FrameworkSetting.RelativeMouseMode, false);
+        Get(FrameworkSetting.CursorSensitivity, 1.0);
     }
 }

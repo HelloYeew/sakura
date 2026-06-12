@@ -3,6 +3,7 @@
 
 using System;
 using Sakura.Framework.Extensions.ColorExtensions;
+using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Rendering.Vertex;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Utilities;
@@ -88,6 +89,8 @@ public partial class BezierCurve : Drawable
 
         Invalidate(InvalidationFlags.DrawInfo);
     }
+
+    protected internal override VertexTopology Topology => VertexTopology.Triangles;
 
     protected override void GenerateVertices()
     {

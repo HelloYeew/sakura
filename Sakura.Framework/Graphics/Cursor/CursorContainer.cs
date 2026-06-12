@@ -80,21 +80,7 @@ public partial class CursorContainer : Container, IRemoveFromDrawVisualiser
         if (ActiveCursor.IsHidden)
             return;
 
-        Vector2 localPosition;
-
-        if (Matrix4x4.Invert(ModelMatrix, out var inverse))
-        {
-            var localNormalized = Vector4.Transform(
-                new Vector4(lastScreenSpaceMousePosition.X, lastScreenSpaceMousePosition.Y, 0, 1),
-                inverse
-            );
-
-            localPosition = new Vector2(localNormalized.X * DrawSize.X, localNormalized.Y * DrawSize.Y);
-        }
-        else
-        {
-            localPosition = lastScreenSpaceMousePosition - new Vector2(DrawRectangle.X, DrawRectangle.Y);
-        }
+        Vector2 localPosition = ToLocalSpace(lastScreenSpaceMousePosition);
 
         ActiveCursor.Position = localPosition;
     }

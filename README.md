@@ -1,6 +1,6 @@
 # 🌸🗡️ Sakura Framework
 
-![NuGet](https://img.shields.io/nuget/v/Sakura.Framework)
+[![NuGet](https://img.shields.io/nuget/v/Sakura.Framework)](https://www.nuget.org/packages/Sakura.Framework/)
 
 A graphic framework and set of toolkits for making basic UI application and 2D game (right now) target to support as many platforms as possible. Backed by .NET.
 
@@ -15,12 +15,24 @@ Some incomplete documentation is in [wiki](https://github.com/HelloYeew/sakura/w
 ## Requirements
 
 - .NET 10.0 SDK
-- We recommend to use IDE like [Visual Studio](https://visualstudio.microsoft.com/vs/), [Rider](https://www.jetbrains.com/rider/) or [VS Code](https://code.visualstudio.com/) for development with this framewor
+- We recommend to use IDE like [Visual Studio](https://visualstudio.microsoft.com/vs/), [Rider](https://www.jetbrains.com/rider/) or [VS Code](https://code.visualstudio.com/) for development with this framework
+
+### Issue of BASS when using Windows ARM64
+
+On Windows ARM64, the BASS audio library (`bass.dll`) requires the **Visual C++ Redistributable for ARM64**. Without it you will see:
+
+```
+Unable to load DLL 'bass' or one of its dependencies: The specified module could not be found. (0x8007007E)
+```
+
+So we fix these problem by pack `vcruntime140.dll` in our native library package. But if the problem still occured please install the VC++ Redistributable for ARM64 [https://aka.ms/vs/17/release/vc_redist.arm64.exe](https://aka.ms/vs/17/release/vc_redist.arm64.exe)
+
+On release, running as x64 (via Windows ARM64's x64 emulation layer) avoids this issue entirely since the x64 `bass.dll` does not depend on the VC++ Redistributable. Most shipped games/apps targeting Windows ARM64 use this approach.
 
 ## Quick start
 
 ```shell
-git clone --recurse-submodules https://github.com/HelloYeew/sakura
+git clone https://github.com/HelloYeew/sakura
 cd sakura
 dotnet restore
 
@@ -28,8 +40,6 @@ dotnet restore
 cd Sakura.Framework.Tests
 dotnet run
 ```
-
-Note : `--recurse-submodules` is required to pull the SPIRV-Cross submodule used by `Sakura.Framework.SPIRV`.
 
 ### Building native libraries manually
 
