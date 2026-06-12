@@ -17,7 +17,13 @@ namespace Sakura.Framework.Allocation;
 public class DependencyContainer : IReadOnlyDependencyContainer
 {
     private readonly IReadOnlyDependencyContainer? parent;
-    private readonly ConcurrentDictionary<Type, object> cache = new();
+
+    // Lazily allocated: most drawables never cache anything, so most containers stay empty.
+    // Keeping empty containers dictionary-free makes the per-drawable container nearly free
+    // and keeps deep-tree resolution walks cheap.
+    private ConcurrentDictionary<Type, object>? cache;
+
+    private static readonly GlobalStatistic<int> cached_count_statistic = GlobalStatistics.Get<int>("DI", "Cached Dependencies");
 
     public DependencyContainer(IReadOnlyDependencyContainer? parent = null)
     {
@@ -27,20 +33,19 @@ public class DependencyContainer : IReadOnlyDependencyContainer
     /// <summary>
     /// Cache a dependency instance of the specified type.
     /// </summary>
-    public void Cache<T>(T instance) where T : class
-    {
-        cache[typeof(T)] = instance;
-        GlobalStatistics.Get<int>("DI", "Cached Dependencies").Value = cache.Count;
-    }
+    public void Cache<T>(T instance) where T : class => cacheAs(typeof(T), instance);
 
     /// <summary>
     /// Caches <paramref name="instance"/> under a different type <typeparamref name="T"/>.
     /// Use this when a concrete type should be resolvable as an interface or base type.
     /// </summary>
-    public void CacheAs<T>(object instance) where T : class
+    public void CacheAs<T>(object instance) where T : class => cacheAs(typeof(T), instance);
+
+    private void cacheAs(Type type, object instance)
     {
-        cache[typeof(T)] = instance;
-        GlobalStatistics.Get<int>("DI", "Cached Dependencies").Value = cache.Count;
+        var c = cache ??= new ConcurrentDictionary<Type, object>();
+        c[type] = instance;
+        cached_count_statistic.Value++;
     }
 
     /// <summary>
@@ -49,11 +54,22 @@ public class DependencyContainer : IReadOnlyDependencyContainer
     /// </summary>
     public T Get<T>() where T : class
     {
-        if (cache.TryGetValue(typeof(T), out object? obj))
-            return (T)obj;
+        // Iterative walk: deep drawable trees produce long chains of containers that cache
+        // nothing, so the per-level cost must stay at a couple of null checks (no recursion).
+        IReadOnlyDependencyContainer? current = this;
 
-        if (parent != null)
-            return parent.Get<T>();
+        while (current is DependencyContainer dc)
+        {
+            var c = dc.cache;
+            if (c != null && c.TryGetValue(typeof(T), out object? obj))
+                return (T)obj;
+
+            current = dc.parent;
+        }
+
+        // A non-DependencyContainer implementation in the chain resolves through the interface.
+        if (current != null)
+            return current.Get<T>();
 
         throw new InvalidOperationException($"Dependency of type {typeof(T).FullName} not found.");
     }
