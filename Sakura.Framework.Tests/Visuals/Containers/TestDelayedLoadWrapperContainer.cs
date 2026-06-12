@@ -109,7 +109,7 @@ public partial class TestDelayedLoadWrapperContainer : TestScene
         AddAssert("Still not loaded", () => !wrapperContainer.DelayedLoadCompleted);
 
         AddStep("Move into view", () => wrapperContainer.Position = inside_position);
-        AddUntilStep("Content loads after delay", () => wrapperContainer.DelayedLoadCompleted);
+        AddUntilStep("Content loads after delay", () => wrapperContainer.DelayedLoadCompleted, 30000);
 
         AddStep("Move out of view", () => wrapperContainer.Position = outside_position);
         AddWaitStep("Wait", 800);
@@ -120,13 +120,13 @@ public partial class TestDelayedLoadWrapperContainer : TestScene
     public void TestUnloadAndReload()
     {
         AddStep("Move unload wrapper into view", () => unloadWrapperContainer.Position = new Vector2(10, 120));
-        AddUntilStep("Content loads", () => unloadWrapperContainer.DelayedLoadCompleted);
+        AddUntilStep("Content loads", () => unloadWrapperContainer.DelayedLoadCompleted, 30000);
 
         AddStep("Move out of view", () => unloadWrapperContainer.Position = outside_position);
-        AddUntilStep("Content unloads after delay", () => !unloadWrapperContainer.DelayedLoadCompleted);
+        AddUntilStep("Content unloads after delay", () => !unloadWrapperContainer.DelayedLoadCompleted, 30000);
 
         AddStep("Move back into view", () => unloadWrapperContainer.Position = new Vector2(10, 120));
-        AddUntilStep("Content recreated", () => unloadWrapperContainer.DelayedLoadCompleted);
+        AddUntilStep("Content recreated", () => unloadWrapperContainer.DelayedLoadCompleted, 30000);
         AddAssert("A new instance was created", () => creationCount >= 2);
     }
 

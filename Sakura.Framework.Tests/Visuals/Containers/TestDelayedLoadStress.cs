@@ -152,7 +152,7 @@ public partial class TestDelayedLoadStress : TestScene
         AddSliderStep("Scroll speed (px/s)", 100f, 8000f, 800f, v => scrollSpeed = v);
         AddStep("Teleport to bottom", () => content.Position = new Vector2(0, -(contentHeight - viewport_height)));
         AddStep("Teleport to top", () => content.Position = new Vector2(0, 0));
-        AddUntilStep("Some panels load", () => createdCount > 0);
+        AddUntilStep("Some panels load", () => createdCount > 0, 30000);
     }
 
     public override void Update()

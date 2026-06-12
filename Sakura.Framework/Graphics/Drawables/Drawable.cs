@@ -27,7 +27,7 @@ namespace Sakura.Framework.Graphics.Drawables;
 /// <summary>
 /// A lowest level of the component hierarchy. All drawable components should be inherited from this class.
 /// </summary>
-public abstract partial class Drawable : Allocation.IDependencyInjectionCandidate
+public abstract partial class Drawable : IDependencyInjectionCandidate
 {
     private static readonly GlobalStatistic<int> stat_updated_last_frame = GlobalStatistics.Get<int>("Drawables", "Updated Last Frame");
     private static readonly GlobalStatistic<int> stat_invalidations = GlobalStatistics.Get<int>("Drawables", "Invalidations");
@@ -695,6 +695,34 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
 
         // Degenerate (non-invertible) transform: fall back to the AABB result.
         return true;
+    }
+
+    /// <summary>
+    /// Converts a screen-space position into this drawable's local pixel space.
+    /// The result is in the same coordinate system as <see cref="Position"/> and <see cref="DrawSize"/>.
+    /// Falls back to a simple AABB offset when the transform is non-invertible.
+    /// </summary>
+    public Vector2 ToLocalSpace(Vector2 screenSpacePos)
+    {
+        if (Matrix3x2.Invert(ModelMatrix, out var inverse))
+        {
+            var normalised = System.Numerics.Vector2.Transform(screenSpacePos, inverse);
+            return new Vector2(normalised.X * DrawSize.X, normalised.Y * DrawSize.Y);
+        }
+
+        return screenSpacePos - new Vector2(DrawRectangle.X, DrawRectangle.Y);
+    }
+
+    /// <summary>
+    /// Converts a local pixel-space position into screen space.
+    /// </summary>
+    public Vector2 ToScreenSpace(Vector2 localPos)
+    {
+        var normalised = DrawSize.X > 0 && DrawSize.Y > 0
+            ? new System.Numerics.Vector2(localPos.X / DrawSize.X, localPos.Y / DrawSize.Y)
+            : (System.Numerics.Vector2)localPos;
+
+        return System.Numerics.Vector2.Transform(normalised, ModelMatrix);
     }
 
     public static Vector2 GetAnchorOriginVector(Anchor anchor)
