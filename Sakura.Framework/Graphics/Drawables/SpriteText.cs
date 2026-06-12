@@ -243,6 +243,12 @@ public partial class SpriteText : Drawable
     /// </summary>
     public Vector2 GetCharacterPosition(int index)
     {
+        // Parents (e.g. a text box positioning its caret) update before this drawable does,
+        // so a query arriving right after a text change would otherwise read the previous
+        // frame's shaping. Shape on demand so callers always get fresh metrics.
+        if (layoutInvalidated)
+            computeLayout();
+
         // If there is no text yet, return the starting text offset.
         if (shapedText == null || shapedText.Glyphs.Count == 0 || index < 0)
         {
