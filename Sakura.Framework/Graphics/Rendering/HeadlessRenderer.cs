@@ -89,4 +89,42 @@ public class HeadlessRenderer : IRenderer
     public IShader CreateShader(Storage storage, string vertexPath, string fragmentPath) => new HeadlessShader();
 
     public INativeVideoTexture CreateVideoTexture(int width, int height) => new HeadlessNativeVideoTexture(width, height);
+
+    public Vector2 RenderScale => Vector2.One;
+
+    public IFrameBuffer CreateFrameBuffer(int width, int height, bool pixelSnapping = false) => new HeadlessFrameBuffer(WhitePixel, width, height);
+
+    public void BindFrameBuffer(IFrameBuffer frameBuffer, RectangleF sourceRect, Color clearColour = default)
+    {
+
+    }
+
+    public void UnbindFrameBuffer()
+    {
+
+    }
+
+    private sealed class HeadlessFrameBuffer : IFrameBuffer
+    {
+        public Texture Texture { get; }
+        public int Width { get; private set; }
+        public int Height { get; private set; }
+
+        public HeadlessFrameBuffer(Texture texture, int width, int height)
+        {
+            Texture = texture;
+            Width = width;
+            Height = height;
+        }
+
+        public void Resize(int width, int height)
+        {
+            Width = width;
+            Height = height;
+        }
+
+        public void Dispose()
+        {
+        }
+    }
 }

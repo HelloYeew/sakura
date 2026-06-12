@@ -98,4 +98,38 @@ public interface IRenderer
     /// Must be called on the render thread.
     /// </summary>
     INativeVideoTexture CreateVideoTexture(int width, int height);
+
+    /// <summary>
+    /// The physical-pixels-per-logical-unit scale of the current output
+    /// (e.g. 2.0 on HiDPI displays). Use to size offscreen buffers in physical pixels.
+    /// </summary>
+    Vector2 RenderScale { get; }
+
+    /// <summary>
+    /// Creates an offscreen render target of the given size in physical pixels.
+    /// Must be called on the draw thread.
+    /// </summary>
+    /// <param name="width">Width in physical pixels.</param>
+    /// <param name="height">Height in physical pixels.</param>
+    /// <param name="pixelSnapping">
+    /// When true the buffer is sampled with nearest-neighbour filtering when blitted,
+    /// snapping to whole pixels instead of bilinear smoothing.
+    /// </param>
+    IFrameBuffer CreateFrameBuffer(int width, int height, bool pixelSnapping = false);
+
+    /// <summary>
+    /// Redirects subsequent draw commands into <paramref name="frameBuffer"/>.
+    /// <paramref name="sourceRect"/> is the logical screen-space rectangle the buffer
+    /// captures: geometry keeps its normal screen-space coordinates and is mapped onto the
+    /// buffer by an adjusted projection. The buffer is cleared to <paramref name="clearColour"/>
+    /// (default: transparent black).
+    /// Nesting is supported; every call must be matched by <see cref="UnbindFrameBuffer"/>.
+    /// </summary>
+    void BindFrameBuffer(IFrameBuffer frameBuffer, RectangleF sourceRect, Color clearColour = default);
+
+    /// <summary>
+    /// Ends rendering into the most recently bound framebuffer, restoring the previous
+    /// render target, viewport, projection and clip state.
+    /// </summary>
+    void UnbindFrameBuffer();
 }

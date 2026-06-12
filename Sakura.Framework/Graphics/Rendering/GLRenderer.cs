@@ -41,6 +41,33 @@ public class GLRenderer : IGLRenderer
 
     internal static GL GL => gl;
 
+    // The live renderer instance, for static notifications (e.g. texture deletion).
+    // Effectively a singleton: only one GL renderer exists per process.
+    private static GLRenderer instance;
+
+    /// <summary>
+    /// Must be called whenever a GL texture is deleted. GL recycles deleted handle IDs,
+    /// so a new texture (e.g. a glyph atlas page or a recreated framebuffer attachment)
+    /// can receive the same numeric handle as a deleted one — if the CPU-side slot
+    /// tracking still maps that handle to a slot, the renderer would skip binding and
+    /// draw with whatever texture happens to occupy the slot.
+    /// </summary>
+    internal static void NotifyTextureDeleted(uint handle)
+    {
+        var renderer = instance;
+        if (renderer == null || handle == 0)
+            return;
+
+        for (int i = 0; i < renderer.boundTextureHandles.Length; i++)
+        {
+            if (renderer.boundTextureHandles[i] == handle)
+                renderer.boundTextureHandles[i] = uint.MaxValue; // never matches a live handle
+        }
+
+        if (renderer.lastBoundTextureHandle == handle)
+            renderer.lastBoundTextureHandle = uint.MaxValue;
+    }
+
     public Texture WhitePixel { get; private set; }
     public Matrix4x4 ProjectionMatrix => projectionMatrix;
     public Storage ShaderStorage { get; set; }
@@ -75,6 +102,22 @@ public class GLRenderer : IGLRenderer
 
     private readonly ConcurrentQueue<Action> drawThreadQueue = new ConcurrentQueue<Action>();
 
+    private uint currentFrameBufferHandle;
+    private int currentViewportWidth = 1;
+    private int currentViewportHeight = 1;
+    private int windowViewportWidth = 1;
+    private int windowViewportHeight = 1;
+    private readonly Stack<FrameBufferState> frameBufferStack = new Stack<FrameBufferState>();
+
+    private struct FrameBufferState
+    {
+        public uint Handle;
+        public int ViewportWidth;
+        public int ViewportHeight;
+        public Matrix4x4 Projection;
+        public ClipState Clip;
+    }
+
     private static readonly int[] texture_samplers = { 0, 1, 2, 3, 4, 5, 6, 7 };
 
     private struct ClipState
@@ -86,6 +129,8 @@ public class GLRenderer : IGLRenderer
 
     public unsafe void Initialize(IGraphicsSurface graphicsSurface)
     {
+        instance = this;
+
         var glSurface = (IOpenGLGraphicsSurface)graphicsSurface;
 
         gl = GL.GetApi(glSurface.GetFunctionAddress);
@@ -142,6 +187,10 @@ public class GLRenderer : IGLRenderer
     {
         gl.Viewport(0, 0, (uint)physicalWidth, (uint)physicalHeight);
         viewportHeight = physicalHeight;
+        windowViewportWidth = physicalWidth;
+        windowViewportHeight = physicalHeight;
+        currentViewportWidth = physicalWidth;
+        currentViewportHeight = physicalHeight;
         projectionMatrix = Matrix4x4.CreateOrthographicOffCenter(0, logicalWidth, logicalHeight, 0, -1, 1);
         renderScaleX = (float)physicalWidth / logicalWidth;
         renderScaleY = (float)physicalHeight / logicalHeight;
@@ -247,8 +296,95 @@ public class GLRenderer : IGLRenderer
         lastBoundTextureHandle = uint.MaxValue;
         SetBlendMode(BlendingMode.Alpha);
 
+        // Defensive: if a previous frame aborted mid-offscreen-pass, don't leak its state.
+        if (frameBufferStack.Count > 0)
+        {
+            frameBufferStack.Clear();
+            currentFrameBufferHandle = 0;
+            gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+            gl.Viewport(0, 0, (uint)windowViewportWidth, (uint)windowViewportHeight);
+            currentViewportWidth = windowViewportWidth;
+            currentViewportHeight = windowViewportHeight;
+        }
+
         rootNode.Draw(this);
         triangleBatch.Draw();
+    }
+
+    public Vector2 RenderScale => new Vector2(renderScaleX, renderScaleY);
+
+    /// <summary>
+    /// Creates an offscreen render target. Must be called on the draw thread.
+    /// </summary>
+    public IFrameBuffer CreateFrameBuffer(int width, int height, bool pixelSnapping = false) => new GLFrameBuffer(gl, width, height, pixelSnapping);
+
+    public void BindFrameBuffer(IFrameBuffer frameBuffer, RectangleF sourceRect, Color clearColour = default)
+    {
+        var glFrameBuffer = (GLFrameBuffer)frameBuffer;
+
+        // Anything batched so far targets the previous render target — flush it there first.
+        triangleBatch.Draw();
+        resetTextureSlots();
+
+        frameBufferStack.Push(new FrameBufferState
+        {
+            Handle = currentFrameBufferHandle,
+            ViewportWidth = currentViewportWidth,
+            ViewportHeight = currentViewportHeight,
+            Projection = projectionMatrix,
+            Clip = currentClip
+        });
+
+        currentFrameBufferHandle = glFrameBuffer.Handle;
+        gl.BindFramebuffer(FramebufferTarget.Framebuffer, glFrameBuffer.Handle);
+        gl.Viewport(0, 0, (uint)glFrameBuffer.Width, (uint)glFrameBuffer.Height);
+        currentViewportWidth = glFrameBuffer.Width;
+        currentViewportHeight = glFrameBuffer.Height;
+
+        // Map the captured logical screen-space rect onto the buffer using the same
+        // top-left-origin convention as the main projection, so draw nodes render with
+        // their unchanged screen-space coordinates.
+        projectionMatrix = Matrix4x4.CreateOrthographicOffCenter(
+            sourceRect.X, sourceRect.X + sourceRect.Width,
+            sourceRect.Y + sourceRect.Height, sourceRect.Y,
+            -1, 1);
+        shader.SetUniform("u_Projection", projectionMatrix);
+
+        // Content inside the buffer starts from a clean clip state; the outer clip applies
+        // to the final composited quad instead.
+        currentClip = new ClipState
+        {
+            ClipData = new Vector4(0, 0, -1, -1),
+            ShearX = 0,
+            Radius = 0
+        };
+
+        gl.ClearColor(clearColour.R / 255f, clearColour.G / 255f, clearColour.B / 255f, clearColour.A / 255f);
+        gl.Clear(ClearBufferMask.ColorBufferBit);
+        gl.ClearColor(Color.Black);
+    }
+
+    public void UnbindFrameBuffer()
+    {
+        if (frameBufferStack.Count == 0)
+            throw new InvalidOperationException($"{nameof(UnbindFrameBuffer)} was called without a matching {nameof(BindFrameBuffer)}.");
+
+        // Flush geometry rendered into the framebuffer before switching away from it.
+        triangleBatch.Draw();
+        resetTextureSlots();
+
+        var state = frameBufferStack.Pop();
+
+        currentFrameBufferHandle = state.Handle;
+        gl.BindFramebuffer(FramebufferTarget.Framebuffer, state.Handle);
+        gl.Viewport(0, 0, (uint)state.ViewportWidth, (uint)state.ViewportHeight);
+        currentViewportWidth = state.ViewportWidth;
+        currentViewportHeight = state.ViewportHeight;
+
+        projectionMatrix = state.Projection;
+        shader.SetUniform("u_Projection", projectionMatrix);
+
+        currentClip = state.Clip;
     }
 
     /// <summary>
