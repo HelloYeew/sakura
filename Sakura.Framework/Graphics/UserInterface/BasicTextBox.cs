@@ -3,6 +3,7 @@
 
 using System;
 using Sakura.Framework.Allocation;
+using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
@@ -21,6 +22,7 @@ public partial class BasicTextBox : Container
     private readonly Container textContainer;
     private readonly Box selectionBox;
     private readonly SpriteText spriteText;
+    private readonly SpriteText placeholderText;
     private readonly SpriteText imeText;
     private readonly Box caret;
 
@@ -33,6 +35,57 @@ public partial class BasicTextBox : Container
     public override bool AcceptsFocus => true;
 
     public Reactive<string> Text { get; } = new Reactive<string>("");
+
+    /// <summary>
+    /// Fired when the user commits the text (presses Enter).
+    /// </summary>
+    public event Action<string>? OnCommit;
+
+    /// <summary>
+    /// Whether committing (Enter) also releases keyboard focus. Defaults to true.
+    /// </summary>
+    public bool ReleaseFocusOnCommit { get; set; } = true;
+
+    /// <summary>
+    /// Maximum number of characters this text box accepts. Null for unlimited.
+    /// </summary>
+    public int? LengthLimit { get; set; }
+
+    /// <summary>
+    /// Dimmed hint text shown while the text box is empty.
+    /// </summary>
+    public string PlaceholderText
+    {
+        get => placeholderText.Text;
+        set
+        {
+            placeholderText.Text = value ?? "";
+            updatePlaceholderVisibility();
+        }
+    }
+
+    private Color backgroundColour = Color.Green;
+
+    /// <summary>
+    /// The background colour while unfocused.
+    /// </summary>
+    public Color BackgroundColour
+    {
+        get => backgroundColour;
+        set
+        {
+            backgroundColour = value;
+            if (!HasFocus)
+                background.Color = value;
+        }
+    }
+
+    /// <summary>
+    /// The background colour while focused. Defaults to a lightened <see cref="BackgroundColour"/>.
+    /// </summary>
+    public Color? BackgroundFocusedColour { get; set; }
+
+    private Color effectiveFocusedColour => BackgroundFocusedColour ?? backgroundColour.Lighten(0.3f);
 
     public BasicTextBox()
     {
@@ -60,6 +113,20 @@ public partial class BasicTextBox : Container
                         Origin = Anchor.CentreLeft,
                         Color = Color.Blue,
                         Alpha = 0f
+                    },
+                    placeholderText = new SpriteText
+                    {
+                        Anchor = Anchor.CentreLeft,
+                        Origin = Anchor.CentreLeft,
+                        Text = "",
+                        Color = Color.White,
+                        Alpha = 0.4f,
+                        Margin = new MarginPadding
+                        {
+                            Left = 5,
+                            Right = 5
+                        },
+                        Font = FontUsage.Default.With(size: 16)
                     },
                     spriteText = new SpriteText
                     {
@@ -106,8 +173,14 @@ public partial class BasicTextBox : Container
             spriteText.Text = newText;
             caretIndex = Math.Clamp(caretIndex, 0, newText.Length);
             selectionStart = Math.Clamp(selectionStart, 0, newText.Length);
+            updatePlaceholderVisibility();
             Invalidate(InvalidationFlags.DrawInfo);
         };
+    }
+
+    private void updatePlaceholderVisibility()
+    {
+        placeholderText.Alpha = string.IsNullOrEmpty(Text.Value) ? 0.4f : 0f;
     }
 
     private void resetCaretBlink()
@@ -119,12 +192,52 @@ public partial class BasicTextBox : Container
             .FadeTo(1, 750).Loop();
     }
 
+    /// <summary>
+    /// To be called whenever the caret moves or text changes: shows the caret solid
+    /// (restarting the blink cycle, as every standard text field does) and re-layouts.
+    /// </summary>
+    private void caretMoved()
+    {
+        if (HasFocus)
+            resetCaretBlink();
+
+        Invalidate(InvalidationFlags.DrawInfo);
+    }
+
+    #region Word Boundaries
+
+    private static bool isWordChar(char c) => char.IsLetterOrDigit(c) || c == '_';
+
+    private int findPreviousWordBoundary(int from)
+    {
+        string text = Text.Value;
+        int i = Math.Clamp(from, 0, text.Length);
+
+        // Skip separators, then the word itself.
+        while (i > 0 && !isWordChar(text[i - 1])) i--;
+        while (i > 0 && isWordChar(text[i - 1])) i--;
+        return i;
+    }
+
+    private int findNextWordBoundary(int from)
+    {
+        string text = Text.Value;
+        int i = Math.Clamp(from, 0, text.Length);
+
+        while (i < text.Length && !isWordChar(text[i])) i++;
+        while (i < text.Length && isWordChar(text[i])) i++;
+        return i;
+    }
+
+    #endregion
+
     #region Focus and Input State
 
     public override void OnFocus(FocusEvent e)
     {
         base.OnFocus(e);
         resetCaretBlink();
+        background.FadeToColour(effectiveFocusedColour, 150, Transforms.Easing.OutQuint);
         window?.StartTextInput();
         Invalidate(InvalidationFlags.DrawInfo);
     }
@@ -135,6 +248,8 @@ public partial class BasicTextBox : Container
 
         caret.ClearTransforms();
         caret.Hide();
+
+        background.FadeToColour(backgroundColour, 150, Transforms.Easing.OutQuint);
 
         selectionBox.Hide();
         imeText.Text = "";
@@ -171,6 +286,10 @@ public partial class BasicTextBox : Container
         return closestIndex;
     }
 
+    // Mouse events don't carry keyboard modifiers, so shift state is tracked from
+    // key events to support Shift+Click selection extension.
+    private bool shiftHeld;
+
     public override bool OnMouseDown(MouseButtonEvent e)
     {
         base.OnMouseDown(e);
@@ -180,8 +299,12 @@ public partial class BasicTextBox : Container
             if (e.Clicks == 1)
             {
                 caretIndex = getIndexFromMouseX(e.ScreenSpaceMousePosition.X);
-                selectionStart = caretIndex;
-                Invalidate(InvalidationFlags.DrawInfo);
+
+                // Shift+Click extends the selection from the existing anchor.
+                if (!shiftHeld)
+                    selectionStart = caretIndex;
+
+                caretMoved();
             }
             return true;
         }
@@ -193,7 +316,7 @@ public partial class BasicTextBox : Container
     public override bool OnDrag(MouseEvent e)
     {
         caretIndex = getIndexFromMouseX(e.ScreenSpaceMousePosition.X);
-        Invalidate(InvalidationFlags.DrawInfo);
+        caretMoved();
         return true;
     }
 
@@ -213,13 +336,55 @@ public partial class BasicTextBox : Container
         Text.Value = Text.Value.Remove(start, length);
     }
 
+    /// <summary>
+    /// Inserts text at the caret (replacing any selection), respecting <see cref="LengthLimit"/>.
+    /// </summary>
+    private void insertTextAtCaret(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return;
+
+        if (selectionStart != caretIndex)
+            deleteSelection();
+
+        if (LengthLimit is int limit)
+        {
+            int available = limit - Text.Value.Length;
+            if (available <= 0)
+                return;
+
+            if (text.Length > available)
+                text = text.Substring(0, available);
+        }
+
+        int insertIndex = caretIndex;
+        caretIndex += text.Length;
+        selectionStart = caretIndex;
+        Text.Value = Text.Value.Insert(insertIndex, text);
+        caretMoved();
+    }
+
     public override bool OnKeyDown(KeyEvent e)
     {
+        // Track shift for Shift+Click selection (mouse events carry no modifiers).
+        if (e.Key == Key.ShiftLeft || e.Key == Key.ShiftRight)
+            shiftHeld = true;
+
         if (!HasFocus) return false;
 
         if (e.Key == Key.Escape)
         {
             GetContainingFocusManager()?.ChangeFocus(null);
+            return true;
+        }
+
+        if (e.Key == Key.Enter || e.Key == Key.KeypadEnter)
+        {
+            OnCommit?.Invoke(Text.Value);
+
+            if (ReleaseFocusOnCommit)
+                GetContainingFocusManager()?.ChangeFocus(null);
+
             return true;
         }
 
@@ -233,21 +398,19 @@ public partial class BasicTextBox : Container
             {
                 selectionStart = 0;
                 caretIndex = Text.Value.Length;
-                Invalidate(InvalidationFlags.DrawInfo);
+                caretMoved();
                 return true;
             }
 
             if (e.Key == Key.C)
             {
+                // Copy applies to the selection only (standard behaviour: an empty
+                // selection must not clobber the clipboard).
                 if (hasSelection)
                 {
                     int start = Math.Min(selectionStart, caretIndex);
                     int length = Math.Abs(selectionStart - caretIndex);
                     window.SetClipboardText(Text.Value.Substring(start, length));
-                }
-                else if (!string.IsNullOrEmpty(Text.Value))
-                {
-                    window.SetClipboardText(Text.Value);
                 }
                 return true;
             }
@@ -260,6 +423,7 @@ public partial class BasicTextBox : Container
                     int length = Math.Abs(selectionStart - caretIndex);
                     window.SetClipboardText(Text.Value.Substring(start, length));
                     deleteSelection();
+                    caretMoved();
                 }
                 return true;
             }
@@ -268,22 +432,57 @@ public partial class BasicTextBox : Container
             {
                 string clipboardText = window.GetClipboardText() ?? "";
                 if (!string.IsNullOrEmpty(clipboardText))
-                {
-                    if (hasSelection)
-                        deleteSelection();
+                    insertTextAtCaret(clipboardText);
+                return true;
+            }
 
-                    int insertIndex = caretIndex;
-                    caretIndex += clipboardText.Length;
-                    selectionStart = caretIndex;
-                    Text.Value = Text.Value.Insert(insertIndex, clipboardText);
+            // Ctrl+Backspace: delete to the previous word boundary.
+            if (e.Key == Key.BackSpace)
+            {
+                if (hasSelection)
+                {
+                    deleteSelection();
                 }
+                else if (caretIndex > 0)
+                {
+                    int boundary = findPreviousWordBoundary(caretIndex);
+                    Text.Value = Text.Value.Remove(boundary, caretIndex - boundary);
+                    caretIndex = boundary;
+                    selectionStart = boundary;
+                }
+
+                caretMoved();
+                return true;
+            }
+
+            // Ctrl+Delete: delete to the next word boundary.
+            if (e.Key == Key.Delete)
+            {
+                if (hasSelection)
+                {
+                    deleteSelection();
+                }
+                else if (caretIndex < Text.Value.Length)
+                {
+                    int boundary = findNextWordBoundary(caretIndex);
+                    Text.Value = Text.Value.Remove(caretIndex, boundary - caretIndex);
+                }
+
+                caretMoved();
                 return true;
             }
         }
 
         if (e.Key == Key.Left)
         {
-            if (shiftPressed)
+            if (controlPressed)
+            {
+                // Ctrl+Left: jump to the previous word boundary.
+                caretIndex = findPreviousWordBoundary(caretIndex);
+                if (!shiftPressed)
+                    selectionStart = caretIndex;
+            }
+            else if (shiftPressed)
             {
                 caretIndex = Math.Max(0, caretIndex - 1);
             }
@@ -296,13 +495,20 @@ public partial class BasicTextBox : Container
                 selectionStart = caretIndex;
             }
 
-            Invalidate(InvalidationFlags.DrawInfo);
+            caretMoved();
             return true;
         }
 
         if (e.Key == Key.Right)
         {
-            if (shiftPressed)
+            if (controlPressed)
+            {
+                // Ctrl+Right: jump to the next word boundary.
+                caretIndex = findNextWordBoundary(caretIndex);
+                if (!shiftPressed)
+                    selectionStart = caretIndex;
+            }
+            else if (shiftPressed)
             {
                 caretIndex = Math.Min(Text.Value.Length, caretIndex + 1);
             }
@@ -315,7 +521,7 @@ public partial class BasicTextBox : Container
                 selectionStart = caretIndex;
             }
 
-            Invalidate(InvalidationFlags.DrawInfo);
+            caretMoved();
             return true;
         }
 
@@ -324,6 +530,7 @@ public partial class BasicTextBox : Container
             if (hasSelection)
             {
                 deleteSelection();
+                caretMoved();
                 return true;
             }
             if (caretIndex > 0)
@@ -331,6 +538,7 @@ public partial class BasicTextBox : Container
                 caretIndex--;
                 selectionStart = caretIndex;
                 Text.Value = Text.Value.Remove(caretIndex, 1);
+                caretMoved();
                 return true;
             }
         }
@@ -340,11 +548,13 @@ public partial class BasicTextBox : Container
             if (hasSelection)
             {
                 deleteSelection();
+                caretMoved();
                 return true;
             }
             if (caretIndex < Text.Value.Length)
             {
                 Text.Value = Text.Value.Remove(caretIndex, 1);
+                caretMoved();
                 return true;
             }
         }
@@ -355,7 +565,7 @@ public partial class BasicTextBox : Container
             if (!shiftPressed)
                 selectionStart = caretIndex;
 
-            Invalidate(InvalidationFlags.DrawInfo);
+            caretMoved();
             return true;
         }
 
@@ -365,24 +575,60 @@ public partial class BasicTextBox : Container
             if (!shiftPressed)
                 selectionStart = caretIndex;
 
-            Invalidate(InvalidationFlags.DrawInfo);
+            caretMoved();
             return true;
         }
 
         return base.OnKeyDown(e);
     }
 
+    public override bool OnKeyUp(KeyEvent e)
+    {
+        if (e.Key == Key.ShiftLeft || e.Key == Key.ShiftRight)
+            shiftHeld = false;
+
+        return base.OnKeyUp(e);
+    }
+
     public override bool OnDoubleClick(MouseButtonEvent e)
     {
         if (e.Button == MouseButton.Left)
         {
-            // select all text on double-click
-            selectionStart = 0;
-            caretIndex = Text.Value.Length;
-            Invalidate(InvalidationFlags.DrawInfo);
+            // Double-click selects the word under the cursor (triple-click selects all).
+            string text = Text.Value;
+            int index = Math.Clamp(getIndexFromMouseX(e.ScreenSpaceMousePosition.X), 0, text.Length);
+
+            int start = index;
+            int end = index;
+
+            if (text.Length > 0)
+            {
+                // Probe the character at (or just before) the click for word membership.
+                int probe = Math.Min(index, text.Length - 1);
+                bool word = isWordChar(text[probe]);
+
+                while (start > 0 && isWordChar(text[start - 1]) == word) start--;
+                while (end < text.Length && isWordChar(text[end]) == word) end++;
+            }
+
+            selectionStart = start;
+            caretIndex = end;
+            caretMoved();
             return true;
         }
         return base.OnDoubleClick(e);
+    }
+
+    public override bool OnTripleClick(MouseButtonEvent e)
+    {
+        if (e.Button == MouseButton.Left)
+        {
+            selectionStart = 0;
+            caretIndex = Text.Value.Length;
+            caretMoved();
+            return true;
+        }
+        return base.OnTripleClick(e);
     }
 
     public override bool OnTextInput(TextInputEvent e)
@@ -390,13 +636,7 @@ public partial class BasicTextBox : Container
         if (!HasFocus) return false;
 
         imeText.Text = "";
-        if (selectionStart != caretIndex)
-            deleteSelection();
-
-        int insertIndex = caretIndex;
-        caretIndex += e.Text.Length;
-        selectionStart = caretIndex;
-        Text.Value = Text.Value.Insert(insertIndex, e.Text);
+        insertTextAtCaret(e.Text);
 
         return true;
     }
