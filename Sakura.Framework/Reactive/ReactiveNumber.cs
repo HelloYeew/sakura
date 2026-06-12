@@ -114,7 +114,7 @@ public class ReactiveNumber<T> : Reactive<T>, IReactiveNumber<T>
     private void setValue(T value)
     {
         // Out-of-range values are clamped rather than rejected — the behaviour games
-        // generally want for sliders/settings (matching osu!framework's BindableNumber).
+        // generally want for sliders/settings
         value = T.Clamp(value, minValue, maxValue);
 
         if (precision > DefaultPrecision)

@@ -95,7 +95,7 @@ public class ReactiveNumberTest
         Assert.That(reactive.Value, Is.EqualTo(12), "value changed when set within range");
         Assert.That(eventCalled, Is.EqualTo(1), "ValueChanged should be called when the value is set within range");
 
-        // Out-of-range values clamp to the nearest bound (osu!framework-style semantics).
+        // Out-of-range values clamp to the nearest bound
         reactive.Value = 4;
         Assert.That(reactive.Value, Is.EqualTo(5), "setting value below MinValue should clamp to min");
         reactive.Value = 100;

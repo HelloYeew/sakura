@@ -57,7 +57,6 @@ public class ReactiveIntTest
         };
         Assert.That(reactive.Value, Is.EqualTo(50));
 
-        // Out-of-range values clamp to the nearest bound (osu!framework-style semantics).
         reactive.Value = -1;
         Assert.That(reactive.Value, Is.EqualTo(0), "setting value below min value should clamp to min");
         reactive.Value = 1000;

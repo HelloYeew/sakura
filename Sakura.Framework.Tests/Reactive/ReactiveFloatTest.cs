@@ -1,7 +1,6 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
-using System;
 using System.Globalization;
 using NUnit.Framework;
 using Sakura.Framework.Reactive;
@@ -73,7 +72,6 @@ public class ReactiveFloatTest
         };
         Assert.That(reactive.Value, Is.EqualTo(50));
 
-        // Out-of-range values clamp to the nearest bound (osu!framework-style semantics).
         reactive.Value = -1;
         Assert.That(reactive.Value, Is.EqualTo(0), "setting value below min value should clamp to min");
         reactive.Value = 1000;
