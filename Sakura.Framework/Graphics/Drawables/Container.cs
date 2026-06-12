@@ -71,15 +71,37 @@ public partial class Container : Drawable
     /// </summary>
     public float CornerRadius { get; set; }
 
+    private float borderThickness;
+
     /// <summary>
     /// The thickness of the border when masking.
     /// </summary>
-    public float BorderThickness { get; set; }
+    public float BorderThickness
+    {
+        get => borderThickness;
+        set
+        {
+            if (borderThickness == value) return;
+            borderThickness = value;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+    }
+
+    private Color borderColor = Color.White;
 
     /// <summary>
     /// The color of the border when masking.
     /// </summary>
-    public Color BorderColor { get; set; } = Color.White;
+    public Color BorderColor
+    {
+        get => borderColor;
+        set
+        {
+            if (borderColor == value) return;
+            borderColor = value;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+    }
 
     /// <summary>
     /// Control which axes that this container automatically sized based on its children's sizes.
