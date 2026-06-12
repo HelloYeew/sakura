@@ -83,14 +83,14 @@ public partial class TestBrowserApp : App
         TestScene.IsVisualRunner = true;
         base.Load();
 
-        Child = new SafeAreaContainer()
+        Add(new SafeAreaContainer
         {
             RelativeSizeAxes = Axes.Both,
-            Child = mainContainer = new DrawSizePreservingFillContainer()
+            Child = mainContainer = new DrawSizePreservingFillContainer
             {
                 RelativeSizeAxes = Axes.Both
             }
-        };
+        });
 
         // Build the rate-adjustable clock that drives test content only.
         // InitialClockRate can be set to >1 for headless/CI runs to speed up tests.
