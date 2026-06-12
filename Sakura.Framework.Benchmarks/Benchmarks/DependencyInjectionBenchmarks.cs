@@ -127,11 +127,9 @@ public class DependencyInjectionBenchmarks
     }
 }
 
-// -------------------------------------------------------------------------
 // Benchmark target types. Kept at namespace level so the source generator can
 // process the partial one; the non-partial ones intentionally take the
 // reflection fallback path.
-// -------------------------------------------------------------------------
 
 public class FakeConfigService { }
 
@@ -142,7 +140,9 @@ public class FakeTextureService { }
 /// <summary>
 /// Not partial — the source generator skips it, forcing the reflection fallback.
 /// </summary>
+#pragma warning disable SFDI0001
 public class ReflectionInjectTarget : IDependencyInjectionCandidate
+#pragma warning restore SFDI0001
 {
     [Resolved]
     private FakeConfigService config { get; set; } = null!;
