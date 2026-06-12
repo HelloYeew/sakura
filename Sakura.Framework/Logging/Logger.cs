@@ -284,8 +284,10 @@ public class Logger
 
         message_queue.Enqueue(new LogMessage(DateTime.UtcNow, level, target, message));
 
-        GlobalStatistics.Get<int>("Logger", $"Log {level} Count").Value++;
+        log_count_stats.GetOrAdd(level, static l => GlobalStatistics.Get<int>("Logger", $"Log {l} Count")).Value++;
     }
+
+    private static readonly ConcurrentDictionary<LogLevel, GlobalStatistic<int>> log_count_stats = new ConcurrentDictionary<LogLevel, GlobalStatistic<int>>();
 
     private static async Task processLogQueue(CancellationToken token)
     {
