@@ -247,15 +247,23 @@ public partial class App : Container, IFocusManager, IDisposable
         return base.OnKeyDown(e);
     }
 
+    private bool focusClaimedByClick;
+
+    public bool WasFocusClaimedByLastClick => focusClaimedByClick;
+
+    public void BeginMouseDownFocusTracking() => focusClaimedByClick = false;
+
     public override bool OnMouseDown(MouseButtonEvent e)
     {
+        BeginMouseDownFocusTracking();
+
         bool handled = base.OnMouseDown(e);
 
-        // click empty space to unfocus
-        if (!handled)
-        {
+        // If nothing claimed focus during this click, release whatever was focused.
+        // This correctly handles clicking non-focusable drawables that still consume
+        // the event (labels, backgrounds, decorative containers, etc.).
+        if (!WasFocusClaimedByLastClick)
             ChangeFocus(null);
-        }
 
         return handled;
     }
@@ -264,6 +272,8 @@ public partial class App : Container, IFocusManager, IDisposable
 
     private readonly List<Drawable> focusStack = new();
 
+    public Drawable? FocusedDrawable => focusedDrawable;
+
     private Drawable focusedDrawable { get; set; }
 
     public virtual bool ChangeFocus(Drawable potentialFocusTarget)
@@ -271,7 +281,11 @@ public partial class App : Container, IFocusManager, IDisposable
         var focusedBefore = focusedDrawable;
 
         if (focusedDrawable == potentialFocusTarget)
+        {
+            if (potentialFocusTarget != null)
+                focusClaimedByClick = true;
             return true;
+        }
 
         if (potentialFocusTarget != null && !potentialFocusTarget.AcceptsFocus)
             return false;
@@ -324,6 +338,7 @@ public partial class App : Container, IFocusManager, IDisposable
 
         focusedDrawable.HasFocus = true;
         focusedDrawable.OnFocus(new FocusEvent());
+        focusClaimedByClick = true;
 
         Logger.Verbose($"Focus changed from {focusedBefore?.ToString() ?? "null"} to {focusedDrawable?.ToString() ?? "null"}");
         return true;

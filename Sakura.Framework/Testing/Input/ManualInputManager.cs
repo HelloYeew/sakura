@@ -103,9 +103,13 @@ public partial class ManualInputManager : Container
     /// </summary>
     public void DoubleClick(MouseButton button)
     {
-        // Send the event with '2' for the click count
+        var focusManager = GetContainingFocusManager();
+
         currentMouseState.SetPressed(button, true);
+        focusManager?.BeginMouseDownFocusTracking();
         base.OnMouseDown(new MouseButtonEvent(currentMouseState, button, 2));
+        if (focusManager != null && !focusManager.WasFocusClaimedByLastClick)
+            focusManager.ChangeFocus(null);
 
         currentMouseState.SetPressed(button, false);
         base.OnMouseUp(new MouseButtonEvent(currentMouseState, button, 2));
@@ -149,7 +153,17 @@ public partial class ManualInputManager : Container
     public void PressButton(MouseButton button)
     {
         currentMouseState.SetPressed(button, true);
+
+        var focusManager = GetContainingFocusManager();
+
+        // Begin focus tracking so we can detect whether a focusable claimed focus.
+        focusManager?.BeginMouseDownFocusTracking();
+
         base.OnMouseDown(new MouseButtonEvent(currentMouseState, button, 1));
+
+        // If nothing claimed focus during this click, clear focus — same logic as App.OnMouseDown.
+        if (focusManager != null && !focusManager.WasFocusClaimedByLastClick)
+            focusManager.ChangeFocus(null);
     }
 
     /// <summary>

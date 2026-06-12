@@ -92,6 +92,120 @@ public partial class TestBasicSliderBar : ManualInputManagerTestScene
     }
 
     [Test]
+    public void TestFocusOnClick()
+    {
+        AddStep("Click slider", () =>
+        {
+            InputManager.MoveMouseTo(slider);
+            InputManager.Click(MouseButton.Left);
+        });
+        AddAssert("Slider has focus", () => slider.HasFocus);
+    }
+
+    [Test]
+    public void TestClickElsewhereUnfocuses()
+    {
+        AddStep("Click slider to focus", () =>
+        {
+            InputManager.MoveMouseTo(slider);
+            InputManager.Click(MouseButton.Left);
+        });
+        AddAssert("Slider has focus", () => slider.HasFocus);
+
+        AddStep("Click outside slider", () =>
+        {
+            InputManager.MoveMouseTo(new Vector2(10, 10));
+            InputManager.Click(MouseButton.Left);
+        });
+        AddAssert("Slider lost focus", () => !slider.HasFocus);
+    }
+
+    [Test]
+    public void TestArrowKeyNavigation()
+    {
+        AddStep("Click slider to focus", () =>
+        {
+            InputManager.MoveMouseTo(slider);
+            InputManager.Click(MouseButton.Left);
+        });
+        AddStep("Set initial value to 50", () => slider.Current.Value = 50f);
+
+        AddStep("Press Right arrow", () => InputManager.PressKey(Key.Right));
+        AddAssert("Value increased by 1%", () => Precision.AlmostEquals(slider.Current.Value, 51f, 0.1f));
+
+        AddStep("Press Left arrow", () => InputManager.PressKey(Key.Left));
+        AddAssert("Value decreased back to 50", () => Precision.AlmostEquals(slider.Current.Value, 50f, 0.1f));
+
+        AddStep("Press Up arrow", () => InputManager.PressKey(Key.Up));
+        AddAssert("Up arrow increases value", () => Precision.AlmostEquals(slider.Current.Value, 51f, 0.1f));
+
+        AddStep("Press Down arrow", () => InputManager.PressKey(Key.Down));
+        AddAssert("Down arrow decreases value", () => Precision.AlmostEquals(slider.Current.Value, 50f, 0.1f));
+    }
+
+    [Test]
+    public void TestCtrlArrowLargeStep()
+    {
+        AddStep("Click slider to focus", () =>
+        {
+            InputManager.MoveMouseTo(slider);
+            InputManager.Click(MouseButton.Left);
+        });
+        AddStep("Set initial value to 50", () => slider.Current.Value = 50f);
+
+        AddStep("Press Ctrl+Right", () => InputManager.PressKey(Key.Right, KeyModifiers.Control));
+        AddAssert("Value jumped by 10%", () => Precision.AlmostEquals(slider.Current.Value, 60f, 0.1f));
+
+        AddStep("Press Ctrl+Left", () => InputManager.PressKey(Key.Left, KeyModifiers.Control));
+        AddAssert("Value jumped back by 10%", () => Precision.AlmostEquals(slider.Current.Value, 50f, 0.1f));
+    }
+
+    [Test]
+    public void TestHomeAndEndKeys()
+    {
+        AddStep("Click slider to focus", () =>
+        {
+            InputManager.MoveMouseTo(slider);
+            InputManager.Click(MouseButton.Left);
+        });
+        AddStep("Set initial value to 50", () => slider.Current.Value = 50f);
+
+        AddStep("Press End", () => InputManager.PressKey(Key.End));
+        AddAssert("Value is max", () => slider.Current.Value == slider.MaxValue);
+
+        AddStep("Press Home", () => InputManager.PressKey(Key.Home));
+        AddAssert("Value is min", () => slider.Current.Value == slider.MinValue);
+    }
+
+    [Test]
+    public void TestArrowKeysClampsAtBounds()
+    {
+        AddStep("Click slider to focus", () =>
+        {
+            InputManager.MoveMouseTo(slider);
+            InputManager.Click(MouseButton.Left);
+        });
+
+        AddStep("Set value to max", () => slider.Current.Value = slider.MaxValue);
+        AddStep("Press Right at max", () => InputManager.PressKey(Key.Right));
+        AddAssert("Value stays at max", () => slider.Current.Value == slider.MaxValue);
+
+        AddStep("Set value to min", () => slider.Current.Value = slider.MinValue);
+        AddStep("Press Left at min", () => InputManager.PressKey(Key.Left));
+        AddAssert("Value stays at min", () => slider.Current.Value == slider.MinValue);
+    }
+
+    [Test]
+    public void TestKeyboardNotActiveWithoutFocus()
+    {
+        AddStep("Set value to 50", () => slider.Current.Value = 50f);
+        AddAssert("Slider has no focus", () => !slider.HasFocus);
+
+        AddStep("Press Right without focus", () => InputManager.PressKey(Key.Right));
+        AddAssert("Value unchanged without focus", () => Precision.AlmostEquals(slider.Current.Value, 50f, 0.01f));
+    }
+
+    [Test]
     public void TestSetSliderReactive()
     {
         AddStep("Set slider value to 75", () => slider.Current.Value = 75f);

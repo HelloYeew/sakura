@@ -276,6 +276,86 @@ public partial class TestBasicTextBox : ManualInputManagerTestScene
     }
 
     [Test]
+    public void TestClickElsewhereUnfocuses()
+    {
+        AddStep("Focus textbox", () =>
+        {
+            InputManager.MoveMouseTo(textBox);
+            InputManager.Click(MouseButton.Left);
+        });
+        AddAssert("Textbox has focus", () => textBox.HasFocus);
+
+        AddStep("Click outside textbox", () =>
+        {
+            InputManager.MoveMouseTo(new Vector2(10, 10));
+            InputManager.Click(MouseButton.Left);
+        });
+        AddAssert("Textbox lost focus", () => !textBox.HasFocus);
+    }
+
+    [Test]
+    public void TestClickingTextBoxAgainKeepsFocus()
+    {
+        AddStep("Focus textbox", () =>
+        {
+            InputManager.MoveMouseTo(textBox);
+            InputManager.Click(MouseButton.Left);
+        });
+        AddAssert("Textbox has focus", () => textBox.HasFocus);
+
+        AddStep("Click textbox again", () => InputManager.Click(MouseButton.Left));
+        AddAssert("Textbox still has focus", () => textBox.HasFocus);
+    }
+
+    [Test]
+    public void TestEscapeUnfocuses()
+    {
+        AddStep("Focus textbox", () =>
+        {
+            InputManager.MoveMouseTo(textBox);
+            InputManager.Click(MouseButton.Left);
+        });
+        AddAssert("Textbox has focus", () => textBox.HasFocus);
+
+        AddStep("Press Escape", () => InputManager.PressKey(Key.Escape));
+        AddAssert("Textbox lost focus", () => !textBox.HasFocus);
+    }
+
+    [Test]
+    public void TestFocusTransferBetweenTwoTextBoxes()
+    {
+        BasicTextBox secondBox = null!;
+
+        AddStep("Add second textbox", () =>
+        {
+            TestContent.Add(secondBox = new BasicTextBox
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Position = new Vector2(0, 60),
+                Width = 300,
+                Height = 40
+            });
+        });
+
+        AddStep("Focus first textbox", () =>
+        {
+            InputManager.MoveMouseTo(textBox);
+            InputManager.Click(MouseButton.Left);
+        });
+        AddAssert("First textbox focused", () => textBox.HasFocus);
+        AddAssert("Second textbox not focused", () => !secondBox.HasFocus);
+
+        AddStep("Click second textbox", () =>
+        {
+            InputManager.MoveMouseTo(secondBox);
+            InputManager.Click(MouseButton.Left);
+        });
+        AddAssert("First textbox lost focus", () => !textBox.HasFocus);
+        AddAssert("Second textbox gained focus", () => secondBox.HasFocus);
+    }
+
+    [Test]
     public void TestEmptyCopyDoesNotClobberClipboard()
     {
         AddStep("Focus and type", () =>
