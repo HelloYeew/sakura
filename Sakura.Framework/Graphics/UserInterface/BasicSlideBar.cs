@@ -14,12 +14,20 @@ public partial class BasicSliderBar<T> : SliderBar<T> where T : struct, INumber<
     public Color BackgroundColor { get; set; } = Color.DarkGreen;
     public Color SelectionColor { get; set; } = Color.LimeGreen;
 
+    /// <summary>
+    /// Color of the focus ring.
+    /// </summary>
+    public Color FocusColor { get; set; } = Color.GreenYellow;
+
     private readonly Box background;
     private readonly Box selection;
 
     public BasicSliderBar()
     {
         Size = new Vector2(200, 20);
+        Masking = true;
+        BorderThickness = 2;
+        BorderColor = Color.Transparent;
 
         Children = new Drawable[]
         {
@@ -39,4 +47,8 @@ public partial class BasicSliderBar<T> : SliderBar<T> where T : struct, INumber<
     }
 
     protected override void OnValueChanged(T value) => selection.Size = new Vector2(GetFillFraction(), 1);
+
+    protected override void OnFocusGained() => BorderColor = FocusColor;
+
+    protected override void OnFocusLost() => BorderColor = Color.Transparent;
 }
