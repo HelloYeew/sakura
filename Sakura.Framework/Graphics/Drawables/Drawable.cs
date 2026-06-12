@@ -670,7 +670,32 @@ public abstract partial class Drawable : Allocation.IDependencyInjectionCandidat
         DrawRectangle = new RectangleF(minX, minY, maxX - minX, maxY - minY);
     }
 
-    public bool Contains(Vector2 screenSpacePos) => DrawRectangle.Contains(screenSpacePos);
+    public bool Contains(Vector2 screenSpacePos)
+    {
+        // Fast rejection against the screen-space AABB.
+        if (!DrawRectangle.Contains(screenSpacePos))
+            return false;
+
+        // The AABB over-covers rotated/sheared drawables (including children of rotated
+        // ancestors), so confirm via the exact inverse transform into local 0..1 space.
+        // For axis-aligned drawables the local test passes trivially.
+        if (Matrix3x2.Invert(ModelMatrix, out var inverse))
+        {
+            var local = Vector2.Transform(screenSpacePos, inverse);
+
+            // Allow half a pixel of leniency so edge coordinates (e.g. X + Width, which the
+            // inclusive AABB accepts) aren't rejected by floating-point error in the
+            // round-trip through the inverse transform.
+            float epsX = DrawSize.X > 0 ? 0.5f / DrawSize.X : 0.001f;
+            float epsY = DrawSize.Y > 0 ? 0.5f / DrawSize.Y : 0.001f;
+
+            return local.X >= -epsX && local.X <= 1 + epsX &&
+                   local.Y >= -epsY && local.Y <= 1 + epsY;
+        }
+
+        // Degenerate (non-invertible) transform: fall back to the AABB result.
+        return true;
+    }
 
     public static Vector2 GetAnchorOriginVector(Anchor anchor)
     {
