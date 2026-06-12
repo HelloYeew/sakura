@@ -27,6 +27,7 @@ namespace Sakura.Framework.Testing;
 
 public partial class TestBrowserApp : App
 {
+    private DrawSizePreservingFillContainer mainContainer;
     private Container testContentContainer;
     private Container testSidebar;
     private Container stepSidebar;
@@ -82,6 +83,15 @@ public partial class TestBrowserApp : App
         TestScene.IsVisualRunner = true;
         base.Load();
 
+        Child = new SafeAreaContainer()
+        {
+            RelativeSizeAxes = Axes.Both,
+            Child = mainContainer = new DrawSizePreservingFillContainer()
+            {
+                RelativeSizeAxes = Axes.Both
+            }
+        };
+
         // Build the rate-adjustable clock that drives test content only.
         // InitialClockRate can be set to >1 for headless/CI runs to speed up tests.
         testClock = new FramedClock(Clock) { Rate = InitialClockRate };
@@ -97,7 +107,7 @@ public partial class TestBrowserApp : App
                 Left = sidebar_width * 2
             }
         };
-        Add(testContentContainer);
+        mainContainer.Add(testContentContainer);
 
         // Top header
         headerContainer = new Container
@@ -225,7 +235,7 @@ public partial class TestBrowserApp : App
         };
 
         headerContainer.Add(headerFlow);
-        Add(headerContainer);
+        mainContainer.Add(headerContainer);
 
         // Left Sidebar (List of Tests)
         testSidebar = new Container
@@ -299,7 +309,7 @@ public partial class TestBrowserApp : App
         leftScroll.Add(testListFlow);
         scrollWrapper.Add(leftScroll);
         testSidebar.Add(scrollWrapper);
-        Add(testSidebar);
+        mainContainer.Add(testSidebar);
 
         stepSidebar = new Container
         {
@@ -346,7 +356,7 @@ public partial class TestBrowserApp : App
 
         stepScrollContainer.Add(stepsFlow);
         stepSidebar.Add(stepScrollContainer);
-        Add(stepSidebar);
+        mainContainer.Add(stepSidebar);
 
         hotReloadText = new SpriteText
         {
@@ -357,7 +367,7 @@ public partial class TestBrowserApp : App
             Depth = float.MaxValue,
             Alpha = 0
         };
-        Add(hotReloadText);
+        mainContainer.Add(hotReloadText);
 
         loadTestClasses();
 
