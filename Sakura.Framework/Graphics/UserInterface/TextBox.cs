@@ -58,6 +58,12 @@ public abstract partial class TextBox : Container
     private int selectionStart;
     private bool shiftHeld;
 
+    /// <summary>
+    /// True while an IME composition is in progress (SDL_TEXTEDITING received with non-empty text).
+    /// Enter/Escape are suppressed during composition so they don't accidentally commit or close the text box.
+    /// </summary>
+    private bool isComposing;
+
     [Resolved]
     private IWindow window { get; set; } = null!;
 
@@ -266,6 +272,7 @@ public abstract partial class TextBox : Container
 
         OnFocusLost();
 
+        isComposing = false;
         SelectionBox.Hide();
         ImeText.Text = "";
         selectionStart = caretIndex;
@@ -368,12 +375,21 @@ public abstract partial class TextBox : Container
 
         if (e.Key == Key.Escape)
         {
+            // During IME composition, Escape cancels the composition; SDL handles it and
+            // fires an empty TextEditing event, so we just absorb the key here.
+            if (isComposing) return true;
+
             GetContainingFocusManager()?.ChangeFocus(null);
             return true;
         }
 
         if (e.Key == Key.Enter || e.Key == Key.KeypadEnter)
         {
+            // Enter while composing confirms the candidate inside the IME popup.
+            // SDL will fire SDL_TEXTINPUT with the chosen text, so we must not also
+            // treat this as a text-box commit — just absorb the key.
+            if (isComposing) return true;
+
             OnCommit?.Invoke(Text.Value);
             if (ReleaseFocusOnCommit)
                 GetContainingFocusManager()?.ChangeFocus(null);
@@ -585,6 +601,9 @@ public abstract partial class TextBox : Container
     public override bool OnTextInput(TextInputEvent e)
     {
         if (!HasFocus) return false;
+
+        // Composition is confirmed — clear the IME overlay and insert the final text.
+        isComposing = false;
         ImeText.Text = "";
         insertTextAtCaret(e.Text);
         return true;
@@ -593,6 +612,9 @@ public abstract partial class TextBox : Container
     public override bool OnTextEditing(TextEditingEvent e)
     {
         if (!HasFocus) return false;
+
+        // An empty editing event signals that the composition was cancelled.
+        isComposing = !string.IsNullOrEmpty(e.Text);
         ImeText.Text = e.Text;
         Invalidate(InvalidationFlags.DrawInfo);
         return true;
