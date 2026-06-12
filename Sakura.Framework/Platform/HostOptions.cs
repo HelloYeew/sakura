@@ -23,4 +23,13 @@ public class HostOptions
     /// when the game is running with an unlimited update rate.
     /// </summary>
     public bool LimitUnlimitedUpdateRate { get; set; } = true;
+
+    /// <summary>
+    /// Whether frame-pacing threads may busy-spin for the last ~0.5ms of each frame to land
+    /// exactly on their deadline. This gives the most precise frame timing on desktop, at the
+    /// cost of constant CPU usage. Disable on battery-constrained targets (e.g. mobile) to
+    /// trade sub-millisecond pacing jitter for power savings. Spinning is automatically
+    /// suspended while the window is inactive regardless of this setting.
+    /// </summary>
+    public bool AllowThreadSpinning { get; set; } = true;
 }

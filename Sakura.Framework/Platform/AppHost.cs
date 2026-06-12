@@ -31,6 +31,8 @@ namespace Sakura.Framework.Platform;
 
 public abstract class AppHost : IDisposable
 {
+    private static readonly int frame_sync_value_count = Enum.GetValues<FrameSync>().Length;
+
     private static readonly GlobalStatistic<int> stat_gc_gen0 = GlobalStatistics.Get<int>("GC", "Gen 0 Collections");
     private static readonly GlobalStatistic<int> stat_gc_gen1 = GlobalStatistics.Get<int>("GC", "Gen 1 Collections");
     private static readonly GlobalStatistic<int> stat_gc_gen2 = GlobalStatistics.Get<int>("GC", "Gen 2 Collections");
@@ -416,17 +418,24 @@ public abstract class AppHost : IDisposable
             Window.GetPhysicalSize(out int initialPhysicalWidth, out int initialPhysicalHeight);
             onResize(initialPhysicalWidth, initialPhysicalHeight, Window.Width, Window.Height);
 
+            // Precision busy-spinning is only worthwhile while the window is focused (and may
+            // be disabled entirely via HostOptions for battery-constrained targets).
+            Func<bool> usePreciseTiming = () => Options.AllowThreadSpinning && Window?.IsActive != false;
+
             updateThread = new AppThread("UpdateThread", PerformUpdate, getUpdateTargetHz)
             {
-                Priority = ThreadPriority.AboveNormal
+                Priority = ThreadPriority.AboveNormal,
+                UsePreciseTiming = usePreciseTiming
             };
             drawThread = new AppThread("DrawThread", PerformDraw, getDrawTargetHz)
             {
-                Priority = ThreadPriority.Normal
+                Priority = ThreadPriority.Normal,
+                UsePreciseTiming = usePreciseTiming
             };
             audioThread = new AppThread("AudioThread", PerformSoundUpdate, getAudioTargetHz)
             {
-                Priority = ThreadPriority.Highest
+                Priority = ThreadPriority.Highest,
+                UsePreciseTiming = usePreciseTiming
             };
 
             drawThread.OnInitialize = () => Window.MakeCurrent();
@@ -529,8 +538,13 @@ public abstract class AppHost : IDisposable
 
                         double remainingMs = (nextMainFrameTime - now) * msPerTick;
 
+                        // Same spin policy as the app threads: skip precision spinning when
+                        // disabled or while the window is inactive (battery savings).
+                        bool mainPreciseTiming = Options.AllowThreadSpinning && Window?.IsActive != false;
+                        double mainGuardMs = mainPreciseTiming ? main_spin_guard_ms : 0;
+
                         // Coarse phase: give the CPU back to the OS for the bulk of the wait.
-                        double sleepMs = remainingMs - main_spin_guard_ms;
+                        double sleepMs = remainingMs - mainGuardMs;
                         if (sleepMs > 0)
                         {
                             var sleepSpan = TimeSpan.FromMilliseconds(sleepMs);
@@ -541,8 +555,11 @@ public abstract class AppHost : IDisposable
                         // Fine phase: tight bounded spin (~main_spin_guard_ms) to land exactly on the
                         // deadline. Thread.SpinWait issues a CPU pause hint without yielding to sleep,
                         // which would overshoot a sub-millisecond deadline.
-                        while (Stopwatch.GetTimestamp() < nextMainFrameTime)
-                            Thread.SpinWait(1);
+                        if (mainPreciseTiming)
+                        {
+                            while (Stopwatch.GetTimestamp() < nextMainFrameTime)
+                                Thread.SpinWait(1);
+                        }
                     }
                     else
                     {
@@ -591,7 +608,7 @@ public abstract class AppHost : IDisposable
         if (!e.IsRepeat && e.Key == Key.F10 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
             int currentValue = (int)FrameLimiter.Value;
-            int nextValue = (currentValue + 1) % Enum.GetValues(typeof(FrameSync)).Length;
+            int nextValue = (currentValue + 1) % frame_sync_value_count;
             FrameLimiter.Value = (FrameSync)nextValue;
         }
 
