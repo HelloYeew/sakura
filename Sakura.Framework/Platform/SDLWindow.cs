@@ -393,7 +393,7 @@ public class SDLWindow : IWindow
             Logger.Error("Failed to create SDL window: " + SDL_GetError());
             throw new Exception("SDL window creation failed.");
         }
-        
+
         if (relativeMouseMode)
             SDL_SetWindowRelativeMouseMode(window, true);
 
