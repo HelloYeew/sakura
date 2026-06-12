@@ -117,10 +117,17 @@ public class DecouplingFramedClock : IFrameBasedClock, IAdjustableClock, ISource
         Seek(0);
     }
 
-    public void ProcessFrame()
+    public void ProcessFrame() => ProcessFrame(reference.CurrentTime);
+
+    /// <summary>
+    /// Processes a frame using an externally captured reference time, allowing a composed
+    /// chain (e.g. <see cref="GameplayClock"/>) to take a single reference snapshot per frame
+    /// and share it across all stages.
+    /// </summary>
+    /// <param name="referenceTime">The current time of this clock's reference, captured once for this frame.</param>
+    internal void ProcessFrame(double referenceTime)
     {
         double lastTime = CurrentTime;
-        double referenceTime = reference.CurrentTime;
         double referenceElapsed = referenceTime - lastReferenceTime;
         lastReferenceTime = referenceTime;
 

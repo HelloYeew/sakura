@@ -68,9 +68,13 @@ public class GameplayClock : IFrameBasedClock, IAdjustableClock
 
     public void ProcessFrame()
     {
-        lastReferenceTime = reference.CurrentTime;
-        decoupled.ProcessFrame();
-        interpolated.ProcessFrame();
+        // One reference snapshot per frame, shared by both stages. This keeps the whole
+        // chain at a single time-source query per frame and guarantees the decoupling and
+        // interpolation stages (and GetTimeAt) all observe the exact same instant.
+        double referenceTime = reference.CurrentTime;
+        lastReferenceTime = referenceTime;
+        decoupled.ProcessFrame(referenceTime);
+        interpolated.ProcessFrame(referenceTime);
     }
 
     /// <summary>

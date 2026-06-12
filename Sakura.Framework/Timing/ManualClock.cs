@@ -8,7 +8,7 @@ namespace Sakura.Framework.Timing;
 /// Useful for deterministic tests, replays and fixed-step simulation: drive any clock chain
 /// (or an entire scene) by assigning <see cref="CurrentTime"/> exact values per step.
 /// </summary>
-public class ManualClock : IClock
+public sealed class ManualClock : IClock
 {
     public double CurrentTime { get; set; }
 
