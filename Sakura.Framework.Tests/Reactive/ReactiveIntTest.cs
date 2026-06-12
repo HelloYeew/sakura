@@ -56,7 +56,11 @@ public class ReactiveIntTest
             Value = 50
         };
         Assert.That(reactive.Value, Is.EqualTo(50));
-        Assert.Throws<ArgumentOutOfRangeException>(() => reactive.Value = -1, "setting value below min value should throw an exception");
-        Assert.Throws<ArgumentOutOfRangeException>(() => reactive.Value = 1000, "setting value above max value should throw an exception");
+
+        // Out-of-range values clamp to the nearest bound (osu!framework-style semantics).
+        reactive.Value = -1;
+        Assert.That(reactive.Value, Is.EqualTo(0), "setting value below min value should clamp to min");
+        reactive.Value = 1000;
+        Assert.That(reactive.Value, Is.EqualTo(100), "setting value above max value should clamp to max");
     }
 }
