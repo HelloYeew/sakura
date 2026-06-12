@@ -4,17 +4,15 @@
 using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Colors;
-using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Graphics.Transforms;
-using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.UserInterface;
 
-public partial class BasicButton : ClickableContainer
+public partial class BasicButton : Button
 {
     private readonly Box background;
     private readonly SpriteText spriteText;
@@ -79,25 +77,11 @@ public partial class BasicButton : ClickableContainer
             }
         };
 
-        Enabled.ValueChanged += enabled =>
-        {
-            background.FadeToColour(enabled.NewValue ? DefaultColor : DefaultColor.Darken(0.5f), 100, Easing.OutQuint);
-        };
     }
 
-    public override bool OnHover(MouseEvent e)
-    {
-        if (!Enabled.Value)
-            return false;
-        background.Color = HoverColor;
-        return base.OnHover(e);
-    }
+    protected override void OnHovered() => background.Color = HoverColor;
 
-    public override bool OnHoverLost(MouseEvent e)
-    {
-        if (!Enabled.Value)
-            return false;
-        background.Color = DefaultColor;
-        return base.OnHoverLost(e);
-    }
+    protected override void OnHoverLost() => background.Color = DefaultColor;
+
+    protected override void OnEnabledChanged(bool enabled) => background.FadeToColour(enabled ? DefaultColor : DefaultColor.Darken(0.5f), 100, Easing.OutQuint);
 }
