@@ -22,9 +22,9 @@ public class ReactiveNumber<T> : Reactive<T>, IReactiveNumber<T>
         precision = DefaultPrecision;
     }
 
-    public event Action<ValueChangedEvent<T>> MinValueChanged = delegate { };
-    public event Action<ValueChangedEvent<T>> MaxValueChanged = delegate { };
-    public event Action<ValueChangedEvent<T>> PrecisionChanged = delegate { };
+    public event Action<ValueChangedEvent<T>> MinValueChanged;
+    public event Action<ValueChangedEvent<T>> MaxValueChanged;
+    public event Action<ValueChangedEvent<T>> PrecisionChanged;
 
     protected T DefaultMinValue => T.MinValue;
 
@@ -58,6 +58,9 @@ public class ReactiveNumber<T> : Reactive<T>, IReactiveNumber<T>
             T oldMinValue = minValue;
             minValue = value;
             TriggerMinValueChanged(oldMinValue, value);
+
+            // Re-apply constraints so the current value respects the new range.
+            setValue(base.Value);
         }
     }
 
@@ -76,6 +79,9 @@ public class ReactiveNumber<T> : Reactive<T>, IReactiveNumber<T>
             T oldMaxValue = maxValue;
             maxValue = value;
             TriggerMaxValueChanged(oldMaxValue, value);
+
+            // Re-apply constraints so the current value respects the new range.
+            setValue(base.Value);
         }
     }
 
@@ -87,10 +93,15 @@ public class ReactiveNumber<T> : Reactive<T>, IReactiveNumber<T>
             if (Disabled || precision.Equals(value))
                 return;
 
-            if (precision <= T.Zero)
+            if (value <= T.Zero)
                 throw new ArgumentOutOfRangeException(nameof(value), "Precision must be greater than zero.");
 
-            TriggerPrecisionChanged(precision, value);
+            T oldPrecision = precision;
+            precision = value;
+            TriggerPrecisionChanged(oldPrecision, value);
+
+            // Re-round the current value onto the new precision step.
+            setValue(base.Value);
         }
     }
 
@@ -102,14 +113,28 @@ public class ReactiveNumber<T> : Reactive<T>, IReactiveNumber<T>
 
     private void setValue(T value)
     {
-        if (value < MinValue || value > MaxValue)
-            throw new ArgumentOutOfRangeException(nameof(value), $"Value must be between {MinValue} and {MaxValue}.");
+        // Out-of-range values are clamped rather than rejected — the behaviour games
+        // generally want for sliders/settings (matching osu!framework's BindableNumber).
+        value = T.Clamp(value, minValue, maxValue);
 
-        if (Precision > DefaultPrecision)
+        if (precision > DefaultPrecision)
         {
-            decimal accurateResult = decimal.CreateTruncating(T.Clamp(value, MinValue, MaxValue));
-            accurateResult = Math.Round(accurateResult / decimal.CreateTruncating(Precision)) * decimal.CreateTruncating(Precision);
-            base.Value = T.CreateTruncating(accurateResult);
+            if (typeof(T) == typeof(decimal))
+            {
+                // Only decimal values need decimal arithmetic for exactness.
+                decimal accurateResult = decimal.CreateTruncating(value);
+                accurateResult = Math.Round(accurateResult / decimal.CreateTruncating(precision)) * decimal.CreateTruncating(precision);
+                base.Value = T.Clamp(T.CreateTruncating(accurateResult), minValue, maxValue);
+            }
+            else
+            {
+                // Double arithmetic is exact for float/integral steps in practical ranges
+                // and an order of magnitude faster than routing through decimal.
+                double doubleResult = double.CreateTruncating(value);
+                double doublePrecision = double.CreateTruncating(precision);
+                doubleResult = Math.Round(doubleResult / doublePrecision) * doublePrecision;
+                base.Value = T.Clamp(T.CreateTruncating(doubleResult), minValue, maxValue);
+            }
         }
         else
         {
@@ -126,17 +151,17 @@ public class ReactiveNumber<T> : Reactive<T>, IReactiveNumber<T>
 
     protected virtual void TriggerMinValueChanged(T oldValue, T newValue)
     {
-        MinValueChanged(new ValueChangedEvent<T>(oldValue, newValue));
+        MinValueChanged?.Invoke(new ValueChangedEvent<T>(oldValue, newValue));
     }
 
     protected virtual void TriggerMaxValueChanged(T oldValue, T newValue)
     {
-        MaxValueChanged(new ValueChangedEvent<T>(oldValue, newValue));
+        MaxValueChanged?.Invoke(new ValueChangedEvent<T>(oldValue, newValue));
     }
 
     protected virtual void TriggerPrecisionChanged(T oldValue, T newValue)
     {
-        PrecisionChanged(new ValueChangedEvent<T>(oldValue, newValue));
+        PrecisionChanged?.Invoke(new ValueChangedEvent<T>(oldValue, newValue));
     }
 
     public bool IsInteger => typeof(T) != typeof(float) && typeof(T) != typeof(double) && typeof(T) != typeof(decimal);
