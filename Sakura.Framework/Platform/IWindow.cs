@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Input;
 using Sakura.Framework.Reactive;
 
@@ -83,6 +84,31 @@ public interface IWindow : IDisposable
     /// Whether the cursor is currently within the window's bounds.
     /// </summary>
     bool CursorInWindow { get; }
+
+    /// <summary>
+    /// Whether the mouse is captured in relative (raw input) mode.
+    /// <para>
+    /// When enabled, the OS cursor is hidden and captured, and mouse motion is reported as
+    /// unaccelerated hardware deltas (bypassing OS pointer ballistics — SDL uses Raw Input /
+    /// evdev / etc. internally). The window maintains a virtual cursor position from these
+    /// deltas scaled by <see cref="CursorSensitivity"/>, clamped to the window bounds.
+    /// This is the recommended mode for cursor-based gameplay.
+    /// </para>
+    /// </summary>
+    bool RelativeMouseMode { get; set; }
+
+    /// <summary>
+    /// Scale applied to raw mouse deltas while <see cref="RelativeMouseMode"/> is active.
+    /// 1.0 = one hardware count per pixel. Has no effect outside relative mode.
+    /// </summary>
+    double CursorSensitivity { get; set; }
+
+    /// <summary>
+    /// The device safe-area insets (notches, rounded corners, system gesture regions) in
+    /// window coordinates. Zero on devices/platforms without an unsafe region.
+    /// Consumed by <see cref="Sakura.Framework.Graphics.Containers.SafeAreaDefiningContainer"/>.
+    /// </summary>
+    Reactive<MarginPadding> SafeAreaPadding { get; }
 
     /// <summary>
     /// The graphic surface associated with this window to render graphics to.

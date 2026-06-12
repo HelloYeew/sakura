@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
@@ -24,6 +25,9 @@ public class HeadlessWindow : IWindow
     public bool CursorVisible { get; set; } = true;
     public Reactive<CursorState> CursorState { get; } = new Reactive<CursorState>(Input.CursorState.Default);
     public bool CursorInWindow { get; } = true;
+    public bool RelativeMouseMode { get; set; }
+    public double CursorSensitivity { get; set; } = 1.0;
+    public Reactive<MarginPadding> SafeAreaPadding { get; } = new Reactive<MarginPadding>(new MarginPadding());
     public IGraphicsSurface GraphicsSurface { get; } = new HeadlessGraphicsSurface();
     private string headlessClipboard = string.Empty;
     public void Initialize()

@@ -15,4 +15,12 @@ public interface IReadOnlyDependencyContainer
     /// <returns>The cached dependency instance.</returns>
     /// <exception cref="System.InvalidOperationException">Thrown when the dependency is not found anywhere in the hierarchy.</exception>
     T Get<T>() where T : class;
+
+    /// <summary>
+    /// Retrieves a dependency of the specified type, or null when it is not cached anywhere
+    /// in the hierarchy. Use for optional dependencies.
+    /// </summary>
+    /// <typeparam name="T">The type of the dependency to retrieve.</typeparam>
+    /// <returns>The cached dependency instance, or null.</returns>
+    T? TryGet<T>() where T : class;
 }

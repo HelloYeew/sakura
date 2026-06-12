@@ -49,6 +49,26 @@ public class DependencyContainer : IReadOnlyDependencyContainer
     }
 
     /// <summary>
+    /// Retrieves a dependency of type <typeparamref name="T"/>, or null when not found.
+    /// Walks up to the parent container if not found locally.
+    /// </summary>
+    public T? TryGet<T>() where T : class
+    {
+        IReadOnlyDependencyContainer? current = this;
+
+        while (current is DependencyContainer dc)
+        {
+            var c = dc.cache;
+            if (c != null && c.TryGetValue(typeof(T), out object? obj))
+                return (T)obj;
+
+            current = dc.parent;
+        }
+
+        return current?.TryGet<T>();
+    }
+
+    /// <summary>
     /// Retrieves a dependency of type <typeparamref name="T"/>.
     /// Walks up to the parent container if not found locally.
     /// </summary>
