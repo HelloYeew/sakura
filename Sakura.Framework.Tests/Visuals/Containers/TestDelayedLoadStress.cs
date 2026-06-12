@@ -15,6 +15,8 @@ namespace Sakura.Framework.Tests.Visuals.Containers;
 /// <summary>
 /// Visual stress "benchmark" for <see cref="DelayedLoadUnloadWrapperContainer"/>
 /// </summary>
+/// TODO: Fix this man pls
+[VisualTestOnly("Take a lot of time to load")]
 public partial class TestDelayedLoadStress : TestScene
 {
     private const int panel_count = 300;

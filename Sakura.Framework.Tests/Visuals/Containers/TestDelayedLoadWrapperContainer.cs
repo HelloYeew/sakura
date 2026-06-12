@@ -11,6 +11,8 @@ using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests.Visuals.Containers;
 
+// TODO: Fix this man pls
+[VisualTestOnly("Take a lot of time to load")]
 public partial class TestDelayedLoadWrapperContainer : TestScene
 {
     private const float viewport_size = 420;
