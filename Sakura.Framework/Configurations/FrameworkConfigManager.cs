@@ -18,7 +18,7 @@ public class FrameworkConfigManager : ConfigManager<FrameworkSetting>
     {
         Get(FrameworkSetting.FrameLimiter, FrameSync.Limit2x);
         Get(FrameworkSetting.ShowFpsGraph, PerformanceOverlayState.Hidden);
-        Get(FrameworkSetting.ExecutionMode, ExecutionMode.SingleThread);
+        Get(FrameworkSetting.ExecutionMode, ExecutionMode.MultiThread);
         Get(FrameworkSetting.MasterVolume, 1.0);
         Get(FrameworkSetting.TrackVolume, 1.0);
         Get(FrameworkSetting.SampleVolume, 1.0);
