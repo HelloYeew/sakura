@@ -1,0 +1,80 @@
+name: Publish Sakura.Framework.Templates to NuGet
+
+on:
+  workflow_dispatch:
+    inputs:
+      patch:
+        description: 'Patch number (the last segment of YYYY.MMDD.patch)'
+        required: false
+        default: '0'
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    name: Pack and Publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Compute CalVer version
+        id: version
+        run: |
+          YEAR=$(TZ='Asia/Bangkok' date +'%Y')
+          MM=$(TZ='Asia/Bangkok' date +'%-m')
+          DD=$(TZ='Asia/Bangkok' date +'%d')
+          PATCH=${{ github.event.inputs.patch }}
+          VERSION="${YEAR}.${MM}${DD}.${PATCH}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Pack Sakura.Framework.Templates
+        run: |
+          dotnet pack Sakura.Framework.Templates/Sakura.Framework.Templates.csproj \
+            --configuration Release \
+            -p:Version=${{ steps.version.outputs.version }} \
+            --output ./nupkg
+
+      - name: NuGet login (Trusted Publishing)
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Publish to nuget.org
+        run: |
+          dotnet nuget push ./nupkg/*.nupkg \
+            --api-key ${{ steps.login.outputs.NUGET_API_KEY }} \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate
+
+      - name: Tag release
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag templates-${{ steps.version.outputs.version }}
+          git push origin templates-${{ steps.version.outputs.version }}
+
+      - name: Create GitHub Release (draft)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create templates-${{ steps.version.outputs.version }} \
+            ./nupkg/*.nupkg \
+            --title "Sakura.Framework.Templates ${{ steps.version.outputs.version }}" \
+            --draft \
+            --generate-notes
+
+      - name: Upload nupkg artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: nupkg
+          path: ./nupkg/*.nupkg

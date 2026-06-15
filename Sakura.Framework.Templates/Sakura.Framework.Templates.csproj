@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageType>Template</PackageType>
+    <PackageId>Sakura.Framework.Templates</PackageId>
+    <Title>Sakura Framework Templates</Title>
+    <Description>Project templates for creating apps and games with the Sakura Framework.</Description>
+    <Authors>HelloYeew</Authors>
+    <PackageTags>sakura;framework;game;graphics;template;dotnet-new</PackageTags>
+    <PackageProjectUrl>https://github.com/HelloYeew/sakura</PackageProjectUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageIcon>icon.png</PackageIcon>
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- No build output — this is a template-only package -->
+    <IncludeContentInPack>true</IncludeContentInPack>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <ContentTargetFolders>content</ContentTargetFolders>
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Content Include="templates\**\*" Exclude="templates\**\bin\**;templates\**\obj\**" />
+    <None Include="..\icon.png" Pack="true" PackagePath="\" />
+  </ItemGroup>
+</Project>
