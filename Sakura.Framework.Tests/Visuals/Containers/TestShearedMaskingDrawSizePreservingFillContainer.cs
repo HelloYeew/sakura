@@ -4,19 +4,35 @@
 using NUnit.Framework;
 using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Graphics.Colors;
+using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Testing;
 
-namespace Sakura.Framework.Tests.Visuals.Drawables;
+namespace Sakura.Framework.Tests.Visuals.Containers;
 
-public partial class TestShearedMasking : TestScene
+public partial class TestShearedMaskingDrawSizePreservingFillContainer : TestScene
 {
+    private DrawSizePreservingFillContainer mainContainer = null!;
+
     [SetUp]
     public void SetUp()
     {
         AddStep("Clear screen", Clear);
+        AddStep("Add draw preserved container", () =>
+        {
+            mainContainer = new DrawSizePreservingFillContainer()
+            {
+                RelativeSizeAxes = Axes.Both,
+                Child = new Box
+                {
+                    RelativeSizeAxes = Axes.Both,
+                    Color = Color.LightGreen
+                }
+            };
+            Add(mainContainer);
+        });
     }
 
     [Test]
@@ -24,11 +40,11 @@ public partial class TestShearedMasking : TestScene
     {
         AddStep("Add sheared rounded container", () =>
         {
-            Add(new Container
+            mainContainer.Add(new Container
             {
                 Anchor = Anchor.Centre,
                 Origin = Anchor.Centre,
-                Size = new Vector2(300, 100),
+                Size = new Vector2(700, 300),
                 Shear = new Vector2(0.5f, 0),
                 Masking = true,
                 CornerRadius = 30,
@@ -42,6 +58,7 @@ public partial class TestShearedMasking : TestScene
                 }
             });
         });
+        addMainContainerSliderStep();
     }
 
     [Test]
@@ -49,11 +66,11 @@ public partial class TestShearedMasking : TestScene
     {
         AddStep("Add sheared container with border", () =>
         {
-            Add(new Container
+            mainContainer.Add(new Container
             {
                 Anchor = Anchor.Centre,
                 Origin = Anchor.Centre,
-                Size = new Vector2(300, 100),
+                Size = new Vector2(700, 300),
                 Shear = new Vector2(-0.5f, 0),
                 Masking = true,
                 CornerRadius = 30,
@@ -69,6 +86,7 @@ public partial class TestShearedMasking : TestScene
                 }
             });
         });
+        addMainContainerSliderStep();
     }
 
     [Test]
@@ -76,15 +94,16 @@ public partial class TestShearedMasking : TestScene
     {
         AddStep("Add sheared circle", () =>
         {
-            Add(new Circle
+            mainContainer.Add(new Circle
             {
                 Anchor = Anchor.Centre,
                 Origin = Anchor.Centre,
-                Size = new Vector2(200, 200),
+                Size = new Vector2(400, 400),
                 Shear = new Vector2(0.4f, 0),
                 Color = Color.MediumPurple
             });
         });
+        addMainContainerSliderStep();
     }
 
     [Test]
@@ -92,11 +111,11 @@ public partial class TestShearedMasking : TestScene
     {
         AddStep("Add sheared mask with overflowing child", () =>
         {
-            Add(new Container
+            mainContainer.Add(new Container
             {
                 Anchor = Anchor.Centre,
                 Origin = Anchor.Centre,
-                Size = new Vector2(300, 100),
+                Size = new Vector2(700, 300),
                 Shear = new Vector2(0.5f, 0),
                 Masking = true,
                 CornerRadius = 25,
@@ -111,11 +130,25 @@ public partial class TestShearedMasking : TestScene
                     {
                         Anchor = Anchor.Centre,
                         Origin = Anchor.Centre,
-                        Size = new Vector2(400, 50),
+                        RelativeSizeAxes = Axes.Both,
+                        Size = new Vector2(1.5f, 0.5f),
                         Color = Color.LightGreen
                     }
                 }
             });
+        });
+        addMainContainerSliderStep();
+    }
+
+    private void addMainContainerSliderStep()
+    {
+        AddSliderStep("Width", 0, 1920, 800, width => mainContainer.TargetDrawSize = mainContainer.TargetDrawSize with
+        {
+            X = width
+        });
+        AddSliderStep("Height", 0, 1080, 600, height => mainContainer.TargetDrawSize = mainContainer.TargetDrawSize with
+        {
+            Y = height
         });
     }
 }
