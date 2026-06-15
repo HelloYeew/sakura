@@ -19,5 +19,7 @@
   <ItemGroup>
     <Content Include="templates\**\*" Exclude="templates\**\bin\**;templates\**\obj\**" />
     <None Include="..\icon.png" Pack="true" PackagePath="\" />
+    <!-- Prevent the SDK from compiling template source files as part of this project -->
+    <Compile Remove="templates\**\*.cs" />
   </ItemGroup>
 </Project>

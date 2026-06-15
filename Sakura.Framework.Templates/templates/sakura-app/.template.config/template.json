@@ -39,17 +39,8 @@
     }
   },
   "primaryOutputs": [
+    { "path": "MyApp.sln" },
     { "path": "MyApp/MyAppApp.cs" },
     { "path": "MyApp.Desktop/Program.cs" }
-  ],
-  "postActions": [
-    {
-      "id": "restore",
-      "condition": "(!skipRestore)",
-      "description": "Restore NuGet packages",
-      "manualInstructions": [{ "text": "Run 'dotnet restore'" }],
-      "actionId": "210D431B-A78B-4D2F-B762-4DC3F3AE5B97",
-      "continueOnError": true
-    }
   ]
 }

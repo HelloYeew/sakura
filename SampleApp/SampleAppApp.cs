@@ -9,7 +9,7 @@ using Sakura.Framework.Maths;
 
 namespace SampleApp;
 
-public class SampleAppApp : App
+public partial class SampleAppApp : App
 {
     private Box box = null!;
 
