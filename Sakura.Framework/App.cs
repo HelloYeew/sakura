@@ -5,6 +5,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using Sakura.Framework.Audio;
 using Sakura.Framework.Audio.BassEngine;
@@ -55,7 +56,16 @@ public partial class App : Container, IFocusManager, IDisposable
     /// </summary>
     protected virtual string ResourceRootNamespace => $"{GetType().Namespace}.Resources";
 
-    internal void SetHost(AppHost host) => Host = host;
+    /// <summary>
+    /// Additional resource assemblies to merge with the primary <see cref="ResourceAssembly"/>.
+    /// Each entry is an (Assembly, rootNamespace) pair. Resources from all assemblies are
+    /// searched in order. Mainly for override your test app to include both game resources
+    /// and test-specific resources.
+    /// </summary>
+    protected virtual IEnumerable<(Assembly Assembly, string RootNamespace)> AdditionalResourceAssemblies
+        => Array.Empty<(Assembly, string)>();
+
+    public void SetHost(AppHost host) => Host = host;
 
     private DrawVisualiser drawVisualiser;
     private GlobalStatisticsDisplay globalStatisticsDisplay;
@@ -83,7 +93,13 @@ public partial class App : Container, IFocusManager, IDisposable
 
         Cache(AudioManager);
 
-        var embeddedResourceStorage = new EmbeddedResourceStorage(ResourceAssembly, ResourceRootNamespace);
+        var primaryStorage = new EmbeddedResourceStorage(ResourceAssembly, ResourceRootNamespace);
+        var additionalStorages = AdditionalResourceAssemblies
+            .Select(e => (Storage)new EmbeddedResourceStorage(e.Assembly, e.RootNamespace))
+            .ToList();
+        Storage embeddedResourceStorage = additionalStorages.Count == 0
+            ? primaryStorage
+            : new CompositeStorage([primaryStorage, ..additionalStorages]);
 
         TrackStore = new TrackStore(embeddedResourceStorage.GetStorageForDirectory("Tracks"), AudioManager);
         SampleStore = new SampleStore(embeddedResourceStorage.GetStorageForDirectory("Samples"), AudioManager);
