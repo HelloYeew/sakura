@@ -56,23 +56,6 @@ jobs:
             --source https://api.nuget.org/v3/index.json \
             --skip-duplicate
 
-      - name: Tag release
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag templates-${{ steps.version.outputs.version }}
-          git push origin templates-${{ steps.version.outputs.version }}
-
-      - name: Create GitHub Release (draft)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create templates-${{ steps.version.outputs.version }} \
-            ./nupkg/*.nupkg \
-            --title "Sakura.Framework.Templates ${{ steps.version.outputs.version }}" \
-            --draft \
-            --generate-notes
-
       - name: Upload nupkg artifact
         uses: actions/upload-artifact@v7
         with:
