@@ -8,6 +8,7 @@ using System.Numerics;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
 using NUnit.Framework;
+using Sakura.Framework.Allocation;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Logging;
@@ -20,6 +21,18 @@ namespace Sakura.Framework.Testing;
 [TestFixture]
 public abstract partial class TestScene : Container
 {
+    [Resolved]
+    private AppHost host { get; set; }
+
+    /// <summary>
+    /// Adds an <see cref="App"/> to this test scene
+    /// </summary>
+    protected void AddApp(App app)
+    {
+        app.SetHost(host);
+        Add(app);
+    }
+
     /// <summary>
     /// Tells the TestScene to bypass spinning up a headless host because the visual is running it.
     /// </summary>
