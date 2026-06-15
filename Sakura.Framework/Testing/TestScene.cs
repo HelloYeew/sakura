@@ -27,10 +27,10 @@ public abstract partial class TestScene : Container
     /// <summary>
     /// Adds an <see cref="App"/> to this test scene
     /// </summary>
-    protected void AddApp(App game)
+    protected void AddApp(App app)
     {
-        game.SetHost(host);
-        Add(game);
+        app.SetHost(host);
+        Add(app);
     }
 
     /// <summary>
