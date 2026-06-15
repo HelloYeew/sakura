@@ -4,7 +4,7 @@
   "classifications": ["Game", "Desktop", "Graphics"],
   "identity": "Sakura.Framework.Templates.SakuraApp",
   "name": "Sakura Framework App",
-  "description": "A cross-platform game/app project using the Sakura Framework.",
+  "description": "A cross-platform game/app project using Sakura Framework.",
   "shortName": "sakura",
   "sourceName": "MyApp",
   "preferNameDirectory": true,

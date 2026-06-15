@@ -9,7 +9,7 @@ class Program
     [STAThread]
     static void Main(string[] args)
     {
-        using (AppHost host = new DesktopAppHost("my-game", new HostOptions()))
+        using (AppHost host = new DesktopAppHost("my-app", new HostOptions()))
         using (App app = new MyAppApp())
             host.Run(app);
     }
