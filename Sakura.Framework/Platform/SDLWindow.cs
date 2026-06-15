@@ -51,6 +51,7 @@ public class SDLWindow : IWindow
     private string title = "Window";
     private string applicationName = "Sakura Framework App";
     private bool resizable = true;
+    private Vector2 minimumSize = new Vector2(800, 600);
     private int currentWidth;
     private int currentHeight;
     private int logicalWidth;
@@ -111,6 +112,19 @@ public class SDLWindow : IWindow
 
     public int Width => logicalWidth;
     public int Height => logicalHeight;
+
+    /// <summary>
+    /// The minimum size of the window, in pixels.
+    /// </summary>
+    public Vector2 MinimumSize
+    {
+        get => minimumSize;
+        set
+        {
+            minimumSize = value;
+            applyMinimumSize();
+        }
+    }
 
     public bool CursorInWindow { get; private set; }
     public IGraphicsSurface GraphicsSurface => activeSurface;
@@ -176,6 +190,12 @@ public class SDLWindow : IWindow
             Right = Math.Max(0, windowW - (safeRect.x + safeRect.w)),
             Bottom = Math.Max(0, windowH - (safeRect.y + safeRect.h)),
         };
+    }
+
+    private unsafe void applyMinimumSize()
+    {
+        if (window == null) return;
+        SDL_SetWindowMinimumSize(window, (int)minimumSize.X, (int)minimumSize.Y);
     }
 
     private unsafe void applyRelativeMouseMode()
@@ -393,6 +413,8 @@ public class SDLWindow : IWindow
             Logger.Error("Failed to create SDL window: " + SDL_GetError());
             throw new Exception("SDL window creation failed.");
         }
+
+        applyMinimumSize();
 
         if (relativeMouseMode)
             SDL_SetWindowRelativeMouseMode(window, true);
