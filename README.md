@@ -1,10 +1,19 @@
-# 🌸🗡️ Sakura Framework
+![Icon](icon.png)
+
+# Sakura Framework
 
 [![NuGet](https://img.shields.io/nuget/v/Sakura.Framework)](https://www.nuget.org/packages/Sakura.Framework/)
 
 A graphic framework and set of toolkits for making basic UI application and 2D game (right now) target to support as many platforms as possible. Backed by .NET.
 
 ## Use this framework
+
+Use our template to quickly create a new project
+
+```shell
+dotnet new install Sakura.Framework.Templates
+dotnet new sakura -n MyAwesomeGame
+```
 
 See [sample app repository](https://github.com/HelloYeew/sakura-sample-app) for example.
 

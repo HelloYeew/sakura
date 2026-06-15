@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "HelloYeew",
+  "classifications": ["Game", "Desktop", "Graphics"],
+  "identity": "Sakura.Framework.Templates.SakuraApp",
+  "name": "Sakura Framework App",
+  "description": "A cross-platform game/app project using Sakura Framework.",
+  "shortName": "sakura",
+  "sourceName": "MyApp",
+  "preferNameDirectory": true,
+  "tags": {
+    "language": "C#",
+    "type": "solution"
+  },
+  "symbols": {
+    "Framework": {
+      "type": "parameter",
+      "description": "The target framework for the project.",
+      "datatype": "choice",
+      "choices": [
+        { "choice": "net10.0", "description": ".NET 10" }
+      ],
+      "defaultValue": "net10.0",
+      "replaces": "net10.0"
+    },
+    "FrameworkVersion": {
+      "type": "parameter",
+      "description": "The Sakura.Framework NuGet version to reference.",
+      "datatype": "string",
+      "defaultValue": "*-*",
+      "replaces": "*-*"
+    },
+    "skipRestore": {
+      "type": "parameter",
+      "datatype": "bool",
+      "description": "If true, skips the automatic restore of the project on create.",
+      "defaultValue": "false",
+      "displayName": "Skip restore"
+    }
+  },
+  "primaryOutputs": [
+    { "path": "MyApp.sln" },
+    { "path": "MyApp/MyAppApp.cs" },
+    { "path": "MyApp.Desktop/Program.cs" }
+  ]
+}

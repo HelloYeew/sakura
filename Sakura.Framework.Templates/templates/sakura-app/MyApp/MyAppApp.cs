@@ -1,15 +1,12 @@
-﻿// This code is part of the Sakura framework project. Licensed under the MIT License.
-// See the LICENSE file for full license text.
-
 using Sakura.Framework;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Maths;
 
-namespace SampleApp;
+namespace MyApp;
 
-public partial class SampleAppApp : App
+public partial class MyAppApp : App
 {
     private Box box = null!;
 
