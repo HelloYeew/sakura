@@ -44,8 +44,9 @@
     <None Include="..\icon.png" Pack="true" PackagePath="/" />
     <None Remove="SourceGenerated\**" />
     <!-- Bundle the source generator and code fix DLLs so consumers get them automatically -->
-    <None Include="..\Sakura.Framework.SourceGenerators\$(OutputPath)\Sakura.Framework.SourceGenerators.dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
-    <None Include="..\Sakura.Framework.CodeFixes\$(OutputPath)\Sakura.Framework.CodeFixes.dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    <!-- Source generators must target netstandard2.0, so the path is fixed, not $(OutputPath) which would resolve to net10.0 -->
+    <None Include="..\Sakura.Framework.SourceGenerators\bin\$(Configuration)\netstandard2.0\Sakura.Framework.SourceGenerators.dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    <None Include="..\Sakura.Framework.CodeFixes\bin\$(Configuration)\netstandard2.0\Sakura.Framework.CodeFixes.dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
     <!-- Wire up the analyzer via buildtransitive (applies to all consumers transitively) -->
     <None Include="Sakura.Framework.targets" Pack="true" PackagePath="buildtransitive/" />
     <None Include="Sakura.Framework.targets" Pack="true" PackagePath="build/" />

@@ -36,6 +36,11 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Version: $VERSION"
 
+      - name: Build SourceGenerators and CodeFixes
+        run: |
+          dotnet build Sakura.Framework.SourceGenerators/Sakura.Framework.SourceGenerators.csproj --configuration Release
+          dotnet build Sakura.Framework.CodeFixes/Sakura.Framework.CodeFixes.csproj --configuration Release
+
       - name: Pack Sakura.Framework
         run: |
           dotnet pack Sakura.Framework/Sakura.Framework.csproj \
