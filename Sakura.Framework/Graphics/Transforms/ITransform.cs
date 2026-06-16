@@ -8,7 +8,11 @@ namespace Sakura.Framework.Graphics.Transforms;
 public interface ITransform
 {
     double StartTime { get; }
-    double EndTime { get;  }
+    double EndTime { get; }
     bool IsLooping { get; set; }
+    int LoopCount { get; set; }
+    double LoopPause { get; set; }
+    double LoopOrigin { get; set; }
+    bool IsLoopComplete(double time);
     void Apply(Drawable drawable, double time);
 }

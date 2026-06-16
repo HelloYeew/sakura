@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Generic;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Transforms;
@@ -74,6 +75,12 @@ public static class TransformExtensions
     }
 
     /// <summary>
+    /// Moves the drawable by an offset relative to its current position over a duration.
+    /// </summary>
+    public static Drawable MoveToOffset(this Drawable drawable, Vector2 offset, double duration = 0, Easing easing = Easing.None)
+        => drawable.MoveTo(drawable.Position + offset, duration, easing);
+
+    /// <summary>
     /// Resizes the drawable to a specific size over a duration.
     /// </summary>
     public static Drawable ResizeTo(this Drawable drawable, Vector2 newSize, double duration = 0, Easing easing = Easing.None)
@@ -86,6 +93,12 @@ public static class TransformExtensions
         }, duration);
         return drawable;
     }
+
+    /// <summary>
+    /// Resizes the drawable to a uniform size over a duration.
+    /// </summary>
+    public static Drawable ResizeTo(this Drawable drawable, float newSize, double duration = 0, Easing easing = Easing.None)
+        => drawable.ResizeTo(new Vector2(newSize), duration, easing);
 
     /// <summary>
     /// Adjusts the drawable's scale to a specific value over a duration.
@@ -122,6 +135,25 @@ public static class TransformExtensions
     }
 
     /// <summary>
+    /// Begins an infinite continuous spin at the given revolution duration.
+    /// Each call to <see cref="Spin"/> replaces the previous spin transform.
+    /// Pair with <c>.Loop()</c> on a <see cref="TransformSequence{T}"/> or just use directly —
+    /// <c>Spin</c> internally marks itself as looping.
+    /// </summary>
+    /// <param name="revolutionDuration">Duration in ms for one full 360° revolution.</param>
+    /// <param name="direction">Clockwise or counter-clockwise.</param>
+    public static Drawable Spin(this Drawable drawable, double revolutionDuration, RotationDirection direction = RotationDirection.Clockwise)
+    {
+        double duration = direction == RotationDirection.Clockwise ? revolutionDuration : -revolutionDuration;
+        var t = drawable.addTransform(new SpinTransform
+        {
+            RevolutionDuration = Math.Abs(revolutionDuration)
+        }, Math.Abs(revolutionDuration));
+        t.IsLooping = true;
+        return drawable;
+    }
+
+    /// <summary>
     /// Fades the drawable to a specific alpha over a duration.
     /// </summary>
     public static Drawable FadeTo(this Drawable drawable, float newAlpha, double duration = 0, Easing easing = Easing.None)
@@ -146,21 +178,25 @@ public static class TransformExtensions
     public static Drawable FadeOut(this Drawable drawable, double duration = 0, Easing easing = Easing.None) => drawable.FadeTo(0, duration, easing);
 
     /// <summary>
-    /// Fades the drawable from zero alpha to full alpha over a duration.
+    /// Sets alpha to 0 then fades to full alpha over a duration.
     /// </summary>
-    public static Drawable FadeFromZero(this Drawable drawable, double duration = 0, Easing easing = Easing.None)
+    public static Drawable FadeInFromZero(this Drawable drawable, double duration = 0, Easing easing = Easing.None)
     {
         drawable.Alpha = 0;
         return drawable.FadeTo(1, duration, easing);
     }
 
     /// <summary>
+    /// Sets alpha to 0 then fades to full alpha over a duration. Alias for <see cref="FadeInFromZero"/>.
+    /// </summary>
+    public static Drawable FadeFromZero(this Drawable drawable, double duration = 0, Easing easing = Easing.None)
+        => drawable.FadeInFromZero(duration, easing);
+
+    /// <summary>
     /// Fades the drawable to zero alpha over a duration.
     /// </summary>
     public static Drawable FadeToZero(this Drawable drawable, double duration = 0, Easing easing = Easing.None)
-    {
-        return drawable.FadeTo(0, duration, easing);
-    }
+        => drawable.FadeTo(0, duration, easing);
 
     /// <summary>
     /// Instantly flashes the drawable to a specific colour, then fades back to its original colour over a duration.
@@ -189,7 +225,7 @@ public static class TransformExtensions
     }
 
     /// <summary>
-    /// Schedules the next transformation to start after a specified delay from the end of the last transformation.
+    /// Schedules the next transform to start after a delay from the end of the last transform.
     /// </summary>
     public static Drawable Wait(this Drawable drawable, double duration)
     {
@@ -201,16 +237,111 @@ public static class TransformExtensions
     }
 
     /// <summary>
-    /// Schedules the next transformation to start immediately after the last transformation finishes.
+    /// Schedules the next transform to start immediately after the last transform finishes.
+    /// Optionally adds an extra delay after that.
     /// </summary>
-    public static Drawable Then(this Drawable drawable) => drawable.Wait(0);
+    public static Drawable Then(this Drawable drawable, double extraDelay = 0) => drawable.Wait(extraDelay);
 
     /// <summary>
-    /// Loop the latest added transforms.
+    /// Loops all transforms that end at the latest end time, infinitely.
     /// </summary>
-    public static Drawable Loop(this Drawable drawable)
+    public static Drawable Loop(this Drawable drawable, double pause = 0)
     {
-        drawable.LoopLatestTransforms();
+        drawable.LoopLatestTransforms(0, pause);
+        return drawable;
+    }
+
+    /// <summary>
+    /// Loops all transforms that end at the latest end time, a finite number of times.
+    /// </summary>
+    public static Drawable Loop(this Drawable drawable, int count, double pause = 0)
+    {
+        drawable.LoopLatestTransforms(count, pause);
+        return drawable;
+    }
+
+    /// <summary>
+    /// Begins a transform sequence on this drawable, enabling advanced chaining,
+    /// scoped looping, and completion callbacks.
+    /// <example><code>
+    /// sprite.TransformSequence()
+    ///       .FadeIn(300)
+    ///       .Then()
+    ///       .Wait(500)
+    ///       .FadeOut(300)
+    ///       .OnComplete(s => s.Expire());
+    /// </code></example>
+    /// </summary>
+    public static TransformSequence<T> TransformSequence<T>(this T drawable) where T : Drawable
+        => new TransformSequence<T>(drawable);
+
+    /// <summary>
+    /// Runs <paramref name="builder"/> against the drawable as a scoped sequence, then loops
+    /// that sequence infinitely with an optional pause between iterations.
+    /// <example><code>
+    /// startText.Loop(b => b.FadeTo(0.25f).Then().FadeTo(1, 1000), 1250);
+    /// </code></example>
+    /// </summary>
+    /// <param name="builder">Action that defines the transforms making up one loop iteration.</param>
+    /// <param name="duration">Duration of one full iteration in ms (sets EndTime of the looping block).</param>
+    /// <param name="pause">Pause between iterations in ms.</param>
+    public static Drawable Loop(this Drawable drawable, Action<Drawable> builder, double duration, double pause = 0)
+    {
+        int countBefore = drawable.TransformCount;
+        double savedDelay = drawable.TimeUntilTransformsCanStart;
+
+        builder(drawable);
+
+        var added = new List<Transform>();
+        drawable.CollectTransformsSince(countBefore, added);
+        foreach (var t in added)
+        {
+            t.IsLooping = true;
+            t.LoopCount = 0;
+            t.LoopPause = pause;
+            if (duration > 0)
+                t.EndTime = t.StartTime + duration;
+        }
+
+        drawable.TimeUntilTransformsCanStart = savedDelay;
+        return drawable;
+    }
+
+    /// <summary>
+    /// Runs <paramref name="builder"/> and loops the result a finite number of times.
+    /// </summary>
+    public static Drawable Loop(this Drawable drawable, Action<Drawable> builder, double duration, int count, double pause = 0)
+    {
+        int countBefore = drawable.TransformCount;
+        double savedDelay = drawable.TimeUntilTransformsCanStart;
+
+        builder(drawable);
+
+        var added = new List<Transform>();
+        drawable.CollectTransformsSince(countBefore, added);
+        if (added.Count == 0)
+        {
+            drawable.TimeUntilTransformsCanStart = savedDelay;
+            return drawable;
+        }
+
+        // All transforms in the builder share the same loop origin — the earliest StartTime.
+        // This ensures IsLoopComplete fires at the same wall-clock moment for every transform.
+        double loopOrigin = double.MaxValue;
+        foreach (var t in added)
+            if (t.StartTime < loopOrigin) loopOrigin = t.StartTime;
+
+        foreach (var t in added)
+        {
+            t.IsLooping = true;
+            t.LoopCount = count;
+            t.LoopPause = pause;
+            t.LoopOrigin = loopOrigin;
+            if (duration > 0)
+                t.EndTime = t.StartTime + duration;
+        }
+
+        drawable.TimeUntilTransformsCanStart = savedDelay;
         return drawable;
     }
 
@@ -231,4 +362,13 @@ public static class TransformExtensions
         drawable.Scheduler.AddDelayed(action, delay);
         return drawable;
     }
+}
+
+/// <summary>
+/// Direction of rotation for <see cref="TransformExtensions.Spin"/>.
+/// </summary>
+public enum RotationDirection
+{
+    Clockwise,
+    CounterClockwise
 }

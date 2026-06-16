@@ -46,6 +46,9 @@ public class SDLWindow : IWindow
 
     private readonly MouseState mouseState = new MouseState();
 
+    private readonly Dictionary<int, GamepadState> gamepadStates = new Dictionary<int, GamepadState>();
+    private readonly Dictionary<int, IntPtr> openGamepads = new Dictionary<int, IntPtr>();
+
     private bool initialized;
 
     private string title = "Window";
@@ -299,6 +302,12 @@ public class SDLWindow : IWindow
     public event Action<TextInputEvent> OnTextInput = delegate { };
     public event Action<TextEditingEvent> OnTextEditing = delegate { };
 
+    public event Action<GamepadButtonEvent> OnGamepadButtonDown = delegate { };
+    public event Action<GamepadButtonEvent> OnGamepadButtonUp = delegate { };
+    public event Action<GamepadAxisEvent> OnGamepadAxisMotion = delegate { };
+    public event Action<GamepadConnectedEvent> OnGamepadConnected = delegate { };
+    public event Action<GamepadDisconnectedEvent> OnGamepadDisconnected = delegate { };
+
     public event Action RenderRequested = delegate { };
 
     public void StartTextInput()
@@ -332,7 +341,7 @@ public class SDLWindow : IWindow
         // Note: SDL3 is always per-monitor DPI aware; the SDL2-era Windows DPI hints are gone.
         // Make sure SDL video backend is fully initialized
         // To make it support for OpenGL context and process advance hint like profile version
-        if (!SDL_Init(SDL_InitFlags.SDL_INIT_VIDEO))
+        if (!SDL_Init(SDL_InitFlags.SDL_INIT_VIDEO | SDL_InitFlags.SDL_INIT_GAMEPAD))
         {
             throw new Exception($"Failed to initialize SDL: {SDL_GetError()}");
         }
@@ -755,6 +764,26 @@ public class SDLWindow : IWindow
                     handleTextEditingEvent(sdlEvent.edit);
                     break;
 
+                case SDL_EventType.SDL_EVENT_GAMEPAD_ADDED:
+                    handleGamepadAdded(sdlEvent.gdevice);
+                    break;
+
+                case SDL_EventType.SDL_EVENT_GAMEPAD_REMOVED:
+                    handleGamepadRemoved(sdlEvent.gdevice);
+                    break;
+
+                case SDL_EventType.SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+                    handleGamepadButtonEvent(sdlEvent.gbutton, pressed: true);
+                    break;
+
+                case SDL_EventType.SDL_EVENT_GAMEPAD_BUTTON_UP:
+                    handleGamepadButtonEvent(sdlEvent.gbutton, pressed: false);
+                    break;
+
+                case SDL_EventType.SDL_EVENT_GAMEPAD_AXIS_MOTION:
+                    handleGamepadAxisEvent(sdlEvent.gaxis);
+                    break;
+
                 default:
                     // SDL3 promoted window events to first-class event types (no more SDL_WINDOWEVENT).
                     if (type >= SDL_EventType.SDL_EVENT_WINDOW_FIRST && type <= SDL_EventType.SDL_EVENT_WINDOW_LAST)
@@ -1139,6 +1168,94 @@ public class SDLWindow : IWindow
             SDL_SetWindowResizable(window, isResizable);
     }
 
+    #region Gamepad
+
+    private unsafe void handleGamepadAdded(SDL_GamepadDeviceEvent deviceEvent)
+    {
+        SDL_JoystickID joystickId = deviceEvent.which;
+        SDL_Gamepad* gamepad = SDL_OpenGamepad(joystickId);
+
+        if (gamepad == null)
+        {
+            Logger.Warning($"Failed to open gamepad (joystick id {joystickId}): {SDL_GetError()}");
+            return;
+        }
+
+        // SDL_GetGamepadID returns the instance ID we use for all subsequent events.
+        int instanceId = (int)(uint)SDL_GetGamepadID(gamepad);
+        string name = SDL_GetGamepadName(gamepad) ?? string.Empty;
+
+        openGamepads[instanceId] = (IntPtr)gamepad;
+        gamepadStates[instanceId] = new GamepadState { DeviceId = instanceId };
+
+        Logger.Debug($"Gamepad connected: id={instanceId}, name=\"{name}\"");
+        OnGamepadConnected.Invoke(new GamepadConnectedEvent(instanceId, name));
+    }
+
+    private unsafe void handleGamepadRemoved(SDL_GamepadDeviceEvent deviceEvent)
+    {
+        int instanceId = (int)(uint)deviceEvent.which;
+
+        if (openGamepads.TryGetValue(instanceId, out IntPtr ptr))
+        {
+            SDL_CloseGamepad((SDL_Gamepad*)ptr);
+            openGamepads.Remove(instanceId);
+        }
+
+        gamepadStates.Remove(instanceId);
+
+        Logger.Debug($"Gamepad disconnected: id={instanceId}");
+        OnGamepadDisconnected.Invoke(new GamepadDisconnectedEvent(instanceId));
+    }
+
+    private void handleGamepadButtonEvent(SDL_GamepadButtonEvent buttonEvent, bool pressed)
+    {
+        int instanceId = (int)(uint)buttonEvent.which;
+        var button = SDLEnumMapping.ToSakuraGamepadButton(buttonEvent.button);
+
+        if (button == GamepadButton.Unknown)
+            return;
+
+        if (!gamepadStates.TryGetValue(instanceId, out var state))
+        {
+            state = new GamepadState { DeviceId = instanceId };
+            gamepadStates[instanceId] = state;
+        }
+
+        state.SetPressed(button, pressed);
+
+        var evt = new GamepadButtonEvent(state.Clone(), button, pressed, convertEventTimestamp(buttonEvent.timestamp));
+
+        if (pressed)
+            OnGamepadButtonDown.Invoke(evt);
+        else
+            OnGamepadButtonUp.Invoke(evt);
+    }
+
+    private void handleGamepadAxisEvent(SDL_GamepadAxisEvent axisEvent)
+    {
+        int instanceId = (int)(uint)axisEvent.which;
+        var axis = SDLEnumMapping.ToSakuraGamepadAxis(axisEvent.axis);
+
+        if (axis == GamepadAxis.Unknown)
+            return;
+
+        if (!gamepadStates.TryGetValue(instanceId, out var state))
+        {
+            state = new GamepadState { DeviceId = instanceId };
+            gamepadStates[instanceId] = state;
+        }
+
+        // SDL3 axis values are Sint16 in [-32768, 32767]. Normalise to [-1, 1].
+        // Triggers report [0, 32767] — normalised result is [0, 1] naturally.
+        float normalized = axisEvent.value / 32767f;
+        state.SetAxis(axis, normalized);
+
+        OnGamepadAxisMotion.Invoke(new GamepadAxisEvent(state.Clone(), axis, normalized, convertEventTimestamp(axisEvent.timestamp)));
+    }
+
+    #endregion
+
     #region Cursor
 
     private bool cursorVisible = true;
@@ -1212,6 +1329,11 @@ public class SDLWindow : IWindow
     public unsafe void Dispose()
     {
         SDL_RemoveEventWatch(&resizeEventWatch, IntPtr.Zero);
+
+        foreach (var ptr in openGamepads.Values)
+            SDL_CloseGamepad((SDL_Gamepad*)ptr);
+        openGamepads.Clear();
+        gamepadStates.Clear();
 
         foreach (IntPtr cursorPtr in sdlCursors.Values)
         {

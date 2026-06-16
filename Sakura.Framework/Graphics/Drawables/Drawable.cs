@@ -1118,21 +1118,28 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
 
         double currentTime = Clock.CurrentTime;
 
+        // First pass (forward): apply all active transforms in order so later transforms
+        // in a sequence correctly overwrite earlier ones.
+        for (int i = 0; i < transforms.Count; i++)
+        {
+            var t = transforms[i];
+            if (currentTime >= t.StartTime)
+                t.Apply(this, currentTime);
+        }
+
+        // Second pass (backward): remove completed transforms. We go backward so removals
+        // don't shift indices of unprocessed entries. Final-value application already
+        // happened in the forward pass above (GetEasedProgress clamps to 1 at completion).
         for (int i = transforms.Count - 1; i >= 0; i--)
         {
             var t = transforms[i];
 
-            // Apply the transform if its start time has been reached.
-            if (Clock.CurrentTime >= t.StartTime)
+            if (!t.IsLooping && currentTime >= t.EndTime)
             {
-                t.Apply(this, Clock.CurrentTime);
+                transforms.RemoveAt(i);
             }
-
-            // Remove the transform if it has completed.
-            if (currentTime >= t.EndTime && !t.IsLooping)
+            else if (t.IsLooping && t.IsLoopComplete(currentTime))
             {
-                // Ensure the final value is applied exactly.
-                t.Apply(this, t.EndTime);
                 transforms.RemoveAt(i);
             }
         }
@@ -1142,6 +1149,23 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
     {
         // don't sort here for performance, looping backwards in ApplyTransforms handles completed transforms
         (transforms ??= new List<Transform>()).Add(transform);
+    }
+
+    /// <summary>
+    /// Number of transforms currently registered on this drawable.
+    /// Used by <see cref="TransformSequence{T}"/> to detect newly added transforms.
+    /// </summary>
+    internal int TransformCount => transforms?.Count ?? 0;
+
+    /// <summary>
+    /// Copies all transforms added after index <paramref name="countBefore"/> into <paramref name="result"/>.
+    /// Used by <see cref="TransformSequence{T}"/> to track which transforms belong to a sequence.
+    /// </summary>
+    internal void CollectTransformsSince(int countBefore, List<Transform> result)
+    {
+        if (transforms == null) return;
+        for (int i = countBefore; i < transforms.Count; i++)
+            result.Add(transforms[i]);
     }
 
     /// <summary>
@@ -1177,7 +1201,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
         }
     }
 
-    internal void LoopLatestTransforms()
+    internal void LoopLatestTransforms(int count = 0, double pause = 0)
     {
         if (transforms == null || transforms.Count == 0)
             return;
@@ -1187,7 +1211,11 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
         foreach (var t in transforms)
         {
             if (Precision.AlmostEquals(t.EndTime, latestEndTime))
+            {
                 t.IsLooping = true;
+                t.LoopCount = count;
+                t.LoopPause = pause;
+            }
         }
     }
 
@@ -1318,6 +1346,14 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
 
     public virtual bool OnTextInput(TextInputEvent e) => false;
     public virtual bool OnTextEditing(TextEditingEvent e) => false;
+
+    public virtual bool OnGamepadButtonDown(GamepadButtonEvent e) => false;
+    public virtual bool OnGamepadButtonUp(GamepadButtonEvent e) => false;
+
+    public virtual bool OnGamepadAxisMotion(GamepadAxisEvent e) => false;
+
+    public virtual void OnGamepadConnected(GamepadConnectedEvent e) { }
+    public virtual void OnGamepadDisconnected(GamepadDisconnectedEvent e) { }
 
     #endregion
 

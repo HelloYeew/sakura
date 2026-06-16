@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System.Collections.Generic;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Input;
@@ -221,5 +222,78 @@ public partial class ManualInputManager : Container
     public void EditComposingText(string text, int start, int length)
     {
         base.OnTextEditing(new TextEditingEvent(text, start, length));
+    }
+
+    private readonly Dictionary<int, GamepadState> gamepadStates = new Dictionary<int, GamepadState>();
+
+    private GamepadState getOrCreateGamepadState(int deviceId)
+    {
+        if (!gamepadStates.TryGetValue(deviceId, out var state))
+        {
+            state = new GamepadState { DeviceId = deviceId };
+            gamepadStates[deviceId] = state;
+        }
+
+        return state;
+    }
+
+    /// <summary>
+    /// Synthesizes a gamepad connected event.
+    /// </summary>
+    public void ConnectGamepad(int deviceId = 0, string name = "Test Gamepad")
+    {
+        getOrCreateGamepadState(deviceId);
+        base.OnGamepadConnected(new GamepadConnectedEvent(deviceId, name));
+    }
+
+    /// <summary>
+    /// Synthesizes a gamepad disconnected event.
+    /// </summary>
+    public void DisconnectGamepad(int deviceId = 0)
+    {
+        gamepadStates.Remove(deviceId);
+        base.OnGamepadDisconnected(new GamepadDisconnectedEvent(deviceId));
+    }
+
+    /// <summary>
+    /// Synthesizes a gamepad button press.
+    /// </summary>
+    public void PressGamepadButton(GamepadButton button, int deviceId = 0)
+    {
+        var state = getOrCreateGamepadState(deviceId);
+        state.SetPressed(button, true);
+        base.OnGamepadButtonDown(new GamepadButtonEvent(state.Clone(), button, isPressed: true));
+    }
+
+    /// <summary>
+    /// Synthesizes a gamepad button release.
+    /// </summary>
+    public void ReleaseGamepadButton(GamepadButton button, int deviceId = 0)
+    {
+        var state = getOrCreateGamepadState(deviceId);
+        state.SetPressed(button, false);
+        base.OnGamepadButtonUp(new GamepadButtonEvent(state.Clone(), button, isPressed: false));
+    }
+
+    /// <summary>
+    /// Synthesizes a complete gamepad button press then release.
+    /// </summary>
+    public void TapGamepadButton(GamepadButton button, int deviceId = 0)
+    {
+        PressGamepadButton(button, deviceId);
+        ReleaseGamepadButton(button, deviceId);
+    }
+
+    /// <summary>
+    /// Synthesizes a gamepad axis movement.
+    /// </summary>
+    /// <param name="axis">The axis to move.</param>
+    /// <param name="value">Normalised value in [-1, 1]. Triggers use [0, 1].</param>
+    /// <param name="deviceId">The gamepad device ID (default 0).</param>
+    public void MoveGamepadAxis(GamepadAxis axis, float value, int deviceId = 0)
+    {
+        var state = getOrCreateGamepadState(deviceId);
+        state.SetAxis(axis, value);
+        base.OnGamepadAxisMotion(new GamepadAxisEvent(state.Clone(), axis, value));
     }
 }

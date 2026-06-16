@@ -186,6 +186,31 @@ public interface IWindow : IDisposable
     event Action<TextEditingEvent> OnTextEditing;
 
     /// <summary>
+    /// Invoked when a gamepad button is pressed.
+    /// </summary>
+    event Action<GamepadButtonEvent> OnGamepadButtonDown;
+
+    /// <summary>
+    /// Invoked when a gamepad button is released.
+    /// </summary>
+    event Action<GamepadButtonEvent> OnGamepadButtonUp;
+
+    /// <summary>
+    /// Invoked when a gamepad axis value changes (stick movement or trigger press).
+    /// </summary>
+    event Action<GamepadAxisEvent> OnGamepadAxisMotion;
+
+    /// <summary>
+    /// Invoked when a gamepad is connected.
+    /// </summary>
+    event Action<GamepadConnectedEvent> OnGamepadConnected;
+
+    /// <summary>
+    /// Invoked when a gamepad is disconnected.
+    /// </summary>
+    event Action<GamepadDisconnectedEvent> OnGamepadDisconnected;
+
+    /// <summary>
     /// Invoked when a render is requested.
     /// This will use when there is a need to render a new frame outside the normal update loop.
     /// Like SDL resize event that block the update loop until the resize is finished.
