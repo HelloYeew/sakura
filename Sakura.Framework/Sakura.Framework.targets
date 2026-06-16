@@ -1,0 +1,13 @@
+<Project>
+  <!--
+    This targets file will be placed in the NuGet package's buildtransitive/ folder.
+    It wires up the bundled source generator DLL as a Roslyn analyzer
+    for any project that references Sakura.Framework
+  -->
+  <ItemGroup>
+    <Analyzer Include="$(MSBuildThisFileDirectory)..\analyzers\dotnet\cs\Sakura.Framework.SourceGenerators.dll"
+              Condition="Exists('$(MSBuildThisFileDirectory)..\analyzers\dotnet\cs\Sakura.Framework.SourceGenerators.dll')" />
+    <Analyzer Include="$(MSBuildThisFileDirectory)..\analyzers\dotnet\cs\Sakura.Framework.CodeFixes.dll"
+              Condition="Exists('$(MSBuildThisFileDirectory)..\analyzers\dotnet\cs\Sakura.Framework.CodeFixes.dll')" />
+  </ItemGroup>
+</Project>

@@ -43,6 +43,12 @@
   <ItemGroup>
     <None Include="..\icon.png" Pack="true" PackagePath="/" />
     <None Remove="SourceGenerated\**" />
+    <!-- Bundle the source generator and code fix DLLs so consumers get them automatically -->
+    <None Include="..\Sakura.Framework.SourceGenerators\$(OutputPath)\Sakura.Framework.SourceGenerators.dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    <None Include="..\Sakura.Framework.CodeFixes\$(OutputPath)\Sakura.Framework.CodeFixes.dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    <!-- Wire up the analyzer via buildtransitive (applies to all consumers transitively) -->
+    <None Include="Sakura.Framework.targets" Pack="true" PackagePath="buildtransitive/" />
+    <None Include="Sakura.Framework.targets" Pack="true" PackagePath="build/" />
   </ItemGroup>
   <PropertyGroup>
     <!--    Setting to enable source debugging in the generated files. -->
@@ -60,5 +66,10 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Remove="SourceGenerated\**" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Build SourceGenerators and CodeFixes before packing so their DLLs exist -->
+    <ProjectReference Include="..\Sakura.Framework.SourceGenerators\Sakura.Framework.SourceGenerators.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\Sakura.Framework.CodeFixes\Sakura.Framework.CodeFixes.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 </Project>
