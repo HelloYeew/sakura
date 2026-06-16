@@ -28,6 +28,7 @@ internal class BassAudioManager : IAudioManager, IDisposable
 
     private readonly BassAudioMixer trackMixer;
     private readonly BassAudioMixer sampleMixer;
+    private bool ownsBassInit;
 
     public Reactive<double> MasterVolume { get; } = new Reactive<double>(1.0);
     public Reactive<double> TrackVolume { get; } = new Reactive<double>(1.0);
@@ -35,12 +36,20 @@ internal class BassAudioManager : IAudioManager, IDisposable
 
     public BassAudioManager()
     {
-        if (!Bass.Init(-1, 44100, DeviceInitFlags.Default))
+        bool initSuccess = Bass.Init(-1, 44100, DeviceInitFlags.Default);
+        bool alreadyInitialised = !initSuccess && Bass.LastError == Errors.Already;
+
+        if (!initSuccess && !alreadyInitialised)
         {
             Logger.Error("BASS initialization failed!", new BassException(Bass.LastError));
         }
         else
         {
+            ownsBassInit = initSuccess;
+
+            if (alreadyInitialised)
+                Logger.Verbose("🔈 BASS already initialised, reusing existing device");
+
             Bass.Configure(Configuration.UpdatePeriod, 5);
             Bass.Configure(Configuration.DeviceBufferLength, -1);
             Bass.Configure(Configuration.PlaybackBufferLength, 100);
@@ -210,7 +219,9 @@ internal class BassAudioManager : IAudioManager, IDisposable
             channel.Dispose();
         }
         activeChannels.Clear();
-        Bass.Free();
+
+        if (ownsBassInit)
+            Bass.Free();
     }
 
     public void StopAll()

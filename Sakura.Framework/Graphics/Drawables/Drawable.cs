@@ -112,6 +112,12 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
     private bool hasCustomClock;
 
     /// <summary>
+    /// True if a clock was explicitly assigned to this drawable (via the <see cref="Clock"/> setter)
+    /// as opposed to one inherited from a parent via <see cref="InheritClock"/>.
+    /// </summary>
+    protected bool HasCustomClock => hasCustomClock;
+
+    /// <summary>
     /// The clock driving this drawable's time. By default this is the parent's clock,
     /// shared by reference all the way down the hierarchy (so all drawables report the
     /// same timeline). Assigning a clock explicitly marks it as custom: it is preserved
