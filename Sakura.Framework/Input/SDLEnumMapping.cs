@@ -146,4 +146,62 @@ internal static class SDLEnumMapping
             _ => MouseButton.Unknown
         };
     }
+
+    /// <summary>
+    /// Convert an SDL gamepad button (raw byte from <see cref="SDL_GamepadButtonEvent.button"/>)
+    /// to a framework <see cref="GamepadButton"/>.
+    /// Reference: https://wiki.libsdl.org/SDL3/SDL_GamepadButton
+    /// </summary>
+    public static GamepadButton ToSakuraGamepadButton(byte rawButton)
+    {
+        return (SDL_GamepadButton)rawButton switch
+        {
+            SDL_GamepadButton.SDL_GAMEPAD_BUTTON_SOUTH => GamepadButton.South,
+            SDL_GamepadButton.SDL_GAMEPAD_BUTTON_EAST => GamepadButton.East,
+            SDL_GamepadButton.SDL_GAMEPAD_BUTTON_WEST => GamepadButton.West,
+            SDL_GamepadButton.SDL_GAMEPAD_BUTTON_NORTH => GamepadButton.North,
+            SDL_GamepadButton.SDL_GAMEPAD_BUTTON_BACK => GamepadButton.Back,
+            SDL_GamepadButton.SDL_GAMEPAD_BUTTON_GUIDE => GamepadButton.Guide,
+            SDL_GamepadButton.SDL_GAMEPAD_BUTTON_START => GamepadButton.Start,
+            SDL_GamepadButton.SDL_GAMEPAD_BUTTON_LEFT_STICK => GamepadButton.LeftStick,
+            SDL_GamepadButton.SDL_GAMEPAD_BUTTON_RIGHT_STICK => GamepadButton.RightStick,
+            SDL_GamepadButton.SDL_GAMEPAD_BUTTON_LEFT_SHOULDER => GamepadButton.LeftShoulder,
+            SDL_GamepadButton.SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER => GamepadButton.RightShoulder,
+            SDL_GamepadButton.SDL_GAMEPAD_BUTTON_DPAD_UP => GamepadButton.DPadUp,
+            SDL_GamepadButton.SDL_GAMEPAD_BUTTON_DPAD_DOWN => GamepadButton.DPadDown,
+            SDL_GamepadButton.SDL_GAMEPAD_BUTTON_DPAD_LEFT => GamepadButton.DPadLeft,
+            SDL_GamepadButton.SDL_GAMEPAD_BUTTON_DPAD_RIGHT => GamepadButton.DPadRight,
+            SDL_GamepadButton.SDL_GAMEPAD_BUTTON_MISC1 => GamepadButton.Misc1,
+            SDL_GamepadButton.SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1 => GamepadButton.RightPaddle1,
+            SDL_GamepadButton.SDL_GAMEPAD_BUTTON_LEFT_PADDLE1 => GamepadButton.LeftPaddle1,
+            SDL_GamepadButton.SDL_GAMEPAD_BUTTON_RIGHT_PADDLE2 => GamepadButton.RightPaddle2,
+            SDL_GamepadButton.SDL_GAMEPAD_BUTTON_LEFT_PADDLE2 => GamepadButton.LeftPaddle2,
+            SDL_GamepadButton.SDL_GAMEPAD_BUTTON_TOUCHPAD => GamepadButton.Touchpad,
+            SDL_GamepadButton.SDL_GAMEPAD_BUTTON_MISC2 => GamepadButton.Misc2,
+            SDL_GamepadButton.SDL_GAMEPAD_BUTTON_MISC3 => GamepadButton.Misc3,
+            SDL_GamepadButton.SDL_GAMEPAD_BUTTON_MISC4 => GamepadButton.Misc4,
+            SDL_GamepadButton.SDL_GAMEPAD_BUTTON_MISC5 => GamepadButton.Misc5,
+            SDL_GamepadButton.SDL_GAMEPAD_BUTTON_MISC6 => GamepadButton.Misc6,
+            _ => GamepadButton.Unknown,
+        };
+    }
+
+    /// <summary>
+    /// Convert an SDL gamepad axis (raw byte from <see cref="SDL_GamepadAxisEvent.axis"/>)
+    /// to a framework <see cref="GamepadAxis"/>.
+    /// Reference: https://wiki.libsdl.org/SDL3/SDL_GamepadAxis
+    /// </summary>
+    public static GamepadAxis ToSakuraGamepadAxis(byte rawAxis)
+    {
+        return (SDL_GamepadAxis)rawAxis switch
+        {
+            SDL_GamepadAxis.SDL_GAMEPAD_AXIS_LEFTX => GamepadAxis.LeftX,
+            SDL_GamepadAxis.SDL_GAMEPAD_AXIS_LEFTY => GamepadAxis.LeftY,
+            SDL_GamepadAxis.SDL_GAMEPAD_AXIS_RIGHTX => GamepadAxis.RightX,
+            SDL_GamepadAxis.SDL_GAMEPAD_AXIS_RIGHTY => GamepadAxis.RightY,
+            SDL_GamepadAxis.SDL_GAMEPAD_AXIS_LEFT_TRIGGER => GamepadAxis.LeftTrigger,
+            SDL_GamepadAxis.SDL_GAMEPAD_AXIS_RIGHT_TRIGGER => GamepadAxis.RightTrigger,
+            _ => GamepadAxis.Unknown,
+        };
+    }
 }

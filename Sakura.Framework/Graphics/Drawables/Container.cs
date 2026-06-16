@@ -750,6 +750,51 @@ public partial class Container : Drawable
         return false;
     }
 
+    public override bool OnGamepadButtonDown(GamepadButtonEvent e)
+    {
+        for (int i = 0; i < children.Count; i++)
+        {
+            if (children[i].OnGamepadButtonDown(e))
+                return true;
+        }
+
+        return false;
+    }
+
+    public override bool OnGamepadButtonUp(GamepadButtonEvent e)
+    {
+        for (int i = 0; i < children.Count; i++)
+        {
+            if (children[i].OnGamepadButtonUp(e))
+                return true;
+        }
+
+        return false;
+    }
+
+    public override bool OnGamepadAxisMotion(GamepadAxisEvent e)
+    {
+        for (int i = 0; i < children.Count; i++)
+        {
+            if (children[i].OnGamepadAxisMotion(e))
+                return true;
+        }
+
+        return false;
+    }
+
+    public override void OnGamepadConnected(GamepadConnectedEvent e)
+    {
+        for (int i = 0; i < children.Count; i++)
+            children[i].OnGamepadConnected(e);
+    }
+
+    public override void OnGamepadDisconnected(GamepadDisconnectedEvent e)
+    {
+        for (int i = 0; i < children.Count; i++)
+            children[i].OnGamepadDisconnected(e);
+    }
+
     #endregion
 
     #region Child Querying & Management

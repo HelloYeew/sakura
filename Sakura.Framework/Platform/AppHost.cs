@@ -68,7 +68,12 @@ public abstract class AppHost : IDisposable
         DragDropText,
         TextInput,
         TextEditing,
-        Resize
+        Resize,
+        GamepadButtonDown,
+        GamepadButtonUp,
+        GamepadAxisMotion,
+        GamepadConnected,
+        GamepadDisconnected,
     }
 
     /// <summary>
@@ -91,6 +96,10 @@ public abstract class AppHost : IDisposable
         public int ResizePhysicalHeight;
         public int ResizeLogicalWidth;
         public int ResizeLogicalHeight;
+        public GamepadButtonEvent GamepadButton;
+        public GamepadAxisEvent GamepadAxis;
+        public GamepadConnectedEvent GamepadConnected;
+        public GamepadDisconnectedEvent GamepadDisconnected;
     }
 
     private void dispatchInput(in PendingInput input)
@@ -139,6 +148,26 @@ public abstract class AppHost : IDisposable
 
             case PendingInputType.Resize:
                 onResize(input.ResizePhysicalWidth, input.ResizePhysicalHeight, input.ResizeLogicalWidth, input.ResizeLogicalHeight);
+                break;
+
+            case PendingInputType.GamepadButtonDown:
+                OnGamepadButtonDown(input.GamepadButton);
+                break;
+
+            case PendingInputType.GamepadButtonUp:
+                OnGamepadButtonUp(input.GamepadButton);
+                break;
+
+            case PendingInputType.GamepadAxisMotion:
+                OnGamepadAxisMotion(input.GamepadAxis);
+                break;
+
+            case PendingInputType.GamepadConnected:
+                OnGamepadConnected(input.GamepadConnected);
+                break;
+
+            case PendingInputType.GamepadDisconnected:
+                OnGamepadDisconnected(input.GamepadDisconnected);
                 break;
         }
     }
@@ -380,6 +409,11 @@ public abstract class AppHost : IDisposable
             Window.OnDragDropText += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.DragDropText, DragDropText = e });
             Window.OnTextInput += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.TextInput, TextInput = e });
             Window.OnTextEditing += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.TextEditing, TextEditing = e });
+            Window.OnGamepadButtonDown += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.GamepadButtonDown, GamepadButton = e });
+            Window.OnGamepadButtonUp += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.GamepadButtonUp, GamepadButton = e });
+            Window.OnGamepadAxisMotion += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.GamepadAxisMotion, GamepadAxis = e });
+            Window.OnGamepadConnected += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.GamepadConnected, GamepadConnected = e });
+            Window.OnGamepadDisconnected += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.GamepadDisconnected, GamepadDisconnected = e });
             Window.Resized += (w, h) =>
             {
                 Window.GetPhysicalSize(out int pw, out int ph);
@@ -658,6 +692,11 @@ public abstract class AppHost : IDisposable
     private void onDragDropText(DragDropTextEvent e) => app?.OnDragDropText(e);
     protected void OnTextInput(TextInputEvent e) => app?.OnTextInput(e);
     protected void OnTextEditing(TextEditingEvent e) => app?.OnTextEditing(e);
+    protected virtual void OnGamepadButtonDown(GamepadButtonEvent e) => app?.OnGamepadButtonDown(e);
+    protected virtual void OnGamepadButtonUp(GamepadButtonEvent e) => app?.OnGamepadButtonUp(e);
+    protected virtual void OnGamepadAxisMotion(GamepadAxisEvent e) => app?.OnGamepadAxisMotion(e);
+    protected virtual void OnGamepadConnected(GamepadConnectedEvent e) => app?.OnGamepadConnected(e);
+    protected virtual void OnGamepadDisconnected(GamepadDisconnectedEvent e) => app?.OnGamepadDisconnected(e);
 
     protected virtual void SetupRenderer()
     {

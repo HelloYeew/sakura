@@ -127,6 +127,11 @@ public class HeadlessWindow : IWindow
     public event Action<DragDropTextEvent>? OnDragDropText;
     public event Action<TextInputEvent>? OnTextInput;
     public event Action<TextEditingEvent>? OnTextEditing;
+    public event Action<GamepadButtonEvent>? OnGamepadButtonDown;
+    public event Action<GamepadButtonEvent>? OnGamepadButtonUp;
+    public event Action<GamepadAxisEvent>? OnGamepadAxisMotion;
+    public event Action<GamepadConnectedEvent>? OnGamepadConnected;
+    public event Action<GamepadDisconnectedEvent>? OnGamepadDisconnected;
     public event Action? RenderRequested;
 
     public void Dispose()
