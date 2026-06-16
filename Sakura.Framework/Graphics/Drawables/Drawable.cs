@@ -1118,28 +1118,28 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
 
         double currentTime = Clock.CurrentTime;
 
+        // First pass (forward): apply all active transforms in order so later transforms
+        // in a sequence correctly overwrite earlier ones.
+        for (int i = 0; i < transforms.Count; i++)
+        {
+            var t = transforms[i];
+            if (currentTime >= t.StartTime)
+                t.Apply(this, currentTime);
+        }
+
+        // Second pass (backward): remove completed transforms. We go backward so removals
+        // don't shift indices of unprocessed entries. Final-value application already
+        // happened in the forward pass above (GetEasedProgress clamps to 1 at completion).
         for (int i = transforms.Count - 1; i >= 0; i--)
         {
             var t = transforms[i];
 
-            // Apply the transform if its start time has been reached.
-            if (Clock.CurrentTime >= t.StartTime)
-            {
-                t.Apply(this, Clock.CurrentTime);
-            }
-
-            // Remove the transform if it has completed.
             if (!t.IsLooping && currentTime >= t.EndTime)
             {
-                // Ensure the final value is applied exactly.
-                t.Apply(this, t.EndTime);
                 transforms.RemoveAt(i);
             }
             else if (t.IsLooping && t.IsLoopComplete(currentTime))
             {
-                // Finite loop finished, apply final value and remove.
-                // Pass currentTime so GetEasedProgress sees the completed state (progress=1 via the clamp above).
-                t.Apply(this, currentTime);
                 transforms.RemoveAt(i);
             }
         }
