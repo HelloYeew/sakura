@@ -65,7 +65,7 @@ public partial class ScreenStack : Container
         // and for removing itself from the Parent (this ScreenStack).
         exitingScreen.InternalExit(nextScreen);
 
-        Logger.Verbose($"Screen stack {this} exited screen {exitingScreen} (depth: {screenStack.Count}).");
+        Logger.Verbose($"📺 Screen stack {this} exited screen {exitingScreen} (depth: {screenStack.Count}).");
 
         // Tell the next screen (if any) that it's resuming.
         nextScreen?.InternalResume(exitingScreen);

@@ -56,6 +56,21 @@ public class Clock : IFrameBasedClock
     }
 
     /// <summary>
+    /// Rebases the clock so that <see cref="CurrentTime"/> becomes 0 at the current moment.
+    /// The next <see cref="ProcessFrame"/> reports an <see cref="ElapsedFrameTime"/> measured
+    /// from this point.
+    /// </summary>
+    public void Reset()
+    {
+        pausedTotal = TimeSource.CurrentTime;
+        stoppedAt = TimeSource.CurrentTime;
+        CurrentTime = 0;
+        ElapsedFrameTime = 0;
+        frames = 0;
+        fpsAccumulator = 0;
+    }
+
+    /// <summary>
     /// Takes this frame's time snapshot. Call once per frame.
     /// </summary>
     public void ProcessFrame()

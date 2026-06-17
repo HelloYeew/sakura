@@ -365,6 +365,8 @@ public class SDLWindow : IWindow
 
     public unsafe void Create()
     {
+        windowFlags |= SDL_WindowFlags.SDL_WINDOW_HIDDEN;
+
         if (Resizable)
         {
             windowFlags |= SDL_WindowFlags.SDL_WINDOW_RESIZABLE;
@@ -1095,6 +1097,12 @@ public class SDLWindow : IWindow
 
         // normal OS message processing
         handleSdlEvents();
+    }
+
+    public unsafe void Show()
+    {
+        if (window != null)
+            SDL_ShowWindow(window);
     }
 
     public unsafe void SwapBuffers()

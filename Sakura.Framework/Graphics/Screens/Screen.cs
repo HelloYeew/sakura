@@ -28,7 +28,7 @@ public partial class Screen : Container
         get => state;
         private set
         {
-            Logger.Verbose($"Screen {this} state changed from {state} to {value}");
+            Logger.Verbose($"📺 Screen {this} state changed from {state} to {value}");
             state = value;
         }
     }
