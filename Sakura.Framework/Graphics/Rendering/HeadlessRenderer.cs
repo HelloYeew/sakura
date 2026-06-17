@@ -4,6 +4,7 @@
 using System;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Textures;
+using Sakura.Framework.IO;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Timing;
@@ -15,6 +16,7 @@ public class HeadlessRenderer : IRenderer
     public Texture WhitePixel { get; }
     public Matrix4x4 ProjectionMatrix => default;
     public Storage ShaderStorage { get; set; }
+    public DiskCache ShaderCache { get; set; }
     private readonly HeadlessTextureManager textureManager;
 
     public HeadlessRenderer(HeadlessTextureManager textureManager)

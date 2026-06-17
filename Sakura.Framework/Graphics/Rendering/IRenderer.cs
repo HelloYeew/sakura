@@ -4,6 +4,7 @@
 using System;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Textures;
+using Sakura.Framework.IO;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Timing;
@@ -81,6 +82,11 @@ public interface IRenderer
     /// Set by <see cref="Platform.AppHost"/> after <see cref="Initialize"/> completes.
     /// </summary>
     Storage ShaderStorage { get; set; }
+
+    /// <summary>
+    /// Content-addressed disk cache for cross-compiled shader output
+    /// </summary>
+    DiskCache ShaderCache { get; set; }
 
     /// <summary>
     /// Creates a backend-specific shader by loading source from a <see cref="Platform.Storage"/>.

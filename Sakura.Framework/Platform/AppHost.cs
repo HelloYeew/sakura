@@ -20,6 +20,7 @@ using Sakura.Framework.Extensions.ExceptionExtensions;
 using Sakura.Framework.Extensions.IEnumerableExtensions;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Input;
+using Sakura.Framework.IO;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Reactive;
@@ -714,6 +715,10 @@ public abstract class AppHost : IDisposable
     {
         Renderer = CreateRenderer();
         Renderer.ShaderStorage = FrameworkStorage.GetStorageForDirectory("Shaders");
+
+        if (Storage != null)
+            Renderer.ShaderCache = new DiskCache(Storage.GetStorageForDirectory("cache/shader"));
+
         InitializeGraphicsContext(Window, Renderer);
         Renderer.Initialize(Window.GraphicsSurface);
     }
@@ -765,7 +770,7 @@ public abstract class AppHost : IDisposable
     {
         if (IsHeadless || Renderer == null)
             return;
-        
+
         UpdateClock.ProcessFrame();
         PerformUpdate();
 

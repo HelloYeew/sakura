@@ -218,7 +218,7 @@ public partial class GLShader : IShader
     {
         using Stream stream = storage.GetStream(path, FileAccess.Read, FileMode.Open);
         string src = readStream(stream);
-        return resolveIncludes(src, name =>
+        return ShaderCompiler.ResolveIncludes(src, name =>
         {
             try
             {
@@ -233,43 +233,6 @@ public partial class GLShader : IShader
         });
     }
 
-    /// <summary>
-    /// Resolves <c>#include</c> directives by passing each include name to <paramref name="loadInclude"/>.
-    /// Uses a compiled regex instead of manual string parsing — handles both <c>"file"</c> and
-    /// <c>&lt;file&gt;</c> syntax, and tolerates whitespace between <c>#</c> and <c>include</c>.
-    /// </summary>
-    private static string resolveIncludes(string src, Func<string, string> loadInclude)
-    {
-        src = src.Replace("\r\n", "\n").Replace("\r", "\n");
-
-        var result = new StringBuilder();
-
-        foreach (string line in src.Split('\n'))
-        {
-            Match match = IncludePattern.Match(line);
-
-            if (match.Success)
-            {
-                string includeName = match.Groups[1].Value.Trim();
-                string includeSource = loadInclude(includeName);
-
-                // Recurse so included files can themselves contain #include.
-                includeSource = resolveIncludes(includeSource, loadInclude);
-                includeSource = includeSource.TrimEnd('\n', '\r');
-
-                result.Append("// ---- begin include: ").Append(includeName).Append(" ----\n");
-                result.Append(includeSource).Append('\n');
-                result.Append("// ---- end include: ").Append(includeName).Append(" ----\n");
-            }
-            else
-            {
-                result.Append(line).Append('\n');
-            }
-        }
-
-        return result.ToString();
-    }
-
     private uint loadFromAssembly(ShaderType type, string resourcePath, Assembly assembly)
     {
         string directory = resourcePath.Contains('/')
@@ -277,7 +240,7 @@ public partial class GLShader : IShader
             : string.Empty;
 
         string src = readEmbeddedResource(resourcePath, assembly);
-        src = resolveIncludes(src, includeName => readEmbeddedResource(directory + includeName, assembly));
+        src = ShaderCompiler.ResolveIncludes(src, includeName => readEmbeddedResource(directory + includeName, assembly));
 
         return compileShader(type, src, resourcePath);
     }

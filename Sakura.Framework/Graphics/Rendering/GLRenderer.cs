@@ -10,6 +10,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using Sakura.Framework.Graphics.Rendering.Batches;
 using Sakura.Framework.Graphics.Textures;
+using Sakura.Framework.IO;
 using Silk.NET.OpenGL;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
@@ -71,6 +72,7 @@ public class GLRenderer : IGLRenderer
     public Texture WhitePixel { get; private set; }
     public Matrix4x4 ProjectionMatrix => projectionMatrix;
     public Storage ShaderStorage { get; set; }
+    public DiskCache ShaderCache { get; set; }
 
     private GLTexture whiteGLTexture => (GLTexture)WhitePixel.BackendTexture!;
 
