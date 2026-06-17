@@ -43,6 +43,18 @@ public class FramedClock : IFrameBasedClock, ISourceChangeableClock
     public void Stop() => IsRunning = false;
 
     /// <summary>
+    /// Rebases this clock so <see cref="CurrentTime"/> becomes 0, set based line onto the source's
+    /// current time. The next <see cref="ProcessFrame"/> reports elapsed time measured from this
+    /// point rather than producing a large jump
+    /// </summary>
+    public void Reset()
+    {
+        CurrentTime = 0;
+        ElapsedFrameTime = 0;
+        lastSourceTime = source.CurrentTime;
+    }
+
+    /// <summary>
     /// Updates the clock's current time based on the source clock.
     /// This should be called once per frame.
     /// </summary>

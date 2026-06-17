@@ -47,10 +47,10 @@ public abstract class AppHost : IDisposable
 
     public Reactive<FrameSync> FrameLimiter { get; set; }
     public Reactive<ExecutionMode> ExecutionMode { get; set; }
-    protected internal IFrameBasedClock UpdateClock { get; private set; }
-    protected internal IFrameBasedClock DrawClock { get; private set; }
-    protected internal IFrameBasedClock AudioClock { get; private set; }
-    public IFrameBasedClock InputClock { get; private set; }
+    protected internal Clock UpdateClock { get; private set; }
+    protected internal Clock DrawClock { get; private set; }
+    protected internal Clock AudioClock { get; private set; }
+    public Clock InputClock { get; private set; }
     private readonly ThrottledFrameClock soundClock = new ThrottledFrameClock(1000);
     private readonly Stopwatch appLoopStopwatch = new Stopwatch();
     private readonly ConcurrentQueue<PendingInput> inputQueue = new ConcurrentQueue<PendingInput>();
@@ -509,6 +509,18 @@ public abstract class AppHost : IDisposable
             this.app.Load();
             this.app.LoadComplete();
 
+            UpdateClock.Reset();
+            DrawClock.Reset();
+            AudioClock.Reset();
+            InputClock.Reset();
+
+            this.app.ResetClock();
+            this.app.InvokeReady();
+
+            renderPrimingFrame();
+
+            Window.Show();
+
             if (ExecutionMode.Value == Threading.ExecutionMode.MultiThread)
             {
                 Window.ClearCurrent();
@@ -742,6 +754,24 @@ public abstract class AppHost : IDisposable
     /// This method is called at a fixed 1000Hz for precise audio processing.
     /// </summary>
     protected virtual void PerformSoundUpdate() { }
+
+    /// <summary>
+    /// Runs a single synchronous update + draw + present pass on the calling (main) thread.
+    /// Used once at startup to put a real frame on screen before the window is shown, so the
+    /// user never sees a blank window. Must be called while the graphics context is current on
+    /// the calling thread before switching to multi-threaded execution.
+    /// </summary>
+    private void renderPrimingFrame()
+    {
+        if (IsHeadless || Renderer == null)
+            return;
+        
+        UpdateClock.ProcessFrame();
+        PerformUpdate();
+
+        DrawClock.ProcessFrame();
+        PerformDraw();
+    }
 
     /// <summary>
     /// This method runs the main game logic updates. It uses a fixed-step approach

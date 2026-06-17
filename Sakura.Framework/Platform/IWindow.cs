@@ -136,8 +136,22 @@ public interface IWindow : IDisposable
 
     /// <summary>
     /// Create the window.
+    /// <remarks>
+    /// The window is created hidden so nothing is shown to the user until the application is
+    /// fully initialized and the first frame has been rendered. Call <see cref="Show"/> once
+    /// everything is ready.
+    /// </remarks>
     /// </summary>
     void Create();
+
+    /// <summary>
+    /// Makes the window visible to the user.
+    /// <remarks>
+    /// this should be called once the application is fully initialized and the first frame has been
+    /// rendered, to avoid showing a blank/black window during startup.
+    /// </remarks>
+    /// </summary>
+    void Show();
 
     void PollEvents();
 

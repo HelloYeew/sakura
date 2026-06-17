@@ -40,6 +40,11 @@ public class HeadlessWindow : IWindow
 
     }
 
+    public void Show()
+    {
+
+    }
+
     public void PollEvents()
     {
         Update?.Invoke();

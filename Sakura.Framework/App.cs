@@ -67,6 +67,34 @@ public partial class App : Container, IFocusManager, IDisposable
 
     public void SetHost(AppHost host) => Host = host;
 
+    /// <summary>
+    /// Invoked after the application is fully initialized (loaded, renderer ready)
+    /// </summary>
+    public virtual void OnReady()
+    {
+    }
+
+    internal void InvokeReady()
+    {
+        OnReady();
+        Ready?.Invoke();
+    }
+
+    /// <summary>
+    /// Re-baselines the app's clock to zero to make every clock start from zero.
+    /// </summary>
+    internal void ResetClock()
+    {
+        if (Clock is FramedClock framed)
+            framed.Reset();
+    }
+
+    /// <summary>
+    /// Raised after <see cref="OnReady"/>, at the moment the application is fully initialized
+    /// and about to become visible. See <see cref="OnReady"/> for timing guarantees.
+    /// </summary>
+    public event Action Ready;
+
     private DrawVisualiser drawVisualiser;
     private GlobalStatisticsDisplay globalStatisticsDisplay;
     private TextureViewerDisplay textureViewerDisplay;
