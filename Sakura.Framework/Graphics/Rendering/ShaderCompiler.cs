@@ -6,6 +6,7 @@ using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
 using Sakura.Framework.IO;
+using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
 using Sakura.Framework.SPIRV;
 
@@ -47,7 +48,8 @@ public static partial class ShaderCompiler
         string vertSrc = ReadWithIncludes(sourceStorage, vertexPath);
         string fragSrc = ReadWithIncludes(sourceStorage, fragmentPath);
 
-        return GetOrCompileSource(vertSrc, fragSrc, target, cache);
+        // readable name for logs, e.g. "shader.vert+shader.frag".
+        return GetOrCompileSource(vertSrc, fragSrc, target, cache, $"{vertexPath}+{fragmentPath}");
     }
 
     /// <summary>
@@ -59,14 +61,22 @@ public static partial class ShaderCompiler
         string vertexSource,
         string fragmentSource,
         CrossCompileTarget target,
-        DiskCache cache = null)
+        DiskCache cache = null,
+        string name = null)
     {
         string key = $"{DiskCache.HashString(vertexSource)}" +
                      $"#{DiskCache.HashString(fragmentSource)}" +
                      $"#{(int)target}#{cache_version}";
 
+        string label = !string.IsNullOrEmpty(name) ? name : (key.Length > 12 ? key[..12] : key);
+
         if (cache != null && cache.TryReadStrings(key, out string cachedVert, out string cachedFrag))
+        {
+            Logger.Verbose($"☀️ Shader cache hit for {label} → {target}, loaded from cache");
             return (cachedVert, cachedFrag);
+        }
+
+        Logger.Verbose($"☀️ Shader cache miss for {label} → {target}, compiling");
 
         var options = new CrossCompileOptions(
             fixClipSpaceZ: false,
@@ -79,7 +89,12 @@ public static partial class ShaderCompiler
             target,
             options);
 
-        cache?.WriteStrings(key, result.VertexShader, result.FragmentShader);
+        if (cache != null)
+        {
+            cache.WriteStrings(key, result.VertexShader, result.FragmentShader);
+            Logger.Verbose($"☀️ Shader compiled for {label} -> {target}!");
+        }
+
         return (result.VertexShader, result.FragmentShader);
     }
 
