@@ -1,33 +1,36 @@
-#version 330 core
+#version 450
 
 #include "sh_Utils.glsl"
 
-in vec4 v_Color;
-in vec2 v_TexCoords;
-in vec2 v_FragPos;
-in vec4 v_ClipData;
-in float v_ClipShearX;
-in float v_ClipRadius;
+layout(location = 0) in vec4 v_Color;
+layout(location = 1) in vec2 v_TexCoords;
+layout(location = 2) in vec2 v_FragPos;
+layout(location = 3) in vec4 v_ClipData;
+layout(location = 4) in float v_ClipShearX;
+layout(location = 5) in float v_ClipRadius;
 
-out vec4 FragColor;
+layout(location = 0) out vec4 FragColor;
 
 // Y, U (Cb), V (Cr) planes -- each is a single-channel R8 texture
-uniform sampler2D u_TextureY;
-uniform sampler2D u_TextureU;
-uniform sampler2D u_TextureV;
+layout(set = 1, binding = 0) uniform sampler2D u_TextureY;
+layout(set = 1, binding = 1) uniform sampler2D u_TextureU;
+layout(set = 1, binding = 2) uniform sampler2D u_TextureV;
 
-// YUV -> RGB conversion matrix (column-major).
-// Supports both Rec.601 (SD) and Rec.709 (HD) colour spaces.
-uniform mat3 u_YuvCoeff;
+// YUV -> RGB conversion. Carried as a mat4 for a clean std140 layout (a mat3 would pad each
+// column to 16 bytes anyway); only the upper-left 3x3 is used. Matches VideoBlock in C#.
+layout(set = 0, binding = 4, std140) uniform VideoBlock
+{
+    mat4 u_YuvCoeff;
+};
 
 void main()
 {
     float y  = texture(u_TextureY, v_TexCoords).r;
     float cb = texture(u_TextureU, v_TexCoords).r;
     float cr = texture(u_TextureV, v_TexCoords).r;
-    
+
     vec3 yuv = vec3(y - 0.0625, cb - 0.5, cr - 0.5);
-    vec3 rgb = clamp(u_YuvCoeff * yuv, 0.0, 1.0);
+    vec3 rgb = clamp(mat3(u_YuvCoeff) * yuv, 0.0, 1.0);
 
     // The YUV matrix produces gamma-encoded (non-linear) RGB values matching the
     // video stream's transfer function (approx. BT.709 gamma ~2.2).
