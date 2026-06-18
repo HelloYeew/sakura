@@ -129,7 +129,7 @@ jobs:
           if git diff --staged --quiet; then
             echo "No changes detected. Skipping."
           else
-            git commit -m "Update Sakura.Framework.NativeLibraries Metal native binaries" \
+            git commit -m "Update metal native binaries" \
               -m "Co-authored-by: HelloYeew <68165621+HelloYeew@users.noreply.github.com>"
             git push --force origin update-sakura-metal-binaries
           fi
