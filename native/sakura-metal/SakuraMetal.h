@@ -21,12 +21,28 @@ typedef struct SakuraMetalVertexAttribute
     int offset;         // byte offset within the vertex struct
 } SakuraMetalVertexAttribute;
 
+// Diagnostic info about the Metal device, filled by sakura_metal_get_info. Mirrors the GL backend's
+// startup logging (device name / API tier / capabilities). `name` is written into the caller-provided
+// buffer (UTF-8, null-terminated, truncated to nameCapacity); the rest are scalar facts.
+typedef struct SakuraMetalInfo
+{
+    int    maxThreadsPerThreadgroup; // device.maxThreadsPerThreadgroup.width
+    int    hasUnifiedMemory;         // 1 if the GPU shares memory with the CPU (Apple Silicon), else 0
+    int    supportsFamilyApple;      // highest supported MTLGPUFamilyApple<n> (0 if none)
+    int    supportsFamilyMac;        // highest supported MTLGPUFamilyMac<n> (0 if none)
+    unsigned long long recommendedMaxWorkingSetSize; // bytes; 0 if unavailable
+} SakuraMetalInfo;
+
 // Device + layer
 
 // Creates a Metal device wrapper bound to the given CAMetalLayer pointer (from SDL3 via IMetalGraphicsSurface.MetalLayer).
 // Returns NULL on failure.
 SakuraMetalDevice* sakura_metal_create(void* caMetalLayer);
 void sakura_metal_destroy(SakuraMetalDevice* device);
+
+// Fills `info` and writes the device name into `nameBuffer` (UTF-8, null-terminated). Used for
+// startup diagnostics. Safe to call any time after create. `nameBuffer` may be NULL to skip the name.
+void sakura_metal_get_info(SakuraMetalDevice* device, SakuraMetalInfo* info, char* nameBuffer, int nameCapacity);
 
 // Frame lifecycle
 

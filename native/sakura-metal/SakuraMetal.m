@@ -6,6 +6,7 @@
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <TargetConditionals.h>
+#include <string.h> // strlcpy
 #if TARGET_OS_IPHONE
 #import <UIKit/UIKit.h>
 #else
@@ -234,6 +235,54 @@ void sakura_metal_destroy(SakuraMetalDevice* device)
         CFRelease((__bridge CFTypeRef)device->frameSemaphore);
 
     free(device);
+}
+
+void sakura_metal_get_info(SakuraMetalDevice* device, SakuraMetalInfo* info, char* nameBuffer, int nameCapacity)
+{
+    if (device == NULL || device->device == nil || info == NULL)
+        return;
+
+    id<MTLDevice> mtl = device->device;
+
+    info->maxThreadsPerThreadgroup = (int)mtl.maxThreadsPerThreadgroup.width;
+    info->hasUnifiedMemory = mtl.hasUnifiedMemory ? 1 : 0;
+    info->recommendedMaxWorkingSetSize = (unsigned long long)mtl.recommendedMaxWorkingSetSize;
+
+    // Highest supported GPU family in each lineage. supportsFamily: is macOS 10.15+ / iOS 13+ (our
+    // deployment targets). The newest family enum constants only exist in newer SDKs, so the Apple8/9
+    // probes are compiled in only when the build SDK defines them (older SDKs simply top out lower).
+    // We probe from high to low and record the top one that's supported.
+    int apple = 0;
+#if (defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && __MAC_OS_X_VERSION_MAX_ALLOWED >= 140000) || \
+    (defined(__IPHONE_OS_VERSION_MAX_ALLOWED) && __IPHONE_OS_VERSION_MAX_ALLOWED >= 170000)
+    if ([mtl supportsFamily:MTLGPUFamilyApple9]) apple = 9;
+    else
+#endif
+#if (defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && __MAC_OS_X_VERSION_MAX_ALLOWED >= 130000) || \
+    (defined(__IPHONE_OS_VERSION_MAX_ALLOWED) && __IPHONE_OS_VERSION_MAX_ALLOWED >= 160000)
+    if ([mtl supportsFamily:MTLGPUFamilyApple8]) apple = 8;
+    else
+#endif
+    if ([mtl supportsFamily:MTLGPUFamilyApple7]) apple = 7;
+    else if ([mtl supportsFamily:MTLGPUFamilyApple6]) apple = 6;
+    else if ([mtl supportsFamily:MTLGPUFamilyApple5]) apple = 5;
+    else if ([mtl supportsFamily:MTLGPUFamilyApple4]) apple = 4;
+    else if ([mtl supportsFamily:MTLGPUFamilyApple3]) apple = 3;
+    else if ([mtl supportsFamily:MTLGPUFamilyApple2]) apple = 2;
+    else if ([mtl supportsFamily:MTLGPUFamilyApple1]) apple = 1;
+    info->supportsFamilyApple = apple;
+
+    // Only Mac2 is probed: MTLGPUFamilyMac1 is deprecated (every Mac1-capable GPU also reports Mac2,
+    // per Apple's deprecation note), so probing Mac1 would add nothing but a deprecation warning.
+    info->supportsFamilyMac = [mtl supportsFamily:MTLGPUFamilyMac2] ? 2 : 0;
+
+    if (nameBuffer != NULL && nameCapacity > 0)
+    {
+        const char* name = mtl.name.UTF8String;
+        if (name == NULL) name = "";
+        // strlcpy null-terminates and never overflows the buffer.
+        strlcpy(nameBuffer, name, (size_t)nameCapacity);
+    }
 }
 
 void sakura_metal_begin_frame(SakuraMetalDevice* device, float r, float g, float b, float a)
