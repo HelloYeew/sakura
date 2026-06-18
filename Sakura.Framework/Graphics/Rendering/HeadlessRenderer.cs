@@ -40,7 +40,7 @@ public class HeadlessRenderer : IRenderer
 
     }
 
-    public void SetRoot(DrawNode rootNode)
+    public void SetRoot(DrawNode rootDrawNode)
     {
 
     }
@@ -91,6 +91,8 @@ public class HeadlessRenderer : IRenderer
     public IShader CreateShader(Storage storage, string vertexPath, string fragmentPath) => new HeadlessShader();
 
     public INativeVideoTexture CreateVideoTexture(int width, int height) => new HeadlessNativeVideoTexture(width, height);
+
+    public INativeTexture CreateNativeTexture(int width, int height) => new HeadlessNativeTexture(width, height);
 
     public Vector2 RenderScale => Vector2.One;
 

@@ -1,0 +1,135 @@
+name: Build Sakura Metal Native
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  BUILD_DIR: build-ci
+
+jobs:
+  native_builds:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - build_target: osx
+            artifact_name: libsakura-metal.dylib
+          - build_target: ios
+            artifact_name: sakura-metal.xcframework.zip
+
+    name: ${{ matrix.build_target }} Native Build
+    defaults:
+      run:
+        working-directory: native/sakura-metal
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Select Xcode
+        run: sudo xcode-select -switch /Applications/Xcode.app
+
+      - name: Build macOS universal dylib
+        if: ${{ matrix.build_target == 'osx' }}
+        run: |
+          cmake -S . -B "$BUILD_DIR" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          cmake --build "$BUILD_DIR" --config Release
+          # Normalise the output location for the upload step.
+          mkdir -p out
+          cp "$BUILD_DIR/libsakura-metal.dylib" out/libsakura-metal.dylib
+          # Sanity check: must be a 2-arch fat binary.
+          lipo -info out/libsakura-metal.dylib
+
+      - name: Build iOS framework slices
+        if: ${{ matrix.build_target == 'ios' }}
+        run: |
+          set -euo pipefail
+
+          # Device (arm64)
+          cmake -S . -B "$BUILD_DIR-device" -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$BUILD_DIR-device" --config Release
+
+          # Simulator (arm64 + x86_64)
+          cmake -S . -B "$BUILD_DIR-sim" -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DCMAKE_OSX_SYSROOT=iphonesimulator \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$BUILD_DIR-sim" --config Release
+
+          DEVICE_FW=$(find "$BUILD_DIR-device" -name 'sakura-metal.framework' -type d | head -1)
+          SIM_FW=$(find "$BUILD_DIR-sim" -name 'sakura-metal.framework' -type d | head -1)
+          echo "Device framework: $DEVICE_FW"
+          echo "Simulator framework: $SIM_FW"
+          if [ -z "$DEVICE_FW" ] || [ -z "$SIM_FW" ]; then
+            echo "::error::Could not locate built sakura-metal.framework slices"
+            exit 1
+          fi
+
+          mkdir -p out
+          xcodebuild -create-xcframework \
+            -framework "$DEVICE_FW" \
+            -framework "$SIM_FW" \
+            -output out/sakura-metal.xcframework
+
+          # Zip the bundle for a clean single-file artifact upload (directories don't round-trip well).
+          (cd out && zip -r sakura-metal.xcframework.zip sakura-metal.xcframework)
+
+      - name: Upload ${{ matrix.build_target }} artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.build_target }}
+          path: native/sakura-metal/out/${{ matrix.artifact_name }}
+          if-no-files-found: error
+
+  create_pr:
+    name: Combine and Create PR
+    runs-on: macos-latest
+    needs: native_builds
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Distribute binaries into NativeLibraries/runtimes
+        run: |
+          set -euo pipefail
+          NL_RUNTIMES="Sakura.Framework.NativeLibraries/runtimes"
+
+          # macOS dylib → runtimes/osx/native/ (alongside the FFmpeg/Bass dylibs).
+          mkdir -p "$NL_RUNTIMES/osx/native"
+          cp artifacts/osx/libsakura-metal.dylib "$NL_RUNTIMES/osx/native/libsakura-metal.dylib"
+
+          # iOS xcframework → runtimes/ios/native/ (top-level *.xcframework, matching the FFmpeg ones).
+          mkdir -p "$NL_RUNTIMES/ios/native"
+          rm -rf "$NL_RUNTIMES/ios/native/sakura-metal.xcframework"
+          unzip -qq artifacts/ios/sakura-metal.xcframework.zip -d "$NL_RUNTIMES/ios/native"
+
+      - name: Commit and push PR branch
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout -b update-sakura-metal-binaries
+
+          git add Sakura.Framework.NativeLibraries/runtimes/
+
+          if git diff --staged --quiet; then
+            echo "No changes detected. Skipping."
+          else
+            git commit -m "Update metal native binaries" \
+              -m "Co-authored-by: HelloYeew <68165621+HelloYeew@users.noreply.github.com>"
+            git push --force origin update-sakura-metal-binaries
+          fi

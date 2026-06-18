@@ -206,9 +206,9 @@ public class GLRenderer : IGLRenderer
         lastBoundTextureHandle = uint.MaxValue;
     }
 
-    public void SetRoot(DrawNode node)
+    public void SetRoot(DrawNode rootDrawNode)
     {
-        rootNode = node;
+        rootNode = rootDrawNode;
     }
 
     public void Resize(int physicalWidth, int physicalHeight, int logicalWidth, int logicalHeight)
@@ -277,6 +277,8 @@ public class GLRenderer : IGLRenderer
     }
 
     public INativeVideoTexture CreateVideoTexture(int width, int height) => new VideoGLTexture(gl, width, height);
+
+    public INativeTexture CreateNativeTexture(int width, int height) => new GLTexture(gl, width, height);
 
     public void DrawVerticesRaw(ReadOnlySpan<Vertex.Vertex> vertices)
     {

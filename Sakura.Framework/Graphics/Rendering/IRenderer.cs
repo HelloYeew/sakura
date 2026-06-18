@@ -27,7 +27,7 @@ public interface IRenderer
 
     void StartFrame();
 
-    void SetRoot(DrawNode rootNode);
+    void SetRoot(DrawNode rootDrawNode);
 
     void Resize(int physicalWidth, int physicalHeight, int logicalWidth, int logicalHeight);
 
@@ -104,6 +104,14 @@ public interface IRenderer
     /// Must be called on the render thread.
     /// </summary>
     INativeVideoTexture CreateVideoTexture(int width, int height);
+
+    /// <summary>
+    /// Creates an empty backend-specific 2D texture of the given size (RGBA8). The caller uploads
+    /// pixel data via <see cref="Textures.INativeTexture.Upload"/> /
+    /// <see cref="Textures.INativeTexture.UploadRegion"/>. Lets backend-agnostic code (texture
+    /// managers, the glyph/sprite atlas) create textures without knowing the concrete backend.
+    /// </summary>
+    INativeTexture CreateNativeTexture(int width, int height);
 
     /// <summary>
     /// The physical-pixels-per-logical-unit scale of the current output

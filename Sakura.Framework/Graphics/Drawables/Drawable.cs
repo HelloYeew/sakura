@@ -712,7 +712,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
     {
         if (Matrix3x2.Invert(ModelMatrix, out var inverse))
         {
-            var normalised = System.Numerics.Vector2.Transform(screenSpacePos, inverse);
+            var normalised = Vector2.Transform(screenSpacePos, inverse);
             return new Vector2(normalised.X * DrawSize.X, normalised.Y * DrawSize.Y);
         }
 
@@ -725,10 +725,10 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
     public Vector2 ToScreenSpace(Vector2 localPos)
     {
         var normalised = DrawSize.X > 0 && DrawSize.Y > 0
-            ? new System.Numerics.Vector2(localPos.X / DrawSize.X, localPos.Y / DrawSize.Y)
-            : (System.Numerics.Vector2)localPos;
+            ? new Vector2(localPos.X / DrawSize.X, localPos.Y / DrawSize.Y)
+            : localPos;
 
-        return System.Numerics.Vector2.Transform(normalised, ModelMatrix);
+        return Vector2.Transform(normalised, ModelMatrix);
     }
 
     public static Vector2 GetAnchorOriginVector(Anchor anchor)

@@ -26,7 +26,12 @@ public interface INativeVideoTexture : IDisposable
     /// For Metal: records the plane textures on the current render command encoder.
     /// Must be called on the render thread.
     /// </summary>
-    void BindPlanes();
+    /// <param name="tiling">
+    /// When true (the sprite uses <c>TextureFillMode.Tile</c>), the planes are sampled with a
+    /// repeating wrap so UVs &gt; 1 tile the frame; otherwise they clamp to edge (the normal video
+    /// case, which avoids edge bleed). Wrap is a per-bind state, not baked into the plane textures.
+    /// </param>
+    void BindPlanes(bool tiling);
 
     /// <summary>
     /// Uploads a decoded YUV420P frame into the backend texture planes.

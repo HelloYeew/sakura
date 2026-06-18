@@ -11,12 +11,11 @@ using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Statistic;
-using Silk.NET.OpenGL;
 
 namespace Sakura.Framework.Graphics.Text;
 
 [SuppressMessage("ReSharper", "InconsistentNaming")]
-public class GLFontStore : IFontStore
+public class RendererFontStore : IFontStore
 {
     private readonly TextureAtlas atlas;
     private readonly Dictionary<string, Lazy<Font>> fontCache = new Dictionary<string, Lazy<Font>>();
@@ -25,9 +24,9 @@ public class GLFontStore : IFontStore
 
     private Font defaultFont;
 
-    public GLFontStore(IRenderer renderer, GL gl)
+    public RendererFontStore(IRenderer renderer)
     {
-        atlas = new TextureAtlas(renderer, gl, 1024, 1024);
+        atlas = new TextureAtlas(renderer, 1024, 1024);
     }
 
     private void loadFrameworkFonts(Storage resourceStorage)

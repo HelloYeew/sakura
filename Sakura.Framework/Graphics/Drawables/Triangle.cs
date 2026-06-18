@@ -23,7 +23,7 @@ public partial class Triangle : Drawable
         float gLinear = ColorExtensions.SrgbToLinear(Color.G);
         float bLinear = ColorExtensions.SrgbToLinear(Color.B);
 
-        var calculatedColor = new System.Numerics.Vector4(rLinear, gLinear, bLinear, DrawAlpha);
+        var calculatedColor = new Vector4(rLinear, gLinear, bLinear, DrawAlpha);
 
         var screenP1 = Vector2.Transform(new Vector2(0.5f, 0), ModelMatrix);
         var screenP2 = Vector2.Transform(new Vector2(0, 1), ModelMatrix);

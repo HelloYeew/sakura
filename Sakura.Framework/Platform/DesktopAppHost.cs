@@ -11,6 +11,7 @@ using JetBrains.Annotations;
 using Sakura.Framework.Configurations;
 using Sakura.Framework.Extensions;
 using Sakura.Framework.Graphics.Rendering;
+using Sakura.Framework.Graphics.Rendering.Metal;
 using Sakura.Framework.Logging;
 
 namespace Sakura.Framework.Platform;
@@ -47,10 +48,9 @@ public class DesktopAppHost : AppHost
     /// </summary>
     protected virtual IEnumerable<RendererType> GetPreferredRenderers()
     {
-        // if (RuntimeInfo.IsMacOS)
-        //     return [RendererType.Metal, RendererType.OpenGL];
+        if (RuntimeInfo.IsApple)
+            return [RendererType.Metal, RendererType.OpenGL];
 
-        // TODO: Enable it back when Metal support added
         return [RendererType.OpenGL];
     }
 
@@ -65,8 +65,10 @@ public class DesktopAppHost : AppHost
         {
             case RendererType.OpenGL:
                 return new GLRenderer();
-            // case RendererType.Metal:
-            //     return new MetalRenderer();
+
+            case RendererType.Metal:
+                return RuntimeInfo.IsMacOS ? new MetalRenderer() : null;
+
             default:
                 return null;
         }

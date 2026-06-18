@@ -71,7 +71,7 @@ public partial class Line : Drawable
         float gLinear = ColorExtensions.SrgbToLinear(Color.G);
         float bLinear = ColorExtensions.SrgbToLinear(Color.B);
 
-        var calculatedColor = new System.Numerics.Vector4(rLinear, gLinear, bLinear, DrawAlpha * (Color.A / 255f));
+        var calculatedColor = new Vector4(rLinear, gLinear, bLinear, DrawAlpha * (Color.A / 255f));
 
         var finalMatrix = ModelMatrix;
 

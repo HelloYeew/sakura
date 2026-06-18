@@ -50,16 +50,21 @@ public sealed class VideoGLTexture : INativeVideoTexture
     /// Must be called on the draw thread. Keeps GL calls inside this layer
     /// so higher-level code (VideoDrawNode) doesn't need a GL reference.
     /// </summary>
-    public void BindPlanes()
+    public void BindPlanes(bool tiling)
     {
-        gl.ActiveTexture(TextureUnit.Texture0);
-        gl.BindTexture(TextureTarget.Texture2D, YHandle);
+        int wrap = tiling ? (int)TextureWrapMode.Repeat : (int)TextureWrapMode.ClampToEdge;
 
-        gl.ActiveTexture(TextureUnit.Texture1);
-        gl.BindTexture(TextureTarget.Texture2D, UHandle);
+        bindPlane(TextureUnit.Texture0, YHandle, wrap);
+        bindPlane(TextureUnit.Texture1, UHandle, wrap);
+        bindPlane(TextureUnit.Texture2, VHandle, wrap);
+    }
 
-        gl.ActiveTexture(TextureUnit.Texture2);
-        gl.BindTexture(TextureTarget.Texture2D, VHandle);
+    private void bindPlane(TextureUnit unit, uint handle, int wrap)
+    {
+        gl.ActiveTexture(unit);
+        gl.BindTexture(TextureTarget.Texture2D, handle);
+        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, wrap);
+        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, wrap);
     }
 
     /// <summary>

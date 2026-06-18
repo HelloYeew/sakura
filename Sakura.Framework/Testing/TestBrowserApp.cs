@@ -29,6 +29,7 @@ public partial class TestBrowserApp : App
 {
     private DrawSizePreservingFillContainer mainContainer;
     private Container testContentContainer;
+    private Box testContentBackgroundBox;
     private Container testSidebar;
     private Container stepSidebar;
     private FlowContainer testListFlow;
@@ -95,7 +96,22 @@ public partial class TestBrowserApp : App
         // Build the rate-adjustable clock that drives test content only.
         // InitialClockRate can be set to >1 for headless/CI runs to speed up tests.
         testClock = new FramedClock(Clock) { Rate = InitialClockRate };
-        testContentContainer = new Container
+
+        mainContainer.Add(testContentBackgroundBox = new Box()
+        {
+            RelativeSizeAxes = Axes.Both,
+            Size = new Vector2(1),
+            Anchor = Anchor.TopRight,
+            Origin = Anchor.TopRight,
+            Margin = new MarginPadding
+            {
+                Top = header_height,
+                Left = sidebar_width * 2
+            },
+            Color = Color.Black
+        });
+
+        mainContainer.Add(testContentContainer = new Container
         {
             RelativeSizeAxes = Axes.Both,
             Size = new Vector2(1),
@@ -106,8 +122,7 @@ public partial class TestBrowserApp : App
                 Top = header_height,
                 Left = sidebar_width * 2
             }
-        };
-        mainContainer.Add(testContentContainer);
+        });
 
         // Top header
         headerContainer = new Container
@@ -225,8 +240,13 @@ public partial class TestBrowserApp : App
             Font = FontUsage.Default.With(size: 14),
             Color = Color.LightGreen,
             Margin = new MarginPadding { Left = 4 },
-            Width = 45
+            Width = 60
         });
+
+        headerFlow.Add(new HeaderButton("Background", () =>
+        {
+            testContentBackgroundBox.FadeToColour(ColorExtensions.GetRandomColor(), 250, Easing.OutQuint);
+        }, Color.Transparent));
 
         clockRateSlider.Current.ValueChanged += e =>
         {
@@ -796,7 +816,7 @@ public partial class TestBrowserApp : App
         stepsFlow.Add(stepButton);
     }
 
-    private void generateStepVisual<T>(SliderStep<T> step) where T : struct, System.Numerics.INumber<T>
+    private void generateStepVisual<T>(SliderStep<T> step) where T : struct, INumber<T>
     {
         stepsFlow.Add(new TestSliderStepControl<T>(step));
     }

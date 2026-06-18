@@ -443,6 +443,9 @@ public abstract class AppHost : IDisposable
             };
 
             Window.Initialize();
+
+            Renderer = CreateRenderer();
+
             PrepareWindowForRenderer(Window);
             Window.Create();
 
@@ -713,7 +716,8 @@ public abstract class AppHost : IDisposable
 
     protected virtual void SetupRenderer()
     {
-        Renderer = CreateRenderer();
+        // just safety here if a subclass/test path didn't pre-create it.
+        Renderer ??= CreateRenderer();
         Renderer.ShaderStorage = FrameworkStorage.GetStorageForDirectory("Shaders");
 
         if (Storage != null)

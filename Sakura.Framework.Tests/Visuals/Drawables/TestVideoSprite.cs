@@ -9,12 +9,12 @@ using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Graphics.Video;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Testing;
-using Sakura.Framework.Utilities; // For Precision.AlmostEquals if needed
+using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Tests.Visuals.Drawables;
 
 [TestFixture]
-[VisualTestOnly("Video decoder test required real hardware")]
+[VisualTestOnly("Required visual renderer")]
 public partial class TestVideoSprite : TestScene
 {
     private VideoSprite videoSprite;
