@@ -278,6 +278,8 @@ public class GLRenderer : IGLRenderer
 
     public INativeVideoTexture CreateVideoTexture(int width, int height) => new VideoGLTexture(gl, width, height);
 
+    public INativeTexture CreateNativeTexture(int width, int height) => new GLTexture(gl, width, height);
+
     public void DrawVerticesRaw(ReadOnlySpan<Vertex.Vertex> vertices)
     {
         if (vertices.Length == 4)

@@ -92,6 +92,8 @@ public class HeadlessRenderer : IRenderer
 
     public INativeVideoTexture CreateVideoTexture(int width, int height) => new HeadlessNativeVideoTexture(width, height);
 
+    public INativeTexture CreateNativeTexture(int width, int height) => new HeadlessNativeTexture(width, height);
+
     public Vector2 RenderScale => Vector2.One;
 
     public IFrameBuffer CreateFrameBuffer(int width, int height, bool pixelSnapping = false) => new HeadlessFrameBuffer(WhitePixel, width, height);

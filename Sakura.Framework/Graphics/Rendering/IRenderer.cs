@@ -106,6 +106,14 @@ public interface IRenderer
     INativeVideoTexture CreateVideoTexture(int width, int height);
 
     /// <summary>
+    /// Creates an empty backend-specific 2D texture of the given size (RGBA8). The caller uploads
+    /// pixel data via <see cref="Textures.INativeTexture.Upload"/> /
+    /// <see cref="Textures.INativeTexture.UploadRegion"/>. Lets backend-agnostic code (texture
+    /// managers, the glyph/sprite atlas) create textures without knowing the concrete backend.
+    /// </summary>
+    INativeTexture CreateNativeTexture(int width, int height);
+
+    /// <summary>
     /// The physical-pixels-per-logical-unit scale of the current output
     /// (e.g. 2.0 on HiDPI displays). Use to size offscreen buffers in physical pixels.
     /// </summary>
