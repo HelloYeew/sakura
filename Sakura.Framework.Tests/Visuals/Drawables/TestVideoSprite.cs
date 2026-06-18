@@ -14,6 +14,7 @@ using Sakura.Framework.Utilities; // For Precision.AlmostEquals if needed
 namespace Sakura.Framework.Tests.Visuals.Drawables;
 
 [TestFixture]
+[VisualTestOnly("Required visual renderer")]
 public partial class TestVideoSprite : TestScene
 {
     private VideoSprite videoSprite;
