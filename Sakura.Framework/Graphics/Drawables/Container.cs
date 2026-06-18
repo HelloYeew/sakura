@@ -297,6 +297,9 @@ public partial class Container : Drawable
     private long subtreeDrawVersion = 1;
     private bool subtreeDirtyNotified;
 
+    private const int draw_node_buffer_count = 3;
+    private int forceRebuildBuffers;
+
     /// <summary>
     /// Marks this container's (and all ancestors') cached draw-node subtree as stale.
     /// The walk up the parent chain short-circuits once per frame per container.
@@ -304,6 +307,12 @@ public partial class Container : Drawable
     internal void MarkSubtreeDrawStateDirty()
     {
         subtreeDrawVersion++;
+
+        // Every buffered draw node is now stale, not just the one written this frame. Force all of
+        // them to rebuild over the next few frames. Set before the short-circuit (like the version
+        // bump) so ancestors reached by the walk also force-rebuild their own buffers — otherwise an
+        // ancestor whose node still version-matches would keep a reference to a removed child's node.
+        forceRebuildBuffers = draw_node_buffer_count;
 
         if (subtreeDirtyNotified)
             return;
@@ -512,8 +521,15 @@ public partial class Container : Drawable
         // If nothing in this subtree changed since this buffer's node was last generated
         // (no invalidations, topology, lifetime or masking transitions), the cached child
         // node list is still valid and the entire subtree walk can be skipped.
-        if (node.AppliedSubtreeVersion == subtreeDrawVersion)
+        // forceRebuildBuffers overrides the cache: after a subtree change the version bumps once but
+        // there are draw_node_buffer_count buffer slots, so each must be rebuilt at least once before
+        // the cache is trusted again. Without this, a buffer not yet rewritten since the change keeps
+        // its stale child list and "ghosts" removed drawables for a few frames.
+        if (forceRebuildBuffers == 0 && node.AppliedSubtreeVersion == subtreeDrawVersion)
             return node;
+
+        if (forceRebuildBuffers > 0)
+            forceRebuildBuffers--;
 
         node.Children.Clear();
 
