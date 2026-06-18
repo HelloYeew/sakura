@@ -473,6 +473,9 @@ Temporary Items
 # CMake
 cmake-build-*/
 
+# Native CMake build output
+native/**/build/
+
 # Mongo Explorer plugin
 .idea/**/mongoSettings.xml
 
