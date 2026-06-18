@@ -43,7 +43,7 @@ public partial class ScreenStack : Container
 
         screen.InternalEnter(lastScreen);
 
-        Logger.Verbose($"Screen stack {this} pushed screen {screen} (depth: {screenStack.Count}).");
+        Logger.Verbose($"📺 Screen stack {this} pushed screen {screen} (depth: {screenStack.Count}).");
     }
 
     /// <summary>
