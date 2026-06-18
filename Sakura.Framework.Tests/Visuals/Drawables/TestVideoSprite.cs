@@ -14,7 +14,6 @@ using Sakura.Framework.Utilities; // For Precision.AlmostEquals if needed
 namespace Sakura.Framework.Tests.Visuals.Drawables;
 
 [TestFixture]
-[VisualTestOnly("Video decoder test required real hardware")]
 public partial class TestVideoSprite : TestScene
 {
     private VideoSprite videoSprite;
