@@ -7,7 +7,6 @@ using System.Linq;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Statistic;
-using Silk.NET.OpenGL;
 using Texture = Sakura.Framework.Graphics.Textures.Texture;
 
 namespace Sakura.Framework.Graphics.Text;
@@ -18,7 +17,6 @@ namespace Sakura.Framework.Graphics.Text;
 public class TextureAtlas : IDisposable
 {
     private readonly IRenderer renderer;
-    private readonly GL gl;
     private readonly int width;
     private readonly int height;
 
@@ -26,14 +24,13 @@ public class TextureAtlas : IDisposable
 
     private const int padding = 1;
 
-    public TextureAtlas(IRenderer renderer, GL gl, int width, int height)
+    public TextureAtlas(IRenderer renderer, int width, int height)
     {
         this.renderer = renderer;
-        this.gl = gl;
         this.width = width;
         this.height = height;
 
-        pages.Add(new AtlasPage(renderer, gl, width, height));
+        pages.Add(new AtlasPage(renderer, width, height));
     }
 
     /// <summary>
@@ -45,7 +42,7 @@ public class TextureAtlas : IDisposable
 
         if (!canFitInPage(page, regionWidth, regionHeight))
         {
-            page = new AtlasPage(renderer, gl, width, height);
+            page = new AtlasPage(renderer, width, height);
             pages.Add(page);
             GlobalStatistics.Get<int>("Fonts", "Atlas Pages").Value = pages.Count;
         }
@@ -142,13 +139,13 @@ public class TextureAtlas : IDisposable
         public int CurrentY { get; set; } = 0;
         public int RowHeight { get; set; } = 0;
 
-        public AtlasPage(IRenderer renderer, GL gl, int width, int height)
+        public AtlasPage(IRenderer renderer, int width, int height)
         {
-            var glTexture = new GLTexture(gl, width, height);
-            NativeTexture = glTexture;
+            var nativeTexture = renderer.CreateNativeTexture(width, height);
+            NativeTexture = nativeTexture;
 
             byte[] emptyData = new byte[width * height * 4];
-            renderer.ScheduleToDrawThread(() => glTexture.Upload(emptyData));
+            renderer.ScheduleToDrawThread(() => nativeTexture.Upload(emptyData));
         }
 
         public void Dispose()

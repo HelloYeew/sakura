@@ -72,9 +72,10 @@ public sealed class VideoTexture : IVideoTexture
 
     /// <summary>
     /// Binds the Y, U, V planes to the appropriate texture slots for the current backend.
-    /// Must be called on the render thread.
+    /// Must be called on the render thread. <paramref name="tiling"/> selects repeat vs clamp wrap
+    /// (see <see cref="INativeVideoTexture.BindPlanes"/>).
     /// </summary>
-    public void BindPlanes() => NativeTexture.BindPlanes();
+    public void BindPlanes(bool tiling) => NativeTexture.BindPlanes(tiling);
 
     /// <summary>
     /// Called when this texture is returned to the pool for reuse.

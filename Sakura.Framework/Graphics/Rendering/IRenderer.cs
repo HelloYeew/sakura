@@ -27,7 +27,7 @@ public interface IRenderer
 
     void StartFrame();
 
-    void SetRoot(DrawNode rootNode);
+    void SetRoot(DrawNode rootDrawNode);
 
     void Resize(int physicalWidth, int physicalHeight, int logicalWidth, int logicalHeight);
 

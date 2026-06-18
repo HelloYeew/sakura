@@ -21,7 +21,7 @@ internal sealed class HeadlessNativeVideoTexture : INativeVideoTexture
         Height = height;
     }
 
-    public void BindPlanes() { }
+    public void BindPlanes(bool tiling) { }
     public unsafe void Upload(AVFrame* frame) { }
     public void MarkAvailable() { }
     public void Dispose() { }

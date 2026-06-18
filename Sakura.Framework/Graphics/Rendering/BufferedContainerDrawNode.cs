@@ -6,7 +6,6 @@ using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
-using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.Rendering;
@@ -84,8 +83,9 @@ public class BufferedContainerDrawNode : ContainerDrawNode
         int targetWidth = Math.Max(1, (int)MathF.Ceiling(rect.Width * renderScale.X * frameBufferScale.X));
         int targetHeight = Math.Max(1, (int)MathF.Ceiling(rect.Height * renderScale.Y * frameBufferScale.Y));
 
-        // Effect passes require GL-specific operations (raw vertex upload + manual binds).
-        bool effectsActive = (blurActive || grayscaleActive) && renderer is IGLRenderer;
+        // Effect passes require a raw vertex upload + manual binds, available on both the GL and Metal
+        // backends (IGLRenderer / IMetalRenderer). Headless has no effect support.
+        bool effectsActive = (blurActive || grayscaleActive) && renderer is IGLRenderer or Metal.IMetalRenderer;
 
         bool needsRedraw = !cacheDrawnFrameBuffer || shared.RenderedVersion != AppliedSubtreeVersion;
 
@@ -117,7 +117,7 @@ public class BufferedContainerDrawNode : ContainerDrawNode
             renderer.UnbindFrameBuffer();
 
             shared.FinalEffectBuffer = effectsActive
-                ? runEffectPasses((IGLRenderer)renderer, rect, targetWidth, targetHeight, renderScale)
+                ? runEffectPasses(renderer, rect, targetWidth, targetHeight, renderScale)
                 : null;
 
             shared.RenderedVersion = AppliedSubtreeVersion;
@@ -132,7 +132,7 @@ public class BufferedContainerDrawNode : ContainerDrawNode
     /// is left untouched (needed when <see cref="BufferedContainer.DrawOriginal"/> is set).
     /// </summary>
     /// <returns>The buffer holding the final effect result.</returns>
-    private IFrameBuffer runEffectPasses(IGLRenderer renderer, RectangleF rect, int targetWidth, int targetHeight, Vector2 renderScale)
+    private IFrameBuffer runEffectPasses(IRenderer renderer, RectangleF rect, int targetWidth, int targetHeight, Vector2 renderScale)
     {
         if (blur_shader == null || !ReferenceEquals(shader_renderer, renderer))
         {
@@ -194,7 +194,7 @@ public class BufferedContainerDrawNode : ContainerDrawNode
         return current;
     }
 
-    private void blurPass(IGLRenderer renderer, IFrameBuffer source, IFrameBuffer target, RectangleF rect, Vector2 direction, float sigmaTexels)
+    private void blurPass(IRenderer renderer, IFrameBuffer source, IFrameBuffer target, RectangleF rect, Vector2 direction, float sigmaTexels)
     {
         int radius = sigmaTexels > 0 ? Math.Min(max_blur_radius, (int)MathF.Ceiling(sigmaTexels * 3)) : 0;
 
@@ -210,7 +210,7 @@ public class BufferedContainerDrawNode : ContainerDrawNode
         });
     }
 
-    private void grayscalePass(IGLRenderer renderer, IFrameBuffer source, IFrameBuffer target, RectangleF rect)
+    private void grayscalePass(IRenderer renderer, IFrameBuffer source, IFrameBuffer target, RectangleF rect)
     {
         runShaderPass(renderer, source, target, rect, grayscale_shader!, shader =>
             shader.SetUniformBlock("GrayscaleBlock", new Uniforms.GrayscaleBlock
@@ -224,7 +224,7 @@ public class BufferedContainerDrawNode : ContainerDrawNode
     /// using a custom shader. Follows the framework's custom-shader pattern:
     /// flush → bind shader + uniforms → raw draw → restore main shader.
     /// </summary>
-    private static void runShaderPass(IGLRenderer renderer, IFrameBuffer source, IFrameBuffer target, RectangleF rect, IShader shader, Action<IShader> setUniforms)
+    private static void runShaderPass(IRenderer renderer, IFrameBuffer source, IFrameBuffer target, RectangleF rect, IShader shader, Action<IShader> setUniforms)
     {
         renderer.BindFrameBuffer(target, rect);
         renderer.FlushBatch();
@@ -237,17 +237,35 @@ public class BufferedContainerDrawNode : ContainerDrawNode
         shader.SetUniform("u_Texture", 0);
         setUniforms(shader);
 
-        // Bind the source attachment to unit 0 for the pass.
-        if (source.Texture.BackendTexture is GLTexture glTexture)
-            glTexture.Bind(0);
+        // Bind the source attachment to unit 0 for the pass. The backend texture is bound directly so
+        // it bypasses the renderer's slot tracking (this is a raw, custom-shader pass).
+        source.Texture.BackendTexture?.Bind(0);
 
         Span<Vertex.Vertex> quad = stackalloc Vertex.Vertex[4];
         fillQuad(quad, rect, new Vector4(1, 1, 1, 1));
 
-        renderer.DrawVerticesRaw(quad);
+        drawRaw(renderer, quad);
         renderer.RestoreMainShader();
 
         renderer.UnbindFrameBuffer();
+    }
+
+    /// <summary>
+    /// Issues a raw vertex draw on whichever backend is active (GL or Metal). Both expose a
+    /// slot-management-free raw draw through their backend-specific renderer interface.
+    /// </summary>
+    private static void drawRaw(IRenderer renderer, ReadOnlySpan<Vertex.Vertex> vertices)
+    {
+        switch (renderer)
+        {
+            case IGLRenderer gl:
+                gl.DrawVerticesRaw(vertices);
+                break;
+
+            case Metal.IMetalRenderer metal:
+                metal.DrawVerticesRaw(vertices);
+                break;
+        }
     }
 
     private void drawComposite(IRenderer renderer, RectangleF rect)

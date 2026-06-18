@@ -206,9 +206,9 @@ public class GLRenderer : IGLRenderer
         lastBoundTextureHandle = uint.MaxValue;
     }
 
-    public void SetRoot(DrawNode node)
+    public void SetRoot(DrawNode rootDrawNode)
     {
-        rootNode = node;
+        rootNode = rootDrawNode;
     }
 
     public void Resize(int physicalWidth, int physicalHeight, int logicalWidth, int logicalHeight)

@@ -40,7 +40,7 @@ public class HeadlessRenderer : IRenderer
 
     }
 
-    public void SetRoot(DrawNode rootNode)
+    public void SetRoot(DrawNode rootDrawNode)
     {
 
     }

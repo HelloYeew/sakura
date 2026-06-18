@@ -545,8 +545,26 @@ public class SDLWindow : IWindow
         height = drawableHeight;
     }
 
-    public void GetPhysicalSize(out int width, out int height)
+    public unsafe void GetPhysicalSize(out int width, out int height)
     {
+        // Query SDL directly for the true pixel size rather than returning the cached
+        // currentWidth/currentHeight which aren't populated until the first resize event fires.
+        // At startup that cache still holds the logical size, so callers (e.g. the initial onResize,
+        // which drives DPI for glyph rasterisation) would otherwise get a half-resolution value on
+        // HiDPI displays, making the first-rendered text/sprites permanently soft.
+        if (window != null)
+        {
+            int pixelWidth, pixelHeight;
+            SDL_GetWindowSizeInPixels(window, &pixelWidth, &pixelHeight);
+
+            if (pixelWidth > 0 && pixelHeight > 0)
+            {
+                width = pixelWidth;
+                height = pixelHeight;
+                return;
+            }
+        }
+
         width = currentWidth;
         height = currentHeight;
     }

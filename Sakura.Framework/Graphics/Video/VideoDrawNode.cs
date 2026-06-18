@@ -2,7 +2,9 @@
 // See the LICENSE file for full license text.
 
 using Sakura.Framework.Graphics.Rendering;
+using Sakura.Framework.Graphics.Rendering.Metal;
 using Sakura.Framework.Graphics.Rendering.Uniforms;
+using Sakura.Framework.Graphics.Textures;
 
 namespace Sakura.Framework.Graphics.Video;
 
@@ -36,9 +38,10 @@ internal class VideoDrawNode : DrawNode
         if (!videoTexture.UploadComplete)
             return;
 
-        // Video rendering requires GL-specific operations (sRGB toggle, raw vertex upload).
-        // On non-GL renderers video is silently skipped until a backend-agnostic path exists.
-        if (renderer is not IGLRenderer glRenderer)
+        // TODO: This is still really bad????
+        bool isGL = renderer is IGLRenderer;
+        bool isMetal = renderer is IMetalRenderer;
+        if (!isGL && !isMetal)
             return;
 
         renderer.FlushBatch();
@@ -49,9 +52,12 @@ internal class VideoDrawNode : DrawNode
                 Projection = renderer.ProjectionMatrix
             });
 
-        // Bind Y/U/V planes to texture units 0/1/2 — GL stays inside VideoTexture.
-        videoTexture.BindPlanes();
+        // Bind Y/U/V planes to texture units 0/1/2 — backend specifics stay inside VideoTexture.
+        // Tile fill repeats the frame (UVs > 1), so the planes need a repeating wrap; otherwise clamp.
+        videoTexture.BindPlanes(FillMode == TextureFillMode.Tile);
 
+        // GL maps sampler uniforms by name; on Metal these are no-ops (planes are bound by slot in
+        // BindPlanes, matching the shader's [[texture(0/1/2)]]).
         videoShader.SetUniform("u_TextureY", 0);
         videoShader.SetUniform("u_TextureU", 1);
         videoShader.SetUniform("u_TextureV", 2);
@@ -59,7 +65,11 @@ internal class VideoDrawNode : DrawNode
         if (yuvMatrix != null)
             videoShader.SetUniformBlock("VideoBlock", VideoBlock.FromMat3(yuvMatrix));
 
-        glRenderer.DrawVerticesRaw(Vertices);
+        if (renderer is IGLRenderer glRenderer)
+            glRenderer.DrawVerticesRaw(Vertices);
+        else if (renderer is IMetalRenderer metalRenderer)
+            metalRenderer.DrawVerticesRaw(Vertices);
+
         renderer.RestoreMainShader();
     }
 }
