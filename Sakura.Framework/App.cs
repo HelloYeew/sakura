@@ -15,6 +15,7 @@ using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Graphics.Rendering;
+using Sakura.Framework.Graphics.Rendering.Metal;
 using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Graphics.Video;
@@ -135,7 +136,7 @@ public partial class App : Container, IFocusManager, IDisposable
             case GLRenderer:
                 TextureManager = new GLTextureManager(Host.Renderer, GLRenderer.GL, embeddedResourceStorage.GetStorageForDirectory("Textures"), CreateImageLoader());
                 VideoStore = new VideoStore(embeddedResourceStorage.GetStorageForDirectory("Videos"), Host.Renderer, TextureManager);
-                FontStore = new GLFontStore(Host.Renderer, GLRenderer.GL);
+                FontStore = new RendererFontStore(Host.Renderer);
                 // TODO: This will exposed all framework file resource out, maybe find better way?
                 var frameworkFontStorage = Host.FrameworkStorage.GetStorageForDirectory("Fonts");
                 var fontStorage = embeddedResourceStorage.GetStorageForDirectory("Fonts");
@@ -146,7 +147,16 @@ public partial class App : Container, IFocusManager, IDisposable
             case HeadlessRenderer:
                 TextureManager = new HeadlessTextureManager();
                 FontStore = new HeadlessFontStore((HeadlessTextureManager)TextureManager);
-                VideoStore = null; // Video playback is not supported in headless mode
+                VideoStore = new VideoStore(embeddedResourceStorage.GetStorageForDirectory("Videos"), Host.Renderer, TextureManager);
+                break;
+
+            case MetalRenderer:
+                TextureManager = new MetalTextureManager(Host.Renderer, embeddedResourceStorage.GetStorageForDirectory("Textures"), CreateImageLoader());
+                FontStore = new RendererFontStore(Host.Renderer);
+                var metalFrameworkFontStorage = Host.FrameworkStorage.GetStorageForDirectory("Fonts");
+                var metalFontStorage = new CompositeStorage(metalFrameworkFontStorage, embeddedResourceStorage.GetStorageForDirectory("Fonts"));
+                FontStore.LoadDefaultFont(metalFontStorage);
+                VideoStore = new VideoStore(embeddedResourceStorage.GetStorageForDirectory("Videos"), Host.Renderer, TextureManager);
                 break;
 
             default:
