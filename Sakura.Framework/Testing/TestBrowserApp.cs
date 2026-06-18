@@ -12,7 +12,6 @@ using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
-using Sakura.Framework.Graphics.Cursor;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Text;
@@ -817,7 +816,7 @@ public partial class TestBrowserApp : App
         stepsFlow.Add(stepButton);
     }
 
-    private void generateStepVisual<T>(SliderStep<T> step) where T : struct, System.Numerics.INumber<T>
+    private void generateStepVisual<T>(SliderStep<T> step) where T : struct, INumber<T>
     {
         stepsFlow.Add(new TestSliderStepControl<T>(step));
     }

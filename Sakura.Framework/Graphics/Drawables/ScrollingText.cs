@@ -101,7 +101,7 @@ public partial class ScrollingText : Container
 
         float dx = ScrollSpeed * (float)(Clock.ElapsedFrameTime / 1000.0);
         float x = text.X - dx;
-        
+
         float loopExtent = textWidth + LoopSpacing;
         if (-x >= loopExtent)
         {
