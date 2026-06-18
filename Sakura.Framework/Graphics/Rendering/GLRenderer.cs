@@ -10,6 +10,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using Sakura.Framework.Graphics.Rendering.Batches;
 using Sakura.Framework.Graphics.Textures;
+using Sakura.Framework.IO;
 using Silk.NET.OpenGL;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
@@ -71,10 +72,25 @@ public class GLRenderer : IGLRenderer
     public Texture WhitePixel { get; private set; }
     public Matrix4x4 ProjectionMatrix => projectionMatrix;
     public Storage ShaderStorage { get; set; }
+    public DiskCache ShaderCache { get; set; }
 
     private GLTexture whiteGLTexture => (GLTexture)WhitePixel.BackendTexture!;
 
     private GLShader shader;
+
+    private Uniforms.GLUniformBuffer<Uniforms.ProjectionBlock> projectionBuffer;
+    private Uniforms.GLUniformBuffer<Uniforms.MaskBlock> maskBuffer;
+    private Uniforms.MaskBlock maskState;
+
+    private const uint projection_binding = 0;
+    private const uint mask_binding = 1;
+
+    private void uploadProjection()
+    {
+        projectionBuffer.Update(new Uniforms.ProjectionBlock { Projection = projectionMatrix });
+    }
+
+    private void uploadMaskState() => maskBuffer.Update(maskState);
 
     private Matrix4x4 projectionMatrix;
 
@@ -171,7 +187,19 @@ public class GLRenderer : IGLRenderer
         prefillTextureSlots();
         resetTextureSlots();
 
-        shader = new GLShader(gl, ShaderStorage, "shader.vert", "shader.frag");
+        var (mainVert, mainFrag) = ShaderCompiler.GetOrCompile(
+            ShaderStorage, "shader.vert", "shader.frag", SPIRV.CrossCompileTarget.GLSL, ShaderCache);
+        shader = new GLShader(gl, mainVert, mainFrag);
+
+        projectionBuffer = new Uniforms.GLUniformBuffer<Uniforms.ProjectionBlock>(gl, projection_binding);
+        maskBuffer = new Uniforms.GLUniformBuffer<Uniforms.MaskBlock>(gl, mask_binding);
+
+        if (!shader.BindUniformBlock("ProjectionBlock", projection_binding))
+            Logger.Error("GLRenderer: main shader is missing expected uniform block 'ProjectionBlock'.");
+        if (!shader.BindUniformBlock("MaskBlock", mask_binding))
+            Logger.Error("GLRenderer: main shader is missing expected uniform block 'MaskBlock'.");
+
+        maskState = default;
 
         triangleBatch = new TriangleBatch(gl, 1000 * 12);
 
@@ -227,16 +255,26 @@ public class GLRenderer : IGLRenderer
     public void RestoreMainShader()
     {
         shader.Use();
-        shader.SetUniform("u_Projection", projectionMatrix);
         shader.SetUniformIntArray("u_Textures", texture_samplers);
-        shader.SetUniform("u_IsMasking", false);
-        shader.SetUniform("u_IsBorder", false);
+
+        uploadProjection();
+        projectionBuffer.Bind();
+
+        maskState.IsMasking = 0;
+        maskState.IsBorder = 0;
+        uploadMaskState();
+        maskBuffer.Bind();
     }
 
     public void DisableSrgb() => gl.Disable(EnableCap.FramebufferSrgb);
     public void RestoreSrgb() => gl.Enable(EnableCap.FramebufferSrgb);
 
-    public IShader CreateShader(Storage storage, string vertexPath, string fragmentPath) => new GLShader(gl, storage, vertexPath, fragmentPath);
+    public IShader CreateShader(Storage storage, string vertexPath, string fragmentPath)
+    {
+        (string vert, string frag) = ShaderCompiler.GetOrCompile(
+            storage, vertexPath, fragmentPath, SPIRV.CrossCompileTarget.GLSL, ShaderCache);
+        return new GLShader(gl, vert, frag);
+    }
 
     public INativeVideoTexture CreateVideoTexture(int width, int height) => new VideoGLTexture(gl, width, height);
 
@@ -278,8 +316,10 @@ public class GLRenderer : IGLRenderer
         stat_drawables_drawn.Value = 0;
 
         shader.Use();
-        shader.SetUniform("u_Projection", projectionMatrix);
         shader.SetUniformIntArray("u_Textures", texture_samplers);
+
+        uploadProjection();
+        projectionBuffer.Bind();
 
         stencilLevel = 0;
         scissorStack.Clear();
@@ -290,8 +330,10 @@ public class GLRenderer : IGLRenderer
             ShearX = 0,
             Radius = 0
         };
-        shader.SetUniform("u_IsMasking", false);
-        shader.SetUniform("u_IsBorder", false);
+        maskState.IsMasking = 0;
+        maskState.IsBorder = 0;
+        uploadMaskState();
+        maskBuffer.Bind();
 
         lastBoundTextureHandle = uint.MaxValue;
         SetBlendMode(BlendingMode.Alpha);
@@ -348,7 +390,7 @@ public class GLRenderer : IGLRenderer
             sourceRect.X, sourceRect.X + sourceRect.Width,
             sourceRect.Y + sourceRect.Height, sourceRect.Y,
             -1, 1);
-        shader.SetUniform("u_Projection", projectionMatrix);
+        uploadProjection();
 
         // Content inside the buffer starts from a clean clip state; the outer clip applies
         // to the final composited quad instead.
@@ -382,7 +424,7 @@ public class GLRenderer : IGLRenderer
         currentViewportHeight = state.ViewportHeight;
 
         projectionMatrix = state.Projection;
-        shader.SetUniform("u_Projection", projectionMatrix);
+        uploadProjection();
 
         currentClip = state.Clip;
     }
@@ -455,15 +497,15 @@ public class GLRenderer : IGLRenderer
 
         triangleBatch.Draw();
 
-        shader.SetUniform("u_IsBorder", true);
-
-        shader.SetUniform("u_MaskCenter", maskCenter);
-        shader.SetUniform("u_MaskHalfSize", maskHalfSize);
-        shader.SetUniform("u_ShearX", shearX);
-        shader.SetUniform("u_CornerRadius", cornerRadius);
-
-        shader.SetUniform("u_BorderThickness", borderThickness);
-        shader.SetUniform("u_BorderColor", borderColor);
+        maskState.IsBorder = 1;
+        maskState.MaskCenter = new System.Numerics.Vector2(maskCenter.X, maskCenter.Y);
+        maskState.MaskHalfSize = new System.Numerics.Vector2(maskHalfSize.X, maskHalfSize.Y);
+        maskState.ShearX = shearX;
+        maskState.CornerRadius = cornerRadius;
+        maskState.BorderThickness = borderThickness;
+        maskState.BorderColor = new System.Numerics.Vector4(
+            borderColor.R / 255f, borderColor.G / 255f, borderColor.B / 255f, borderColor.A / 255f);
+        uploadMaskState();
 
         if (boundTextureCount == 0 || whiteGLTexture.GLHandle != boundTextureHandles[0])
         {
@@ -479,7 +521,8 @@ public class GLRenderer : IGLRenderer
 
         triangleBatch.Draw();
 
-        shader.SetUniform("u_IsBorder", false);
+        maskState.IsBorder = 0;
+        uploadMaskState();
         lastBoundTextureHandle = uint.MaxValue;
     }
 

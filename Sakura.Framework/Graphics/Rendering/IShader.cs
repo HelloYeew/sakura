@@ -33,6 +33,14 @@ public interface IShader : IDisposable
     void SetUniform(string name, float[] mat3X3);
 
     /// <summary>
+    /// Uploads a std140-laid-out uniform block by name. <typeparamref name="T"/> must match the
+    /// block's GLSL layout exactly (see <c>Uniforms</c> structs). The backend owns the underlying
+    /// buffer and binds it to the block's binding point. Replaces per-name <see cref="SetUniform(string,float)"/>
+    /// calls for shaders authored in GLSL 450 with uniform blocks.
+    /// </summary>
+    void SetUniformBlock<T>(string blockName, in T data) where T : unmanaged;
+
+    /// <summary>
     /// The native program handle. Used by backend-specific code that needs raw access.
     /// </summary>
     nint Handle { get; }

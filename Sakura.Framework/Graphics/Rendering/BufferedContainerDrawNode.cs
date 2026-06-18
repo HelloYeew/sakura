@@ -200,17 +200,23 @@ public class BufferedContainerDrawNode : ContainerDrawNode
 
         runShaderPass(renderer, source, target, rect, blur_shader!, shader =>
         {
-            shader.SetUniform("u_TexelSize", new Vector2(1f / source.Width, 1f / source.Height));
-            shader.SetUniform("u_Direction", direction);
-            shader.SetUniform("u_Sigma", sigmaTexels);
-            shader.SetUniform("u_Radius", radius);
+            shader.SetUniformBlock("BlurBlock", new Uniforms.BlurBlock
+            {
+                TexelSize = new Vector2(1f / source.Width, 1f / source.Height),
+                Direction = new Vector2(direction.X, direction.Y),
+                Sigma = sigmaTexels,
+                Radius = radius,
+            });
         });
     }
 
     private void grayscalePass(IGLRenderer renderer, IFrameBuffer source, IFrameBuffer target, RectangleF rect)
     {
         runShaderPass(renderer, source, target, rect, grayscale_shader!, shader =>
-            shader.SetUniform("u_Strength", grayscaleStrength));
+            shader.SetUniformBlock("GrayscaleBlock", new Uniforms.GrayscaleBlock
+            {
+                Strength = grayscaleStrength
+            }));
     }
 
     /// <summary>
@@ -224,7 +230,10 @@ public class BufferedContainerDrawNode : ContainerDrawNode
         renderer.FlushBatch();
 
         shader.Use();
-        shader.SetUniform("u_Projection", renderer.ProjectionMatrix);
+        shader.SetUniformBlock("ProjectionBlock", new Uniforms.ProjectionBlock
+        {
+            Projection = renderer.ProjectionMatrix
+        });
         shader.SetUniform("u_Texture", 0);
         setUniforms(shader);
 

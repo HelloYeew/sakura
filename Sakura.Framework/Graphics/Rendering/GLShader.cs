@@ -34,6 +34,19 @@ public partial class GLShader : IShader
     // per-frame SetUniform calls (projection, masking state, ...) cheap.
     private readonly Dictionary<string, int> uniformLocations = new Dictionary<string, int>();
 
+    // Lazily-created UBOs for std140 blocks set via SetUniformBlock. Each distinct block name gets a
+    // dedicated buffer and a sequential binding point linked into the program on first use.
+    private readonly Dictionary<string, GLBlockBinding> uniformBlocks = new Dictionary<string, GLBlockBinding>();
+    private uint nextBlockBinding;
+
+    private sealed class GLBlockBinding
+    {
+        public uint Buffer;
+        public uint BindingPoint;
+        public int Size;
+        public bool Allocated;
+    }
+
     private int getUniformLocation(string name)
     {
         if (!uniformLocations.TryGetValue(name, out int location))
@@ -106,6 +119,73 @@ public partial class GLShader : IShader
     {
         gl.UseProgram(handle);
         stat_shader_binds.Value++;
+    }
+
+    /// <summary>
+    /// Links a named std140 uniform block in this program to a GL uniform-buffer binding point,
+    /// so a <see cref="Uniforms.GLUniformBuffer{T}"/> bound to the same point feeds the block.
+    /// Call once after construction for each block the shader declares.
+    /// </summary>
+    /// <param name="blockName">The block name as it appears in the cross-compiled GLSL (e.g. "ProjectionBlock").</param>
+    /// <param name="bindingPoint">The binding point to associate the block with.</param>
+    /// <returns>True if the block exists in the program and was linked; false if not found.</returns>
+    public bool BindUniformBlock(string blockName, uint bindingPoint)
+    {
+        uint index = gl.GetUniformBlockIndex(handle, blockName);
+
+        // GL_INVALID_INDEX (0xFFFFFFFF) means the block was optimised out or not present.
+        if (index == uint.MaxValue)
+            return false;
+
+        gl.UniformBlockBinding(handle, index, bindingPoint);
+        return true;
+    }
+
+    public unsafe void SetUniformBlock<T>(string blockName, in T data) where T : unmanaged
+    {
+        if (!uniformBlocks.TryGetValue(blockName, out GLBlockBinding block))
+        {
+            uint index = gl.GetUniformBlockIndex(handle, blockName);
+            if (index == uint.MaxValue)
+            {
+                // Block not present in this program (e.g. optimised out), nothing to upload.
+                uniformBlocks[blockName] = new GLBlockBinding
+                {
+                    Buffer = 0,
+                    BindingPoint = uint.MaxValue
+                };
+                return;
+            }
+
+            block = new GLBlockBinding
+            {
+                Buffer = gl.GenBuffer(),
+                BindingPoint = nextBlockBinding++,
+                Size = sizeof(T),
+            };
+            gl.UniformBlockBinding(handle, index, block.BindingPoint);
+            uniformBlocks[blockName] = block;
+        }
+
+        if (block.BindingPoint == uint.MaxValue)
+            return;
+
+        gl.BindBuffer(BufferTargetARB.UniformBuffer, block.Buffer);
+        fixed (T* ptr = &data)
+        {
+            if (!block.Allocated)
+            {
+                gl.BufferData(BufferTargetARB.UniformBuffer, (nuint)block.Size, ptr, BufferUsageARB.DynamicDraw);
+                block.Allocated = true;
+            }
+            else
+            {
+                gl.BufferSubData(BufferTargetARB.UniformBuffer, 0, (nuint)block.Size, ptr);
+            }
+        }
+
+        gl.BindBufferBase(BufferTargetARB.UniformBuffer, block.BindingPoint, block.Buffer);
+        gl.BindBuffer(BufferTargetARB.UniformBuffer, 0);
     }
 
     public void SetUniform(string name, int value)
@@ -195,6 +275,15 @@ public partial class GLShader : IShader
     {
         if (disposed) return;
         gl.DeleteProgram(handle);
+
+        foreach (GLBlockBinding block in uniformBlocks.Values)
+        {
+            if (block.Buffer != 0)
+                gl.DeleteBuffer(block.Buffer);
+        }
+
+        uniformBlocks.Clear();
+
         GlobalStatistics.Get<int>("Graphics", "Loaded Shaders").Value--;
         disposed = true;
         GC.SuppressFinalize(this);
@@ -218,7 +307,7 @@ public partial class GLShader : IShader
     {
         using Stream stream = storage.GetStream(path, FileAccess.Read, FileMode.Open);
         string src = readStream(stream);
-        return resolveIncludes(src, name =>
+        return ShaderCompiler.ResolveIncludes(src, name =>
         {
             try
             {
@@ -233,43 +322,6 @@ public partial class GLShader : IShader
         });
     }
 
-    /// <summary>
-    /// Resolves <c>#include</c> directives by passing each include name to <paramref name="loadInclude"/>.
-    /// Uses a compiled regex instead of manual string parsing — handles both <c>"file"</c> and
-    /// <c>&lt;file&gt;</c> syntax, and tolerates whitespace between <c>#</c> and <c>include</c>.
-    /// </summary>
-    private static string resolveIncludes(string src, Func<string, string> loadInclude)
-    {
-        src = src.Replace("\r\n", "\n").Replace("\r", "\n");
-
-        var result = new StringBuilder();
-
-        foreach (string line in src.Split('\n'))
-        {
-            Match match = IncludePattern.Match(line);
-
-            if (match.Success)
-            {
-                string includeName = match.Groups[1].Value.Trim();
-                string includeSource = loadInclude(includeName);
-
-                // Recurse so included files can themselves contain #include.
-                includeSource = resolveIncludes(includeSource, loadInclude);
-                includeSource = includeSource.TrimEnd('\n', '\r');
-
-                result.Append("// ---- begin include: ").Append(includeName).Append(" ----\n");
-                result.Append(includeSource).Append('\n');
-                result.Append("// ---- end include: ").Append(includeName).Append(" ----\n");
-            }
-            else
-            {
-                result.Append(line).Append('\n');
-            }
-        }
-
-        return result.ToString();
-    }
-
     private uint loadFromAssembly(ShaderType type, string resourcePath, Assembly assembly)
     {
         string directory = resourcePath.Contains('/')
@@ -277,7 +329,7 @@ public partial class GLShader : IShader
             : string.Empty;
 
         string src = readEmbeddedResource(resourcePath, assembly);
-        src = resolveIncludes(src, includeName => readEmbeddedResource(directory + includeName, assembly));
+        src = ShaderCompiler.ResolveIncludes(src, includeName => readEmbeddedResource(directory + includeName, assembly));
 
         return compileShader(type, src, resourcePath);
     }

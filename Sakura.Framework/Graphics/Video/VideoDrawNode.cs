@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using Sakura.Framework.Graphics.Rendering;
+using Sakura.Framework.Graphics.Rendering.Uniforms;
 
 namespace Sakura.Framework.Graphics.Video;
 
@@ -43,7 +44,10 @@ internal class VideoDrawNode : DrawNode
         renderer.FlushBatch();
 
         videoShader.Use();
-        videoShader.SetUniform("u_Projection", renderer.ProjectionMatrix);
+        videoShader.SetUniformBlock("ProjectionBlock", new ProjectionBlock
+            {
+                Projection = renderer.ProjectionMatrix
+            });
 
         // Bind Y/U/V planes to texture units 0/1/2 — GL stays inside VideoTexture.
         videoTexture.BindPlanes();
@@ -53,7 +57,7 @@ internal class VideoDrawNode : DrawNode
         videoShader.SetUniform("u_TextureV", 2);
 
         if (yuvMatrix != null)
-            videoShader.SetUniform("u_YuvCoeff", yuvMatrix);
+            videoShader.SetUniformBlock("VideoBlock", VideoBlock.FromMat3(yuvMatrix));
 
         glRenderer.DrawVerticesRaw(Vertices);
         renderer.RestoreMainShader();

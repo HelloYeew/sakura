@@ -20,5 +20,6 @@ public sealed class HeadlessShader : IShader
     public void SetUniform(string name, Color value) { }
     public void SetUniformIntArray(string name, int[] values) { }
     public void SetUniform(string name, float[] mat3X3) { }
+    public void SetUniformBlock<T>(string blockName, in T data) where T : unmanaged { }
     public void Dispose() { }
 }

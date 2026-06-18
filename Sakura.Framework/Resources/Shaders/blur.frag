@@ -1,24 +1,24 @@
-#version 330 core
+#version 450
 
-// One direction of a two-pass separable Gaussian blur, used by BufferedContainer.
-// Pairs with the standard shader.vert; unused varyings are simply not declared.
+layout(location = 0) in vec4 v_Color;
+layout(location = 1) in vec2 v_TexCoords;
 
-in vec4 v_Color;
-in vec2 v_TexCoords;
+layout(location = 0) out vec4 FragColor;
 
-out vec4 FragColor;
+layout(set = 1, binding = 0) uniform sampler2D u_Texture;
 
-uniform sampler2D u_Texture;
-
-// 1.0 / texture size in pixels.
-uniform vec2 u_TexelSize;
-
-// (1,0) for the horizontal pass, (0,1) for the vertical pass.
-uniform vec2 u_Direction;
-
-// Gaussian sigma in texels, and the sampling radius (taps each side, max 64).
-uniform float u_Sigma;
-uniform int u_Radius;
+// Field order matches the std140 layout in BlurBlock (C#):
+//   vec2  u_TexelSize  (offset 0)   // 1.0 / texture size in pixels
+//   vec2  u_Direction  (offset 8)   // (1,0) horizontal pass, (0,1) vertical pass
+//   float u_Sigma      (offset 16)  // Gaussian sigma in texels
+//   int   u_Radius     (offset 20)  // sampling radius (taps each side, max 64)
+layout(set = 0, binding = 3, std140) uniform BlurBlock
+{
+    vec2 u_TexelSize;
+    vec2 u_Direction;
+    float u_Sigma;
+    int u_Radius;
+};
 
 void main()
 {

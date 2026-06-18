@@ -1,38 +1,47 @@
-#version 330 core
+#version 450
 
 #include "sh_Utils.glsl"
 
-in vec4 v_Color;
-in vec2 v_TexCoords;
-in vec2 v_FragPos;
-in float v_TexIndex;
-in vec4 v_ClipData;
-in float v_ClipShearX;
-in float v_ClipRadius;
+layout(location = 0) in vec4 v_Color;
+layout(location = 1) in vec2 v_TexCoords;
+layout(location = 2) in vec2 v_FragPos;
+layout(location = 3) in float v_TexIndex;
+layout(location = 4) in vec4 v_ClipData;
+layout(location = 5) in float v_ClipShearX;
+layout(location = 6) in float v_ClipRadius;
 
-out vec4 FragColor;
+layout(location = 0) out vec4 FragColor;
 
-uniform sampler2D u_Textures[8];
+layout(set = 1, binding = 0) uniform sampler2D u_Textures[8];
 
-// Masking uniforms
-uniform bool u_IsMasking;
-uniform vec2 u_MaskCenter;     // True center of the element in screen space
-uniform vec2 u_MaskHalfSize;   // Un-sheared half size (Width/2, Height/2)
-uniform float u_ShearX;        // Container.Shear.X
-uniform float u_CornerRadius;
-
-// Border uniforms
-uniform bool u_IsBorder;
-uniform float u_BorderThickness;
-uniform vec4 u_BorderColor;
+// Masking + border state. Field order matches the std140 layout in MaskBlock in C#
+//   vec4 u_BorderColor (offset 0)
+//   vec2 u_MaskCenter (offset 16)
+//   vec2 u_MaskHalfSize (offset 24)
+//   float u_ShearX (offset 32)
+//   float u_CornerRadius (offset 36)
+//   float u_BorderThickness(offset 40)
+//   int u_IsMasking (offset 44)
+//   int u_IsBorder (offset 48)
+layout(set = 0, binding = 1, std140) uniform MaskBlock
+{
+    vec4 u_BorderColor;
+    vec2 u_MaskCenter;
+    vec2 u_MaskHalfSize;
+    float u_ShearX;
+    float u_CornerRadius;
+    float u_BorderThickness;
+    int u_IsMasking;
+    int u_IsBorder;
+};
 
 void main()
 {
-    if (u_IsBorder)
+    if (u_IsBorder != 0)
     {
         vec2 posInRect = v_FragPos - u_MaskCenter;
         float sk = u_ShearX * u_MaskHalfSize.y;
-        
+
         float dist = sdRoundParallelogram(posInRect, u_MaskHalfSize, sk, u_CornerRadius);
 
         float outerAlpha = 1.0 - smoothstep(-0.5, 0.5, dist);
@@ -61,7 +70,7 @@ void main()
 
     texColor *= v_Color;
 
-    if (u_IsMasking && u_CornerRadius > 0.0)
+    if (u_IsMasking != 0 && u_CornerRadius > 0.0)
     {
         vec2 posInRect = v_FragPos - u_MaskCenter;
         float sk = u_ShearX * u_MaskHalfSize.y;
