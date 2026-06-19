@@ -259,7 +259,13 @@ public partial class App : Container, IFocusManager, IDisposable
 
     public override bool OnKeyDown(KeyEvent e)
     {
-        if (!e.IsRepeat && e.Key == Key.F1 && (e.Modifiers & KeyModifiers.Control) > 0)
+        if (!e.IsRepeat && e.Key == Key.F1 && (e.Modifiers & KeyModifiers.Control) > 0 && (e.Modifiers & KeyModifiers.Shift) > 0)
+        {
+            toggleVisualiser();
+            drawVisualiser.ToggleInspectMode();
+            return true;
+        }
+        else if (!e.IsRepeat && e.Key == Key.F1 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
             toggleVisualiser();
             return true;

@@ -199,7 +199,7 @@ public partial class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVi
             Text = "Inspect",
             DefaultColor = Color.DarkMagenta,
             HoverColor = Color.Magenta,
-            Action = toggleInspectMode
+            Action = ToggleInspectMode
         });
 
         // Tree view (left)
@@ -332,7 +332,7 @@ public partial class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVi
         runningTimeText.Text = $"Has been running for {TimeSpan.FromSeconds(targetRoot.Clock.CurrentTime / 1000):hh\\:mm\\:ss}";
     }
 
-    private void toggleInspectMode()
+    public void ToggleInspectMode()
     {
         isInspecting = !isInspecting;
 
@@ -390,7 +390,7 @@ public partial class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVi
                 timeUntilNextTreeRefresh = 0;
             }
 
-            toggleInspectMode();
+            ToggleInspectMode();
             return true;
         }
 
@@ -401,7 +401,7 @@ public partial class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVi
     {
         if (isInspecting && e.Key == Key.Escape)
         {
-            toggleInspectMode();
+            ToggleInspectMode();
             return true;
         }
 
