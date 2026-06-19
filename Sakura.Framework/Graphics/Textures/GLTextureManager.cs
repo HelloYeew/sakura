@@ -32,6 +32,8 @@ public class GLTextureManager : ITextureManager
     /// </summary>
     public Texture WhitePixel { get; }
 
+    public TextureAtlas Atlas { get; }
+
     public GLTextureManager(IRenderer renderer, GL gl, Storage storage, IImageLoader imageLoader)
     {
         this.renderer = renderer;
@@ -40,6 +42,7 @@ public class GLTextureManager : ITextureManager
         this.imageLoader = imageLoader;
         WhitePixel = new Texture(GLTexture.WhitePixel);
         missingTexture = createNullTexture();
+        Atlas = new TextureAtlas(renderer, usage: AtlasUsage.Textures);
     }
 
     /// <summary>
@@ -63,17 +66,27 @@ public class GLTextureManager : ITextureManager
 
             // force a copy of the pooled memory immediately on the update thread
             byte[] pixelDataCopy = rawImage.Data.ToArray();
-
-            var glTexture = new GLTexture(gl, rawImage.Width, rawImage.Height);
-            var texture = new Texture(glTexture);
+            int imageWidth = rawImage.Width;
+            int imageHeight = rawImage.Height;
 
             // dispose the native image on the thread that created it
             rawImage.Dispose();
 
-            renderer.ScheduleToDrawThread(() =>
+            Texture? texture = null;
+
+            if (imageWidth <= TextureAtlas.MAX_ATLAS_TEXTURE_SIZE && imageHeight <= TextureAtlas.MAX_ATLAS_TEXTURE_SIZE)
+                texture = Atlas.AddRegion(imageWidth, imageHeight, pixelDataCopy);
+
+            if (texture == null)
             {
-                glTexture.Upload(pixelDataCopy);
-            });
+                var glTexture = new GLTexture(gl, imageWidth, imageHeight);
+                texture = new Texture(glTexture);
+
+                renderer.ScheduleToDrawThread(() =>
+                {
+                    glTexture.Upload(pixelDataCopy);
+                });
+            }
 
             textureCache[path] = texture;
             GlobalStatistics.Get<int>("Textures", "Loaded Textures").Value = textureCache.Count;
@@ -127,7 +140,7 @@ public class GLTextureManager : ITextureManager
 
         if (textureCache.TryGetValue(path, out var texture))
         {
-            if (texture.BackendTexture != null && texture.BackendTexture != WhitePixel.BackendTexture && texture.BackendTexture != missingTexture.BackendTexture)
+            if (texture.BackendTexture != null && texture.BackendTexture != WhitePixel.BackendTexture && texture.BackendTexture != missingTexture.BackendTexture && !Atlas.OwnsNativeTexture(texture.BackendTexture))
             {
                 renderer.ScheduleToDrawThread(() =>
                 {
@@ -148,7 +161,7 @@ public class GLTextureManager : ITextureManager
     {
         foreach (var texture in textureCache.Values)
         {
-            if (texture.BackendTexture != null && texture.BackendTexture != WhitePixel.BackendTexture && texture.BackendTexture != missingTexture.BackendTexture)
+            if (texture.BackendTexture != null && texture.BackendTexture != WhitePixel.BackendTexture && texture.BackendTexture != missingTexture.BackendTexture && !Atlas.OwnsNativeTexture(texture.BackendTexture))
             {
                 renderer.ScheduleToDrawThread(() =>
                 {
@@ -158,9 +171,13 @@ public class GLTextureManager : ITextureManager
         }
 
         textureCache.Clear();
+        Atlas.Dispose();
     }
 
-    public IEnumerable<Texture> GetAllTextures() => textureCache.Values;
+    /// <summary>
+    /// Returns only standalone (non-atlas) cached textures, so the viewer can show atlas pages separately.
+    /// </summary>
+    public IEnumerable<Texture> GetAllTextures() => textureCache.Values.Where(t => !Atlas.OwnsNativeTexture(t.BackendTexture));
 
     public void RegisterVideoTexture(IVideoTexture texture) => videoTextures.TryAdd(texture, 0);
     public void UnregisterVideoTexture(IVideoTexture texture) => videoTextures.TryRemove(texture, out _);

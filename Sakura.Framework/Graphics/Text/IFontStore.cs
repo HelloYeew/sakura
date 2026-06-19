@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Platform;
 
 namespace Sakura.Framework.Graphics.Text;

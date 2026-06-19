@@ -30,6 +30,8 @@ public class GLRenderer : IGLRenderer
     private static readonly GlobalStatistic<int> stat_vertices_drawn = GlobalStatistics.Get<int>("Renderer", "Vertices Drawn");
     private static readonly GlobalStatistic<int> stat_shader_binds = GlobalStatistics.Get<int>("Renderer", "Shader Binds");
     private static readonly GlobalStatistic<int> stat_texture_binds = GlobalStatistics.Get<int>("Renderer", "Texture Binds");
+
+    private static readonly GlobalStatistic<int> stat_texture_binds_last_frame = GlobalStatistics.Get<int>("Renderer", "Texture Binds (Last Frame)");
     private static readonly GlobalStatistic<int> stat_slot_exhaustion_flushes = GlobalStatistics.Get<int>("Renderer", "Slot Exhaustion Flushes");
     private static readonly GlobalStatistic<int> stat_state_change_flushes = GlobalStatistics.Get<int>("Renderer", "State Change Flushes");
     private static readonly GlobalStatistic<int> stat_buffer_full_flushes = GlobalStatistics.Get<int>("Renderer", "Buffer Full Flushes");
@@ -353,6 +355,10 @@ public class GLRenderer : IGLRenderer
 
         rootNode.Draw(this);
         triangleBatch.Draw();
+
+        // Publish a stable snapshot of this frame's totals for cross-thread consumers (e.g. the
+        // texture viewer). Done after the final batch flush so all binds for the frame are counted.
+        stat_texture_binds_last_frame.Value = stat_texture_binds.Value;
     }
 
     public Vector2 RenderScale => new Vector2(renderScaleX, renderScaleY);

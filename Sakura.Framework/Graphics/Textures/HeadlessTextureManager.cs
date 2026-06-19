@@ -10,6 +10,8 @@ public class HeadlessTextureManager : ITextureManager
 {
     public Texture WhitePixel { get; }
 
+    public TextureAtlas? Atlas => null;
+
     public HeadlessTextureManager()
     {
         WhitePixel = createDummyTexture(1, 1);
