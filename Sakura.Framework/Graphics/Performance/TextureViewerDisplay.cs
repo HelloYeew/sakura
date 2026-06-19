@@ -32,6 +32,8 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
 
     private int lastTextureUpdates = -1;
     private int lastAtlasPageCount = -1;
+    private int lastTextureAtlasPageCount = -1;
+    private int lastTextureCount = -1;
     private int lastVideoCount = -1;
     private double lastUpdateTime;
 
@@ -187,7 +189,7 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
         currentTimeText.Text = $"{DateTime.Now:dd MMMM yyyy HH:mm:ss tt}";
         runningTimeText.Text = $"Has been running for {TimeSpan.FromSeconds(host.UpdateClock.CurrentTime / 1000):hh\\:mm\\:ss}";
 
-        int textureBinds = GlobalStatistics.Get<int>("Renderer", "Texture Binds").Value;
+        int textureBinds = GlobalStatistics.Get<int>("Renderer", "Texture Binds (Last Frame)").Value;
         bindsText.Text = $"Texture Binds (Last Frame): {textureBinds}";
 
         if (host.UpdateClock.CurrentTime - lastUpdateTime < 100)
@@ -197,12 +199,16 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
 
         int currentTextureUpdates = GlobalStatistics.Get<int>("Textures", "Texture Updates").Value;
         int currentAtlasPageCount = fontStore.Atlas != null ? fontStore.Atlas.GetAllPages().Count() : 0;
+        int currentTextureAtlasPageCount = textureManager.Atlas?.PageCount ?? 0;
+        int currentTextureCount = textureManager.GetAllTextures().Count();
         int currentVideoCount = textureManager.GetAllVideoTextures().Count();
 
-        if (currentTextureUpdates != lastTextureUpdates || currentAtlasPageCount != lastAtlasPageCount || currentVideoCount != lastVideoCount)
+        if (currentTextureUpdates != lastTextureUpdates || currentAtlasPageCount != lastAtlasPageCount || currentTextureAtlasPageCount != lastTextureAtlasPageCount || currentTextureCount != lastTextureCount || currentVideoCount != lastVideoCount)
         {
             lastTextureUpdates = currentTextureUpdates;
             lastAtlasPageCount = currentAtlasPageCount;
+            lastTextureAtlasPageCount = currentTextureAtlasPageCount;
+            lastTextureCount = currentTextureCount;
             lastVideoCount = currentVideoCount;
             refreshTextures();
         }
@@ -231,6 +237,16 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
             {
                 int groupUploaded = group.Count(vt => vt.UploadComplete);
                 flowContainer.Add(createVideoPoolCard(group.Key.Width, group.Key.Height, group.Count(), groupUploaded));
+            }
+        }
+
+        if (textureManager.Atlas != null)
+        {
+            int texturePageIndex = 0;
+            foreach (var atlasPage in textureManager.Atlas.GetAllPages())
+            {
+                flowContainer.Add(createTextureCard($"Texture Atlas Page {texturePageIndex} ({atlasPage.Width}x{atlasPage.Height})", atlasPage));
+                texturePageIndex++;
             }
         }
 
