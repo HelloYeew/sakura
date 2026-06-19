@@ -30,6 +30,17 @@ public unsafe class VideoDecoder : IDisposable
     public DecoderState State { get; private set; } = DecoderState.Ready;
     public bool Looping { get; set; }
 
+    /// <summary>
+    /// Monotonically increasing seek counter. Incremented (atomically) the instant
+    /// <see cref="Seek"/> is requested — on the caller's thread, before the decode thread
+    /// processes the seek. Every <see cref="DecodedFrame"/> is stamped with the generation it
+    /// was produced under, so consumers can discard frames that belong to a position we have
+    /// since seeked away from. This is the single source of truth that keeps seek/reverse/loop
+    /// from anchoring onto stale frames.
+    /// </summary>
+    public int SeekGeneration => Volatile.Read(ref seekGeneration);
+    private int seekGeneration;
+
     public readonly Reactive<bool> HardwareAcceleration = new Reactive<bool>(true);
 
     /// <summary>
@@ -68,6 +79,24 @@ public unsafe class VideoDecoder : IDisposable
 
     private volatile float lastDecodedFrameTime;
     private double? skipOutputUntilTime;
+
+    // The generation stamped onto frames the decode thread is currently producing.
+    // Set when a seek command runs; frames carry it so consumers can match against SeekGeneration.
+    private int decodeGeneration;
+
+    // Holds back the most recent decoded frame during a post-seek skip so we always have at
+    // least one frame to emit even if every decoded frame is earlier than the seek target
+    // (e.g. seek landed past the last keyframe). Returned to the pool when superseded.
+    private FFmpegFrame? skipHeldFrame;
+    private double skipHeldFrameTime;
+
+    // A YUV420P frame that has been decoded+converted but could not be uploaded yet because the
+    // texture pool was momentarily empty. Held here and retried on the next decode iteration so
+    // the frame is never silently dropped (which previously caused missing/blank frames under
+    // load). Stamped with the generation it was decoded under.
+    private FFmpegFrame? pendingUploadFrame;
+    private double pendingUploadFrameTime;
+    private int pendingUploadFrameGeneration;
 
     private Task? decodeTask;
     private CancellationTokenSource? cts;
@@ -161,9 +190,26 @@ public unsafe class VideoDecoder : IDisposable
             codecContext = null;
         }
 
-        // Flush buffered frames — they may have been decoded with the old codec config
+        // Bump the generation so the sprite discards any in-flight frames from the old codec
+        // instead of continuing to display textures we are about to recycle (avoids a flash of
+        // a stale/blank frame while the codec is swapped).
+        int generation = Interlocked.Increment(ref seekGeneration);
+        decodeGeneration = generation;
+
+        // Flush buffered frames — they may have been decoded with the old codec config.
+        // Reset() clears each texture's pending upload before returning it to the pool.
         while (decodedFrames.TryDequeue(out var staleFrame))
+        {
+            staleFrame.NativeTexture.Reset();
             availableTextures.Enqueue(staleFrame.NativeTexture);
+        }
+
+        // Discard any held/pending native frames from the old codec config.
+        skipHeldFrame?.Return();
+        skipHeldFrame = null;
+        pendingUploadFrame?.Return();
+        pendingUploadFrame = null;
+        skipOutputUntilTime = null;
 
         // Re-open with current HardwareAcceleration.Value
         AVCodec* codec = null;
@@ -184,12 +230,48 @@ public unsafe class VideoDecoder : IDisposable
         if (!CanSeek)
             throw new InvalidOperationException("Underlying stream does not support seeking.");
 
+        // Bump the generation NOW, on the caller's thread, so any frame still sitting in the
+        // queues (decoded before this call) is immediately recognisable as stale by consumers,
+        // and so frames produced by this seek carry the new generation. We snapshot it for the
+        // command closure rather than reading the shared field inside the decode thread.
+        int generation = Interlocked.Increment(ref seekGeneration);
+
         decoderCommands.Enqueue(() =>
         {
+            // A newer seek may have been queued after this one — if so, skip this stale seek
+            // entirely so we don't seek backwards and forwards redundantly.
+            if (generation != Volatile.Read(ref seekGeneration))
+                return;
+
             ffmpeg.avcodec_flush_buffers(codecContext);
-            long ts = (long)(targetMs / timeBaseInSeconds / 1000.0);
+
+            // Drop any frames already decoded for the old position so they cannot be handed out.
+            while (decodedFrames.TryDequeue(out var stale))
+            {
+                stale.NativeTexture.Reset();
+                availableTextures.Enqueue(stale.NativeTexture);
+            }
+
+            // Discard any held/pending native frames belonging to the old position.
+            skipHeldFrame?.Return();
+            skipHeldFrame = null;
+            pendingUploadFrame?.Return();
+            pendingUploadFrame = null;
+
+            // targetMs is a 0-based position. av_seek_frame works in stream-timebase units that
+            // INCLUDE the container's start_time, so add start_time back when converting. The
+            // skip target below stays 0-based to match the 0-based frameTime computed in
+            // readDecodedFrames — keeping the two consistent is what makes seeks land precisely.
+            long startTime = avStream->start_time != ffmpeg.AV_NOPTS_VALUE ? avStream->start_time : 0;
+            long ts = (long)(targetMs / timeBaseInSeconds / 1000.0) + startTime;
             ffmpeg.av_seek_frame(formatContext, avStream->index, ts, ffmpeg.AVSEEK_FLAG_BACKWARD);
+
+            // Seek with BACKWARD lands on the keyframe at or before the target. We want to skip
+            // the frames between that keyframe and the target so playback resumes at the right
+            // place — but we must never skip the LAST decodable frame, or a seek that lands
+            // between keyframes (or past the last keyframe) would emit nothing and freeze.
             skipOutputUntilTime = targetMs;
+            decodeGeneration = generation;
             State = DecoderState.Ready;
         });
     }
@@ -443,6 +525,29 @@ public unsafe class VideoDecoder : IDisposable
                     case DecoderState.Running:
                         GlobalStatistics.Get<int>("Video", "Pool Available").Value = availableTextures.Count;
                         GlobalStatistics.Get<int>("Video", "Pending Frames").Value = decodedFrames.Count;
+
+                        // First, retry any frame that was decoded but couldn't be uploaded last
+                        // time because the pool was empty. Only drop it if it now belongs to a
+                        // superseded seek generation.
+                        if (pendingUploadFrame != null)
+                        {
+                            if (pendingUploadFrameGeneration != Volatile.Read(ref seekGeneration))
+                            {
+                                pendingUploadFrame.Return();
+                                pendingUploadFrame = null;
+                            }
+                            else if (tryEmitFrame(pendingUploadFrame, pendingUploadFrameTime, pendingUploadFrameGeneration))
+                            {
+                                pendingUploadFrame = null;
+                            }
+                            else
+                            {
+                                // Pool still empty — wait for the draw thread to recycle a texture.
+                                Thread.Sleep(1);
+                                break;
+                            }
+                        }
+
                         if (!texturePoolWarmed || !availableTextures.IsEmpty)
                             decodeNextFrame(packet, receiveFrame);
                         else
@@ -533,7 +638,25 @@ public unsafe class VideoDecoder : IDisposable
         while (true)
         {
             int result = ffmpeg.avcodec_receive_frame(codecContext, receiveFrame);
-            if (result < 0) break;
+            if (result < 0)
+            {
+                // Codec fully drained (EOF) while still in a post-seek skip means the seek target
+                // was at or past the last frame. Emit the held frame so we show the final frame
+                // instead of freezing on blank. EAGAIN just means "need more input" — keep holding.
+                if (result == ffmpeg.AVERROR_EOF && skipOutputUntilTime.HasValue && skipHeldFrame != null)
+                {
+                    var held = skipHeldFrame;
+                    skipHeldFrame = null;
+                    skipOutputUntilTime = null;
+                    if (!tryEmitFrame(held, skipHeldFrameTime, decodeGeneration))
+                    {
+                        pendingUploadFrame = held;
+                        pendingUploadFrameTime = skipHeldFrameTime;
+                        pendingUploadFrameGeneration = decodeGeneration;
+                    }
+                }
+                break;
+            }
 
             long ts = receiveFrame->best_effort_timestamp != ffmpeg.AV_NOPTS_VALUE
                 ? receiveFrame->best_effort_timestamp
@@ -541,12 +664,6 @@ public unsafe class VideoDecoder : IDisposable
 
             long startTime = avStream->start_time != ffmpeg.AV_NOPTS_VALUE ? avStream->start_time : 0;
             double frameTime = (ts - startTime) * timeBaseInSeconds * 1000.0;
-
-            if (skipOutputUntilTime.HasValue)
-            {
-                if (frameTime < skipOutputUntilTime.Value) continue;
-                skipOutputUntilTime = null;
-            }
 
             // Resolve pixel format — transfer from HW memory if needed
             FFmpegFrame frame;
@@ -577,6 +694,28 @@ public unsafe class VideoDecoder : IDisposable
             frame = ensureYuv420P(frame);
             if (frame == null) continue;
 
+            // Post-seek skip: drop frames between the landed keyframe and the seek target so
+            // playback resumes at the requested time. Critically, we HOLD BACK the most recent
+            // skipped frame instead of discarding it, so that if the target lands past the last
+            // decodable frame (or between keyframes with imperfect timestamps) we still have a
+            // frame to show instead of freezing on a blank screen.
+            if (skipOutputUntilTime.HasValue)
+            {
+                if (frameTime < skipOutputUntilTime.Value)
+                {
+                    // Supersede any previously held frame, returning it to its pool.
+                    skipHeldFrame?.Return();
+                    skipHeldFrame = frame;
+                    skipHeldFrameTime = frameTime;
+                    continue;
+                }
+
+                // Reached the target. The held frame (if any) is no longer needed.
+                skipHeldFrame?.Return();
+                skipHeldFrame = null;
+                skipOutputUntilTime = null;
+            }
+
             int width  = frame.Pointer->width;
             int height = frame.Pointer->height;
 
@@ -595,32 +734,49 @@ public unsafe class VideoDecoder : IDisposable
                 });
             }
 
-            // Return this frame and sleep until the pool has textures.
-            if (availableTextures.IsEmpty)
+            // Try to upload into a pooled texture. If the pool is momentarily empty we keep the
+            // frame in pendingUploadFrame and retry next iteration rather than dropping it.
+            if (!tryEmitFrame(frame, frameTime, decodeGeneration))
             {
-                frame.Return();
-                GlobalStatistics.Get<int>("Video", "Frames Dropped (Pool Full)").Value++;
-                Thread.Sleep(1);
-                continue;
+                pendingUploadFrame = frame;
+                pendingUploadFrameTime = frameTime;
+                pendingUploadFrameGeneration = decodeGeneration;
+                return; // back off; decode loop will retry the pending frame shortly
             }
-
-            if (!availableTextures.TryDequeue(out var tex))
-            {
-                frame.Return();
-                GlobalStatistics.Get<int>("Video", "Frames Dropped (Pool Full)").Value++;
-                Thread.Sleep(1);
-                continue;
-            }
-
-            var upload = new VideoTextureUpload(frame);
-            tex.SetData(upload);
-
-            // Texture is a dimension-only proxy — no GL handles, no Video namespace import needed.
-            // VideoSprite reads NativeTexture directly for rendering.
-            var texture = new Texture(width, height);
-            decodedFrames.Enqueue(new DecodedFrame { Time = frameTime, Texture = texture, NativeTexture = tex });
-            GlobalStatistics.Get<int>("Video", "Frames Decoded").Value++;
         }
+    }
+
+    /// <summary>
+    /// Uploads a converted YUV420P frame into a pooled texture and enqueues it for display.
+    /// Returns false (without consuming the frame) if the texture pool is currently empty —
+    /// the caller is responsible for holding the frame and retrying.
+    /// </summary>
+    private bool tryEmitFrame(FFmpegFrame frame, double frameTime, int generation)
+    {
+        if (!availableTextures.TryDequeue(out var tex))
+        {
+            GlobalStatistics.Get<int>("Video", "Frames Waiting (Pool Empty)").Value++;
+            return false;
+        }
+
+        int width = frame.Pointer->width;
+        int height = frame.Pointer->height;
+
+        var upload = new VideoTextureUpload(frame);
+        tex.SetData(upload);
+
+        // Texture is a dimension-only proxy — no GL handles, no Video namespace import needed.
+        // VideoSprite reads NativeTexture directly for rendering.
+        var texture = new Texture(width, height);
+        decodedFrames.Enqueue(new DecodedFrame
+        {
+            Time = frameTime,
+            Texture = texture,
+            NativeTexture = tex,
+            Generation = generation,
+        });
+        GlobalStatistics.Get<int>("Video", "Frames Decoded").Value++;
+        return true;
     }
 
     private FFmpegFrame ensureYuv420P(FFmpegFrame frame)
@@ -648,10 +804,18 @@ public unsafe class VideoDecoder : IDisposable
             if (ffmpeg.av_frame_get_buffer(scaled.Pointer, 0) < 0)
             {
                 Logger.Warning("[VideoDecoder] Failed to allocate scaler frame buffer.");
-                scaled.Dispose();
+                scaled.Return(); // back to the scaler pool, not Dispose — keeps the pool slot
                 frame.Return();
                 return null!;
             }
+        }
+
+        if (swsContext == null)
+        {
+            Logger.Warning("[VideoDecoder] sws_getCachedContext returned null.");
+            scaled.Return();
+            frame.Return();
+            return null!;
         }
 
         int scaleResult = ffmpeg.sws_scale(
@@ -664,7 +828,7 @@ public unsafe class VideoDecoder : IDisposable
         if (scaleResult < 0)
         {
             Logger.Warning($"[VideoDecoder] sws_scale failed: {scaleResult}");
-            scaled.Dispose();
+            scaled.Return();
             return null!;
         }
 
@@ -716,6 +880,12 @@ public unsafe class VideoDecoder : IDisposable
 
         if (swsContext != null)
             ffmpeg.sws_freeContext(swsContext);
+
+        // Free any native frames held outside the pools (post-seek skip / pending upload).
+        skipHeldFrame?.Dispose();
+        skipHeldFrame = null;
+        pendingUploadFrame?.Dispose();
+        pendingUploadFrame = null;
 
         // Return all decodedFrames textures to the pool, then dispose them all.
         while (decodedFrames.TryDequeue(out var frame))

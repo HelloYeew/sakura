@@ -197,12 +197,13 @@ public partial class VideoSprite : Drawable, IDisposable
         // mistaken for another seek in SyncToClock mode.
         lastSyncTime = double.NaN;
 
-        // The decoder's Seek() takes a raw PTS value.
-        // If we know ptsBias (the container's PTS offset), use it.
-        // Otherwise pass absoluteMs directly — the decoder will seek close enough
-        // and ptsBias will be re-established from the first arriving frame.
-        double targetPts = double.IsNaN(ptsBias) ? absoluteMs : absoluteMs + ptsBias;
-        decoder.Seek(targetPts);
+        // The decoder's Seek() takes a 0-based absolute position in milliseconds. It internally
+        // adds the container's start_time when converting to a stream timestamp and subtracts it
+        // again when comparing decoded frame times against the skip target, so the start offset
+        // is fully handled decoder-side. We must NOT add ptsBias here — doing so double-counts
+        // the container start offset and makes every seek overshoot (the "seek lands elsewhere"
+        // bug). Pass the plain absolute position.
+        decoder.Seek(absoluteMs);
 
         // Flush all buffered frames — they belong to the old position.
         decoder.ReturnFrames(availableFrames);
@@ -264,8 +265,21 @@ public partial class VideoSprite : Drawable, IDisposable
         // Pull newly decoded frames and schedule their GL upload on the draw thread.
         // decodedFrames are enqueued immediately by the decode thread after SetData(),
         // so we see them here without waiting for the draw thread.
+        //
+        // Each frame is stamped with the decoder's seek generation at decode time. Any frame
+        // whose generation no longer matches the decoder's current generation belongs to a
+        // position we have seeked away from — discard it (returning its texture) so it can
+        // never be displayed or used to (re)anchor ptsBias. This is what stops seek/reverse
+        // from jumping to the wrong place or freezing on a stale frame.
+        int currentGeneration = decoder.SeekGeneration;
         foreach (var f in decoder.GetDecodedFrames())
         {
+            if (f.Generation != currentGeneration)
+            {
+                decoder.ReturnFrames(new[] { f });
+                continue;
+            }
+
             availableFrames.Enqueue(f);
 
             // Schedule the actual GL upload for this frame's NativeTexture.

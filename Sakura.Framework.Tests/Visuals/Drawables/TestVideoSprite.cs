@@ -110,6 +110,62 @@ public partial class TestVideoSprite : TestScene
     }
 
     [Test]
+    public void TestReverseSeeking()
+    {
+        createVideo();
+
+        AddStep("Play", () => videoSprite.Play());
+        AddStep("Seek forward to 6000ms", () => videoSprite.Seek(6000));
+        AddWaitStep("Let it settle", 500);
+        AddAssert("Showing a frame after forward seek", () => videoSprite.Alpha == 1f);
+
+        AddStep("Pause", () => videoSprite.Pause());
+        AddStep("Seek backward to 1000ms", () => videoSprite.Seek(1000));
+        AddAssert("Time is 1000ms after backward seek", () => Precision.AlmostEquals(videoSprite.CurrentTime, 1000));
+        AddWaitStep("Let it settle", 500);
+        AddAssert("Time still 1000ms while paused", () => Precision.AlmostEquals(videoSprite.CurrentTime, 1000));
+        AddAssert("Still showing a frame after backward seek (no blank/freeze)", () => videoSprite.Alpha == 1f);
+        AddAssert("Not stuck buffering", () => !videoSprite.Buffering);
+
+        AddStep("Resume", () => videoSprite.Play());
+    }
+
+    [Test]
+    public void TestRapidSeekSpam()
+    {
+        createVideo();
+
+        AddStep("Play", () => videoSprite.Play());
+
+        for (int i = 0; i < 10; i++)
+        {
+            double target = 500 + i * 400;
+            AddStep($"Rapid seek to {target}ms", () => videoSprite.Seek(target));
+        }
+
+        AddStep("Final seek to 3000ms", () => videoSprite.Seek(3000));
+        AddWaitStep("Let decoder catch up", 800);
+        AddAssert("Showing a frame after rapid seeks", () => videoSprite.Alpha == 1f);
+        AddAssert("Not stuck buffering", () => !videoSprite.Buffering);
+    }
+    
+    [Test]
+    public void TestSeekThenPlaybackContinues()
+    {
+        createVideo();
+
+        AddStep("Play", () => videoSprite.Play());
+        AddStep("Seek to 4000ms", () => videoSprite.Seek(4000));
+        AddWaitStep("Settle on target", 400);
+
+        double afterSeek = 0;
+        AddStep("Record time", () => afterSeek = videoSprite.CurrentTime);
+        AddWaitStep("Play forward", 600);
+        AddAssert("Time advanced past the seek target", () => videoSprite.CurrentTime > afterSeek);
+        AddAssert("Still showing a frame", () => videoSprite.Alpha == 1f);
+    }
+
+    [Test]
     public void TestTransformationsAndColor()
     {
         createVideo();
