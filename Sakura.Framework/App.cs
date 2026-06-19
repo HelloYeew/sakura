@@ -259,15 +259,11 @@ public partial class App : Container, IFocusManager, IDisposable
 
     public override bool OnKeyDown(KeyEvent e)
     {
-        if (!e.IsRepeat && e.Key == Key.F1 && (e.Modifiers & KeyModifiers.Control) > 0 && (e.Modifiers & KeyModifiers.Shift) > 0)
+        if (!e.IsRepeat && e.Key == Key.F1 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
             toggleVisualiser();
-            drawVisualiser.ToggleInspectMode();
-            return true;
-        }
-        else if (!e.IsRepeat && e.Key == Key.F1 && (e.Modifiers & KeyModifiers.Control) > 0)
-        {
-            toggleVisualiser();
+            if ((e.Modifiers & KeyModifiers.Shift) > 0)
+                drawVisualiser.ToggleInspectMode();
             return true;
         }
         else if (!e.IsRepeat && e.Key == Key.F2 && (e.Modifiers & KeyModifiers.Control) > 0)
@@ -376,7 +372,7 @@ public partial class App : Container, IFocusManager, IDisposable
                 focusStack.RemoveAt(focusStack.Count - 1);
             }
 
-            Logger.Verbose($"Focus changed from {focusedBefore?.ToString() ?? "null"} to {focusedDrawable?.ToString() ?? "null"}");
+            Logger.Verbose($"🐭 Focus changed from {focusedBefore?.ToString() ?? "null"} to {focusedDrawable?.ToString() ?? "null"}");
             return true;
         }
 
@@ -398,7 +394,7 @@ public partial class App : Container, IFocusManager, IDisposable
         focusedDrawable.OnFocus(new FocusEvent());
         focusClaimedByClick = true;
 
-        Logger.Verbose($"Focus changed from {focusedBefore?.ToString() ?? "null"} to {focusedDrawable?.ToString() ?? "null"}");
+        Logger.Verbose($"🐭 Focus changed from {focusedBefore?.ToString() ?? "null"} to {focusedDrawable?.ToString() ?? "null"}");
         return true;
     }
 

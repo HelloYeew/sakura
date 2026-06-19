@@ -287,6 +287,7 @@ public partial class TestBrowserApp : App
             Height = 25,
             Anchor = Anchor.TopCentre,
             Origin = Anchor.TopCentre,
+            PlaceholderText = "Search...",
             Margin = new MarginPadding { Top = 5 }
         });
 
