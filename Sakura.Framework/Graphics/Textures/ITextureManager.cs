@@ -60,4 +60,10 @@ public interface ITextureManager : IDisposable
     /// Returns all currently active video textures.
     /// </summary>
     IEnumerable<IVideoTexture> GetAllVideoTextures();
+
+    /// <summary>
+    /// The dynamic atlas that small regular textures are packed into, or <c>null</c> if this
+    /// manager does not perform atlas packing (e.g. the headless manager).
+    /// </summary>
+    TextureAtlas? Atlas { get; }
 }

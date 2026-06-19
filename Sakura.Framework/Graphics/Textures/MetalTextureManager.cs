@@ -27,8 +27,11 @@ public class MetalTextureManager : ITextureManager
     private readonly ConcurrentDictionary<IVideoTexture, byte> videoTextures = new ConcurrentDictionary<IVideoTexture, byte>();
 
     private readonly Texture missingTexture;
+    private readonly TextureAtlas atlas;
 
     public Texture WhitePixel { get; }
+
+    public TextureAtlas? Atlas => atlas;
 
     public MetalTextureManager(IRenderer renderer, Storage storage, IImageLoader imageLoader)
     {
@@ -39,6 +42,7 @@ public class MetalTextureManager : ITextureManager
         // The Metal renderer owns a 1x1 white texture; reuse it so solid-colour drawables sample white.
         WhitePixel = renderer.WhitePixel;
         missingTexture = new Texture(renderer.CreateNativeTexture(1, 1));
+        atlas = new TextureAtlas(renderer, usage: AtlasUsage.Textures);
     }
 
     public Texture Get(string path)
@@ -56,13 +60,22 @@ public class MetalTextureManager : ITextureManager
 
             var rawImage = imageLoader.Load(stream);
             byte[] pixelDataCopy = rawImage.Data.ToArray();
-
-            var nativeTexture = renderer.CreateNativeTexture(rawImage.Width, rawImage.Height);
-            var texture = new Texture(nativeTexture);
+            int imageWidth = rawImage.Width;
+            int imageHeight = rawImage.Height;
 
             rawImage.Dispose();
 
-            renderer.ScheduleToDrawThread(() => nativeTexture.Upload(pixelDataCopy));
+            Texture? texture = null;
+
+            if (imageWidth <= TextureAtlas.MAX_ATLAS_TEXTURE_SIZE && imageHeight <= TextureAtlas.MAX_ATLAS_TEXTURE_SIZE)
+                texture = atlas.AddRegion(imageWidth, imageHeight, pixelDataCopy);
+
+            if (texture == null)
+            {
+                var nativeTexture = renderer.CreateNativeTexture(imageWidth, imageHeight);
+                texture = new Texture(nativeTexture);
+                renderer.ScheduleToDrawThread(() => nativeTexture.Upload(pixelDataCopy));
+            }
 
             textureCache[path] = texture;
             GlobalStatistics.Get<int>("Textures", "Loaded Textures").Value = textureCache.Count;
@@ -110,7 +123,7 @@ public class MetalTextureManager : ITextureManager
 
         if (textureCache.TryGetValue(path, out var texture))
         {
-            if (texture.BackendTexture != null && texture.BackendTexture != WhitePixel.BackendTexture && texture.BackendTexture != missingTexture.BackendTexture)
+            if (texture.BackendTexture != null && texture.BackendTexture != WhitePixel.BackendTexture && texture.BackendTexture != missingTexture.BackendTexture && !atlas.OwnsNativeTexture(texture.BackendTexture))
                 renderer.ScheduleToDrawThread(() => texture.BackendTexture!.Dispose());
 
             textureCache.Remove(path);
@@ -125,14 +138,15 @@ public class MetalTextureManager : ITextureManager
     {
         foreach (var texture in textureCache.Values)
         {
-            if (texture.BackendTexture != null && texture.BackendTexture != WhitePixel.BackendTexture && texture.BackendTexture != missingTexture.BackendTexture)
+            if (texture.BackendTexture != null && texture.BackendTexture != WhitePixel.BackendTexture && texture.BackendTexture != missingTexture.BackendTexture && !atlas.OwnsNativeTexture(texture.BackendTexture))
                 renderer.ScheduleToDrawThread(() => texture.BackendTexture!.Dispose());
         }
 
         textureCache.Clear();
+        atlas.Dispose();
     }
 
-    public IEnumerable<Texture> GetAllTextures() => textureCache.Values;
+    public IEnumerable<Texture> GetAllTextures() => textureCache.Values.Where(t => !atlas.OwnsNativeTexture(t.BackendTexture));
 
     public void RegisterVideoTexture(IVideoTexture texture) => videoTextures.TryAdd(texture, 0);
     public void UnregisterVideoTexture(IVideoTexture texture) => videoTextures.TryRemove(texture, out _);
