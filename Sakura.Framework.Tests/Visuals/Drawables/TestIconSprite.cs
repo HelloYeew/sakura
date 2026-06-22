@@ -5,6 +5,7 @@ using System.Linq;
 using NUnit.Framework;
 using Sakura.Framework.Allocation;
 using Sakura.Framework.Extensions.DrawableExtensions;
+using Sakura.Framework.Extensions.IconUsageExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
@@ -96,7 +97,7 @@ public partial class TestIconSprite : TestScene
                 Origin = Anchor.Centre,
                 Color = Color.White,
                 Font = FontUsage.Default.With(size: 40, weight: nameof(DefaultFontWeights.Bold)),
-                Text = "Bold alarm " + char.ConvertFromUtf32((int)IconUsage.Alarm)
+                Text = $"Bold alarm {IconUsage.Alarm.ToGlyph()}"
             };
             Add(text);
         });
