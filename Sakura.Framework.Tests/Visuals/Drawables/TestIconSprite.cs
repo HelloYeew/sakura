@@ -1,11 +1,14 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System.Linq;
 using NUnit.Framework;
+using Sakura.Framework.Allocation;
 using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
+using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Testing;
 
@@ -13,6 +16,9 @@ namespace Sakura.Framework.Tests.Visuals.Drawables;
 
 public partial class TestIconSprite : TestScene
 {
+    [Resolved]
+    private IFontStore fontStore { get; set; } = null!;
+
     private IconSprite icon;
 
     [SetUp]
@@ -77,5 +83,41 @@ public partial class TestIconSprite : TestScene
             };
             Add(text);
         });
+    }
+
+    [Test]
+    public void TestIconInBoldSpriteText()
+    {
+        AddStep("Add a Bold SpriteText with an icon", () =>
+        {
+            var text = new SpriteText
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Color = Color.White,
+                Font = FontUsage.Default.With(size: 40, weight: nameof(DefaultFontWeights.Bold)),
+                Text = "Bold alarm " + char.ConvertFromUtf32((int)IconUsage.Alarm)
+            };
+            Add(text);
+        });
+    }
+
+    [Test]
+    public void TestIconFallbackSurvivesWeightOverride()
+    {
+        AddAssert("Material font is a fallback for Regular", () => iconFontIsFallbackFor(FontUsage.Default));
+        AddAssert("Material font is a fallback for Bold", () => iconFontIsFallbackFor(FontUsage.Default.With(weight: nameof(DefaultFontWeights.Bold))));
+        AddAssert("Material font is a fallback for Bold Italic", () => iconFontIsFallbackFor(FontUsage.Default.With(weight: nameof(DefaultFontWeights.Bold), italics: true)));
+    }
+
+    private bool iconFontIsFallbackFor(FontUsage usage)
+    {
+        var materialFont = fontStore.Get("MaterialSymbolsOutlined");
+
+        // headless font stores return null and have no fallbacks, this work only on real renderer
+        if (materialFont == null)
+            return true;
+
+        return fontStore.GetFallbacks(usage).Contains(materialFont);
     }
 }
