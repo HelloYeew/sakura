@@ -34,17 +34,26 @@ public class DependencyInjectionGeneratorTests
             }
             public delegate void InjectDependenciesDelegate(object target, IReadOnlyDependencyContainer dependencies);
             public delegate IReadOnlyDependencyContainer CacheDependenciesDelegate(object target, IReadOnlyDependencyContainer? parent);
-            public interface IReadOnlyDependencyContainer { T Get<T>() where T : class; void Inject<T>(T instance) where T : class; }
+            public interface IReadOnlyDependencyContainer { T Get<T>() where T : class; T? TryGet<T>() where T : class; void Inject<T>(T instance) where T : class; }
             public class DependencyContainer : IReadOnlyDependencyContainer
             {
                 public DependencyContainer(IReadOnlyDependencyContainer? parent = null) { }
                 public T Get<T>() where T : class => default!;
+                public T? TryGet<T>() where T : class => default;
                 public void Inject<T>(T instance) where T : class { }
                 public void CacheAs<T>(object instance) where T : class { }
             }
 
             [System.AttributeUsage(System.AttributeTargets.Property | System.AttributeTargets.Field)]
-            public class ResolvedAttribute : System.Attribute { }
+            public class ResolvedAttribute : System.Attribute
+            {
+                public bool CanBeNull { get; init; }
+                public ResolvedAttribute() { }
+                public ResolvedAttribute(bool canBeNull) { CanBeNull = canBeNull; }
+            }
+
+            [System.AttributeUsage(System.AttributeTargets.Parameter)]
+            public sealed class CanBeNullAttribute : System.Attribute { }
 
             [System.AttributeUsage(System.AttributeTargets.Method)]
             public class BackgroundDependencyLoaderAttribute : System.Attribute { }
@@ -118,6 +127,92 @@ public class DependencyInjectionGeneratorTests
             // No [Cached] — cache delegate should be null
             Assert.That(generated, Does.Contain("null"));
         });
+    }
+
+    // [Resolved(canBeNull: true)] — positional ctor form should emit TryGet<T>()
+
+    [Test]
+    public void Resolved_canBeNull_positional_generates_TryGet()
+    {
+        const string source = """
+            using Sakura.Framework.Allocation;
+            namespace WaguriApp
+            {
+                public abstract partial class Drawable : IDependencyInjectionCandidate { }
+
+                public partial class SpriteText : Drawable
+                {
+                    [Resolved(canBeNull: true)]
+                    private IFontStore? fontStore { get; set; }
+                }
+
+                public interface IFontStore { }
+            }
+            """;
+
+        var result = GeneratorTestHelper.RunGenerator<DependencyInjectionGenerator>(stubs, source);
+        string generated = GeneratorTestHelper.GetGeneratedSource(result, "WaguriApp_SpriteText.DI.g.cs");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(generated, Does.Contain("self.fontStore = deps.TryGet<global::WaguriApp.IFontStore>()"));
+            Assert.That(generated, Does.Not.Contain("deps.Get<global::WaguriApp.IFontStore>()"));
+        });
+    }
+
+    // [Resolved(CanBeNull = true)] — named property form should also emit TryGet<T>()
+
+    [Test]
+    public void Resolved_canBeNull_named_generates_TryGet()
+    {
+        const string source = """
+            using Sakura.Framework.Allocation;
+            namespace WaguriApp
+            {
+                public abstract partial class Drawable : IDependencyInjectionCandidate { }
+
+                public partial class SpriteText : Drawable
+                {
+                    [Resolved(CanBeNull = true)]
+                    private IFontStore? fontStore { get; set; }
+                }
+
+                public interface IFontStore { }
+            }
+            """;
+
+        var result = GeneratorTestHelper.RunGenerator<DependencyInjectionGenerator>(stubs, source);
+        string generated = GeneratorTestHelper.GetGeneratedSource(result, "WaguriApp_SpriteText.DI.g.cs");
+
+        Assert.That(generated, Does.Contain("self.fontStore = deps.TryGet<global::WaguriApp.IFontStore>()"));
+    }
+
+    // [BackgroundDependencyLoader] with a [CanBeNull] parameter should resolve via TryGet<T>()
+
+    [Test]
+    public void BackgroundDependencyLoader_canBeNull_param_generates_TryGet()
+    {
+        const string source = """
+            using Sakura.Framework.Allocation;
+            namespace WaguriApp
+            {
+                public abstract partial class Drawable : IDependencyInjectionCandidate { }
+
+                public partial class VideoSprite : Drawable
+                {
+                    [BackgroundDependencyLoader]
+                    private void load(IRenderer renderer, [CanBeNull] ITextureManager textures) { }
+                }
+
+                public interface IRenderer { }
+                public interface ITextureManager { }
+            }
+            """;
+
+        var result = GeneratorTestHelper.RunGenerator<DependencyInjectionGenerator>(stubs, source);
+        string generated = GeneratorTestHelper.GetGeneratedSource(result, "WaguriApp_VideoSprite.DI.g.cs");
+
+        Assert.That(generated, Does.Contain("self.load(deps.Get<global::WaguriApp.IRenderer>(), deps.TryGet<global::WaguriApp.ITextureManager>())"));
     }
 
     // [Resolved] field (not property)
