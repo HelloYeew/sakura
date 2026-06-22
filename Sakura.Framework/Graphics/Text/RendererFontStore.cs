@@ -74,9 +74,13 @@ public class RendererFontStore : IFontStore
 
         // Material Symbols for IconSprite
         // TODO: The material symbols font support variable font with different weights and italics, should add support in future.
+        // These are single-weight fonts, also add fallback with non-weight
         AddFont(resourceStorage, "MaterialSymbolsOutlined-Regular.ttf", alias: "MaterialSymbolsOutlined-Regular");
+        addFontAlias("MaterialSymbolsOutlined-Regular", "MaterialSymbolsOutlined");
         AddFont(resourceStorage, "MaterialSymbolsRounded-Regular.ttf", alias: "MaterialSymbolsRounded-Regular");
+        addFontAlias("MaterialSymbolsRounded-Regular", "MaterialSymbolsRounded");
         AddFont(resourceStorage, "MaterialSymbolsSharp-Regular.ttf", alias: "MaterialSymbolsSharp-Regular");
+        addFontAlias("MaterialSymbolsSharp-Regular", "MaterialSymbolsSharp");
         AddFallbackFamily("MaterialSymbolsOutlined");
     }
 
@@ -91,6 +95,10 @@ public class RendererFontStore : IFontStore
             // AddFont already has a try-catch and checks if the stream is null,
             // so it will safely skip weights that don't exist in the storage.
             AddFont(storage, normalFileName, alias: $"{family}-{weight}");
+
+            // Add regular font as normal fallback too
+            if (weight == nameof(DefaultFontWeights.Regular))
+                addFontAlias($"{family}-{weight}", family);
 
             if (hasItalics)
             {
@@ -133,6 +141,22 @@ public class RendererFontStore : IFontStore
                 return null!;
             }
         });
+    }
+
+    /// <summary>
+    /// Registers an additional cache key that points at an already-registered font, sharing the same
+    /// underlying <see cref="Font"/> instance. Use this instead of calling <see cref="AddFont"/> again
+    /// for the same file, so the font is loaded once and lookups by either key return the same object
+    /// (important for reference-identity comparisons in fallback resolution).
+    /// </summary>
+    private void addFontAlias(string existingKey, string alias)
+    {
+        if (existingKey == alias) return;
+
+        if (fontCache.TryGetValue(existingKey, out var existing))
+            fontCache[alias] = existing;
+        else
+            Logger.Warning($"Cannot alias font '{alias}' to missing key '{existingKey}'.");
     }
 
     private Font loadFontFromStream(string name, Stream stream)
@@ -195,14 +219,13 @@ public class RendererFontStore : IFontStore
 
         foreach (string family in fallbackFamilies)
         {
-            var fallbackUsage = usage.With(family: family);
-            var fallbackFont = Get(fallbackUsage);
+            var fallbackFont = Get(usage.With(family: family));
 
-            if (fallbackFont != null && fallbackFont != defaultFont && !returnedFonts.Contains(fallbackFont))
-            {
-                returnedFonts.Add(fallbackFont);
+            if (fallbackFont == defaultFont || fallbackFont == null)
+                fallbackFont = Get(family);
+
+            if (fallbackFont != null && fallbackFont != defaultFont && returnedFonts.Add(fallbackFont))
                 yield return fallbackFont;
-            }
         }
     }
 

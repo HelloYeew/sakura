@@ -1,6 +1,8 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using Sakura.Framework.Extensions.IconUsageExtensions;
+
 namespace Sakura.Framework.Graphics.Drawables;
 
 /// <summary>
@@ -25,7 +27,7 @@ public partial class IconSprite : SpriteText
         {
             if (icon == value) return;
             icon = value;
-            Text = char.ConvertFromUtf32((int)icon);
+            Text = icon.ToGlyph();
         }
     }
 
