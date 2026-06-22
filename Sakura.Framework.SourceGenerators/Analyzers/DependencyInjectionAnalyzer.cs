@@ -78,6 +78,16 @@ public sealed class DependencyInjectionAnalyzer : DiagnosticAnalyzer
         description: "The DI system caches [Cached] property values by reading through the getter. A write-only property cannot be cached.",
         helpLinkUri: "https://github.com/HelloYeew/sakura/wiki");
 
+    public static readonly DiagnosticDescriptor NULLABLE_RESOLVED_ON_NON_NULLABLE_TYPE = new DiagnosticDescriptor(
+        id: "SFDI0007",
+        title: "[Resolved(canBeNull: true)] member should be a nullable type",
+        messageFormat: "'{0}' is marked [Resolved(canBeNull: true)] but its type is not nullable; declare it as a nullable reference type (e.g. 'T?').",
+        category: "Sakura.DI",
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        description: "An optional [Resolved] member resolves to null when the dependency is missing. Declaring it as a nullable reference type makes the possible null visible at use sites and avoids false non-null assumptions.",
+        helpLinkUri: "https://github.com/HelloYeew/sakura/wiki");
+
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics
         => ImmutableArray.Create(
             MISSING_PARTIAL_ON_DI_CLASS,
@@ -85,7 +95,8 @@ public sealed class DependencyInjectionAnalyzer : DiagnosticAnalyzer
             RESOLVED_PROPERTY_HAS_NO_SETTER,
             MULTIPLE_BACKGROUND_LOADERS,
             RESOLVED_ON_STATIC_MEMBER,
-            CACHED_PROPERTY_HAS_NO_GETTER);
+            CACHED_PROPERTY_HAS_NO_GETTER,
+            NULLABLE_RESOLVED_ON_NON_NULLABLE_TYPE);
 
     private const string resolved_fqn = "Sakura.Framework.Allocation.ResolvedAttribute";
     private const string cached_fqn = "Sakura.Framework.Allocation.CachedAttribute";
@@ -163,8 +174,9 @@ public sealed class DependencyInjectionAnalyzer : DiagnosticAnalyzer
                 }
             }
 
-            // SFDI0003, SFDI0005 — [Resolved] checks
-            if (hasAttribute(member, resolved_fqn))
+            // SFDI0003, SFDI0005, SFDI0007 — [Resolved] checks
+            var resolvedAttr = getAttribute(member, resolved_fqn);
+            if (resolvedAttr != null)
             {
                 var loc = getFirstLocation(member, context);
 
@@ -177,11 +189,20 @@ public sealed class DependencyInjectionAnalyzer : DiagnosticAnalyzer
                     // SFDI0003 — no setter
                     if (resolvedProp.SetMethod == null)
                         context.ReportDiagnostic(Diagnostic.Create(RESOLVED_PROPERTY_HAS_NO_SETTER, loc, member.Name));
+
+                    // SFDI0007 — canBeNull on a non-nullable type
+                    if (isNullableResolvedOnNonNullable(resolvedAttr, resolvedProp.Type))
+                        context.ReportDiagnostic(Diagnostic.Create(NULLABLE_RESOLVED_ON_NON_NULLABLE_TYPE, loc, member.Name));
                 }
-                else if (member is IFieldSymbol resolvedField && resolvedField.IsStatic)
+                else if (member is IFieldSymbol resolvedField)
                 {
                     // SFDI0005 — static field
-                    context.ReportDiagnostic(Diagnostic.Create(RESOLVED_ON_STATIC_MEMBER, loc, member.Name));
+                    if (resolvedField.IsStatic)
+                        context.ReportDiagnostic(Diagnostic.Create(RESOLVED_ON_STATIC_MEMBER, loc, member.Name));
+
+                    // SFDI0007 — canBeNull on a non-nullable type
+                    if (isNullableResolvedOnNonNullable(resolvedAttr, resolvedField.Type))
+                        context.ReportDiagnostic(Diagnostic.Create(NULLABLE_RESOLVED_ON_NON_NULLABLE_TYPE, loc, member.Name));
                 }
             }
 
@@ -224,6 +245,42 @@ public sealed class DependencyInjectionAnalyzer : DiagnosticAnalyzer
         => symbol.GetAttributes().Any(a =>
             a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
              .Replace("global::", string.Empty) == fqn);
+
+    private static AttributeData? getAttribute(ISymbol symbol, string fqn)
+        => symbol.GetAttributes().FirstOrDefault(a =>
+            a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+             .Replace("global::", string.Empty) == fqn);
+
+    /// <summary>
+    /// True when a [Resolved] attribute opts into canBeNull (via ctor arg or named property) but the
+    /// member's type is a non-nullable reference type, which SFDI0007 flags.
+    /// </summary>
+    private static bool isNullableResolvedOnNonNullable(AttributeData resolvedAttr, ITypeSymbol memberType)
+    {
+        if (!getResolvedCanBeNull(resolvedAttr))
+            return false;
+
+        // Value types are out of scope (TryGet/Get require a reference type anyway).
+        if (!memberType.IsReferenceType)
+            return false;
+
+        // Already nullable (e.g. `Foo?`) — nothing to flag.
+        return memberType.NullableAnnotation != NullableAnnotation.Annotated;
+    }
+
+    private static bool getResolvedCanBeNull(AttributeData attr)
+    {
+        if (attr.ConstructorArguments.Length > 0 && attr.ConstructorArguments[0].Value is bool ctorValue)
+            return ctorValue;
+
+        foreach (var named in attr.NamedArguments)
+        {
+            if (named.Key == "CanBeNull" && named.Value.Value is bool namedValue)
+                return namedValue;
+        }
+
+        return false;
+    }
 
     private static Location getFirstLocation(ISymbol symbol, SymbolAnalysisContext context)
     {

@@ -28,6 +28,10 @@ internal static class ReflectionDependencyActivator
         typeof(IReadOnlyDependencyContainer).GetMethod(nameof(IReadOnlyDependencyContainer.Get), BindingFlags.Public | BindingFlags.Instance)
         ?? throw new InvalidOperationException($"Could not find '{nameof(IReadOnlyDependencyContainer.Get)}' on {nameof(IReadOnlyDependencyContainer)}.");
 
+    private static readonly MethodInfo try_get_method =
+        typeof(IReadOnlyDependencyContainer).GetMethod(nameof(IReadOnlyDependencyContainer.TryGet), BindingFlags.Public | BindingFlags.Instance)
+        ?? throw new InvalidOperationException($"Could not find '{nameof(IReadOnlyDependencyContainer.TryGet)}' on {nameof(IReadOnlyDependencyContainer)}.");
+
     private static readonly MethodInfo cache_as_method =
         typeof(DependencyContainer).GetMethod(nameof(DependencyContainer.CacheAs), BindingFlags.Public | BindingFlags.Instance)
         ?? throw new InvalidOperationException($"Could not find '{nameof(DependencyContainer.CacheAs)}' on {nameof(DependencyContainer)}.");
@@ -82,9 +86,28 @@ internal static class ReflectionDependencyActivator
 
     /// <summary>
     /// Builds an expression that resolves <paramref name="dependencyType"/> from the container parameter.
+    /// When <paramref name="canBeNull"/> is true the non-throwing <c>TryGet&lt;T&gt;</c> is used so a missing
+    /// dependency resolves to <c>null</c> instead of throwing.
     /// </summary>
-    private static Expression resolveExpression(ParameterExpression depsParam, Type dependencyType)
-        => Expression.Call(depsParam, get_method.MakeGenericMethod(dependencyType));
+    private static MethodCallExpression resolveExpression(ParameterExpression depsParam, Type dependencyType, bool canBeNull)
+    {
+        var method = canBeNull ? try_get_method : get_method;
+        return Expression.Call(depsParam, method.MakeGenericMethod(dependencyType));
+    }
+
+    /// <summary>
+    /// Determines whether a loader parameter should be resolved optionally either it carries
+    /// <see cref="CanBeNullAttribute"/> or it is declared as a nullable reference type.
+    /// </summary>
+    private static bool loaderParameterCanBeNull(ParameterInfo parameter)
+    {
+        if (parameter.GetCustomAttribute<CanBeNullAttribute>() != null)
+            return true;
+
+        // Nullable reference type annotation, e.g. `Foo?`.
+        var nullabilityInfo = new NullabilityInfoContext().Create(parameter);
+        return nullabilityInfo.WriteState == NullabilityState.Nullable;
+    }
 
     /// <summary>
     /// Builds an inject delegate that handles only members <b>declared directly on <paramref name="type"/></b>
@@ -105,7 +128,8 @@ internal static class ReflectionDependencyActivator
                      BindingFlags.Public | BindingFlags.NonPublic |
                      BindingFlags.Instance | BindingFlags.DeclaredOnly))
         {
-            if (member.GetCustomAttribute<ResolvedAttribute>() == null)
+            var resolved = member.GetCustomAttribute<ResolvedAttribute>();
+            if (resolved == null)
                 continue;
 
             if (member is PropertyInfo property)
@@ -115,13 +139,13 @@ internal static class ReflectionDependencyActivator
                     throw new InvalidOperationException(
                         $"Member {type.Name}.{property.Name} is marked [Resolved] but has no setter.");
 
-                body.Add(Expression.Call(typedInstance, setter, resolveExpression(depsParam, property.PropertyType)));
+                body.Add(Expression.Call(typedInstance, setter, resolveExpression(depsParam, property.PropertyType, resolved.CanBeNull)));
             }
             else if (member is FieldInfo field)
             {
                 body.Add(Expression.Assign(
                     Expression.Field(typedInstance, field),
-                    resolveExpression(depsParam, field.FieldType)));
+                    resolveExpression(depsParam, field.FieldType, resolved.CanBeNull)));
             }
         }
 
@@ -134,7 +158,7 @@ internal static class ReflectionDependencyActivator
         if (loaderMethod != null)
         {
             var args = loaderMethod.GetParameters()
-                .Select(p => resolveExpression(depsParam, p.ParameterType))
+                .Select(p => resolveExpression(depsParam, p.ParameterType, loaderParameterCanBeNull(p)))
                 .ToArray();
 
             body.Add(Expression.Call(typedInstance, loaderMethod, args));

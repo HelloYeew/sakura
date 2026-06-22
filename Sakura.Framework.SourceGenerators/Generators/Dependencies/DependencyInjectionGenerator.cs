@@ -28,6 +28,7 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
 {
     // Fully qualified attribute names used to recognize DI members.
     private const string resolved_attribute = "Sakura.Framework.Allocation.ResolvedAttribute";
+    private const string can_be_null_attribute = "Sakura.Framework.Allocation.CanBeNullAttribute";
     private const string cached_attribute = "Sakura.Framework.Allocation.CachedAttribute";
     private const string background_loader_attribute = "Sakura.Framework.Allocation.BackgroundDependencyLoaderAttribute";
     private const string candidate_interface = "Sakura.Framework.Allocation.IDependencyInjectionCandidate";
@@ -45,10 +46,6 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
 
         context.RegisterSourceOutput(candidates, emit);
     }
-
-    // -------------------------------------------------------------------------
-    // Pipeline: predicate
-    // -------------------------------------------------------------------------
 
     /// <summary>
     /// Syntax-only check that does this class declaration look like a DI candidate?
@@ -153,7 +150,10 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
         var resolvedMembers = new List<ResolvedMemberData>();
         foreach (var member in symbol.GetMembers())
         {
-            if (!hasAttribute(member, resolved_attribute)) continue;
+            var resolvedAttr = getAttribute(member, resolved_attribute);
+            if (resolvedAttr == null) continue;
+
+            bool canBeNull = getResolvedCanBeNull(resolvedAttr);
 
             switch (member)
             {
@@ -163,6 +163,7 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
                         MemberName = prop.Name,
                         FullyQualifiedTypeName = toGlobalName(prop.Type),
                         IsField = false,
+                        CanBeNull = canBeNull,
                     });
                     break;
 
@@ -172,6 +173,7 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
                         MemberName = field.Name,
                         FullyQualifiedTypeName = toGlobalName(field.Type),
                         IsField = true,
+                        CanBeNull = canBeNull,
                     });
                     break;
             }
@@ -190,6 +192,7 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
                     .Select(p => new BackgroundLoaderParameterData
                     {
                         FullyQualifiedTypeName = toGlobalName(p.Type),
+                        CanBeNull = loaderParameterCanBeNull(p),
                     })
                     .ToList(),
             };
@@ -361,7 +364,10 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
             sb.AppendLine($"{bodyIndent}        var self = ({candidate.FullyQualifiedName})target;");
 
             foreach (var resolved in candidate.ResolvedMembers)
-                sb.AppendLine($"{bodyIndent}        self.{resolved.MemberName} = deps.Get<{resolved.FullyQualifiedTypeName}>();");
+            {
+                string resolveCall = resolved.CanBeNull ? "TryGet" : "Get";
+                sb.AppendLine($"{bodyIndent}        self.{resolved.MemberName} = deps.{resolveCall}<{resolved.FullyQualifiedTypeName}>();");
+            }
 
             if (candidate.BackgroundLoader != null)
             {
@@ -372,7 +378,7 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
                 }
                 else
                 {
-                    string args = string.Join(", ", loader.Parameters.Select(p => $"deps.Get<{p.FullyQualifiedTypeName}>()"));
+                    string args = string.Join(", ", loader.Parameters.Select(p => $"deps.{(p.CanBeNull ? "TryGet" : "Get")}<{p.FullyQualifiedTypeName}>()"));
                     sb.AppendLine($"{bodyIndent}        self.{loader.MethodName}({args});");
                 }
             }
@@ -448,6 +454,47 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
         return symbol.GetAttributes().Any(a =>
             a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
              .Replace("global::", string.Empty) == attributeFqn);
+    }
+
+    private static AttributeData? getAttribute(ISymbol symbol, string attributeFqn)
+    {
+        return symbol.GetAttributes().FirstOrDefault(a =>
+            a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+             .Replace("global::", string.Empty) == attributeFqn);
+    }
+
+    /// <summary>
+    /// Reads the CanBeNull state from a [Resolved] attribute, honoring both the positional
+    /// constructor argument (<c>[Resolved(true)]</c>) and the named property (<c>[Resolved(CanBeNull = true)]</c>).
+    /// </summary>
+    private static bool getResolvedCanBeNull(AttributeData attr)
+    {
+        // Positional constructor argument: ResolvedAttribute(bool canBeNull).
+        if (attr.ConstructorArguments.Length > 0 &&
+            attr.ConstructorArguments[0].Value is bool ctorValue)
+            return ctorValue;
+
+        // Named argument: CanBeNull = true.
+        foreach (var named in attr.NamedArguments)
+        {
+            if (named.Key == "CanBeNull" && named.Value.Value is bool namedValue)
+                return namedValue;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// A loader parameter resolves optionally when it carries [CanBeNull] or is declared as a
+    /// nullable reference type (e.g. <c>Foo?</c>).
+    /// </summary>
+    private static bool loaderParameterCanBeNull(IParameterSymbol parameter)
+    {
+        if (hasAttribute(parameter, can_be_null_attribute))
+            return true;
+
+        return parameter.Type.IsReferenceType &&
+               parameter.NullableAnnotation == NullableAnnotation.Annotated;
     }
 
     private static bool isCachedAttribute(AttributeData attr)

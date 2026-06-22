@@ -95,6 +95,12 @@ internal sealed class ResolvedMemberData
     /// True if this is a field; false if it is a property.
     /// </summary>
     public bool IsField { get; set; }
+
+    /// <summary>
+    /// True when the member is marked <c>[Resolved(canBeNull: true)]</c>, meaning it should be
+    /// resolved via <c>TryGet&lt;T&gt;</c> (null when missing) rather than <c>Get&lt;T&gt;</c>.
+    /// </summary>
+    public bool CanBeNull { get; set; }
 }
 
 /// <summary>
@@ -122,6 +128,12 @@ internal sealed class BackgroundLoaderParameterData
     /// Fully qualified type, e.g. "global::Sakura.Framework.AppHost"
     /// </summary>
     public string FullyQualifiedTypeName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// True when the parameter is marked <c>[CanBeNull]</c> or declared as a nullable reference
+    /// type, meaning it should be resolved via <c>TryGet&lt;T&gt;</c> rather than <c>Get&lt;T&gt;</c>.
+    /// </summary>
+    public bool CanBeNull { get; set; }
 }
 
 /// <summary>

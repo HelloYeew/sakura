@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System.Linq;
 using System.Threading.Tasks;
 using NUnit.Framework;
 using Sakura.Framework.CodeFixes.Analyzers;
@@ -21,16 +22,25 @@ public class DependencyInjectionAnalyzerTests
         namespace Sakura.Framework.Allocation
         {
             public interface IDependencyInjectionCandidate { }
-            public interface IReadOnlyDependencyContainer { T Get<T>() where T : class; }
+            public interface IReadOnlyDependencyContainer { T Get<T>() where T : class; T? TryGet<T>() where T : class; }
             public class DependencyContainer : IReadOnlyDependencyContainer
             {
                 public DependencyContainer(IReadOnlyDependencyContainer? parent = null) { }
                 public T Get<T>() where T : class => default!;
+                public T? TryGet<T>() where T : class => default;
                 public void CacheAs<T>(object instance) where T : class { }
             }
 
             [System.AttributeUsage(System.AttributeTargets.Property | System.AttributeTargets.Field)]
-            public class ResolvedAttribute : System.Attribute { }
+            public class ResolvedAttribute : System.Attribute
+            {
+                public bool CanBeNull { get; init; }
+                public ResolvedAttribute() { }
+                public ResolvedAttribute(bool canBeNull) { CanBeNull = canBeNull; }
+            }
+
+            [System.AttributeUsage(System.AttributeTargets.Parameter)]
+            public sealed class CanBeNullAttribute : System.Attribute { }
 
             [System.AttributeUsage(System.AttributeTargets.Method)]
             public class BackgroundDependencyLoaderAttribute : System.Attribute { }
@@ -508,5 +518,77 @@ public class DependencyInjectionAnalyzerTests
             """;
 
         AnalyzerTestHelper.AssertNoDiagnostics<DependencyInjectionAnalyzer>(stubs, source);
+    }
+
+    [Test]
+    public void SFDI0007_reported_when_canBeNull_member_is_non_nullable()
+    {
+        const string source = """
+            #nullable enable
+            using Sakura.Framework.Allocation;
+            namespace WaguriGame
+            {
+                public abstract partial class Drawable : IDependencyInjectionCandidate { }
+
+                public partial class SpriteText : Drawable
+                {
+                    // Non-nullable type but marked optional — should trigger SFDI0007.
+                    [Resolved(canBeNull: true)]
+                    private IFont font { get; set; } = null!;
+                }
+
+                public interface IFont { }
+            }
+            """;
+
+        AnalyzerTestHelper.AssertSingleDiagnostic<DependencyInjectionAnalyzer>("SFDI0007", stubs, source);
+    }
+
+    [Test]
+    public void SFDI0007_not_reported_when_canBeNull_member_is_nullable()
+    {
+        const string source = """
+            #nullable enable
+            using Sakura.Framework.Allocation;
+            namespace WaguriGame
+            {
+                public abstract partial class Drawable : IDependencyInjectionCandidate { }
+
+                public partial class SpriteText : Drawable
+                {
+                    [Resolved(canBeNull: true)]
+                    private IFont? font { get; set; }
+                }
+
+                public interface IFont { }
+            }
+            """;
+
+        var diagnostics = AnalyzerTestHelper.GetDiagnostics<DependencyInjectionAnalyzer>(stubs, source);
+        Assert.That(diagnostics.Any(d => d.Id == "SFDI0007"), Is.False);
+    }
+
+    [Test]
+    public void SFDI0007_not_reported_for_required_resolved_member()
+    {
+        const string source = """
+            #nullable enable
+            using Sakura.Framework.Allocation;
+            namespace WaguriGame
+            {
+                public abstract partial class Drawable : IDependencyInjectionCandidate { }
+
+                public partial class SpriteText : Drawable
+                {
+                    [Resolved]
+                    private IFont font { get; set; } = null!;
+                }
+
+                public interface IFont { }
+            }
+            """;
+
+        var diagnostics = AnalyzerTestHelper.GetDiagnostics<DependencyInjectionAnalyzer>(stubs, source);
+        Assert.That(diagnostics.Any(d => d.Id == "SFDI0007"), Is.False);
     }
 }
