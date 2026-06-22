@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
+using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Maths;
 
@@ -362,13 +363,4 @@ public static class TransformExtensions
         drawable.Scheduler.AddDelayed(action, delay);
         return drawable;
     }
-}
-
-/// <summary>
-/// Direction of rotation for <see cref="TransformExtensions.Spin"/>.
-/// </summary>
-public enum RotationDirection
-{
-    Clockwise,
-    CounterClockwise
 }
