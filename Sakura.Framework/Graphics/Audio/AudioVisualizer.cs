@@ -46,10 +46,9 @@ public partial class AudioVisualizer : Drawable
 
     /// <summary>
     /// Input amplitude amplification. BASS FFT bins are already roughly 0..1 (and usually
-    /// much smaller), so this is a modest multiplier — not the pixel-scale value the osu!
-    /// original used. Too high and every bar pins to full height (a solid block).
+    /// much smaller)
     /// </summary>
-    public float Magnitude { get; set; } = 8;
+    public float Magnitude { get; set; } = 2;
 
     private readonly float[] frequencyAmplitudes = new float[bars_per_visualiser];
     private readonly float[] temporalAmplitudes = new float[ChannelAmplitudes.AMPLITUDES_SIZE];
