@@ -1357,6 +1357,30 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
 
     #endregion
 
+    #region Input queue opt-ins
+
+    /// <summary>
+    /// Whether this drawable should be considered for the non-positional input queue (keyboard,
+    /// text, gamepad). Override to <c>false</c> to opt a subtree out of non-positional input.
+    /// </summary>
+    public virtual bool HandleNonPositionalInput => true;
+
+    /// <summary>
+    /// Whether this drawable should be considered for the positional input queue (mouse, scroll,
+    /// drag, hover). Override to <c>false</c> to opt a subtree out of positional input.
+    /// </summary>
+    public virtual bool HandlePositionalInput => true;
+
+    /// <summary>
+    /// Whether this drawable receives positional input at the given screen-space point. Defaults to
+    /// <see cref="Contains"/> so behaviour matches the existing hit test; override to widen or
+    /// narrow the receptive area (e.g. an invisible drag handle larger than its visual bounds).
+    /// </summary>
+    /// <param name="screenSpacePos">The screen-space point to test.</param>
+    public virtual bool ReceivePositionalInputAt(Vector2 screenSpacePos) => Contains(screenSpacePos);
+
+    #endregion
+
     #region Focus Management
 
     /// <summary>
@@ -1385,6 +1409,24 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
             // Check if the parent implements the interface
             if (p is IFocusManager focusManager)
                 return focusManager;
+
+            p = p.Parent;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Walks up the parent hierarchy to find the nearest <see cref="IInputManagerProvider"/>
+    /// (typically the app root), exposing the shared <see cref="InputManager"/> / authoritative
+    /// <see cref="InputState"/>. Returns null when not yet attached under one.
+    /// </summary>
+    protected internal InputManager? GetContainingInputManager()
+    {
+        Drawable? p = Parent;
+        while (p != null)
+        {
+            if (p is IInputManagerProvider provider)
+                return provider.InputManager;
 
             p = p.Parent;
         }

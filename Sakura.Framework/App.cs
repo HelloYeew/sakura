@@ -28,7 +28,7 @@ using Sakura.Framework.Timing;
 
 namespace Sakura.Framework;
 
-public partial class App : Container, IFocusManager, IDisposable
+public partial class App : Container, IFocusManager, IInputManagerProvider, IDisposable
 {
     public IWindow Window => Host?.Window;
 
@@ -257,8 +257,16 @@ public partial class App : Container, IFocusManager, IDisposable
         Scheduler?.Update();
     }
 
+    public InputManager InputManager { get; } = new InputManager();
+
+    private void rebuildInputQueues() => InputManager.BuildQueues(this);
+
     public override bool OnKeyDown(KeyEvent e)
     {
+        if (!e.IsRepeat)
+            InputManager.HandleKeyDown(e.Key);
+        rebuildInputQueues();
+
         if (!e.IsRepeat && e.Key == Key.F1 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
             toggleVisualiser();
@@ -307,8 +315,18 @@ public partial class App : Container, IFocusManager, IDisposable
 
     public void BeginMouseDownFocusTracking() => focusClaimedByClick = false;
 
+    public override bool OnKeyUp(KeyEvent e)
+    {
+        InputManager.HandleKeyUp(e.Key);
+        rebuildInputQueues();
+        return base.OnKeyUp(e);
+    }
+
     public override bool OnMouseDown(MouseButtonEvent e)
     {
+        InputManager.HandleMouseDown(e.Button, e.ScreenSpaceMousePosition);
+        rebuildInputQueues();
+
         BeginMouseDownFocusTracking();
 
         bool handled = base.OnMouseDown(e);
@@ -320,6 +338,59 @@ public partial class App : Container, IFocusManager, IDisposable
             ChangeFocus(null);
 
         return handled;
+    }
+
+    public override bool OnMouseUp(MouseButtonEvent e)
+    {
+        InputManager.HandleMouseUp(e.Button, e.ScreenSpaceMousePosition);
+        rebuildInputQueues();
+        return base.OnMouseUp(e);
+    }
+
+    public override bool OnMouseMove(MouseEvent e)
+    {
+        InputManager.HandleMouseMove(e.MouseState.Position);
+        rebuildInputQueues();
+        return base.OnMouseMove(e);
+    }
+
+    public override bool OnScroll(ScrollEvent e)
+    {
+        InputManager.HandleScroll(e.ScreenSpaceMousePosition);
+        rebuildInputQueues();
+        return base.OnScroll(e);
+    }
+
+    public override bool OnGamepadButtonDown(GamepadButtonEvent e)
+    {
+        InputManager.HandleGamepadButtonDown(e.GamepadState.DeviceId, e.Button);
+        rebuildInputQueues();
+        return base.OnGamepadButtonDown(e);
+    }
+
+    public override bool OnGamepadButtonUp(GamepadButtonEvent e)
+    {
+        InputManager.HandleGamepadButtonUp(e.GamepadState.DeviceId, e.Button);
+        rebuildInputQueues();
+        return base.OnGamepadButtonUp(e);
+    }
+
+    public override bool OnGamepadAxisMotion(GamepadAxisEvent e)
+    {
+        InputManager.HandleGamepadAxis(e.GamepadState.DeviceId, e.Axis, e.Value);
+        return base.OnGamepadAxisMotion(e);
+    }
+
+    public override void OnGamepadConnected(GamepadConnectedEvent e)
+    {
+        InputManager.HandleGamepadConnected(e.DeviceId);
+        base.OnGamepadConnected(e);
+    }
+
+    public override void OnGamepadDisconnected(GamepadDisconnectedEvent e)
+    {
+        InputManager.HandleGamepadDisconnected(e.DeviceId);
+        base.OnGamepadDisconnected(e);
     }
 
     #region Focus Management

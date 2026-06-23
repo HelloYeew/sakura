@@ -9,7 +9,7 @@ using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Testing.Input;
 
-public partial class ManualInputManager : Container
+public partial class ManualInputManager : Container, IInputManagerProvider
 {
     /// <summary>
     /// If true, hardware inputs from the host/parent will be passed to children.
@@ -18,6 +18,14 @@ public partial class ManualInputManager : Container
     public bool UseParentInput { get; set; } = true;
 
     private readonly MouseState currentMouseState = new MouseState();
+
+    /// <summary>
+    /// Exposes a shared <see cref="InputState"/> for descendants that read it via
+    /// <see cref="Drawable.GetContainingInputManager"/> (e.g. ScrollableContainer's hover refresh).
+    /// Kept in sync with the synthetic cursor position so test input drives the same state path as
+    /// real input. As the nearest provider, this is found before the app's manager.
+    /// </summary>
+    public InputManager InputManager { get; } = new InputManager();
 
     public ManualInputManager()
     {
@@ -31,6 +39,7 @@ public partial class ManualInputManager : Container
             return true;
 
         currentMouseState.Position = e.MouseState.Position;
+        InputManager.HandleMouseMove(e.MouseState.Position);
         return base.OnMouseMove(e);
     }
 
@@ -81,6 +90,7 @@ public partial class ManualInputManager : Container
     {
         Vector2 delta = position - currentMouseState.Position;
         currentMouseState.Position = position;
+        InputManager.HandleMouseMove(position);
         var syntheticEvent = new MouseEvent(currentMouseState, delta);
         base.OnMouseMove(syntheticEvent);
     }

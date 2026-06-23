@@ -35,3 +35,16 @@ public interface IFocusManager
     /// </summary>
     bool WasFocusClaimedByLastClick { get; }
 }
+
+/// <summary>
+/// Implemented by a drawable (typically the app root) that owns an <see cref="InputManager"/> and
+/// its authoritative <see cref="InputState"/>. Lets descendants read shared input state e.g. the
+/// current mouse position — without each reconstructing it locally.
+/// </summary>
+public interface IInputManagerProvider
+{
+    /// <summary>
+    /// The input manager owning the authoritative <see cref="InputState"/> for this subtree.
+    /// </summary>
+    InputManager InputManager { get; }
+}

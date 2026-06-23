@@ -309,6 +309,8 @@ public partial class ScrollableContainer : Container
 
         Vector2 dist = targetScroll - currentScroll;
 
+        Vector2 scrollBefore = currentScroll;
+
         // Snap to target if very close to prevent infinite micro-stutters
         if (dist.LengthSquared() < 0.1f && targetScroll == clampedTarget)
         {
@@ -321,6 +323,26 @@ public partial class ScrollableContainer : Container
         }
 
         ScrollContent.Position = -currentScroll;
+
+        if (currentScroll != scrollBefore)
+            refreshHoverAtCursor();
+    }
+
+    /// <summary>
+    /// Re-evaluates hover over the scrolled content by replaying a mouse-move at the input manager's
+    /// current mouse position. Does nothing until attached under an <see cref="IInputManagerProvider"/>.
+    /// </summary>
+    private void refreshHoverAtCursor()
+    {
+        var manager = GetContainingInputManager();
+        if (manager == null)
+            return;
+
+        var state = new MouseState
+        {
+            Position = manager.CurrentState.MousePosition
+        };
+        ScrollContent.OnMouseMove(new MouseEvent(state));
     }
 
     private void updateScrollbars()
