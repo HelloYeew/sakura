@@ -10,7 +10,7 @@ namespace Sakura.Framework.Audio;
 /// Interface for a playable audio channel (track, sample, etc.).
 /// This is returned when a <see cref="Track"/> or <see cref="Sample"/> is played.
 /// </summary>
-public interface IAudioChannel : IDisposable
+public interface IAudioChannel : IDisposable, IHasAmplitudes
 {
     /// <summary>
     /// Starts playing the audio on this channel.
@@ -54,8 +54,17 @@ public interface IAudioChannel : IDisposable
 
     /// <summary>
     /// Gets or sets the playback frequency/pitch (1.0 is normal).
+    /// Changing this resamples the audio, so speed and pitch move together
+    /// (like speeding up a record). For pitch-preserving speed changes, use <see cref="Tempo"/>.
     /// </summary>
     Reactive<double> Frequency { get; }
+
+    /// <summary>
+    /// Gets or sets the playback tempo as a multiplier (1.0 is normal, 2.0 is twice as fast,
+    /// 0.5 is half speed). Unlike <see cref="Frequency"/>, this preserves pitch.
+    /// Backends without a tempo DSP treat this as a no-op.
+    /// </summary>
+    Reactive<double> Tempo { get; }
 
     /// <summary>
     /// Gets or sets the stereo balance/pan (-1.0 left, 0.0 center, 1.0 right).

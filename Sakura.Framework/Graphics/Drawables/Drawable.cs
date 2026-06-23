@@ -234,7 +234,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
         }
     }
 
-    public Vector2 Size
+    public virtual Vector2 Size
     {
         get => size;
         set
@@ -421,7 +421,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
     /// <summary>
     /// The width of this drawable.
     /// </summary>
-    public float Width
+    public virtual float Width
     {
         get => Size.X;
         set => Size = new Vector2(value, Size.Y);
@@ -430,7 +430,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
     /// <summary>
     /// The height of this drawable.
     /// </summary>
-    public float Height
+    public virtual float Height
     {
         get => Size.Y;
         set => Size = new Vector2(Size.X, value);

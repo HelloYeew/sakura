@@ -29,6 +29,19 @@ internal class BassAudioChannel : IAudioChannel
     private bool isLooping;
     private int cachedLevel;
     private long lastLevelFetchTick;
+
+    private readonly float[] fftBuffer = new float[ChannelAmplitudes.AMPLITUDES_SIZE];
+    private readonly float[] frequencyAmplitudes = new float[ChannelAmplitudes.AMPLITUDES_SIZE];
+    private long lastAmplitudesFetchTick;
+    private ChannelAmplitudes cachedAmplitudes = ChannelAmplitudes.Empty;
+
+    // Per-frame temporal damping of the spectrum so visualisers receive a smooth signal rather
+    // than the raw, jittery FFT. Each refresh eases the stored value toward the new reading,
+    // retaining this fraction of the old value per ~60fps frame (higher = smoother but laggier).
+    // Made framerate-independent by raising it to (elapsedMs / referenceFrameMs).
+    private const double amplitude_retain_per_frame = 0.4;
+    private const double amplitude_reference_frame_ms = 1000.0 / 60.0;
+
     public bool AutoDispose { get; set; } = false;
 
     public BassAudioMixer Mixer { get; internal set; }
@@ -80,6 +93,17 @@ internal class BassAudioChannel : IAudioChannel
         {
             if (isDisposed) return;
             BassUtils.CheckError(Bass.ChannelSetAttribute(ChannelHandle, ChannelAttribute.Pan, (float)e.NewValue), "setting balance");
+        });
+
+        Tempo.ValueChanged += e => manager.EnqueueAction(() =>
+        {
+            if (isDisposed) return;
+
+            // BASS expects tempo as a percentage change from normal speed
+            // (0 = normal, +50 = 1.5x, -50 = 0.5x). Valid range is roughly -95..+5000.
+            double multiplier = Math.Clamp(e.NewValue, 0.05, 51.0);
+            float percent = (float)((multiplier - 1.0) * 100.0);
+            BassUtils.CheckError(Bass.ChannelSetAttribute(ChannelHandle, ChannelAttribute.Tempo, percent), "setting tempo");
         });
     }
 
@@ -162,6 +186,7 @@ internal class BassAudioChannel : IAudioChannel
     public Reactive<double> Volume { get; } = new Reactive<double>(1.0);
     public Reactive<double> Frequency { get; } = new Reactive<double>(1.0);
     public Reactive<double> Balance { get; } = new Reactive<double>(0.0);
+    public Reactive<double> Tempo { get; } = new Reactive<double>(1.0);
     private double restartPoint;
 
     public double CurrentTime
@@ -268,6 +293,50 @@ internal class BassAudioChannel : IAudioChannel
         }
     }
 
+    public ChannelAmplitudes CurrentAmplitudes
+    {
+        get
+        {
+            if (isDisposed)
+                return ChannelAmplitudes.Empty;
+
+            if (!IsRunning.Value)
+            {
+                Array.Clear(frequencyAmplitudes, 0, frequencyAmplitudes.Length);
+                cachedAmplitudes = new ChannelAmplitudes(0f, 0f, frequencyAmplitudes);
+                return cachedAmplitudes;
+            }
+
+            long currentTick = Environment.TickCount64;
+
+            long elapsed = currentTick - lastAmplitudesFetchTick;
+            if (elapsed < 15)
+                return cachedAmplitudes;
+
+            lastAmplitudesFetchTick = currentTick;
+
+            int result = Mixer != null
+                ? BassMix.ChannelGetData(ChannelHandle, fftBuffer, (int)DataFlags.FFT512)
+                : Bass.ChannelGetData(ChannelHandle, fftBuffer, (int)DataFlags.FFT512);
+
+            if (result < 0)
+            {
+                Array.Clear(frequencyAmplitudes, 0, frequencyAmplitudes.Length);
+                cachedAmplitudes = new ChannelAmplitudes(AmplitudeLeft, AmplitudeRight, frequencyAmplitudes);
+                return cachedAmplitudes;
+            }
+
+            // Ease each bin toward its new reading instead of snapping. Framerate-independent:
+            // the fraction of the OLD value retained shrinks as more time passes.
+            float retain = (float)Math.Pow(amplitude_retain_per_frame, elapsed / amplitude_reference_frame_ms);
+            for (int i = 0; i < frequencyAmplitudes.Length; i++)
+                frequencyAmplitudes[i] = fftBuffer[i] + (frequencyAmplitudes[i] - fftBuffer[i]) * retain;
+
+            cachedAmplitudes = new ChannelAmplitudes(AmplitudeLeft, AmplitudeRight, frequencyAmplitudes);
+            return cachedAmplitudes;
+        }
+    }
+
     private bool isDisposed;
 
     public void Dispose()
@@ -279,8 +348,6 @@ internal class BassAudioChannel : IAudioChannel
         {
             Mixer?.RemoveChannel(this);
 
-            // If it's a stream, we free the stream.
-            // If it's a sample channel, BASS manages it, and it's freed when the sample is freed.
             if (isStream)
             {
                 Bass.StreamFree(ChannelHandle);

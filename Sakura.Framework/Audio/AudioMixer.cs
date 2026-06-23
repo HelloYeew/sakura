@@ -22,12 +22,14 @@ public class AudioMixer : IAudioMixer
     public Reactive<double> Volume { get; } = new Reactive<double>(1.0);
     public Reactive<double> Frequency { get; } = new Reactive<double>(1.0);
     public Reactive<double> Balance { get; } = new Reactive<double>(0.0);
+    public Reactive<double> Tempo { get; } = new Reactive<double>(1.0);
 
     public double CurrentTime { get; set; }
     public double Length => 0;
     public double RestartPoint { get; set; }
     public float AmplitudeLeft { get; } = 0;
     public float AmplitudeRight { get; } = 0;
+    public virtual ChannelAmplitudes CurrentAmplitudes => ChannelAmplitudes.Empty;
     public bool Looping { get; set; }
     public bool AutoDispose { get; set; }
 

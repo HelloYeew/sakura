@@ -138,6 +138,20 @@ internal class BassAudioManager : IAudioManager, IDisposable
     /// </summary>
     internal BassAudioChannel CreateChannel(int channelHandle, bool isStream, BassAudioMixer targetMixer = null)
     {
+        if (isStream)
+        {
+            int tempoHandle = BassFx.TempoCreate(channelHandle, BassFlags.Decode | BassFlags.FxFreeSource);
+
+            if (tempoHandle != 0)
+            {
+                channelHandle = tempoHandle;
+            }
+            else
+            {
+                Logger.Error($"BASS Error: {Bass.LastError} while creating tempo stream; falling back to source channel.", new BassException(Bass.LastError));
+            }
+        }
+
         var channel = new BassAudioChannel(channelHandle, this, isStream, targetMixer);
 
         lock (activeChannels)
