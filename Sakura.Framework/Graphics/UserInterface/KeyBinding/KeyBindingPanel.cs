@@ -25,9 +25,9 @@ public abstract partial class KeyBindingPanel<T> : Container where T : struct, E
     public float RowSpacing { get; init; } = 2;
 
     /// <summary>
-    /// Number of binding slots shown per action (e.g. 2 for a keyboard + gamepad pair, like osu!).
+    /// Number of binding slots shown per action
     /// </summary>
-    public int SlotsPerAction { get; init; } = 2;
+    public int SlotsPerAction { get; init; } = 1;
 
     protected KeyBindingPanel(KeyBindingStore<T> store)
     {
