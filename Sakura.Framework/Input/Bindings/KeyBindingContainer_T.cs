@@ -48,12 +48,35 @@ public abstract partial class KeyBindingContainer<T> : KeyBindingContainer where
         }
     }
 
+    /// <summary>
+    /// An optional external source of bindings (e.g. a <see cref="KeyBindingStore{T}"/>) consulted by
+    /// <see cref="ReloadMappings"/>. When null, <see cref="DefaultKeyBindings"/> is used. To pick up
+    /// runtime changes, subscribe the store's change notification to <see cref="ReloadMappings"/>.
+    /// </summary>
+    public IKeyBindingSource? Source { get; set; }
+
     public override void LoadComplete()
     {
         base.LoadComplete();
 
         if (KeyBindings.Count == 0)
-            KeyBindings = DefaultKeyBindings.ToList();
+            ReloadMappings();
+    }
+
+    /// <summary>
+    /// Recomputes the live <see cref="KeyBindings"/> from <see cref="Source"/> (or
+    /// <see cref="DefaultKeyBindings"/> if no source is set) and safely clears any in-flight pressed
+    /// state, releasing currently-held actions first so no action is left stranded after a rebind.
+    /// </summary>
+    public void ReloadMappings()
+    {
+        // Release anything currently held so handlers see a clean release before the map changes.
+        releaseAllPressedBindings();
+        pressedKeys.Clear();
+
+        KeyBindings = Source != null
+            ? Source.GetBindings(GetType()).ToList()
+            : DefaultKeyBindings.ToList();
     }
 
     public override bool OnKeyDown(KeyEvent e)

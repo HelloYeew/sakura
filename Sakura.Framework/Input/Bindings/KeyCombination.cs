@@ -14,11 +14,13 @@ namespace Sakura.Framework.Input.Bindings;
 /// </summary>
 public readonly struct KeyCombination : IEquatable<KeyCombination>
 {
+    private readonly ImmutableArray<InputKey> keys;
+
     /// <summary>
     /// The keys that make up this combination, normalised (physical modifiers folded to logical,
-    /// sorted, de-duplicated).
+    /// sorted, de-duplicated). Safe to read on a default-valued <see cref="KeyCombination"/> (returns empty).
     /// </summary>
-    public readonly ImmutableArray<InputKey> Keys;
+    public ImmutableArray<InputKey> Keys => keys.IsDefault ? ImmutableArray<InputKey>.Empty : keys;
 
     /// <summary>
     /// An empty combination that matches nothing.
@@ -27,7 +29,7 @@ public readonly struct KeyCombination : IEquatable<KeyCombination>
 
     public KeyCombination(IEnumerable<InputKey> keys)
     {
-        Keys = normalise(keys);
+        this.keys = normalise(keys);
     }
 
     public KeyCombination(params InputKey[] keys)
@@ -55,9 +57,17 @@ public readonly struct KeyCombination : IEquatable<KeyCombination>
 
     private static InputKey parseToken(string token)
     {
-        // Direct InputKey name match.
+        // Direct InputKey name match (modifiers, mouse, scroll).
         if (Enum.TryParse<InputKey>(token, ignoreCase: true, out var inputKey) && inputKey != InputKey.None)
             return inputKey;
+
+        // Gamepad buttons serialised as "Gamepad{Button}" (e.g. "GamepadSouth").
+        if (token.StartsWith("Gamepad", StringComparison.OrdinalIgnoreCase) && token.Length > "Gamepad".Length)
+        {
+            string buttonName = token["Gamepad".Length..];
+            if (Enum.TryParse<GamepadButton>(buttonName, ignoreCase: true, out var gamepadButton))
+                return InputKeyExtensions.FromGamepadButton(gamepadButton);
+        }
 
         // Fall back to a keyboard Key name (e.g. "A", "Space", "F1").
         if (Enum.TryParse<Key>(token, ignoreCase: true, out var key) && key != Key.Unknown)
@@ -67,9 +77,16 @@ public readonly struct KeyCombination : IEquatable<KeyCombination>
     }
 
     /// <summary>
-    /// Serialises this combination back to a human-readable string (the inverse of <see cref="Parse"/>).
+    /// Serialises this combination to a string that round-trips through <see cref="Parse"/>.
+    /// Keyboard keys are emitted by their <see cref="Key"/> name (e.g. <c>"A"</c>), not their raw
+    /// numeric <see cref="InputKey"/> value.
     /// </summary>
-    public override string ToString() => string.Join('+', Keys);
+    public override string ToString() => string.Join('+', Keys.Select(InputKeyExtensions.GetReadableName));
+
+    /// <summary>
+    /// A human-readable representation suitable for display in UI (same as <see cref="ToString"/>).
+    /// </summary>
+    public string DisplayString => ToString();
 
     /// <summary>
     /// Whether this combination is satisfied by the given set of currently-pressed keys.

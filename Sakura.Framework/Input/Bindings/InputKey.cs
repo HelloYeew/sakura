@@ -72,7 +72,6 @@ public enum InputKey
 
     #endregion
 
-
     #region Gamepad buttons
 
     /// <summary>Start of the gamepad button block.</summary>
@@ -136,6 +135,32 @@ public static class InputKeyExtensions
             horizontal = InputKey.MouseWheelLeft;
 
         return (vertical, horizontal);
+    }
+
+    /// <summary>
+    /// A human-readable, <see cref="KeyCombination.Parse"/>-compatible name for a single
+    /// <see cref="InputKey"/>. Keyboard keys are returned by their <see cref="Key"/> name (e.g.
+    /// <c>"A"</c>) rather than their raw numeric value; all other keys use their enum name.
+    /// </summary>
+    public static string GetReadableName(this InputKey key)
+    {
+        // Keyboard block: map back to the Key enum name.
+        if (key >= InputKey.KeyboardFirst && key < InputKey.MouseLeft)
+        {
+            var keyboard = (Key)(key - InputKey.KeyboardFirst);
+            return keyboard.ToString();
+        }
+
+        // Gamepad block: emit as Gamepad{Button} (e.g. "GamepadSouth"). South maps to exactly
+        // GamepadFirst, so the boundary is inclusive.
+        if (key >= InputKey.GamepadFirst)
+        {
+            var button = (GamepadButton)(key - InputKey.GamepadFirst);
+            return $"Gamepad{button}";
+        }
+
+        // Modifiers, mouse buttons and scroll directions all have meaningful enum names.
+        return key.ToString();
     }
 
     /// <summary>
