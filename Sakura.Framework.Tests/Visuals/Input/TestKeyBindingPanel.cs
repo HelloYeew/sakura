@@ -56,6 +56,7 @@ public partial class TestKeyBindingPanel : ManualInputManagerTestScene
                 // width here. Do NOT set Size.Y / RelativeSizeAxes.Y — that would defeat auto-height
                 // and collapse the rows' hit areas.
                 Width = 0.6f,
+                SlotsPerAction = 2
             };
 
             TestContent.Add(panel);
