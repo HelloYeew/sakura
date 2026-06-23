@@ -37,6 +37,12 @@ public partial class AudioDucker : Component
 
     private double currentDuckFactor = 1.0;
 
+    /// <summary>
+    /// The current ducking factor applied to the target's volume (1.0 = no ducking,
+    /// down to <see cref="DuckMultiplier"/> when fully ducked). Useful for meters/UI and testing.
+    /// </summary>
+    public double CurrentDuckFactor => currentDuckFactor;
+
     public AudioDucker(IAudioChannel source, IAudioChannel target, Reactive.Reactive<double> targetVolumeBindable)
     {
         this.source = source;
@@ -52,50 +58,38 @@ public partial class AudioDucker : Component
 
         if (source is BassAudioChannel bassSource)
         {
-            // Get the current output level of the source channel
-            int level = Bass.ChannelGetLevel(bassSource.ChannelHandle);
+            float peak = Math.Max(bassSource.AmplitudeLeft, bassSource.AmplitudeRight);
 
-            if (level != -1)
+            double targetDuckFactor = 1.0;
+            if (peak > Threshold)
             {
-                // BASS packs left channel in low word, right channel in high word
-                int left = level & 0xFFFF;
-                int right = level >> 16;
+                // If it's loud, snap the duck factor down
+                targetDuckFactor = DuckMultiplier;
+            }
 
-                // Calculate the peak level from 0.0 to 1.0
-                float peak = Math.Max(left, right) / 32768f;
+            // Smoothly ease the current duck factor towards the target
+            if (currentDuckFactor > targetDuckFactor)
+            {
+                // Attack instantly
+                currentDuckFactor = targetDuckFactor;
+            }
+            else
+            {
+                // Recover smoothly over time (incorporate Clock for frame-rate independence)
+                currentDuckFactor += RecoverySpeed * (Clock.ElapsedFrameTime / 16.66f);
+                currentDuckFactor = Math.Min(1.0, currentDuckFactor);
+            }
 
-                // Determine the target duck factor based on the threshold
-                double targetDuckFactor = 1.0;
-                if (peak > Threshold)
-                {
-                    // If it's loud, snap the duck factor down
-                    targetDuckFactor = DuckMultiplier;
-                }
+            // Apply the ducked multiplier to the original volume value
+            // Note: We bypass the Value setter to avoid triggering a feedback loop if needed,
+            // but since we are writing to the channel directly here:
+            if (target is BassAudioChannel bassTarget)
+            {
+                // Calculate the final volume: (Framework Target Volume) * (Ducking Factor)
+                double finalVolume = targetVolumeBindable.Value * currentDuckFactor;
 
-                // Smoothly ease the current duck factor towards the target
-                if (currentDuckFactor > targetDuckFactor)
-                {
-                    // Attack instantly
-                    currentDuckFactor = targetDuckFactor;
-                }
-                else
-                {
-                    // Recover smoothly over time (incorporate Clock for frame-rate independence)
-                    currentDuckFactor += RecoverySpeed * (Clock.ElapsedFrameTime / 16.66f);
-                    currentDuckFactor = Math.Min(1.0, currentDuckFactor);
-                }
-
-                // Apply the ducked multiplier to the original volume value
-                // Note: We bypass the Value setter to avoid triggering a feedback loop if needed,
-                // but since we are writing to the channel directly here:
-                if (target is BassAudioChannel bassTarget)
-                {
-                    // Calculate the final volume: (Framework Target Volume) * (Ducking Factor)
-                    double finalVolume = targetVolumeBindable.Value * currentDuckFactor;
-
-                    // Apply directly to BASS to avoid mutating the user's Reactive value
-                    Bass.ChannelSetAttribute(bassTarget.ChannelHandle, ChannelAttribute.Volume, (float)finalVolume);
-                }
+                // Apply directly to BASS to avoid mutating the user's Reactive value
+                Bass.ChannelSetAttribute(bassTarget.ChannelHandle, ChannelAttribute.Volume, (float)finalVolume);
             }
         }
     }
