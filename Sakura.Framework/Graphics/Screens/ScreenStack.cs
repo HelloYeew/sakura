@@ -22,6 +22,12 @@ public partial class ScreenStack : Container
     public Screen? CurrentScreen => screenStack.Count > 0 ? screenStack.Peek() : null;
 
     /// <summary>
+    /// Invoked whenever the active screen changes.
+    /// Arguments are (PreviousScreen, NewScreen).
+    /// </summary>
+    public event Action<Screen?, Screen?>? OnScreenChange;
+
+    /// <summary>
     /// Pushes a new <see cref="Screen"/> onto the stack, making it the active screen.
     /// </summary>
     /// <param name="screen">The screen to push.</param>
@@ -44,6 +50,8 @@ public partial class ScreenStack : Container
         screen.InternalEnter(lastScreen);
 
         Logger.Verbose($"📺 Screen stack {this} pushed screen {screen} (depth: {screenStack.Count}).");
+
+        OnScreenChange?.Invoke(lastScreen, screen);
     }
 
     /// <summary>
@@ -69,5 +77,7 @@ public partial class ScreenStack : Container
 
         // Tell the next screen (if any) that it's resuming.
         nextScreen?.InternalResume(exitingScreen);
+
+        OnScreenChange?.Invoke(exitingScreen, nextScreen);
     }
 }

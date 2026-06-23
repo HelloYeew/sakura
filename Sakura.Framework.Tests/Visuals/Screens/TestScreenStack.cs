@@ -119,6 +119,53 @@ public partial class TestScreenStack : TestScene
         AddAssert("Fourth screen depth is 2", () => Precision.AlmostEquals(screen4.Depth, 2));
     }
 
+    [Test]
+    public void TestOnScreenChangeEvent()
+    {
+        Screen? reportedOldScreen = null;
+        Screen? reportedNewScreen = null;
+        int invokeCount = 0;
+
+        AddStep("Subscribe to event", () =>
+        {
+            stack.OnScreenChange += (oldScreen, newScreen) =>
+            {
+                reportedOldScreen = oldScreen;
+                reportedNewScreen = newScreen;
+                invokeCount++;
+            };
+        });
+
+        DummyScreen screen1 = null!;
+        DummyScreen screen2 = null!;
+
+        AddStep("Push first screen", () => stack.Push(screen1 = new DummyScreen()));
+        AddAssert("Event fired once", () => invokeCount == 1);
+        AddAssert("Old screen is null", () => reportedOldScreen == null);
+        AddAssert("New screen is screen1", () => reportedNewScreen == screen1);
+
+        addWaitForTransition();
+
+        AddStep("Push second screen", () => stack.Push(screen2 = new DummyScreen()));
+        AddAssert("Event fired twice", () => invokeCount == 2);
+        AddAssert("Old screen is screen1", () => reportedOldScreen == screen1);
+        AddAssert("New screen is screen2", () => reportedNewScreen == screen2);
+
+        addWaitForTransition();
+
+        AddStep("Exit second screen", () => stack.Exit());
+        AddAssert("Event fired thrice", () => invokeCount == 3);
+        AddAssert("Old screen is screen2", () => reportedOldScreen == screen2);
+        AddAssert("New screen is screen1", () => reportedNewScreen == screen1);
+
+        addWaitForTransition();
+
+        AddStep("Exit first screen", () => stack.Exit());
+        AddAssert("Event fired four times", () => invokeCount == 4);
+        AddAssert("Old screen is screen1", () => reportedOldScreen == screen1);
+        AddAssert("New screen is null", () => reportedNewScreen == null);
+    }
+
     private void addWaitForTransition()
     {
         AddWaitStep("Wait for transition", 700);
