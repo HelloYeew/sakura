@@ -243,7 +243,17 @@ public class Font : IDisposable
                     }
                     else
                     {
-                        // Move the cursor even if it's an invisible character like a space
+                        // Invisible characters such as spaces produce no bitmap, but they still
+                        // occupy horizontal space. We must record them as glyphs (with no texture)
+                        // so that the glyph list stays 1:1 with the shaped characters. Consumers
+                        // that position a caret rely on this alignment, and a missing space glyph
+                        // would otherwise make the caret stick to the previous character.
+                        glyphs.Add(new TextGlyph
+                        {
+                            Texture = null,
+                            Position = new Vector2(cursorX / dpiScale, baselineY / dpiScale),
+                            Size = new Vector2(xAdvance / dpiScale, 0)
+                        });
                         cursorX += xAdvance;
                         continue;
                     }
@@ -404,7 +414,11 @@ public class Font : IDisposable
 
 public struct TextGlyph
 {
-    public Texture Texture;
+    /// <summary>
+    /// The rasterized glyph texture, or null for invisible glyphs (e.g. spaces) that only
+    /// contribute advance width and are never drawn.
+    /// </summary>
+    public Texture? Texture;
     public Vector2 Position;
     public Vector2 Size;
 }

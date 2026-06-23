@@ -2,7 +2,6 @@
 // See the LICENSE file for full license text.
 
 using System;
-using Sakura.Framework.Graphics.Text;
 
 namespace Sakura.Framework.Graphics.Textures;
 
