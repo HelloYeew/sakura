@@ -3,7 +3,6 @@
 
 using System;
 using Sakura.Framework.Graphics.Drawables;
-using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.Textures;

@@ -57,6 +57,50 @@ public partial class SpriteText : Drawable
         }
     }
 
+    /// <summary>
+    /// The measured size of this sprite. Reading any size component forces a layout pass so the
+    /// returned value reflects the current <see cref="Text"/> immediately (callers commonly read
+    /// <see cref="Width"/> right after setting text to size a surrounding element). Without this,
+    /// the getter would return the previously measured size until the next frame's update — which
+    /// is especially noticeable when the text switches scripts (e.g. Latin to CJK via a fallback
+    /// font) and the width changes substantially.
+    /// </summary>
+    public override Vector2 Size
+    {
+        get
+        {
+            ensureLayout();
+            return base.Size;
+        }
+        set => base.Size = value;
+    }
+
+    public override float Width
+    {
+        get => Size.X;
+        set => Size = new Vector2(value, Size.Y);
+    }
+
+    public override float Height
+    {
+        get => Size.Y;
+        set => Size = new Vector2(Size.X, value);
+    }
+
+    /// <summary>
+    /// Runs a deferred layout pass if the text/font changed since the last measurement.
+    /// Safe to call before dependencies are injected: it no-ops until they are available.
+    /// </summary>
+    private void ensureLayout()
+    {
+        if (layoutInvalidated && !computingLayout)
+            computeLayout();
+    }
+
+    // Guards against re-entrancy: computeLayout reads/writes Size, whose accessors call
+    // ensureLayout. Without this flag those reads would recurse back into computeLayout.
+    private bool computingLayout;
+
     public FontUsage Font
     {
         get => fontUsage;
@@ -87,10 +131,7 @@ public partial class SpriteText : Drawable
 
     protected internal override void UpdateTransforms()
     {
-        if (layoutInvalidated)
-        {
-            computeLayout();
-        }
+        ensureLayout();
         base.UpdateTransforms();
     }
 
@@ -99,31 +140,42 @@ public partial class SpriteText : Drawable
         if ((fontStore == null || window == null) && Dependencies != null)
             DependencyActivator.Inject(this, Dependencies);
 
+        // Dependencies not ready yet. Leave layoutInvalidated set so we measure once they are,
+        // but flip the re-entrancy guard to avoid spinning if Size is read in the meantime.
         if (fontStore == null || window == null) return;
 
-        if (resolvedFont == null)
-            resolvedFont = fontStore.Get(fontUsage);
-
-        if (resolvedFont == null) return;
-
-        var fallbacks = fontStore.GetFallbacks(fontUsage);
-
-        window.GetPhysicalSize(out int physW, out int physH);
-        float dpiScale = (float)physW / window.Width;
-
-        if (dpiScale <= 0) dpiScale = 1.0f;
-
-        shapedText = resolvedFont.ProcessText(Text, fontUsage.Size, dpiScale, fallbacks);
-        ContentSize = new Vector2(shapedText.BoundingBox.X, shapedText.BoundingBox.Y);
-
-        if (Math.Abs(Size.X - ContentSize.X) > 1.0f || Math.Abs(Size.Y - ContentSize.Y) > 1.0f)
+        computingLayout = true;
+        try
         {
-            // The Size setter invalidates our geometry and notifies an interested parent
-            // (auto-size / flow), so no explicit parent invalidation is needed.
-            Size = ContentSize;
-        }
+            if (resolvedFont == null)
+                resolvedFont = fontStore.Get(fontUsage);
 
-        layoutInvalidated = false;
+            if (resolvedFont == null) return;
+
+            var fallbacks = fontStore.GetFallbacks(fontUsage);
+
+            window.GetPhysicalSize(out int physW, out int physH);
+            float dpiScale = (float)physW / window.Width;
+
+            if (dpiScale <= 0) dpiScale = 1.0f;
+
+            shapedText = resolvedFont.ProcessText(Text, fontUsage.Size, dpiScale, fallbacks);
+            ContentSize = new Vector2(shapedText.BoundingBox.X, shapedText.BoundingBox.Y);
+
+            // Read through base.Size to avoid re-entering layout via the overridden getter.
+            if (Math.Abs(base.Size.X - ContentSize.X) > 1.0f || Math.Abs(base.Size.Y - ContentSize.Y) > 1.0f)
+            {
+                // The Size setter invalidates our geometry and notifies an interested parent
+                // (auto-size / flow), so no explicit parent invalidation is needed.
+                base.Size = ContentSize;
+            }
+
+            layoutInvalidated = false;
+        }
+        finally
+        {
+            computingLayout = false;
+        }
     }
 
     protected override void GenerateVertices()
@@ -177,6 +229,29 @@ public partial class SpriteText : Drawable
             var texture = glyph.Texture;
             var pos = glyph.Position;
             var size = glyph.Size;
+
+            // Invisible glyphs (e.g. spaces) carry advance width but have no texture.
+            // Emit a zero-area quad so the per-glyph vertex layout stays 1:1 with the glyph
+            // list (the draw node skips these batches), while still letting the glyph
+            // contribute to the bounding box.
+            if (texture == null)
+            {
+                var gx = (pos.X + textOffset.X) * normalizationScale.X;
+                var gy = (pos.Y + textOffset.Y) * normalizationScale.Y;
+                var p = Vector2.Transform(new Vector2(gx, gy), ModelMatrix);
+
+                minX = Math.Min(minX, p.X);
+                minY = Math.Min(minY, p.Y);
+                maxX = Math.Max(maxX, p.X);
+                maxY = Math.Max(maxY, p.Y);
+
+                var zero = new Vertex { Position = new Vector2(p.X, p.Y), TexCoords = Vector2.Zero, Color = drawColor };
+                vertices[vIndex++] = zero;
+                vertices[vIndex++] = zero;
+                vertices[vIndex++] = zero;
+                vertices[vIndex++] = zero;
+                continue;
+            }
 
             float pixelX = pos.X + textOffset.X;
             float pixelY = pos.Y + textOffset.Y;
@@ -246,8 +321,7 @@ public partial class SpriteText : Drawable
         // Parents (e.g. a text box positioning its caret) update before this drawable does,
         // so a query arriving right after a text change would otherwise read the previous
         // frame's shaping. Shape on demand so callers always get fresh metrics.
-        if (layoutInvalidated)
-            computeLayout();
+        ensureLayout();
 
         // If there is no text yet, return the starting text offset.
         if (shapedText == null || shapedText.Glyphs.Count == 0 || index < 0)
@@ -322,10 +396,35 @@ public partial class SpriteText : Drawable
             Texture? currentTexture = null;
             int currentVertexStart = 0;
             int currentBatchVertexCount = 0;
+            // Every glyph occupies a fixed 4-vertex slot in the buffer (see GenerateVertices),
+            // including invisible glyphs such as spaces. This cursor tracks the slot of the
+            // current glyph so batches reference the correct vertex range even when some
+            // glyphs are skipped.
+            int vertexCursor = 0;
 
             for (int i = 0; i < text.shapedText.Glyphs.Count; i++)
             {
                 var glyph = text.shapedText.Glyphs[i];
+
+                // Invisible glyphs (null texture) are not drawn. Flush the current batch so the
+                // skipped vertices don't get folded into a neighbouring texture's batch.
+                if (glyph.Texture == null)
+                {
+                    if (currentTexture != null && currentBatchVertexCount > 0)
+                    {
+                        batches[batchCount++] = new GlyphBatch
+                        {
+                            Texture = currentTexture,
+                            VertexStart = currentVertexStart,
+                            VertexCount = currentBatchVertexCount
+                        };
+                    }
+                    currentTexture = null;
+                    currentBatchVertexCount = 0;
+                    vertexCursor += 4;
+                    currentVertexStart = vertexCursor;
+                    continue;
+                }
 
                 if (currentTexture != null && currentTexture.BackendTexture?.Handle != glyph.Texture.BackendTexture?.Handle)
                 {
@@ -341,6 +440,7 @@ public partial class SpriteText : Drawable
 
                 currentTexture = glyph.Texture;
                 currentBatchVertexCount += 4;
+                vertexCursor += 4;
             }
 
             if (currentTexture != null && currentBatchVertexCount > 0)
