@@ -3,7 +3,6 @@
 
 using System.Collections.Generic;
 using NUnit.Framework;
-using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;

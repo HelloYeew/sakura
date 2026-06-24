@@ -54,6 +54,9 @@ public partial class TestScrollingText : TestScene
     [Test]
     public void TestScrollsContinuously()
     {
+        if (!IsVisualRunner)
+            Assert.Ignore("Requires glyph measurement (visual runner); headless has no font metrics.");
+
         AddStep("Use fast scroll", () =>
         {
             scrolling.StartDelay = 0;

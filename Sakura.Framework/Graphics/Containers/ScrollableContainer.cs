@@ -329,21 +329,12 @@ public partial class ScrollableContainer : Container
     }
 
     /// <summary>
-    /// Re-evaluates hover over the scrolled content by replaying a mouse-move at the input manager's
-    /// current mouse position. Does nothing until attached under an <see cref="IInputManagerProvider"/>.
+    /// Re-evaluates hover after the content scrolls under a stationary cursor, so the drawable now
+    /// physically under the cursor becomes hovered (and the previous one is un-hovered). The hover
+    /// bookkeeping is owned by the <see cref="InputManager"/>, so we ask it to refresh. Does nothing
+    /// until attached under an <see cref="IInputManagerProvider"/>.
     /// </summary>
-    private void refreshHoverAtCursor()
-    {
-        var manager = GetContainingInputManager();
-        if (manager == null)
-            return;
-
-        var state = new MouseState
-        {
-            Position = manager.CurrentState.MousePosition
-        };
-        ScrollContent.OnMouseMove(new MouseEvent(state));
-    }
+    private void refreshHoverAtCursor() => GetContainingInputManager()?.RefreshHover();
 
     private void updateScrollbars()
     {

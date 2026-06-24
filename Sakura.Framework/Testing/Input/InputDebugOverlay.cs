@@ -134,6 +134,10 @@ public partial class InputDebugOverlay : Container
     {
         base.Update();
 
+        var sharedManager = GetContainingInputManager();
+        if (sharedManager != null)
+            mouseState.Position = sharedManager.CurrentState.MousePosition;
+
         mouseLine.Text = $"Mouse: {mouseState.Position}";
         buttonsLine.Text = $"Buttons: {describePressedButtons()}";
         keysLine.Text = $"Keys: {(pressedKeys.Count == 0 ? "none" : string.Join(", ", pressedKeys))}";
@@ -153,13 +157,11 @@ public partial class InputDebugOverlay : Container
         string positionalFront = inputManager.PositionalInputQueue.Count > 0
             ? inputManager.PositionalInputQueue[0].GetType().Name
             : "none";
-        var sharedManager = GetContainingInputManager();
-        var dragTarget = sharedManager?.DragCaptureTarget;
+        var sharedInputManager = GetContainingInputManager();
+        var dragTarget = sharedInputManager?.DragCaptureTarget;
         positionalConsumerText.Text =
             $"Positional front: {positionalFront}   Drag capture: {dragTarget?.GetType().Name ?? "none"}";
 
-        // Phase 2: which queue entry consumed the most recent non-positional event. The consumer is
-        // captured at observe-time (see the overriding handlers); here we just render it.
         string consumer = lastNonPositionalConsumer == null
             ? (lastNonPositionalEvent == "(none)" ? "none yet" : "unhandled")
             : lastNonPositionalConsumer.GetType().Name;

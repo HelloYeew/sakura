@@ -115,6 +115,18 @@ public class InputState
 
     internal void RemoveGamepad(int deviceId) => gamepads.Remove(deviceId);
 
+    /// <summary>
+    /// Clears all pressed keys, mouse buttons, gamepads and modifiers (mouse position is preserved).
+    /// Used to reset state between tests so input does not leak across them.
+    /// </summary>
+    internal void Clear()
+    {
+        pressedKeys.Clear();
+        pressedMouseButtons.Clear();
+        gamepads.Clear();
+        recomputeModifiers();
+    }
+
     private GamepadState getOrAddGamepad(int deviceId)
     {
         if (!gamepads.TryGetValue(deviceId, out var state))

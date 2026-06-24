@@ -44,16 +44,20 @@ public class InputManager : IFocusManager
     /// </summary>
     /// <param name="root">The subtree root to walk (typically the app root).</param>
     /// <param name="positionalPoint">The screen-space point to build the positional queue for.</param>
+    private Drawable lastQueueRoot;
+
     public void BuildQueues(Drawable root, Vector2 positionalPoint)
     {
         nonPositionalQueue.Clear();
         positionalQueue.Clear();
 
+        lastQueueRoot = root;
+
         if (root == null)
             return;
 
-        buildNonPositional(root);
-        buildPositional(root, positionalPoint);
+        buildNonPositional(root, isRoot: true);
+        buildPositional(root, positionalPoint, isRoot: true);
     }
 
     /// <summary>
@@ -61,9 +65,12 @@ public class InputManager : IFocusManager
     /// </summary>
     public void BuildQueues(Drawable root) => BuildQueues(root, CurrentState.MousePosition);
 
-    private void buildNonPositional(Drawable drawable)
+    private void buildNonPositional(Drawable drawable, bool isRoot = false)
     {
-        if (!drawable.IsLoaded || !drawable.HandleNonPositionalInput)
+        // The explicitly-chosen root is always walked; only descendants are filtered by the opt-in.
+        // This lets a subtree root (e.g. a ManualInputManager that has opted itself out of its
+        // parent's queues) still build its own queues over itself.
+        if (!drawable.IsLoaded || (!isRoot && !drawable.HandleNonPositionalInput))
             return;
 
         if (drawable is Container container)
@@ -76,9 +83,9 @@ public class InputManager : IFocusManager
         nonPositionalQueue.Add(drawable);
     }
 
-    private void buildPositional(Drawable drawable, Vector2 point)
+    private void buildPositional(Drawable drawable, Vector2 point, bool isRoot = false)
     {
-        if (!drawable.IsLoaded || !drawable.IsAlive || drawable.IsHidden || !drawable.HandlePositionalInput)
+        if (!drawable.IsLoaded || !drawable.IsAlive || drawable.IsHidden || (!isRoot && !drawable.HandlePositionalInput))
             return;
 
         bool receives = drawable.ReceivePositionalInputAt(point);
@@ -319,6 +326,21 @@ public class InputManager : IFocusManager
     }
 
     /// <summary>
+    /// Re-evaluates hover at the current mouse position without an actual mouse move. Use when the
+    /// scene changes under a stationary cursor (e.g. content scrolls), so a drawable that moved under
+    /// or out from under the cursor gets the correct <c>OnHover</c>/<c>OnHoverLost</c>. Rebuilds the
+    /// positional queue against the last root passed to <see cref="BuildQueues"/>.
+    /// </summary>
+    public void RefreshHover()
+    {
+        if (lastQueueRoot == null)
+            return;
+
+        BuildQueues(lastQueueRoot, CurrentState.MousePosition);
+        updateHover(new MouseEvent(new MouseState { Position = CurrentState.MousePosition }));
+    }
+
+    /// <summary>
     /// Dispatches a scroll down the positional queue (front-to-back); the first entry that handles
     /// it wins.
     /// </summary>
@@ -399,6 +421,33 @@ public class InputManager : IFocusManager
             if (!hoveredDrawables.Contains(drawable))
                 hoveredDrawables.Add(drawable);
         }
+    }
+
+    /// <summary>
+    /// Clears all transient input state: pressed keys/buttons/gamepads, drag capture, hover set, and
+    /// the queues. Mainly for tests, so input does not leak from one test into the next when a
+    /// manager instance is shared across a fixture. The mouse position is preserved.
+    /// </summary>
+    public void Reset()
+    {
+        CurrentState.Clear();
+        dragCaptureTarget = null;
+
+        foreach (var drawable in hoveredDrawables)
+            drawable.IsHovered = false;
+        hoveredDrawables.Clear();
+        hoverBlockers.Clear();
+
+        nonPositionalQueue.Clear();
+        positionalQueue.Clear();
+        LastNonPositionalHandler = null;
+        LastPositionalHandler = null;
+
+        if (focusedDrawable != null)
+            focusedDrawable.HasFocus = false;
+        focusedDrawable = null;
+        focusClaimedByClick = false;
+        focusStack.Clear();
     }
 
     #endregion

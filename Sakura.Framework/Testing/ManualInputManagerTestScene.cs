@@ -133,6 +133,8 @@ public abstract partial class ManualInputManagerTestScene : TestScene
 
     protected void ResetInput()
     {
+        InputManager.InputManager.Reset();
+
         InputManager.MoveMouseTo(InitialMousePosition);
 
         InputManager.ReleaseButton(MouseButton.Left);
