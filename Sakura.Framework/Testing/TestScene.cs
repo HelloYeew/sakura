@@ -268,6 +268,13 @@ public abstract partial class TestScene : Container
         private double currentStepStartTime;
         private FramedClock? scaledClock;
 
+        private readonly ManualClock virtualSource = new ManualClock();
+
+        /// <summary>
+        /// Virtual milliseconds advanced per headless frame before scaling by <see cref="HeadlessClockRate"/>
+        /// </summary>
+        private const double virtual_frame_step_ms = 16.0;
+
         // The clock used to measure WaitStep elapsed time, same as scaledClock when rate != 1.
         private IFrameBasedClock stepClock = null!;
 
@@ -290,27 +297,19 @@ public abstract partial class TestScene : Container
             Logger.Debug($"Resource assembly: {ResourceAssembly.FullName}");
             Logger.Debug($"Resource root namespace: {ResourceRootNamespace}");
 
-            // Wrap the app clock in a rate-scaled FramedClock and assign it to the
-            // test scene only. The app's own clock is left alone so base.Update() and
-            // the host loop continue to work normally. stepClock is used to measure
-            // WaitStep elapsed time so it matches the scene's scaled time.
-            if (HeadlessClockRate != 1.0)
+            scaledClock = new FramedClock(virtualSource)
             {
-                scaledClock = new FramedClock(Clock) { Rate = HeadlessClockRate };
-                testScene.Clock = scaledClock;
-                stepClock = scaledClock;
-            }
-            else
-            {
-                stepClock = Clock;
-            }
+                Rate = HeadlessClockRate
+            };
+            testScene.Clock = scaledClock;
+            stepClock = scaledClock;
 
             Add(testScene);
         }
 
         public override void Update()
         {
-            scaledClock?.ProcessFrame();
+            virtualSource.CurrentTime += virtual_frame_step_ms;
             base.Update();
 
             if (TestException != null) return;

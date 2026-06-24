@@ -20,7 +20,6 @@ using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Graphics.Video;
 using Sakura.Framework.Input;
-using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Reactive;
 using Sakura.Framework.Threading;
@@ -28,7 +27,7 @@ using Sakura.Framework.Timing;
 
 namespace Sakura.Framework;
 
-public partial class App : Container, IFocusManager, IDisposable
+public partial class App : Container, IFocusManager, IInputManagerProvider, IDisposable
 {
     public IWindow Window => Host?.Window;
 
@@ -257,8 +256,16 @@ public partial class App : Container, IFocusManager, IDisposable
         Scheduler?.Update();
     }
 
+    public InputManager InputManager { get; } = new InputManager();
+
+    private void rebuildInputQueues() => InputManager.BuildQueues(this);
+
     public override bool OnKeyDown(KeyEvent e)
     {
+        if (!e.IsRepeat)
+            InputManager.HandleKeyDown(e.Key);
+        rebuildInputQueues();
+
         if (!e.IsRepeat && e.Key == Key.F1 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
             toggleVisualiser();
@@ -292,26 +299,31 @@ public partial class App : Container, IFocusManager, IDisposable
             return true;
         }
 
-        if (focusedDrawable != null && focusedDrawable.IsLoaded && focusedDrawable.IsAlive)
+        var focused = InputManager.FocusedDrawable;
+        if (focused != null && focused.IsLoaded && focused.IsAlive)
         {
-            if (focusedDrawable.OnKeyDown(e))
+            if (focused.OnKeyDown(e))
                 return true;
         }
 
-        return base.OnKeyDown(e);
+        return InputManager.DispatchKeyDown(e);
     }
 
-    private bool focusClaimedByClick;
-
-    public bool WasFocusClaimedByLastClick => focusClaimedByClick;
-
-    public void BeginMouseDownFocusTracking() => focusClaimedByClick = false;
+    public override bool OnKeyUp(KeyEvent e)
+    {
+        InputManager.HandleKeyUp(e.Key);
+        rebuildInputQueues();
+        return InputManager.DispatchKeyUp(e);
+    }
 
     public override bool OnMouseDown(MouseButtonEvent e)
     {
+        InputManager.HandleMouseDown(e.Button, e.ScreenSpaceMousePosition);
+        rebuildInputQueues();
+
         BeginMouseDownFocusTracking();
 
-        bool handled = base.OnMouseDown(e);
+        bool handled = InputManager.DispatchMouseDown(e);
 
         // If nothing claimed focus during this click, release whatever was focused.
         // This correctly handles clicking non-focusable drawables that still consume
@@ -322,89 +334,87 @@ public partial class App : Container, IFocusManager, IDisposable
         return handled;
     }
 
-    #region Focus Management
-
-    private readonly List<Drawable> focusStack = new();
-
-    public Drawable? FocusedDrawable => focusedDrawable;
-
-    private Drawable focusedDrawable { get; set; }
-
-    public virtual bool ChangeFocus(Drawable potentialFocusTarget)
+    public override bool OnMouseUp(MouseButtonEvent e)
     {
-        var focusedBefore = focusedDrawable;
-
-        if (focusedDrawable == potentialFocusTarget)
-        {
-            if (potentialFocusTarget != null)
-                focusClaimedByClick = true;
-            return true;
-        }
-
-        if (potentialFocusTarget != null && !potentialFocusTarget.AcceptsFocus)
-            return false;
-
-        if (potentialFocusTarget == null)
-        {
-            if (focusedDrawable != null)
-            {
-                focusedDrawable.HasFocus = false;
-                focusedDrawable.OnFocusLost(new FocusLostEvent());
-                focusStack.Remove(focusedDrawable);
-            }
-
-            focusedDrawable = null;
-
-            while (focusStack.Count > 0)
-            {
-                var previous = focusStack[^1];
-
-                if (previous.IsAlive && previous.IsLoaded && previous.AcceptsFocus)
-                {
-                    focusedDrawable = previous;
-                    focusStack.RemoveAt(focusStack.Count - 1);
-
-                    focusedDrawable.HasFocus = true;
-                    focusedDrawable.OnFocus(new FocusEvent());
-                    break;
-                }
-
-                focusStack.RemoveAt(focusStack.Count - 1);
-            }
-
-            Logger.Verbose($"🐭 Focus changed from {focusedBefore?.ToString() ?? "null"} to {focusedDrawable?.ToString() ?? "null"}");
-            return true;
-        }
-
-        if (focusedDrawable != null)
-        {
-            focusedDrawable.HasFocus = false;
-            focusedDrawable.OnFocusLost(new FocusLostEvent());
-
-            if (!focusStack.Contains(focusedDrawable))
-            {
-                focusStack.Add(focusedDrawable);
-            }
-        }
-
-        focusedDrawable = potentialFocusTarget;
-        focusStack.Remove(focusedDrawable);
-
-        focusedDrawable.HasFocus = true;
-        focusedDrawable.OnFocus(new FocusEvent());
-        focusClaimedByClick = true;
-
-        Logger.Verbose($"🐭 Focus changed from {focusedBefore?.ToString() ?? "null"} to {focusedDrawable?.ToString() ?? "null"}");
-        return true;
+        InputManager.HandleMouseUp(e.Button, e.ScreenSpaceMousePosition);
+        rebuildInputQueues();
+        return InputManager.DispatchMouseUp(e);
     }
 
-    public virtual void TriggerFocusContention(Drawable triggerSource)
+    public override bool OnMouseMove(MouseEvent e)
     {
-        if (triggerSource != null && triggerSource.RequestsFocus)
-        {
-            ChangeFocus(triggerSource);
-        }
+        InputManager.HandleMouseMove(e.MouseState.Position);
+        rebuildInputQueues();
+        return InputManager.DispatchMouseMove(e);
     }
+
+    public override bool OnScroll(ScrollEvent e)
+    {
+        InputManager.HandleScroll(e.ScreenSpaceMousePosition);
+        rebuildInputQueues();
+        return InputManager.DispatchScroll(e);
+    }
+
+    public override bool OnTextInput(TextInputEvent e)
+    {
+        rebuildInputQueues();
+        return InputManager.DispatchTextInput(e);
+    }
+
+    public override bool OnTextEditing(TextEditingEvent e)
+    {
+        rebuildInputQueues();
+        return InputManager.DispatchTextEditing(e);
+    }
+
+    public override bool OnGamepadButtonDown(GamepadButtonEvent e)
+    {
+        InputManager.HandleGamepadButtonDown(e.GamepadState.DeviceId, e.Button);
+        rebuildInputQueues();
+        return InputManager.DispatchGamepadButtonDown(e);
+    }
+
+    public override bool OnGamepadButtonUp(GamepadButtonEvent e)
+    {
+        InputManager.HandleGamepadButtonUp(e.GamepadState.DeviceId, e.Button);
+        rebuildInputQueues();
+        return InputManager.DispatchGamepadButtonUp(e);
+    }
+
+    public override bool OnGamepadAxisMotion(GamepadAxisEvent e)
+    {
+        InputManager.HandleGamepadAxis(e.GamepadState.DeviceId, e.Axis, e.Value);
+        rebuildInputQueues();
+        return InputManager.DispatchGamepadAxisMotion(e);
+    }
+
+    public override void OnGamepadConnected(GamepadConnectedEvent e)
+    {
+        InputManager.HandleGamepadConnected(e.DeviceId);
+        rebuildInputQueues();
+        InputManager.DispatchGamepadConnected(e);
+    }
+
+    public override void OnGamepadDisconnected(GamepadDisconnectedEvent e)
+    {
+        InputManager.HandleGamepadDisconnected(e.DeviceId);
+        rebuildInputQueues();
+        InputManager.DispatchGamepadDisconnected(e);
+    }
+
+    #region Focus Management (delegated to InputManager)
+
+    public Drawable? FocusedDrawable => InputManager.FocusedDrawable;
+
+    public IReadOnlyList<Drawable> FocusStack => InputManager.FocusStack;
+
+    public bool WasFocusClaimedByLastClick => InputManager.WasFocusClaimedByLastClick;
+
+    public void BeginMouseDownFocusTracking() => InputManager.BeginMouseDownFocusTracking();
+
+    public virtual bool ChangeFocus(Drawable? potentialFocusTarget) => InputManager.ChangeFocus(potentialFocusTarget);
+
+    public virtual void TriggerFocusContention(Drawable? triggerSource) => InputManager.TriggerFocusContention(triggerSource);
 
     #endregion
 }

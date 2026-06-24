@@ -295,6 +295,13 @@ public partial class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVi
 
         if (State == Visibility.Hidden) return;
 
+        if (isInspecting)
+        {
+            var manager = GetContainingInputManager();
+            if (manager != null)
+                updateInspectHighlight(manager.CurrentState.MousePosition);
+        }
+
         timeUntilNextPropertyRefresh -= Clock.ElapsedFrameTime;
         if (timeUntilNextPropertyRefresh <= 0)
         {
@@ -360,24 +367,29 @@ public partial class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVi
     {
         if (isInspecting)
         {
-            hoveredDrawable = findDrawableUnderMouse(absoluteRoot, e.ScreenSpaceMousePosition);
-
-            if (hoveredDrawable != null)
-            {
-                var rect = hoveredDrawable.DrawRectangle;
-                inspectHighlightBox.Position = new Vector2(rect.X, rect.Y);
-                inspectHighlightBox.Size = new Vector2(rect.Width, rect.Height);
-                if (hoveredDrawable != lastHoveredDrawable)
-                {
-                    inspectHighlightBox.Color = Color.LimeGreen;
-                    inspectHighlightBox.FlashColour(Color.White, 300, Easing.OutQuint);
-                }
-                lastHoveredDrawable = hoveredDrawable;
-            }
+            updateInspectHighlight(e.ScreenSpaceMousePosition);
             return true;
         }
 
         return base.OnMouseMove(e);
+    }
+
+    private void updateInspectHighlight(Vector2 screenSpaceMousePosition)
+    {
+        hoveredDrawable = findDrawableUnderMouse(absoluteRoot, screenSpaceMousePosition);
+
+        if (hoveredDrawable != null)
+        {
+            var rect = hoveredDrawable.DrawRectangle;
+            inspectHighlightBox.Position = new Vector2(rect.X, rect.Y);
+            inspectHighlightBox.Size = new Vector2(rect.Width, rect.Height);
+            if (hoveredDrawable != lastHoveredDrawable)
+            {
+                inspectHighlightBox.Color = Color.LimeGreen;
+                inspectHighlightBox.FlashColour(Color.White, 300, Easing.OutQuint);
+            }
+            lastHoveredDrawable = hoveredDrawable;
+        }
     }
 
     public override bool OnMouseDown(MouseButtonEvent e)

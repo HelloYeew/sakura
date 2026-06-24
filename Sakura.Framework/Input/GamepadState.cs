@@ -19,6 +19,11 @@ public class GamepadState
     private readonly Dictionary<GamepadAxis, float> axisValues = new Dictionary<GamepadAxis, float>();
 
     /// <summary>
+    /// The buttons currently held on this gamepad.
+    /// </summary>
+    public IReadOnlyCollection<GamepadButton> PressedButtons => pressedButtons;
+
+    /// <summary>
     /// Returns true if <paramref name="button"/> is currently held.
     /// </summary>
     public bool IsPressed(GamepadButton button) => pressedButtons.Contains(button);

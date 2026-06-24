@@ -309,6 +309,8 @@ public partial class ScrollableContainer : Container
 
         Vector2 dist = targetScroll - currentScroll;
 
+        Vector2 scrollBefore = currentScroll;
+
         // Snap to target if very close to prevent infinite micro-stutters
         if (dist.LengthSquared() < 0.1f && targetScroll == clampedTarget)
         {
@@ -321,7 +323,18 @@ public partial class ScrollableContainer : Container
         }
 
         ScrollContent.Position = -currentScroll;
+
+        if (currentScroll != scrollBefore)
+            refreshHoverAtCursor();
     }
+
+    /// <summary>
+    /// Re-evaluates hover after the content scrolls under a stationary cursor, so the drawable now
+    /// physically under the cursor becomes hovered (and the previous one is un-hovered). The hover
+    /// bookkeeping is owned by the <see cref="InputManager"/>, so we ask it to refresh. Does nothing
+    /// until attached under an <see cref="IInputManagerProvider"/>.
+    /// </summary>
+    private void refreshHoverAtCursor() => GetContainingInputManager()?.RefreshHover();
 
     private void updateScrollbars()
     {

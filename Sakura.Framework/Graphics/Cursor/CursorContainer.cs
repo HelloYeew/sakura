@@ -63,6 +63,10 @@ public partial class CursorContainer : Container, IRemoveFromDrawVisualiser
         base.Update();
         if (!IsLoaded) return;
 
+        var manager = GetContainingInputManager();
+        if (manager != null)
+            lastScreenSpaceMousePosition = manager.CurrentState.MousePosition;
+
         bool shouldBeVisible = !HideWhenOutsideWindow || window.CursorInWindow;
 
         if (isCursorVisible != shouldBeVisible)
