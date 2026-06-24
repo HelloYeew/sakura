@@ -22,22 +22,22 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="FFmpeg.AutoGen" Version="8.1.0" />
-    <PackageReference Include="FreeTypeSharp" Version="3.0.1" />
-    <PackageReference Include="HarfBuzzSharp" Version="8.3.1.2" />
-    <PackageReference Include="JetBrains.Annotations" Version="2025.2.2" />
+    <PackageReference Include="FreeTypeSharp" Version="3.1.0" />
+    <PackageReference Include="HarfBuzzSharp" Version="14.2.0" />
+    <PackageReference Include="JetBrains.Annotations" Version="2026.2.0" />
     <PackageReference Include="ManagedBass" Version="4.0.2" />
     <PackageReference Include="ManagedBass.Fx" Version="4.0.2" />
     <PackageReference Include="ManagedBass.Mix" Version="4.0.2" />
-    <PackageReference Include="NUnit" Version="4.4.0" />
+    <PackageReference Include="NUnit" Version="4.6.1" />
     <PackageReference Include="Sakura.Framework.NativeLibraries" Version="2026.618.0" />
     <PackageReference Include="Sakura.Framework.SourceGenerators" Version="2026.622.0">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <PackageReference Include="Sakura.Framework.SPIRV" Version="2026.617.0" />
-    <PackageReference Include="ppy.SDL3-CS" Version="2026.520.0" />
-    <PackageReference Include="Silk.NET.OpenGL" Version="2.22.0" />
-    <PackageReference Include="Silk.NET.Maths" Version="2.22.0" />
+    <PackageReference Include="ppy.SDL3-CS" Version="2026.623.0" />
+    <PackageReference Include="Silk.NET.OpenGL" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.Maths" Version="2.23.0" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
   </ItemGroup>
   <ItemGroup>
