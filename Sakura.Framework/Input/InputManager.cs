@@ -3,15 +3,16 @@
 
 using System.Collections.Generic;
 using Sakura.Framework.Graphics.Drawables;
+using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Input;
 
 /// <summary>
-/// Owns a single authoritative <see cref="InputState"/> and builds two explicit, inspectable input
-/// queues each frame
+/// Owns a single authoritative <see cref="InputState"/>, builds two explicit, inspectable input
+/// queues each frame, dispatches events down them, and owns focus (<see cref="IFocusManager"/>).
 /// </summary>
-public class InputManager
+public class InputManager : IFocusManager
 {
     /// <summary>
     /// The authoritative input snapshot. Mutated only by this manager.
@@ -101,7 +102,7 @@ public class InputManager
     /// gamepad), or <c>null</c> if the last event was unhandled. Exposed for the debug overlay so it
     /// can highlight "this is where the key went".
     /// </summary>
-    public Drawable LastNonPositionalHandler { get; private set; }
+    public Drawable? LastNonPositionalHandler { get; private set; }
 
     #region Non-positional dispatch
 
@@ -183,9 +184,9 @@ public class InputManager
     /// The drawable that consumed the most recent positional event (mouse / scroll), or
     /// <c>null</c> if unhandled. Exposed for the debug overlay.
     /// </summary>
-    public Drawable LastPositionalHandler { get; private set; }
+    public Drawable? LastPositionalHandler { get; private set; }
 
-    private Drawable dragCaptureTarget;
+    private Drawable? dragCaptureTarget;
 
     /// <summary>
     /// The drawable currently capturing the drag (set on the mouse-down that started a left-button
@@ -193,7 +194,7 @@ public class InputManager
     /// stays with its target even when the cursor leaves its bounds. Replaces the per-container
     /// <c>draggedChild</c> bookkeeping. Exposed for the overlay.
     /// </summary>
-    public Drawable DragCaptureTarget => dragCaptureTarget;
+    public Drawable? DragCaptureTarget => dragCaptureTarget;
 
     private readonly List<Drawable> hoveredDrawables = new List<Drawable>();
 
@@ -396,6 +397,117 @@ public class InputManager
     public void HandleGamepadConnected(int deviceId) => CurrentState.AddGamepad(deviceId);
 
     public void HandleGamepadDisconnected(int deviceId) => CurrentState.RemoveGamepad(deviceId);
+
+    #endregion
+
+    #region Focus management (IFocusManager)
+
+    private readonly List<Drawable> focusStack = new List<Drawable>();
+
+    private Drawable? focusedDrawable;
+
+    private bool focusClaimedByClick;
+
+    /// <summary>
+    /// The drawable that currently holds focus, or null if nothing is focused.
+    /// </summary>
+    public Drawable? FocusedDrawable => focusedDrawable;
+
+    /// <summary>
+    /// The current focus stack (back-most first), exposed for inspection / the debug overlay.
+    /// </summary>
+    public IReadOnlyList<Drawable> FocusStack => focusStack;
+
+    /// <summary>
+    /// True if a focusable drawable claimed focus during the most recent mouse-down dispatch.
+    /// </summary>
+    public bool WasFocusClaimedByLastClick => focusClaimedByClick;
+
+    /// <summary>
+    /// Resets the "focus was claimed by this click" tracker. Called before a mouse-down dispatch.
+    /// </summary>
+    public void BeginMouseDownFocusTracking() => focusClaimedByClick = false;
+
+    /// <summary>
+    /// Changes the currently focused drawable, maintaining a stack so focus is restored to the
+    /// previous holder when the current one is released or removed.
+    /// </summary>
+    public bool ChangeFocus(Drawable? potentialFocusTarget)
+    {
+        var focusedBefore = focusedDrawable;
+
+        if (focusedDrawable == potentialFocusTarget)
+        {
+            if (potentialFocusTarget != null)
+                focusClaimedByClick = true;
+            return true;
+        }
+
+        if (potentialFocusTarget != null && !potentialFocusTarget.AcceptsFocus)
+            return false;
+
+        if (potentialFocusTarget == null)
+        {
+            if (focusedDrawable != null)
+            {
+                focusedDrawable.HasFocus = false;
+                focusedDrawable.OnFocusLost(new FocusLostEvent());
+                focusStack.Remove(focusedDrawable);
+            }
+
+            focusedDrawable = null;
+
+            while (focusStack.Count > 0)
+            {
+                var previous = focusStack[^1];
+
+                if (previous.IsAlive && previous.IsLoaded && previous.AcceptsFocus)
+                {
+                    focusedDrawable = previous;
+                    focusStack.RemoveAt(focusStack.Count - 1);
+
+                    focusedDrawable.HasFocus = true;
+                    focusedDrawable.OnFocus(new FocusEvent());
+                    break;
+                }
+
+                focusStack.RemoveAt(focusStack.Count - 1);
+            }
+
+            Logger.Verbose($"🐭 Focus changed from {focusedBefore?.ToString() ?? "null"} to {focusedDrawable?.ToString() ?? "null"}");
+            return true;
+        }
+
+        if (focusedDrawable != null)
+        {
+            focusedDrawable.HasFocus = false;
+            focusedDrawable.OnFocusLost(new FocusLostEvent());
+
+            if (!focusStack.Contains(focusedDrawable))
+            {
+                focusStack.Add(focusedDrawable);
+            }
+        }
+
+        focusedDrawable = potentialFocusTarget;
+        focusStack.Remove(focusedDrawable);
+
+        focusedDrawable.HasFocus = true;
+        focusedDrawable.OnFocus(new FocusEvent());
+        focusClaimedByClick = true;
+
+        Logger.Verbose($"🐭 Focus changed from {focusedBefore?.ToString() ?? "null"} to {focusedDrawable?.ToString() ?? "null"}");
+        return true;
+    }
+
+    /// <summary>
+    /// Evaluates focus state when a drawable requests focus (e.g. a freshly shown overlay).
+    /// </summary>
+    public void TriggerFocusContention(Drawable? triggerSource)
+    {
+        if (triggerSource != null && triggerSource.RequestsFocus)
+            ChangeFocus(triggerSource);
+    }
 
     #endregion
 }

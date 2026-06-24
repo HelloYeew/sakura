@@ -20,7 +20,6 @@ using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Graphics.Video;
 using Sakura.Framework.Input;
-using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Reactive;
 using Sakura.Framework.Threading;
@@ -300,20 +299,15 @@ public partial class App : Container, IFocusManager, IInputManagerProvider, IDis
             return true;
         }
 
-        if (focusedDrawable != null && focusedDrawable.IsLoaded && focusedDrawable.IsAlive)
+        var focused = InputManager.FocusedDrawable;
+        if (focused != null && focused.IsLoaded && focused.IsAlive)
         {
-            if (focusedDrawable.OnKeyDown(e))
+            if (focused.OnKeyDown(e))
                 return true;
         }
 
         return InputManager.DispatchKeyDown(e);
     }
-
-    private bool focusClaimedByClick;
-
-    public bool WasFocusClaimedByLastClick => focusClaimedByClick;
-
-    public void BeginMouseDownFocusTracking() => focusClaimedByClick = false;
 
     public override bool OnKeyUp(KeyEvent e)
     {
@@ -423,89 +417,19 @@ public partial class App : Container, IFocusManager, IInputManagerProvider, IDis
     protected internal override bool TriggerMouseMove(MouseEvent e) => false;
     protected internal override bool TriggerScroll(ScrollEvent e) => false;
 
-    #region Focus Management
+    #region Focus Management (delegated to InputManager)
 
-    private readonly List<Drawable> focusStack = new();
+    public Drawable? FocusedDrawable => InputManager.FocusedDrawable;
 
-    public Drawable? FocusedDrawable => focusedDrawable;
+    public IReadOnlyList<Drawable> FocusStack => InputManager.FocusStack;
 
-    private Drawable focusedDrawable { get; set; }
+    public bool WasFocusClaimedByLastClick => InputManager.WasFocusClaimedByLastClick;
 
-    public virtual bool ChangeFocus(Drawable potentialFocusTarget)
-    {
-        var focusedBefore = focusedDrawable;
+    public void BeginMouseDownFocusTracking() => InputManager.BeginMouseDownFocusTracking();
 
-        if (focusedDrawable == potentialFocusTarget)
-        {
-            if (potentialFocusTarget != null)
-                focusClaimedByClick = true;
-            return true;
-        }
+    public virtual bool ChangeFocus(Drawable? potentialFocusTarget) => InputManager.ChangeFocus(potentialFocusTarget);
 
-        if (potentialFocusTarget != null && !potentialFocusTarget.AcceptsFocus)
-            return false;
-
-        if (potentialFocusTarget == null)
-        {
-            if (focusedDrawable != null)
-            {
-                focusedDrawable.HasFocus = false;
-                focusedDrawable.OnFocusLost(new FocusLostEvent());
-                focusStack.Remove(focusedDrawable);
-            }
-
-            focusedDrawable = null;
-
-            while (focusStack.Count > 0)
-            {
-                var previous = focusStack[^1];
-
-                if (previous.IsAlive && previous.IsLoaded && previous.AcceptsFocus)
-                {
-                    focusedDrawable = previous;
-                    focusStack.RemoveAt(focusStack.Count - 1);
-
-                    focusedDrawable.HasFocus = true;
-                    focusedDrawable.OnFocus(new FocusEvent());
-                    break;
-                }
-
-                focusStack.RemoveAt(focusStack.Count - 1);
-            }
-
-            Logger.Verbose($"🐭 Focus changed from {focusedBefore?.ToString() ?? "null"} to {focusedDrawable?.ToString() ?? "null"}");
-            return true;
-        }
-
-        if (focusedDrawable != null)
-        {
-            focusedDrawable.HasFocus = false;
-            focusedDrawable.OnFocusLost(new FocusLostEvent());
-
-            if (!focusStack.Contains(focusedDrawable))
-            {
-                focusStack.Add(focusedDrawable);
-            }
-        }
-
-        focusedDrawable = potentialFocusTarget;
-        focusStack.Remove(focusedDrawable);
-
-        focusedDrawable.HasFocus = true;
-        focusedDrawable.OnFocus(new FocusEvent());
-        focusClaimedByClick = true;
-
-        Logger.Verbose($"🐭 Focus changed from {focusedBefore?.ToString() ?? "null"} to {focusedDrawable?.ToString() ?? "null"}");
-        return true;
-    }
-
-    public virtual void TriggerFocusContention(Drawable triggerSource)
-    {
-        if (triggerSource != null && triggerSource.RequestsFocus)
-        {
-            ChangeFocus(triggerSource);
-        }
-    }
+    public virtual void TriggerFocusContention(Drawable? triggerSource) => InputManager.TriggerFocusContention(triggerSource);
 
     #endregion
 }

@@ -138,8 +138,12 @@ public partial class InputDebugOverlay : Container
         buttonsLine.Text = $"Buttons: {describePressedButtons()}";
         keysLine.Text = $"Keys: {(pressedKeys.Count == 0 ? "none" : string.Join(", ", pressedKeys))}";
 
-        var focus = GetContainingFocusManager()?.FocusedDrawable;
-        focusLine.Text = $"Focus: {focus?.GetType().Name ?? "none"}";
+        var focusManager = GetContainingFocusManager();
+        var focus = focusManager?.FocusedDrawable;
+        string stack = focusManager == null || focusManager.FocusStack.Count == 0
+            ? "empty"
+            : describeQueue(focusManager.FocusStack);
+        focusLine.Text = $"Focus: {focus?.GetType().Name ?? "none"}   Stack: {stack}";
 
         // Rebuild and render the live input queues for the observed subtree at the current cursor.
         inputManager.BuildQueues(content, mouseState.Position);

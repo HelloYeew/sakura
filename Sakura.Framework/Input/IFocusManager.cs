@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System.Collections.Generic;
 using Sakura.Framework.Graphics.Drawables;
 
 namespace Sakura.Framework.Input;
@@ -11,6 +12,12 @@ public interface IFocusManager
     /// The drawable that currently holds focus, or null if nothing is focused.
     /// </summary>
     Drawable? FocusedDrawable { get; }
+
+    /// <summary>
+    /// The current focus stack (back-most first): drawables whose focus is suspended and will be
+    /// restored when the current focus is released. Exposed for inspection / debug overlays.
+    /// </summary>
+    IReadOnlyList<Drawable> FocusStack { get; }
 
     /// <summary>
     /// Changes the currently focused drawable.
