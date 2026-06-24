@@ -59,6 +59,24 @@ public abstract partial class TextBox : Container
     private bool shiftHeld;
 
     /// <summary>
+    /// The current caret index within <see cref="Text"/>.
+    /// </summary>
+    public int CaretIndex => caretIndex;
+
+    /// <summary>
+    /// The current selection anchor index within <see cref="Text"/>. Equal to <see cref="CaretIndex"/>
+    /// when there is no selection.
+    /// </summary>
+    public int SelectionStart => selectionStart;
+
+    /// <summary>
+    /// Set internally while the text value is being changed programmatically (i.e. not via a user
+    /// edit such as typing, pasting, or deleting). Used to decide whether the caret should jump to
+    /// the end of the new text.
+    /// </summary>
+    private bool isEditingText;
+
+    /// <summary>
     /// True while an IME composition is in progress (SDL_TEXTEDITING received with non-empty text).
     /// Enter/Escape are suppressed during composition so they don't accidentally commit or close the text box.
     /// </summary>
@@ -88,6 +106,26 @@ public abstract partial class TextBox : Container
     /// Maximum number of characters. Null for unlimited.
     /// </summary>
     public int? LengthLimit { get; set; }
+
+    private double caretBlinkDuration = 750;
+
+    /// <summary>
+    /// Duration in milliseconds of a single caret fade (i.e. half of a full blink cycle: the time
+    /// to fade from visible to hidden, and again from hidden to visible). Defaults to 750ms.
+    /// Set to 0 to disable blinking and keep the caret permanently visible while focused.
+    /// </summary>
+    public double CaretBlinkDuration
+    {
+        get => caretBlinkDuration;
+        set
+        {
+            caretBlinkDuration = Math.Max(0, value);
+
+            // Apply the new timing immediately if the caret is currently active.
+            if (HasFocus)
+                resetCaretBlink();
+        }
+    }
 
     /// <summary>
     /// Dimmed hint text shown while the box is empty.
@@ -159,10 +197,24 @@ public abstract partial class TextBox : Container
         {
             string newText = e.NewValue ?? "";
             SpriteText.Text = newText;
-            caretIndex = Math.Clamp(caretIndex, 0, newText.Length);
-            selectionStart = Math.Clamp(selectionStart, 0, newText.Length);
+
+            if (isEditingText)
+            {
+                // A user edit (typing, pasting, deleting) already positioned the caret itself,
+                // so we only clamp to keep it within the new bounds.
+                caretIndex = Math.Clamp(caretIndex, 0, newText.Length);
+                selectionStart = Math.Clamp(selectionStart, 0, newText.Length);
+            }
+            else
+            {
+                // The value was assigned programmatically (e.g. setting initial text). Place the
+                // caret at the end of the new text, matching standard text box behaviour.
+                caretIndex = newText.Length;
+                selectionStart = newText.Length;
+            }
+
             UpdatePlaceholderVisibility();
-            Invalidate(InvalidationFlags.DrawInfo);
+            caretMoved();
         };
     }
 
@@ -223,7 +275,11 @@ public abstract partial class TextBox : Container
     {
         Caret.ClearTransforms();
         Caret.Alpha = 1;
-        Caret.FadeTo(0, 750).Then().FadeTo(1, 750).Loop();
+
+        if (caretBlinkDuration <= 0)
+            return;
+
+        Caret.FadeTo(0, caretBlinkDuration).Then().FadeTo(1, caretBlinkDuration).Loop();
     }
 
     private void caretMoved()
@@ -331,6 +387,25 @@ public abstract partial class TextBox : Container
         return true;
     }
 
+    /// <summary>
+    /// Assigns <see cref="Text"/> as part of a user edit (typing, pasting, deleting). The caller is
+    /// responsible for having already positioned <see cref="caretIndex"/>; this flag tells the
+    /// <see cref="Text"/> change handler not to reset the caret to the end of the text.
+    /// </summary>
+    private void setTextFromUserEdit(string value)
+    {
+        isEditingText = true;
+
+        try
+        {
+            Text.Value = value;
+        }
+        finally
+        {
+            isEditingText = false;
+        }
+    }
+
     private void deleteSelection()
     {
         if (selectionStart == caretIndex) return;
@@ -340,7 +415,7 @@ public abstract partial class TextBox : Container
 
         caretIndex = start;
         selectionStart = start;
-        Text.Value = Text.Value.Remove(start, length);
+        setTextFromUserEdit(Text.Value.Remove(start, length));
     }
 
     private void insertTextAtCaret(string text)
@@ -362,7 +437,7 @@ public abstract partial class TextBox : Container
         int insertIndex = caretIndex;
         caretIndex += text.Length;
         selectionStart = caretIndex;
-        Text.Value = Text.Value.Insert(insertIndex, text);
+        setTextFromUserEdit(Text.Value.Insert(insertIndex, text));
         caretMoved();
     }
 
@@ -449,9 +524,10 @@ public abstract partial class TextBox : Container
                 else if (caretIndex > 0)
                 {
                     int boundary = findPreviousWordBoundary(caretIndex);
-                    Text.Value = Text.Value.Remove(boundary, caretIndex - boundary);
+                    string updated = Text.Value.Remove(boundary, caretIndex - boundary);
                     caretIndex = boundary;
                     selectionStart = boundary;
+                    setTextFromUserEdit(updated);
                 }
                 caretMoved();
                 return true;
@@ -464,7 +540,7 @@ public abstract partial class TextBox : Container
                 else if (caretIndex < Text.Value.Length)
                 {
                     int boundary = findNextWordBoundary(caretIndex);
-                    Text.Value = Text.Value.Remove(caretIndex, boundary - caretIndex);
+                    setTextFromUserEdit(Text.Value.Remove(caretIndex, boundary - caretIndex));
                 }
                 caretMoved();
                 return true;
@@ -518,7 +594,7 @@ public abstract partial class TextBox : Container
             {
                 caretIndex--;
                 selectionStart = caretIndex;
-                Text.Value = Text.Value.Remove(caretIndex, 1);
+                setTextFromUserEdit(Text.Value.Remove(caretIndex, 1));
                 caretMoved();
                 return true;
             }
@@ -529,7 +605,7 @@ public abstract partial class TextBox : Container
             if (hasSelection) { deleteSelection(); caretMoved(); return true; }
             if (caretIndex < Text.Value.Length)
             {
-                Text.Value = Text.Value.Remove(caretIndex, 1);
+                setTextFromUserEdit(Text.Value.Remove(caretIndex, 1));
                 caretMoved();
                 return true;
             }
