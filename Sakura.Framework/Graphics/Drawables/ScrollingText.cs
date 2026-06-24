@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Text;
 
@@ -12,6 +13,7 @@ namespace Sakura.Framework.Graphics.Drawables;
 public partial class ScrollingText : Container
 {
     private readonly SpriteText text;
+    private Color color = Color.White;
 
     /// <summary>
     /// Scroll speed in logical pixels per second.
@@ -33,6 +35,9 @@ public partial class ScrollingText : Container
     /// </summary>
     public float ScrollOffset => text.X;
 
+    /// <summary>
+    /// The text to display.
+    /// </summary>
     public string Text
     {
         get => text.Text;
@@ -46,6 +51,9 @@ public partial class ScrollingText : Container
         }
     }
 
+    /// <summary>
+    /// The <see cref="FontUsage"/> to use for the text.
+    /// </summary>
     public FontUsage Font
     {
         get => text.Font;
@@ -53,6 +61,19 @@ public partial class ScrollingText : Container
         {
             text.Font = value;
             resetScroll();
+        }
+    }
+
+    /// <summary>
+    /// The color of the text.
+    /// </summary>
+    public new Color Color
+    {
+        get => color;
+        set
+        {
+            color = value;
+            text.Color = value;
         }
     }
 
@@ -67,6 +88,7 @@ public partial class ScrollingText : Container
         {
             Anchor = Anchor.CentreLeft,
             Origin = Anchor.CentreLeft,
+            Color = Color
         });
 
         delayRemaining = StartDelay;

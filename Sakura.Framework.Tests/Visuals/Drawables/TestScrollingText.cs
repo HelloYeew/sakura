@@ -98,4 +98,15 @@ public partial class TestScrollingText : TestScene
 
         AddWaitStep("Watch", 4000);
     }
+
+    [Test]
+    public void TestChangeColor()
+    {
+        AddStep("Change color", () => scrolling.Color = Color.Red);
+        AddWaitStep("Watch", 2000);
+        AddStep("Change color", () => scrolling.Color = Color.Green);
+        AddWaitStep("Watch", 2000);
+        AddStep("Change color", () => scrolling.Color = Color.Blue);
+        AddWaitStep("Watch", 2000);
+    }
 }
