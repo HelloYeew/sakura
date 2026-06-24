@@ -107,6 +107,26 @@ public abstract partial class TextBox : Container
     /// </summary>
     public int? LengthLimit { get; set; }
 
+    private double caretBlinkDuration = 750;
+
+    /// <summary>
+    /// Duration in milliseconds of a single caret fade (i.e. half of a full blink cycle: the time
+    /// to fade from visible to hidden, and again from hidden to visible). Defaults to 750ms.
+    /// Set to 0 to disable blinking and keep the caret permanently visible while focused.
+    /// </summary>
+    public double CaretBlinkDuration
+    {
+        get => caretBlinkDuration;
+        set
+        {
+            caretBlinkDuration = Math.Max(0, value);
+
+            // Apply the new timing immediately if the caret is currently active.
+            if (HasFocus)
+                resetCaretBlink();
+        }
+    }
+
     /// <summary>
     /// Dimmed hint text shown while the box is empty.
     /// </summary>
@@ -255,7 +275,11 @@ public abstract partial class TextBox : Container
     {
         Caret.ClearTransforms();
         Caret.Alpha = 1;
-        Caret.FadeTo(0, 750).Then().FadeTo(1, 750).Loop();
+
+        if (caretBlinkDuration <= 0)
+            return;
+
+        Caret.FadeTo(0, caretBlinkDuration).Then().FadeTo(1, caretBlinkDuration).Loop();
     }
 
     private void caretMoved()
