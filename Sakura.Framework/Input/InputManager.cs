@@ -155,17 +155,19 @@ public class InputManager : IFocusManager
     /// (front-to-back), invoking <paramref name="invoke"/> on each entry until one returns
     /// <c>true</c>. Records the consuming entry in <see cref="LastNonPositionalHandler"/>.
     /// </summary>
-    /// <param name="invoke">Calls the appropriate <c>Trigger*</c> self-handler on a queue entry.</param>
+    /// <param name="invoke">Invokes the appropriate <c>OnX</c> handler on a queue entry.</param>
     /// <returns><c>true</c> if a queue entry handled the event.</returns>
     private bool dispatchNonPositional(System.Func<Drawable, bool> invoke)
     {
         // Snapshot count up front; handlers may mutate the tree, and entries are skipped if they
-        // were removed/unloaded mid-dispatch (mirroring the guards on the old recursive path).
+        // were removed/unloaded mid-dispatch.
         for (int i = 0; i < nonPositionalQueue.Count; i++)
         {
             var drawable = nonPositionalQueue[i];
 
-            if (!drawable.IsLoaded)
+            // The queue root is the dispatcher (App / ManualInputManager): its OnX *is* this dispatch
+            // entry point, so invoking it again would re-enter and recurse infinitely. Skip it.
+            if (!drawable.IsLoaded || ReferenceEquals(drawable, lastQueueRoot))
                 continue;
 
             if (invoke(drawable))
@@ -179,31 +181,31 @@ public class InputManager : IFocusManager
         return false;
     }
 
-    public bool DispatchKeyDown(KeyEvent e) => dispatchNonPositional(d => d.TriggerKeyDown(e));
+    public bool DispatchKeyDown(KeyEvent e) => dispatchNonPositional(d => d.OnKeyDown(e));
 
-    public bool DispatchKeyUp(KeyEvent e) => dispatchNonPositional(d => d.TriggerKeyUp(e));
+    public bool DispatchKeyUp(KeyEvent e) => dispatchNonPositional(d => d.OnKeyUp(e));
 
-    public bool DispatchTextInput(TextInputEvent e) => dispatchNonPositional(d => d.TriggerTextInput(e));
+    public bool DispatchTextInput(TextInputEvent e) => dispatchNonPositional(d => d.OnTextInput(e));
 
-    public bool DispatchTextEditing(TextEditingEvent e) => dispatchNonPositional(d => d.TriggerTextEditing(e));
+    public bool DispatchTextEditing(TextEditingEvent e) => dispatchNonPositional(d => d.OnTextEditing(e));
 
-    public bool DispatchGamepadButtonDown(GamepadButtonEvent e) => dispatchNonPositional(d => d.TriggerGamepadButtonDown(e));
+    public bool DispatchGamepadButtonDown(GamepadButtonEvent e) => dispatchNonPositional(d => d.OnGamepadButtonDown(e));
 
-    public bool DispatchGamepadButtonUp(GamepadButtonEvent e) => dispatchNonPositional(d => d.TriggerGamepadButtonUp(e));
+    public bool DispatchGamepadButtonUp(GamepadButtonEvent e) => dispatchNonPositional(d => d.OnGamepadButtonUp(e));
 
-    public bool DispatchGamepadAxisMotion(GamepadAxisEvent e) => dispatchNonPositional(d => d.TriggerGamepadAxisMotion(e));
+    public bool DispatchGamepadAxisMotion(GamepadAxisEvent e) => dispatchNonPositional(d => d.OnGamepadAxisMotion(e));
 
     /// <summary>
     /// Delivers a gamepad connected event to every entry in the non-positional queue (broadcast; no
-    /// consumption), mirroring the recursive <c>OnGamepadConnected</c> fan-out.
+    /// consumption).
     /// </summary>
     public void DispatchGamepadConnected(GamepadConnectedEvent e)
     {
         for (int i = 0; i < nonPositionalQueue.Count; i++)
         {
             var drawable = nonPositionalQueue[i];
-            if (drawable.IsLoaded)
-                drawable.TriggerGamepadConnected(e);
+            if (drawable.IsLoaded && !ReferenceEquals(drawable, lastQueueRoot))
+                drawable.OnGamepadConnected(e);
         }
     }
 
@@ -215,8 +217,8 @@ public class InputManager : IFocusManager
         for (int i = 0; i < nonPositionalQueue.Count; i++)
         {
             var drawable = nonPositionalQueue[i];
-            if (drawable.IsLoaded)
-                drawable.TriggerGamepadDisconnected(e);
+            if (drawable.IsLoaded && !ReferenceEquals(drawable, lastQueueRoot))
+                drawable.OnGamepadDisconnected(e);
         }
     }
 
@@ -256,10 +258,10 @@ public class InputManager : IFocusManager
         {
             var drawable = positionalQueue[i];
 
-            if (!drawable.IsLoaded || !drawable.IsAlive || drawable.IsHidden)
+            if (!drawable.IsLoaded || !drawable.IsAlive || drawable.IsHidden || ReferenceEquals(drawable, lastQueueRoot))
                 continue;
 
-            if (drawable.TriggerMouseDown(e))
+            if (drawable.OnMouseDown(e))
             {
                 if (e.Button == MouseButton.Left)
                     dragCaptureTarget = drawable;
@@ -284,7 +286,7 @@ public class InputManager : IFocusManager
             var target = dragCaptureTarget;
             dragCaptureTarget = null;
 
-            bool capturedHandled = target.IsLoaded && target.TriggerMouseUp(e);
+            bool capturedHandled = target.IsLoaded && target.OnMouseUp(e);
             LastPositionalHandler = capturedHandled ? target : null;
             return capturedHandled;
         }
@@ -293,10 +295,10 @@ public class InputManager : IFocusManager
         {
             var drawable = positionalQueue[i];
 
-            if (!drawable.IsLoaded || !drawable.IsAlive || drawable.IsHidden)
+            if (!drawable.IsLoaded || !drawable.IsAlive || drawable.IsHidden || ReferenceEquals(drawable, lastQueueRoot))
                 continue;
 
-            if (drawable.TriggerMouseUp(e))
+            if (drawable.OnMouseUp(e))
             {
                 LastPositionalHandler = drawable;
                 return true;
@@ -316,10 +318,10 @@ public class InputManager : IFocusManager
         bool handled = false;
 
         // A drag in progress stays with its captured target, even outside its bounds. The target's
-        // IsDragged flag short-circuits its OnMouseMove straight to OnDrag; recursion is suppressed
-        // via TriggerMouseMove so a captured container does not re-route into its children.
+        // IsDragged flag short-circuits its OnMouseMove straight to OnDrag, so this delivers the drag
+        // without re-routing into children (there is no recursive children-walk any more).
         if (dragCaptureTarget != null && dragCaptureTarget.IsLoaded)
-            handled = dragCaptureTarget.TriggerMouseMove(e);
+            handled = dragCaptureTarget.OnMouseMove(e);
 
         updateHover(e);
         return handled;
@@ -350,10 +352,10 @@ public class InputManager : IFocusManager
         {
             var drawable = positionalQueue[i];
 
-            if (!drawable.IsLoaded || !drawable.IsAlive || drawable.IsHidden)
+            if (!drawable.IsLoaded || !drawable.IsAlive || drawable.IsHidden || ReferenceEquals(drawable, lastQueueRoot))
                 continue;
 
-            if (drawable.TriggerScroll(e))
+            if (drawable.OnScroll(e))
             {
                 LastPositionalHandler = drawable;
                 return true;
