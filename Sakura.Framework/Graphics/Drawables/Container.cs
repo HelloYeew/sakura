@@ -580,6 +580,12 @@ public partial class Container : Drawable
 
     public override bool OnMouseDown(MouseButtonEvent e)
     {
+        // skip the recursive children-walk (descendants have their own queue
+        // entries and the manager owns drag capture)
+        // run only this container's own self-logic.
+        if (suppressPositionalRecursion)
+            return base.OnMouseDown(e);
+
         var sorted = getSortedChildren();
 
         // Iterate front-to-back (highest depth first).
@@ -601,6 +607,9 @@ public partial class Container : Drawable
 
     public override bool OnMouseUp(MouseButtonEvent e)
     {
+        if (suppressPositionalRecursion)
+            return base.OnMouseUp(e);
+
         bool handled = false;
 
         // If a drag was in progress, only the dragged child should receive the OnMouseUp event.
@@ -628,6 +637,9 @@ public partial class Container : Drawable
 
     public override bool OnMouseMove(MouseEvent e)
     {
+        if (suppressPositionalRecursion)
+            return base.OnMouseMove(e);
+
         bool handled = false;
 
         // If a drag is in progress, the dragged child must get the event first.
@@ -666,6 +678,9 @@ public partial class Container : Drawable
 
     public override bool OnScroll(ScrollEvent e)
     {
+        if (suppressPositionalRecursion)
+            return base.OnScroll(e);
+
         // Propagate to the first child that contains the mouse position, front-to-back.
         var sorted = getSortedChildren();
 
@@ -690,6 +705,17 @@ public partial class Container : Drawable
     /// path, e.g. ManualInputManager in tests), recursion behaves exactly as before.
     /// </summary>
     private bool suppressNonPositionalRecursion;
+
+    /// <summary>
+    /// While true, the recursive positional children-walk (mouse / scroll) and per-container drag
+    /// capture are suppressed. The <see cref="InputManager"/> sets this on a queue entry before
+    /// invoking its OnMouseDown/OnScroll/etc. self-logic, so a consumer that calls base.OnMouseDown
+    /// (e.g. ClickableContainer, PanZoomContainer, OverlayContainer) runs its own logic without
+    /// re-recursing into children that already have their own queue entries — only the
+    /// <see cref="Drawable"/> self-logic (focus / click / drag-start) at the tail still runs. When
+    /// false (the legacy path, e.g. ManualInputManager in tests), recursion behaves exactly as before.
+    /// </summary>
+    private bool suppressPositionalRecursion;
 
     public override bool OnKeyDown(KeyEvent e)
     {
@@ -894,6 +920,25 @@ public partial class Container : Drawable
         finally
         {
             suppressNonPositionalRecursion = previous;
+        }
+    }
+
+    protected internal override bool TriggerMouseDown(MouseButtonEvent e) => withPositionalRecursionSuppressed(() => OnMouseDown(e));
+    protected internal override bool TriggerMouseUp(MouseButtonEvent e) => withPositionalRecursionSuppressed(() => OnMouseUp(e));
+    protected internal override bool TriggerMouseMove(MouseEvent e) => withPositionalRecursionSuppressed(() => OnMouseMove(e));
+    protected internal override bool TriggerScroll(ScrollEvent e) => withPositionalRecursionSuppressed(() => OnScroll(e));
+
+    private bool withPositionalRecursionSuppressed(System.Func<bool> action)
+    {
+        bool previous = suppressPositionalRecursion;
+        suppressPositionalRecursion = true;
+        try
+        {
+            return action();
+        }
+        finally
+        {
+            suppressPositionalRecursion = previous;
         }
     }
 

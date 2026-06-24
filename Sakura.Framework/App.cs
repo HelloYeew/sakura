@@ -329,7 +329,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider, IDis
 
         BeginMouseDownFocusTracking();
 
-        bool handled = base.OnMouseDown(e);
+        bool handled = InputManager.DispatchMouseDown(e);
 
         // If nothing claimed focus during this click, release whatever was focused.
         // This correctly handles clicking non-focusable drawables that still consume
@@ -344,21 +344,21 @@ public partial class App : Container, IFocusManager, IInputManagerProvider, IDis
     {
         InputManager.HandleMouseUp(e.Button, e.ScreenSpaceMousePosition);
         rebuildInputQueues();
-        return base.OnMouseUp(e);
+        return InputManager.DispatchMouseUp(e);
     }
 
     public override bool OnMouseMove(MouseEvent e)
     {
         InputManager.HandleMouseMove(e.MouseState.Position);
         rebuildInputQueues();
-        return base.OnMouseMove(e);
+        return InputManager.DispatchMouseMove(e);
     }
 
     public override bool OnScroll(ScrollEvent e)
     {
         InputManager.HandleScroll(e.ScreenSpaceMousePosition);
         rebuildInputQueues();
-        return base.OnScroll(e);
+        return InputManager.DispatchScroll(e);
     }
 
     public override bool OnTextInput(TextInputEvent e)
@@ -417,6 +417,11 @@ public partial class App : Container, IFocusManager, IInputManagerProvider, IDis
     protected internal override bool TriggerGamepadAxisMotion(GamepadAxisEvent e) => false;
     protected internal override void TriggerGamepadConnected(GamepadConnectedEvent e) { }
     protected internal override void TriggerGamepadDisconnected(GamepadDisconnectedEvent e) { }
+
+    protected internal override bool TriggerMouseDown(MouseButtonEvent e) => false;
+    protected internal override bool TriggerMouseUp(MouseButtonEvent e) => false;
+    protected internal override bool TriggerMouseMove(MouseEvent e) => false;
+    protected internal override bool TriggerScroll(ScrollEvent e) => false;
 
     #region Focus Management
 

@@ -181,6 +181,10 @@ public partial class Screen : Container
         return base.OnKeyUp(e);
     }
 
+    public override bool HandleNonPositionalInput => State == ScreenState.Active && base.HandleNonPositionalInput;
+
+    public override bool HandlePositionalInput => State == ScreenState.Active && base.HandlePositionalInput;
+
     #endregion
 }
 

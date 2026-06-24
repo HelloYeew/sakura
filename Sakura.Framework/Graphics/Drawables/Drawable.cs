@@ -72,8 +72,8 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
     /// </summary>
     public bool DisposeOnRemoval { get; set; }
 
-    public bool IsHovered { get; private set; }
-    public bool IsDragged { get; private set; }
+    public bool IsHovered { get; internal set; }
+    public bool IsDragged { get; internal set; }
 
     /// <summary>
     /// The current loading state of the component
@@ -1368,6 +1368,15 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
     protected internal virtual bool TriggerGamepadAxisMotion(GamepadAxisEvent e) => OnGamepadAxisMotion(e);
     protected internal virtual void TriggerGamepadConnected(GamepadConnectedEvent e) => OnGamepadConnected(e);
     protected internal virtual void TriggerGamepadDisconnected(GamepadDisconnectedEvent e) => OnGamepadDisconnected(e);
+
+    #endregion
+
+    #region Positional dispatch (queue-driven)
+
+    protected internal virtual bool TriggerMouseDown(MouseButtonEvent e) => OnMouseDown(e);
+    protected internal virtual bool TriggerMouseUp(MouseButtonEvent e) => OnMouseUp(e);
+    protected internal virtual bool TriggerMouseMove(MouseEvent e) => OnMouseMove(e);
+    protected internal virtual bool TriggerScroll(ScrollEvent e) => OnScroll(e);
 
     #endregion
 

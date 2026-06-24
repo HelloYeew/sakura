@@ -177,6 +177,194 @@ public class InputManager
 
     #endregion
 
+    #region Positional dispatch
+
+    /// <summary>
+    /// The drawable that consumed the most recent positional event (mouse / scroll), or
+    /// <c>null</c> if unhandled. Exposed for the debug overlay.
+    /// </summary>
+    public Drawable LastPositionalHandler { get; private set; }
+
+    private Drawable dragCaptureTarget;
+
+    /// <summary>
+    /// The drawable currently capturing the drag (set on the mouse-down that started a left-button
+    /// drag, cleared on mouse-up). While set, mouse-move and mouse-up route only to it, so a drag
+    /// stays with its target even when the cursor leaves its bounds. Replaces the per-container
+    /// <c>draggedChild</c> bookkeeping. Exposed for the overlay.
+    /// </summary>
+    public Drawable DragCaptureTarget => dragCaptureTarget;
+
+    private readonly List<Drawable> hoveredDrawables = new List<Drawable>();
+
+    private readonly HashSet<Drawable> hoverBlockers = new HashSet<Drawable>();
+
+    public IReadOnlyList<Drawable> HoveredDrawables => hoveredDrawables;
+
+    /// <summary>
+    /// Dispatches a mouse-down down the positional queue (front-to-back). The first entry that
+    /// handles it becomes the drag-capture target (so subsequent moves/up stay with it).
+    /// </summary>
+    public bool DispatchMouseDown(MouseButtonEvent e)
+    {
+        for (int i = 0; i < positionalQueue.Count; i++)
+        {
+            var drawable = positionalQueue[i];
+
+            if (!drawable.IsLoaded || !drawable.IsAlive || drawable.IsHidden)
+                continue;
+
+            if (drawable.TriggerMouseDown(e))
+            {
+                if (e.Button == MouseButton.Left)
+                    dragCaptureTarget = drawable;
+
+                LastPositionalHandler = drawable;
+                return true;
+            }
+        }
+
+        LastPositionalHandler = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Dispatches a mouse-up. If a drag is in progress, only the captured target receives it (and the
+    /// capture is released); otherwise it walks the positional queue front-to-back.
+    /// </summary>
+    public bool DispatchMouseUp(MouseButtonEvent e)
+    {
+        if (dragCaptureTarget != null)
+        {
+            var target = dragCaptureTarget;
+            dragCaptureTarget = null;
+
+            bool capturedHandled = target.IsLoaded && target.TriggerMouseUp(e);
+            LastPositionalHandler = capturedHandled ? target : null;
+            return capturedHandled;
+        }
+
+        for (int i = 0; i < positionalQueue.Count; i++)
+        {
+            var drawable = positionalQueue[i];
+
+            if (!drawable.IsLoaded || !drawable.IsAlive || drawable.IsHidden)
+                continue;
+
+            if (drawable.TriggerMouseUp(e))
+            {
+                LastPositionalHandler = drawable;
+                return true;
+            }
+        }
+
+        LastPositionalHandler = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Handles a mouse-move: routes the move to the drag-capture target (if any) for drag delivery,
+    /// then reconciles hover enter/leave against the freshly built positional queue.
+    /// </summary>
+    public bool DispatchMouseMove(MouseEvent e)
+    {
+        bool handled = false;
+
+        // A drag in progress stays with its captured target, even outside its bounds. The target's
+        // IsDragged flag short-circuits its OnMouseMove straight to OnDrag; recursion is suppressed
+        // via TriggerMouseMove so a captured container does not re-route into its children.
+        if (dragCaptureTarget != null && dragCaptureTarget.IsLoaded)
+            handled = dragCaptureTarget.TriggerMouseMove(e);
+
+        updateHover(e);
+        return handled;
+    }
+
+    /// <summary>
+    /// Dispatches a scroll down the positional queue (front-to-back); the first entry that handles
+    /// it wins.
+    /// </summary>
+    public bool DispatchScroll(ScrollEvent e)
+    {
+        for (int i = 0; i < positionalQueue.Count; i++)
+        {
+            var drawable = positionalQueue[i];
+
+            if (!drawable.IsLoaded || !drawable.IsAlive || drawable.IsHidden)
+                continue;
+
+            if (drawable.TriggerScroll(e))
+            {
+                LastPositionalHandler = drawable;
+                return true;
+            }
+        }
+
+        LastPositionalHandler = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Reconciles hover state against the current positional queue: drawables that are in the queue
+    /// (i.e. under the cursor and opted in) but were not hovered get <see cref="Drawable.IsHovered"/>
+    /// set and <c>OnHover</c>; drawables that were hovered but are no longer in the queue get
+    /// <c>OnHoverLost</c>. Mirrors the per-drawable hover toggling the recursive path performed.
+    /// </summary>
+    private void updateHover(MouseEvent e)
+    {
+        // Walk the positional queue front-to-back, marking entries as hovered until one "blocks" by
+        // returning true from OnHover (e.g. a visible OverlayContainer). Everything in front of and
+        // including the blocker is hovered; everything behind it is treated as not hovered. This
+        // mirrors the recursive path, where a child returning true from OnMouseMove broke the loop.
+        var newlyHovered = new HashSet<Drawable>();
+        bool blocked = false;
+
+        for (int i = 0; i < positionalQueue.Count && !blocked; i++)
+        {
+            var drawable = positionalQueue[i];
+            newlyHovered.Add(drawable);
+
+            if (!drawable.IsHovered)
+            {
+                drawable.IsHovered = true;
+                if (drawable.OnHover(e))
+                    blocked = true;
+            }
+            else if (hoverBlockers.Contains(drawable))
+            {
+                // Already hovered and known to block: stop here so drawables behind it stay unhovered.
+                blocked = true;
+            }
+
+            if (blocked)
+                hoverBlockers.Add(drawable);
+        }
+
+        // Leave: previously hovered but no longer in the (front-of-blocker) hovered set, or gone.
+        for (int i = hoveredDrawables.Count - 1; i >= 0; i--)
+        {
+            var drawable = hoveredDrawables[i];
+
+            if (!drawable.IsLoaded || !drawable.IsAlive || !newlyHovered.Contains(drawable))
+            {
+                drawable.IsHovered = false;
+                hoverBlockers.Remove(drawable);
+                if (drawable.IsLoaded)
+                    drawable.OnHoverLost(e);
+                hoveredDrawables.RemoveAt(i);
+            }
+        }
+
+        // Record the freshly entered drawables (front-of-blocker only).
+        foreach (var drawable in newlyHovered)
+        {
+            if (!hoveredDrawables.Contains(drawable))
+                hoveredDrawables.Add(drawable);
+        }
+    }
+
+    #endregion
+
     #region Raw event observation (state-only; does not dispatch)
 
     public void HandleMouseMove(Vector2 position) => CurrentState.SetMousePosition(position);

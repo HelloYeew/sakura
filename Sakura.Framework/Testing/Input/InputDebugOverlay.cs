@@ -32,6 +32,7 @@ public partial class InputDebugOverlay : Container
     private SpriteText nonPositionalQueueText = null!;
     private SpriteText positionalQueueText = null!;
     private SpriteText lastConsumerText = null!;
+    private SpriteText positionalConsumerText = null!;
 
     private readonly MouseState mouseState = new MouseState();
     private readonly HashSet<Key> pressedKeys = new HashSet<Key>();
@@ -105,6 +106,7 @@ public partial class InputDebugOverlay : Container
                         nonPositionalQueueText = line(Color.Cyan),
                         positionalQueueText = line(Color.Orange),
                         lastConsumerText = line(Color.Magenta),
+                        positionalConsumerText = line(Color.Orange),
                         eventLogFlow = new FlowContainer
                         {
                             AutoSizeAxes = Axes.Both,
@@ -143,6 +145,14 @@ public partial class InputDebugOverlay : Container
         inputManager.BuildQueues(content, mouseState.Position);
         nonPositionalQueueText.Text = $"Non-positional queue: {describeQueue(inputManager.NonPositionalInputQueue)}";
         positionalQueueText.Text = $"Positional queue: {describeQueue(inputManager.PositionalInputQueue)}";
+
+        string positionalFront = inputManager.PositionalInputQueue.Count > 0
+            ? inputManager.PositionalInputQueue[0].GetType().Name
+            : "none";
+        var sharedManager = GetContainingInputManager();
+        var dragTarget = sharedManager?.DragCaptureTarget;
+        positionalConsumerText.Text =
+            $"Positional front: {positionalFront}   Drag capture: {dragTarget?.GetType().Name ?? "none"}";
 
         // Phase 2: which queue entry consumed the most recent non-positional event. The consumer is
         // captured at observe-time (see the overriding handlers); here we just render it.

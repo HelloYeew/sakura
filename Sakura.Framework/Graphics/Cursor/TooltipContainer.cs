@@ -91,6 +91,10 @@ public partial class TooltipContainer : Container
     {
         base.Update();
 
+        var manager = GetContainingInputManager();
+        if (manager != null)
+            lastMousePosition = ToLocalSpace(manager.CurrentState.MousePosition);
+
         double now = Clock.CurrentTime;
         double interval = AppearDelay / 10.0;
 
