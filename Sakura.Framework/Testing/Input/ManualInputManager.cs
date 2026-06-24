@@ -117,12 +117,14 @@ public partial class ManualInputManager : Container, IInputManagerProvider
         var focusManager = GetContainingFocusManager();
 
         currentMouseState.SetPressed(button, true);
+        InputManager.HandleMouseDown(button, currentMouseState.Position);
         focusManager?.BeginMouseDownFocusTracking();
         base.OnMouseDown(new MouseButtonEvent(currentMouseState, button, 2));
         if (focusManager != null && !focusManager.WasFocusClaimedByLastClick)
             focusManager.ChangeFocus(null);
 
         currentMouseState.SetPressed(button, false);
+        InputManager.HandleMouseUp(button, currentMouseState.Position);
         base.OnMouseUp(new MouseButtonEvent(currentMouseState, button, 2));
     }
 
@@ -164,6 +166,7 @@ public partial class ManualInputManager : Container, IInputManagerProvider
     public void PressButton(MouseButton button)
     {
         currentMouseState.SetPressed(button, true);
+        InputManager.HandleMouseDown(button, currentMouseState.Position);
 
         var focusManager = GetContainingFocusManager();
 
@@ -184,6 +187,7 @@ public partial class ManualInputManager : Container, IInputManagerProvider
     public void ReleaseButton(MouseButton button)
     {
         currentMouseState.SetPressed(button, false);
+        InputManager.HandleMouseUp(button, currentMouseState.Position);
         base.OnMouseUp(new MouseButtonEvent(currentMouseState, button, 1));
     }
 
@@ -204,6 +208,11 @@ public partial class ManualInputManager : Container, IInputManagerProvider
     /// <param name="modifiers">Optional key modifiers (e.g., Shift, Control).</param>
     public void PressKey(Key key, KeyModifiers modifiers = KeyModifiers.None)
     {
+        // Feed the synthetic press (and any modifier flags, as their left-side physical keys) into the
+        // shared InputState so descendants reading it (e.g. KeyBindingContainer) see the press.
+        foreach (var modifierKey in modifierKeysFor(modifiers))
+            InputManager.HandleKeyDown(modifierKey);
+        InputManager.HandleKeyDown(key);
         base.OnKeyDown(new KeyEvent(key, modifiers, false));
     }
 
@@ -214,7 +223,19 @@ public partial class ManualInputManager : Container, IInputManagerProvider
     /// <param name="modifiers">Optional key modifiers (e.g., Shift, Control).</param>
     public void ReleaseKey(Key key, KeyModifiers modifiers = KeyModifiers.None)
     {
+        InputManager.HandleKeyUp(key);
         base.OnKeyUp(new KeyEvent(key, modifiers, false));
+    }
+
+    // Maps modifier flags to the left-side physical keys we register in the shared InputState.
+    private static IEnumerable<Key> modifierKeysFor(KeyModifiers modifiers)
+    {
+        if ((modifiers & KeyModifiers.Shift) != 0)
+            yield return Key.ShiftLeft;
+        if ((modifiers & KeyModifiers.Control) != 0)
+            yield return Key.ControlLeft;
+        if ((modifiers & KeyModifiers.Alt) != 0)
+            yield return Key.AltLeft;
     }
 
     /// <summary>
@@ -253,6 +274,7 @@ public partial class ManualInputManager : Container, IInputManagerProvider
     public void ConnectGamepad(int deviceId = 0, string name = "Test Gamepad")
     {
         getOrCreateGamepadState(deviceId);
+        InputManager.HandleGamepadConnected(deviceId);
         base.OnGamepadConnected(new GamepadConnectedEvent(deviceId, name));
     }
 
@@ -262,6 +284,7 @@ public partial class ManualInputManager : Container, IInputManagerProvider
     public void DisconnectGamepad(int deviceId = 0)
     {
         gamepadStates.Remove(deviceId);
+        InputManager.HandleGamepadDisconnected(deviceId);
         base.OnGamepadDisconnected(new GamepadDisconnectedEvent(deviceId));
     }
 
@@ -272,6 +295,7 @@ public partial class ManualInputManager : Container, IInputManagerProvider
     {
         var state = getOrCreateGamepadState(deviceId);
         state.SetPressed(button, true);
+        InputManager.HandleGamepadButtonDown(deviceId, button);
         base.OnGamepadButtonDown(new GamepadButtonEvent(state.Clone(), button, isPressed: true));
     }
 
@@ -282,6 +306,7 @@ public partial class ManualInputManager : Container, IInputManagerProvider
     {
         var state = getOrCreateGamepadState(deviceId);
         state.SetPressed(button, false);
+        InputManager.HandleGamepadButtonUp(deviceId, button);
         base.OnGamepadButtonUp(new GamepadButtonEvent(state.Clone(), button, isPressed: false));
     }
 

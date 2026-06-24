@@ -70,6 +70,16 @@ public class InputState
                 result.Add(input);
         }
 
+        foreach (var gamepad in gamepads.Values)
+        {
+            foreach (var button in gamepad.PressedButtons)
+            {
+                var input = InputKeyExtensions.FromGamepadButton(button);
+                if (input != InputKey.None)
+                    result.Add(input);
+            }
+        }
+
         return result;
     }
 

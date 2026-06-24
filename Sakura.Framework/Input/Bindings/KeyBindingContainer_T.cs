@@ -27,11 +27,6 @@ public abstract partial class KeyBindingContainer<T> : KeyBindingContainer where
     public List<KeyBinding> KeyBindings { get; set; } = new List<KeyBinding>();
 
     /// <summary>
-    /// The keys currently held down, in press order. Physical modifiers are folded to logical form.
-    /// </summary>
-    private readonly List<InputKey> pressedKeys = new List<InputKey>();
-
-    /// <summary>
     /// Bindings currently considered "pressed", each paired with the handler (if any) that claimed it.
     /// </summary>
     private readonly List<PressedBinding> pressedBindings = new List<PressedBinding>();
@@ -72,11 +67,38 @@ public abstract partial class KeyBindingContainer<T> : KeyBindingContainer where
     {
         // Release anything currently held so handlers see a clean release before the map changes.
         releaseAllPressedBindings();
-        pressedKeys.Clear();
 
         KeyBindings = Source != null
             ? Source.GetBindings(GetType()).ToList()
             : DefaultKeyBindings.ToList();
+    }
+
+    /// <summary>
+    /// The currently-held inputs in <see cref="InputKey"/> space, read from the shared
+    /// <see cref="InputState"/> of the containing <see cref="InputManager"/> (keyboard keys folded to
+    /// logical modifiers, plus mouse and gamepad buttons), unioned with the logical modifiers carried
+    /// by the current event's <see cref="KeyModifiers"/> flags (so combinations match even when the
+    /// platform reports a modifier as a flag rather than a discrete key). An optional
+    /// <paramref name="transient"/> key (e.g. a momentary scroll key) is appended.
+    /// </summary>
+    private List<InputKey> currentPressedKeys(KeyModifiers eventModifiers = KeyModifiers.None, InputKey transient = InputKey.None)
+    {
+        var result = new List<InputKey>();
+
+        var manager = GetContainingInputManager();
+        if (manager != null)
+            result.AddRange(manager.CurrentState.GetPressedInputKeys());
+
+        foreach (var modifier in modifierKeys(eventModifiers))
+        {
+            if (!result.Contains(modifier))
+                result.Add(modifier);
+        }
+
+        if (transient != InputKey.None && !result.Contains(transient))
+            result.Add(transient);
+
+        return result;
     }
 
     public override bool OnKeyDown(KeyEvent e)
@@ -85,40 +107,20 @@ public abstract partial class KeyBindingContainer<T> : KeyBindingContainer where
         if (base.OnKeyDown(e))
             return true;
 
-        bool handled = false;
+        // The pressed state already lives in the shared InputState; just recompute matches. Repeats
+        // are driven off the event's IsRepeat flag (and only forwarded when SendRepeats is set).
+        if (e.IsRepeat)
+            return SendRepeats && updatePressedBindings(currentPressedKeys(e.Modifiers), repeat: true, scrollDelta: Vector2.Zero);
 
-        // Expand modifier flags into logical modifier InputKeys so combinations like Ctrl+A work even
-        // when the platform reports the modifier via KeyModifiers rather than a discrete key event.
-        foreach (var modifier in modifierKeys(e.Modifiers))
-            handled |= addPressedKey(modifier, e.IsRepeat);
-
-        handled |= addPressedKey(InputKeyExtensions.FromKey(e.Key), e.IsRepeat);
-        return handled;
+        return updatePressedBindings(currentPressedKeys(e.Modifiers), repeat: false, scrollDelta: Vector2.Zero);
     }
 
     public override bool OnKeyUp(KeyEvent e)
     {
         base.OnKeyUp(e);
 
-        var released = InputKeyExtensions.FromKey(e.Key);
-        bool handled = removePressedKey(released);
-
-        // If the released key is itself a (physical) modifier, clear its logical form directly —
-        // we store modifiers in logical form, and the platform's reported modifier flags may still
-        // briefly include the key being released.
-        var releasedLogical = released.ToLogicalModifier();
-        if (releasedLogical != InputKey.None)
-            handled |= removePressedKey(releasedLogical);
-
-        // Also reconcile against the modifier flags: release any logical modifier no longer reported.
-        var activeModifiers = modifierKeys(e.Modifiers).ToHashSet();
-        foreach (var modifier in new[] { InputKey.Shift, InputKey.Control, InputKey.Alt, InputKey.Super })
-        {
-            if (!activeModifiers.Contains(modifier))
-                handled |= removePressedKey(modifier);
-        }
-
-        return handled;
+        releaseBindingsNoLongerMatched(currentPressedKeys(e.Modifiers));
+        return false;
     }
 
     public override bool OnMouseDown(MouseButtonEvent e)
@@ -126,13 +128,15 @@ public abstract partial class KeyBindingContainer<T> : KeyBindingContainer where
         if (base.OnMouseDown(e))
             return true;
 
-        return addPressedKey(InputKeyExtensions.FromMouseButton(e.Button), repeat: false);
+        return updatePressedBindings(currentPressedKeys(), repeat: false, scrollDelta: Vector2.Zero);
     }
 
     public override bool OnMouseUp(MouseButtonEvent e)
     {
         base.OnMouseUp(e);
-        return removePressedKey(InputKeyExtensions.FromMouseButton(e.Button));
+
+        releaseBindingsNoLongerMatched(currentPressedKeys());
+        return false;
     }
 
     public override bool OnScroll(ScrollEvent e)
@@ -153,11 +157,9 @@ public abstract partial class KeyBindingContainer<T> : KeyBindingContainer where
         if (scrollKey == InputKey.None)
             return false;
 
-        // Press, dispatch (with the scroll delta attached), then release immediately.
-        pressedKeys.Add(scrollKey);
-        bool handled = updatePressedBindings(repeat: false, scrollDelta: delta);
-        pressedKeys.Remove(scrollKey);
-        releaseBindingsNoLongerMatched();
+        var pressed = currentPressedKeys(transient: scrollKey);
+        bool handled = updatePressedBindings(pressed, repeat: false, scrollDelta: delta);
+        releaseBindingsNoLongerMatched(currentPressedKeys());
 
         return handled;
     }
@@ -167,49 +169,22 @@ public abstract partial class KeyBindingContainer<T> : KeyBindingContainer where
         if (base.OnGamepadButtonDown(e))
             return true;
 
-        return addPressedKey(InputKeyExtensions.FromGamepadButton(e.Button), repeat: false);
+        return updatePressedBindings(currentPressedKeys(), repeat: false, scrollDelta: Vector2.Zero);
     }
 
     public override bool OnGamepadButtonUp(GamepadButtonEvent e)
     {
         base.OnGamepadButtonUp(e);
-        return removePressedKey(InputKeyExtensions.FromGamepadButton(e.Button));
-    }
 
-    private bool addPressedKey(InputKey key, bool repeat)
-    {
-        if (key == InputKey.None)
-            return false;
-
-        if (pressedKeys.Contains(key))
-        {
-            if (repeat && SendRepeats)
-                return updatePressedBindings(repeat: true, scrollDelta: Vector2.Zero);
-
-            return false;
-        }
-
-        pressedKeys.Add(key);
-        return updatePressedBindings(repeat: false, scrollDelta: Vector2.Zero);
-    }
-
-    private bool removePressedKey(InputKey key)
-    {
-        if (key == InputKey.None)
-            return false;
-
-        if (!pressedKeys.Remove(key))
-            return false;
-
-        releaseBindingsNoLongerMatched();
-        return true;
+        releaseBindingsNoLongerMatched(currentPressedKeys());
+        return false;
     }
 
     /// <summary>
-    /// Recomputes which bindings are satisfied by the current <see cref="pressedKeys"/> and fires
-    /// press events for any newly-satisfied bindings, subject to the simultaneous-binding mode.
+    /// Recomputes which bindings are satisfied by <paramref name="pressedKeys"/> and fires press
+    /// events for any newly-satisfied bindings, subject to the simultaneous-binding mode.
     /// </summary>
-    private bool updatePressedBindings(bool repeat, Vector2 scrollDelta)
+    private bool updatePressedBindings(IReadOnlyCollection<InputKey> pressedKeys, bool repeat, Vector2 scrollDelta)
     {
         var newlyPressed = KeyBindings
                            .Where(b => b.KeyCombination.IsPressed(pressedKeys, MatchingMode))
@@ -255,9 +230,10 @@ public abstract partial class KeyBindingContainer<T> : KeyBindingContainer where
         => pressedBindings.Any(p => ReferenceEquals(p.Binding, binding));
 
     /// <summary>
-    /// Releases any active binding whose combination is no longer satisfied.
+    /// Releases any active binding whose combination is no longer satisfied by
+    /// <paramref name="pressedKeys"/>.
     /// </summary>
-    private void releaseBindingsNoLongerMatched()
+    private void releaseBindingsNoLongerMatched(IReadOnlyCollection<InputKey> pressedKeys)
     {
         for (int i = pressedBindings.Count - 1; i >= 0; i--)
         {
@@ -314,34 +290,10 @@ public abstract partial class KeyBindingContainer<T> : KeyBindingContainer where
     }
 
     /// <summary>
-    /// Collects descendant <see cref="IKeyBindingHandler{T}"/> implementers in front-to-back order
-    /// (front-most child first), so the visually top-most handler gets first refusal — mirroring how
-    /// positional input is resolved elsewhere in the framework.
+    /// Collects descendant <see cref="IKeyBindingHandler{T}"/> implementers in front-to-back order.
+    /// The traversal now lives on the <see cref="InputManager"/> (single source of truth); when no
+    /// manager is reachable (e.g. a detached container), this container has no handlers to dispatch to.
     /// </summary>
     private IEnumerable<IKeyBindingHandler<T>> getHandlers()
-    {
-        var results = new List<IKeyBindingHandler<T>>();
-        collect(this, results);
-        return results;
-    }
-
-    private static void collect(Container container, List<IKeyBindingHandler<T>> results)
-    {
-        var sorted = container.SortedChildren;
-
-        // Iterate front-to-back (highest depth / latest insertion first).
-        for (int i = sorted.Count - 1; i >= 0; i--)
-        {
-            var child = sorted[i];
-
-            if (!child.IsLoaded || !child.IsAlive)
-                continue;
-
-            if (child is IKeyBindingHandler<T> handler)
-                results.Add(handler);
-
-            if (child is Container childContainer)
-                collect(childContainer, results);
-        }
-    }
+        => GetContainingInputManager()?.CollectKeyBindingHandlers<T>(this) ?? new List<IKeyBindingHandler<T>>();
 }

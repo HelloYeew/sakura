@@ -3,6 +3,7 @@
 
 using System.Collections.Generic;
 using Sakura.Framework.Graphics.Drawables;
+using Sakura.Framework.Input.Bindings;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 
@@ -95,6 +96,42 @@ public class InputManager : IFocusManager
         // Add after children so the front-most receiver sits at the front of the queue.
         if (receives)
             positionalQueue.Add(drawable);
+    }
+
+    /// <summary>
+    /// Collects descendants of <paramref name="root"/> implementing <see cref="IKeyBindingHandler{T}"/>
+    /// in front-to-back order (front-most child first), so the visually top-most handler gets first
+    /// refusal. Centralises the non-positional handler traversal that <c>KeyBindingContainer</c> used
+    /// to walk itself. Loaded + alive + non-positional-opted-in drawables only; the root itself is not
+    /// included (a container dispatches to its descendants).
+    /// </summary>
+    public List<IKeyBindingHandler<T>> CollectKeyBindingHandlers<T>(Drawable root) where T : struct
+    {
+        var results = new List<IKeyBindingHandler<T>>();
+
+        if (root is Container container)
+            collectKeyBindingHandlers(container, results);
+
+        return results;
+    }
+
+    private static void collectKeyBindingHandlers<T>(Container container, List<IKeyBindingHandler<T>> results) where T : struct
+    {
+        var sorted = container.SortedChildren;
+
+        for (int i = sorted.Count - 1; i >= 0; i--)
+        {
+            var child = sorted[i];
+
+            if (!child.IsLoaded || !child.IsAlive || !child.HandleNonPositionalInput)
+                continue;
+
+            if (child is IKeyBindingHandler<T> handler)
+                results.Add(handler);
+
+            if (child is Container childContainer)
+                collectKeyBindingHandlers(childContainer, results);
+        }
     }
 
     /// <summary>
