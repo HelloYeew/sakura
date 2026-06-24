@@ -306,7 +306,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider, IDis
                 return true;
         }
 
-        return base.OnKeyDown(e);
+        return InputManager.DispatchKeyDown(e);
     }
 
     private bool focusClaimedByClick;
@@ -319,7 +319,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider, IDis
     {
         InputManager.HandleKeyUp(e.Key);
         rebuildInputQueues();
-        return base.OnKeyUp(e);
+        return InputManager.DispatchKeyUp(e);
     }
 
     public override bool OnMouseDown(MouseButtonEvent e)
@@ -361,37 +361,62 @@ public partial class App : Container, IFocusManager, IInputManagerProvider, IDis
         return base.OnScroll(e);
     }
 
+    public override bool OnTextInput(TextInputEvent e)
+    {
+        rebuildInputQueues();
+        return InputManager.DispatchTextInput(e);
+    }
+
+    public override bool OnTextEditing(TextEditingEvent e)
+    {
+        rebuildInputQueues();
+        return InputManager.DispatchTextEditing(e);
+    }
+
     public override bool OnGamepadButtonDown(GamepadButtonEvent e)
     {
         InputManager.HandleGamepadButtonDown(e.GamepadState.DeviceId, e.Button);
         rebuildInputQueues();
-        return base.OnGamepadButtonDown(e);
+        return InputManager.DispatchGamepadButtonDown(e);
     }
 
     public override bool OnGamepadButtonUp(GamepadButtonEvent e)
     {
         InputManager.HandleGamepadButtonUp(e.GamepadState.DeviceId, e.Button);
         rebuildInputQueues();
-        return base.OnGamepadButtonUp(e);
+        return InputManager.DispatchGamepadButtonUp(e);
     }
 
     public override bool OnGamepadAxisMotion(GamepadAxisEvent e)
     {
         InputManager.HandleGamepadAxis(e.GamepadState.DeviceId, e.Axis, e.Value);
-        return base.OnGamepadAxisMotion(e);
+        rebuildInputQueues();
+        return InputManager.DispatchGamepadAxisMotion(e);
     }
 
     public override void OnGamepadConnected(GamepadConnectedEvent e)
     {
         InputManager.HandleGamepadConnected(e.DeviceId);
-        base.OnGamepadConnected(e);
+        rebuildInputQueues();
+        InputManager.DispatchGamepadConnected(e);
     }
 
     public override void OnGamepadDisconnected(GamepadDisconnectedEvent e)
     {
         InputManager.HandleGamepadDisconnected(e.DeviceId);
-        base.OnGamepadDisconnected(e);
+        rebuildInputQueues();
+        InputManager.DispatchGamepadDisconnected(e);
     }
+
+    protected internal override bool TriggerKeyDown(KeyEvent e) => false;
+    protected internal override bool TriggerKeyUp(KeyEvent e) => false;
+    protected internal override bool TriggerTextInput(TextInputEvent e) => false;
+    protected internal override bool TriggerTextEditing(TextEditingEvent e) => false;
+    protected internal override bool TriggerGamepadButtonDown(GamepadButtonEvent e) => false;
+    protected internal override bool TriggerGamepadButtonUp(GamepadButtonEvent e) => false;
+    protected internal override bool TriggerGamepadAxisMotion(GamepadAxisEvent e) => false;
+    protected internal override void TriggerGamepadConnected(GamepadConnectedEvent e) { }
+    protected internal override void TriggerGamepadDisconnected(GamepadDisconnectedEvent e) { }
 
     #region Focus Management
 

@@ -1357,6 +1357,20 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
 
     #endregion
 
+    #region Non-positional dispatch (queue-driven)
+
+    protected internal virtual bool TriggerKeyDown(KeyEvent e) => OnKeyDown(e);
+    protected internal virtual bool TriggerKeyUp(KeyEvent e) => OnKeyUp(e);
+    protected internal virtual bool TriggerTextInput(TextInputEvent e) => OnTextInput(e);
+    protected internal virtual bool TriggerTextEditing(TextEditingEvent e) => OnTextEditing(e);
+    protected internal virtual bool TriggerGamepadButtonDown(GamepadButtonEvent e) => OnGamepadButtonDown(e);
+    protected internal virtual bool TriggerGamepadButtonUp(GamepadButtonEvent e) => OnGamepadButtonUp(e);
+    protected internal virtual bool TriggerGamepadAxisMotion(GamepadAxisEvent e) => OnGamepadAxisMotion(e);
+    protected internal virtual void TriggerGamepadConnected(GamepadConnectedEvent e) => OnGamepadConnected(e);
+    protected internal virtual void TriggerGamepadDisconnected(GamepadDisconnectedEvent e) => OnGamepadDisconnected(e);
+
+    #endregion
+
     #region Input queue opt-ins
 
     /// <summary>

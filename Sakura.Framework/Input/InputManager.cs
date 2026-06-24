@@ -64,14 +64,14 @@ public class InputManager
         if (!drawable.IsLoaded || !drawable.HandleNonPositionalInput)
             return;
 
-        nonPositionalQueue.Add(drawable);
-
         if (drawable is Container container)
         {
             var children = container.Children;
             for (int i = 0; i < children.Count; i++)
                 buildNonPositional(children[i]);
         }
+
+        nonPositionalQueue.Add(drawable);
     }
 
     private void buildPositional(Drawable drawable, Vector2 point)
@@ -95,6 +95,87 @@ public class InputManager
         if (receives)
             positionalQueue.Add(drawable);
     }
+
+    /// <summary>
+    /// The queue entry that consumed the most recent non-positional event (keyboard / text /
+    /// gamepad), or <c>null</c> if the last event was unhandled. Exposed for the debug overlay so it
+    /// can highlight "this is where the key went".
+    /// </summary>
+    public Drawable LastNonPositionalHandler { get; private set; }
+
+    #region Non-positional dispatch
+
+    /// <summary>
+    /// Dispatches a non-positional event down the current <see cref="NonPositionalInputQueue"/>
+    /// (front-to-back), invoking <paramref name="invoke"/> on each entry until one returns
+    /// <c>true</c>. Records the consuming entry in <see cref="LastNonPositionalHandler"/>.
+    /// </summary>
+    /// <param name="invoke">Calls the appropriate <c>Trigger*</c> self-handler on a queue entry.</param>
+    /// <returns><c>true</c> if a queue entry handled the event.</returns>
+    private bool dispatchNonPositional(System.Func<Drawable, bool> invoke)
+    {
+        // Snapshot count up front; handlers may mutate the tree, and entries are skipped if they
+        // were removed/unloaded mid-dispatch (mirroring the guards on the old recursive path).
+        for (int i = 0; i < nonPositionalQueue.Count; i++)
+        {
+            var drawable = nonPositionalQueue[i];
+
+            if (!drawable.IsLoaded)
+                continue;
+
+            if (invoke(drawable))
+            {
+                LastNonPositionalHandler = drawable;
+                return true;
+            }
+        }
+
+        LastNonPositionalHandler = null;
+        return false;
+    }
+
+    public bool DispatchKeyDown(KeyEvent e) => dispatchNonPositional(d => d.TriggerKeyDown(e));
+
+    public bool DispatchKeyUp(KeyEvent e) => dispatchNonPositional(d => d.TriggerKeyUp(e));
+
+    public bool DispatchTextInput(TextInputEvent e) => dispatchNonPositional(d => d.TriggerTextInput(e));
+
+    public bool DispatchTextEditing(TextEditingEvent e) => dispatchNonPositional(d => d.TriggerTextEditing(e));
+
+    public bool DispatchGamepadButtonDown(GamepadButtonEvent e) => dispatchNonPositional(d => d.TriggerGamepadButtonDown(e));
+
+    public bool DispatchGamepadButtonUp(GamepadButtonEvent e) => dispatchNonPositional(d => d.TriggerGamepadButtonUp(e));
+
+    public bool DispatchGamepadAxisMotion(GamepadAxisEvent e) => dispatchNonPositional(d => d.TriggerGamepadAxisMotion(e));
+
+    /// <summary>
+    /// Delivers a gamepad connected event to every entry in the non-positional queue (broadcast; no
+    /// consumption), mirroring the recursive <c>OnGamepadConnected</c> fan-out.
+    /// </summary>
+    public void DispatchGamepadConnected(GamepadConnectedEvent e)
+    {
+        for (int i = 0; i < nonPositionalQueue.Count; i++)
+        {
+            var drawable = nonPositionalQueue[i];
+            if (drawable.IsLoaded)
+                drawable.TriggerGamepadConnected(e);
+        }
+    }
+
+    /// <summary>
+    /// Delivers a gamepad disconnected event to every entry in the non-positional queue (broadcast).
+    /// </summary>
+    public void DispatchGamepadDisconnected(GamepadDisconnectedEvent e)
+    {
+        for (int i = 0; i < nonPositionalQueue.Count; i++)
+        {
+            var drawable = nonPositionalQueue[i];
+            if (drawable.IsLoaded)
+                drawable.TriggerGamepadDisconnected(e);
+        }
+    }
+
+    #endregion
 
     #region Raw event observation (state-only; does not dispatch)
 

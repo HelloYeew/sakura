@@ -31,9 +31,13 @@ public partial class InputDebugOverlay : Container
     private FlowContainer eventLogFlow = null!;
     private SpriteText nonPositionalQueueText = null!;
     private SpriteText positionalQueueText = null!;
+    private SpriteText lastConsumerText = null!;
 
     private readonly MouseState mouseState = new MouseState();
     private readonly HashSet<Key> pressedKeys = new HashSet<Key>();
+
+    private string lastNonPositionalEvent = "(none)";
+    private Drawable lastNonPositionalConsumer;
 
     // The overlay carries its own dormant InputManager so it can show the live queues built over the
     // observed content subtree. This is the Phase 1 answer to "where did my key go?" — it makes the
@@ -100,6 +104,7 @@ public partial class InputDebugOverlay : Container
                         focusLine = line(Color.White),
                         nonPositionalQueueText = line(Color.Cyan),
                         positionalQueueText = line(Color.Orange),
+                        lastConsumerText = line(Color.Magenta),
                         eventLogFlow = new FlowContainer
                         {
                             AutoSizeAxes = Axes.Both,
@@ -138,6 +143,13 @@ public partial class InputDebugOverlay : Container
         inputManager.BuildQueues(content, mouseState.Position);
         nonPositionalQueueText.Text = $"Non-positional queue: {describeQueue(inputManager.NonPositionalInputQueue)}";
         positionalQueueText.Text = $"Positional queue: {describeQueue(inputManager.PositionalInputQueue)}";
+
+        // Phase 2: which queue entry consumed the most recent non-positional event. The consumer is
+        // captured at observe-time (see the overriding handlers); here we just render it.
+        string consumer = lastNonPositionalConsumer == null
+            ? (lastNonPositionalEvent == "(none)" ? "none yet" : "unhandled")
+            : lastNonPositionalConsumer.GetType().Name;
+        lastConsumerText.Text = $"Last non-positional: {lastNonPositionalEvent} -> {consumer}";
 
         // Rebuild the rolling event log (most recent last).
         eventLogFlow.Clear();
@@ -205,35 +217,57 @@ public partial class InputDebugOverlay : Container
     {
         pressedKeys.Add(e.Key);
         record($"KeyDown {e.Key}{modifierSuffix(e.Modifiers)}{(e.IsRepeat ? " (repeat)" : "")}");
-        return base.OnKeyDown(e);
+        return noteNonPositionalConsumer($"KeyDown {e.Key}", base.OnKeyDown(e));
     }
 
     public override bool OnKeyUp(KeyEvent e)
     {
         pressedKeys.Remove(e.Key);
         record($"KeyUp {e.Key}{modifierSuffix(e.Modifiers)}");
-        return base.OnKeyUp(e);
+        return noteNonPositionalConsumer($"KeyUp {e.Key}", base.OnKeyUp(e));
     }
 
     public override bool OnTextInput(TextInputEvent e)
     {
         record($"TextInput \"{e.Text}\"");
-        return base.OnTextInput(e);
+        return noteNonPositionalConsumer($"TextInput \"{e.Text}\"", base.OnTextInput(e));
     }
 
     public override bool OnGamepadButtonDown(GamepadButtonEvent e)
     {
         record($"GamepadDown {e.Button}");
-        return base.OnGamepadButtonDown(e);
+        return noteNonPositionalConsumer($"GamepadDown {e.Button}", base.OnGamepadButtonDown(e));
     }
 
     public override bool OnGamepadButtonUp(GamepadButtonEvent e)
     {
         record($"GamepadUp {e.Button}");
-        return base.OnGamepadButtonUp(e);
+        return noteNonPositionalConsumer($"GamepadUp {e.Button}", base.OnGamepadButtonUp(e));
     }
 
     #endregion
+
+    /// <summary>
+    /// Records the most recent non-positional event and, when it was handled downstream, the
+    /// front-most opted-in entry of the live non-positional queue — the entry that gets first crack
+    /// and is therefore the consumer in the queue-driven model. This is side-effect free: it only
+    /// reads the already-built queue and does not re-invoke any handler.
+    /// </summary>
+    private bool noteNonPositionalConsumer(string description, bool handled)
+    {
+        lastNonPositionalEvent = description;
+
+        if (!handled)
+        {
+            lastNonPositionalConsumer = null;
+            return false;
+        }
+
+        inputManager.BuildQueues(content, mouseState.Position);
+        var queue = inputManager.NonPositionalInputQueue;
+        lastNonPositionalConsumer = queue.Count > 0 ? queue[0] : null;
+        return true;
+    }
 
     private static string modifierSuffix(KeyModifiers modifiers)
         => modifiers == KeyModifiers.None ? "" : $" [{modifiers}]";

@@ -682,8 +682,20 @@ public partial class Container : Drawable
         return base.OnScroll(e);
     }
 
+    /// <summary>
+    /// While true, the recursive non-positional children-walk below is suppressed. The <see cref="InputManager"/>
+    /// sets this on a queue entry just before invoking its OnX self-logic, so a consumer that calls
+    /// base.OnKeyDown (e.g. KeyBindingContainer, TextBox, Screen) runs its own logic without
+    /// re-recursing into children that already have their own queue entries. When false (the legacy
+    /// path, e.g. ManualInputManager in tests), recursion behaves exactly as before.
+    /// </summary>
+    private bool suppressNonPositionalRecursion;
+
     public override bool OnKeyDown(KeyEvent e)
     {
+        if (suppressNonPositionalRecursion)
+            return false;
+
         for (int i = 0; i < children.Count; i++)
         {
             if (children[i].OnKeyDown(e))
@@ -695,6 +707,9 @@ public partial class Container : Drawable
 
     public override bool OnKeyUp(KeyEvent e)
     {
+        if (suppressNonPositionalRecursion)
+            return false;
+
         for (int i = 0; i < children.Count; i++)
         {
             if (children[i].OnKeyUp(e))
@@ -746,6 +761,9 @@ public partial class Container : Drawable
 
     public override bool OnTextInput(TextInputEvent e)
     {
+        if (suppressNonPositionalRecursion)
+            return false;
+
         for (int i = 0; i < children.Count; i++)
         {
             if (children[i].OnTextInput(e))
@@ -757,6 +775,9 @@ public partial class Container : Drawable
 
     public override bool OnTextEditing(TextEditingEvent e)
     {
+        if (suppressNonPositionalRecursion)
+            return false;
+
         for (int i = 0; i < children.Count; i++)
         {
             if (children[i].OnTextEditing(e))
@@ -768,6 +789,9 @@ public partial class Container : Drawable
 
     public override bool OnGamepadButtonDown(GamepadButtonEvent e)
     {
+        if (suppressNonPositionalRecursion)
+            return false;
+
         for (int i = 0; i < children.Count; i++)
         {
             if (children[i].OnGamepadButtonDown(e))
@@ -779,6 +803,9 @@ public partial class Container : Drawable
 
     public override bool OnGamepadButtonUp(GamepadButtonEvent e)
     {
+        if (suppressNonPositionalRecursion)
+            return false;
+
         for (int i = 0; i < children.Count; i++)
         {
             if (children[i].OnGamepadButtonUp(e))
@@ -790,6 +817,9 @@ public partial class Container : Drawable
 
     public override bool OnGamepadAxisMotion(GamepadAxisEvent e)
     {
+        if (suppressNonPositionalRecursion)
+            return false;
+
         for (int i = 0; i < children.Count; i++)
         {
             if (children[i].OnGamepadAxisMotion(e))
@@ -801,14 +831,70 @@ public partial class Container : Drawable
 
     public override void OnGamepadConnected(GamepadConnectedEvent e)
     {
+        if (suppressNonPositionalRecursion)
+            return;
+
         for (int i = 0; i < children.Count; i++)
             children[i].OnGamepadConnected(e);
     }
 
     public override void OnGamepadDisconnected(GamepadDisconnectedEvent e)
     {
+        if (suppressNonPositionalRecursion)
+            return;
+
         for (int i = 0; i < children.Count; i++)
             children[i].OnGamepadDisconnected(e);
+    }
+
+    protected internal override bool TriggerKeyDown(KeyEvent e) => withRecursionSuppressed(() => OnKeyDown(e));
+    protected internal override bool TriggerKeyUp(KeyEvent e) => withRecursionSuppressed(() => OnKeyUp(e));
+    protected internal override bool TriggerTextInput(TextInputEvent e) => withRecursionSuppressed(() => OnTextInput(e));
+    protected internal override bool TriggerTextEditing(TextEditingEvent e) => withRecursionSuppressed(() => OnTextEditing(e));
+    protected internal override bool TriggerGamepadButtonDown(GamepadButtonEvent e) => withRecursionSuppressed(() => OnGamepadButtonDown(e));
+    protected internal override bool TriggerGamepadButtonUp(GamepadButtonEvent e) => withRecursionSuppressed(() => OnGamepadButtonUp(e));
+    protected internal override bool TriggerGamepadAxisMotion(GamepadAxisEvent e) => withRecursionSuppressed(() => OnGamepadAxisMotion(e));
+
+    protected internal override void TriggerGamepadConnected(GamepadConnectedEvent e)
+    {
+        bool previous = suppressNonPositionalRecursion;
+        suppressNonPositionalRecursion = true;
+        try
+        {
+            OnGamepadConnected(e);
+        }
+        finally
+        {
+            suppressNonPositionalRecursion = previous;
+        }
+    }
+
+    protected internal override void TriggerGamepadDisconnected(GamepadDisconnectedEvent e)
+    {
+        bool previous = suppressNonPositionalRecursion;
+        suppressNonPositionalRecursion = true;
+        try
+        {
+            OnGamepadDisconnected(e);
+        }
+        finally
+        {
+            suppressNonPositionalRecursion = previous;
+        }
+    }
+
+    private bool withRecursionSuppressed(System.Func<bool> action)
+    {
+        bool previous = suppressNonPositionalRecursion;
+        suppressNonPositionalRecursion = true;
+        try
+        {
+            return action();
+        }
+        finally
+        {
+            suppressNonPositionalRecursion = previous;
+        }
     }
 
     #endregion
