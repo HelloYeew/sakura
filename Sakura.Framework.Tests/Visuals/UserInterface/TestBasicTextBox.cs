@@ -382,4 +382,66 @@ public partial class TestBasicTextBox : ManualInputManagerTestScene
 
         AddAssert("Clipboard kept earlier copy", () => textBox.Text.Value == "keepme");
     }
+
+    [Test]
+    public void TestSetTextOnInit()
+    {
+        const string initial = "Initial   blablabla";
+
+        AddStep("Set initial text", () => textBox.Text.Value = initial);
+
+        AddAssert("Reactive value updated", () => textBox.Text.Value == initial);
+        AddAssert("Caret moved to end of text", () => textBox.CaretIndex == initial.Length);
+        AddAssert("No selection after setting text", () => textBox.SelectionStart == textBox.CaretIndex);
+
+        // Setting the text again should still leave the caret at the end of the new value.
+        AddStep("Set shorter text", () => textBox.Text.Value = "short");
+        AddAssert("Caret moved to end of new text", () => textBox.CaretIndex == "short".Length);
+        AddAssert("Caret stays within bounds", () => textBox.CaretIndex <= textBox.Text.Value.Length);
+    }
+
+    [Test]
+    public void TestSetTextDoesNotDisruptTyping()
+    {
+        AddStep("Set initial text", () => textBox.Text.Value = "abc");
+
+        AddStep("Focus textbox", () =>
+        {
+            InputManager.MoveMouseTo(textBox);
+            InputManager.Click(MouseButton.Left);
+        });
+
+        // Clicking to focus repositions the caret to the mouse, so move it to the end first.
+        AddStep("Move caret to end", () => InputManager.PressKey(Key.End));
+        AddStep("Type more text", () => InputManager.TypeText("def"));
+        AddAssert("Typed text appended at end", () => textBox.Text.Value == "abcdef");
+        AddAssert("Caret at end after typing", () => textBox.CaretIndex == "abcdef".Length);
+    }
+
+    [Test]
+    public void TestSetTextWithSpace()
+    {
+        // Spaces (including consecutive, leading, and trailing ones) must be counted so the caret
+        // lands at the true end of the string rather than collapsing whitespace.
+        const string spaced = "  hello   world  ";
+
+        AddStep("Set text with spaces", () => textBox.Text.Value = spaced);
+
+        AddAssert("Reactive value preserves spaces", () => textBox.Text.Value == spaced);
+        AddAssert("Caret at end including trailing spaces", () => textBox.CaretIndex == spaced.Length);
+        AddAssert("No selection after setting text", () => textBox.SelectionStart == textBox.CaretIndex);
+
+        // Typing into a space-containing string should append, keeping every space intact.
+        // Clicking to focus repositions the caret to the mouse, so move it to the end first.
+        AddStep("Focus textbox", () =>
+        {
+            InputManager.MoveMouseTo(textBox);
+            InputManager.Click(MouseButton.Left);
+        });
+        AddStep("Move caret to end", () => InputManager.PressKey(Key.End));
+
+        AddStep("Type trailing word", () => InputManager.TypeText("!"));
+        AddAssert("Appended after trailing spaces", () => textBox.Text.Value == spaced + "!");
+        AddAssert("Caret at new end", () => textBox.CaretIndex == (spaced + "!").Length);
+    }
 }
