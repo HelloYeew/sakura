@@ -232,15 +232,23 @@ public partial class TestBrowserApp : App
 
         clockRateSlider.Current.Value = InitialClockRate;
 
-        headerFlow.Add(clockRateLabel = new SpriteText
+        headerFlow.Add(new ClickableContainer
         {
             Anchor = Anchor.CentreLeft,
             Origin = Anchor.CentreLeft,
-            Text = "1.00×",
-            Font = FontUsage.Default.With(size: 14),
-            Color = Color.LightGreen,
+            AutoSizeAxes = Axes.X,
+            RelativeSizeAxes = Axes.Y,
             Margin = new MarginPadding { Left = 4 },
-            Width = 60
+            Action = () => clockRateSlider.Current.Value = 1.0,
+            Child = clockRateLabel = new SpriteText
+            {
+                Anchor = Anchor.CentreLeft,
+                Origin = Anchor.CentreLeft,
+                Text = "1.00×",
+                Font = FontUsage.Default.With(size: 14),
+                Color = Color.LightGreen,
+                Width = 60
+            }
         });
 
         headerFlow.Add(new HeaderButton("Background", () =>
