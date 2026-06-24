@@ -52,6 +52,27 @@ public partial class TestScrollingText : TestScene
     }
 
     [Test]
+    public void TestScrollsContinuously()
+    {
+        AddStep("Use fast scroll", () =>
+        {
+            scrolling.StartDelay = 0;
+            scrolling.ScrollSpeed = 240f;
+        });
+
+        float firstOffset = 0f;
+        AddWaitStep("Let it scroll a while", 1500);
+        AddStep("Sample offset", () => firstOffset = scrolling.ScrollOffset);
+
+        AddAssert("Has started scrolling (offset negative)", () => scrolling.ScrollOffset < 0);
+
+        AddWaitStep("Scroll past at least one loop", 4000);
+        AddAssert("Offset stayed bounded (wrapped, not stalled)", () =>
+            scrolling.ScrollOffset <= 0 && scrolling.ScrollOffset > -10000);
+        AddAssert("Still actively scrolling", () => scrolling.ScrollOffset != firstOffset);
+    }
+
+    [Test]
     public void TestShortTextDoesNotScroll()
     {
         AddStep("Set short text", () => scrolling.Text = short_text);

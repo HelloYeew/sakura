@@ -13,6 +13,14 @@ namespace Sakura.Framework.Graphics.Drawables;
 public partial class ScrollingText : Container
 {
     private readonly SpriteText text;
+
+    /// <summary>
+    /// A trailing copy of <see cref="text"/> positioned one loop-extent behind it, so that as the
+    /// first copy scrolls off the left edge the second copy fills the gap from the right, giving a
+    /// seamless, endlessly-scrolling marquee with no blank state.
+    /// </summary>
+    private readonly SpriteText textCopy;
+
     private Color color = Color.White;
 
     /// <summary>
@@ -47,6 +55,7 @@ public partial class ScrollingText : Container
                 return;
 
             text.Text = value;
+            textCopy.Text = value;
             resetScroll();
         }
     }
@@ -60,6 +69,7 @@ public partial class ScrollingText : Container
         set
         {
             text.Font = value;
+            textCopy.Font = value;
             resetScroll();
         }
     }
@@ -74,6 +84,7 @@ public partial class ScrollingText : Container
         {
             color = value;
             text.Color = value;
+            textCopy.Color = value;
         }
     }
 
@@ -91,12 +102,22 @@ public partial class ScrollingText : Container
             Color = Color
         });
 
+        Add(textCopy = new SpriteText
+        {
+            Anchor = Anchor.CentreLeft,
+            Origin = Anchor.CentreLeft,
+            Color = Color,
+            Alpha = 0f
+        });
+
         delayRemaining = StartDelay;
     }
 
     private void resetScroll()
     {
         text.X = 0;
+        textCopy.X = 0;
+        textCopy.Alpha = 0f;
         delayRemaining = StartDelay;
     }
 
@@ -111,26 +132,31 @@ public partial class ScrollingText : Container
         {
             if (text.X != 0)
                 text.X = 0;
+            textCopy.Alpha = 0f;
             delayRemaining = StartDelay;
             return;
         }
 
+        float loopExtent = textWidth + LoopSpacing;
+
         if (delayRemaining > 0)
         {
             delayRemaining -= Clock.ElapsedFrameTime / 1000.0;
+
+            textCopy.X = text.X + loopExtent;
+            textCopy.Alpha = 0f;
             return;
         }
 
         float dx = ScrollSpeed * (float)(Clock.ElapsedFrameTime / 1000.0);
         float x = text.X - dx;
 
-        float loopExtent = textWidth + LoopSpacing;
         if (-x >= loopExtent)
-        {
-            x = 0;
-            delayRemaining = StartDelay;
-        }
+            x += loopExtent;
 
         text.X = x;
+        
+        textCopy.X = x + loopExtent;
+        textCopy.Alpha = 1f;
     }
 }
