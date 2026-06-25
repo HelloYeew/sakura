@@ -672,10 +672,7 @@ public abstract class AppHost : IDisposable
                         Window.WindowMode = WindowMode.Borderless;
                         break;
                     case WindowMode.Borderless:
-                        if (RuntimeInfo.IsMacOS)
-                            Window.WindowMode = WindowMode.Windowed;
-                        else
-                            Window.WindowMode = WindowMode.Fullscreen;
+                        Window.WindowMode = WindowMode.Fullscreen;
                         break;
                     case WindowMode.Fullscreen:
                         Window.WindowMode = WindowMode.Windowed;
