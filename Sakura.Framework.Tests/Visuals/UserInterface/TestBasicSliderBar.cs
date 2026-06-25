@@ -5,6 +5,7 @@ using NUnit.Framework;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
+using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Graphics.UserInterface;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
@@ -262,5 +263,49 @@ public partial class TestBasicSliderBar : ManualInputManagerTestScene
         AddStep("Click 1/4", () => InputManager.Click(MouseButton.Left));
         AddAssert("First slider value is roughly 25", () => Precision.AlmostEquals(slider.Current.Value, 25f, 2f));
         AddAssert("Second slider value is still roughly 75", () => Precision.AlmostEquals(slider2.Current.Value, 75f, 2f));
+    }
+
+    [Test]
+    public void TestContinuousDriveSnapsFill()
+    {
+        // Simulate a value driven repeatedly within the same frame (e.g. a slider tracking playback
+        // position, updated every Update()). Successive changes arrive with ~zero gap, so the slider
+        // should detect a continuous drive and snap to the latest target rather than easing.
+        //
+        // NOTE: driving across separate AddSteps would NOT reproduce this — the test runner leaves a
+        // gap between steps, which the heuristic correctly reads as isolated changes. The drive must
+        // happen within a single step to be same-frame.
+        AddStep("Drive value continuously to 100", () =>
+        {
+            slider.Current.Value = 0f;
+
+            for (int i = 1; i <= 10; i++)
+                slider.Current.Value = i * 10f;
+
+            // Snapped same-frame: the fill is already full, no transform pending. (An eased change
+            // would leave selection size unchanged this frame, i.e. CurrentFillWidth still ~0.)
+            Assert.That(slider.CurrentFillWidth, Is.EqualTo(1f).Within(0.01f), "continuous drive should snap the fill");
+        });
+    }
+
+    [Test]
+    public void TestIsolatedChangeAnimatesFill()
+    {
+        AddStep("Set up long linear fill animation", () =>
+        {
+            slider.FillAnimationDuration = 5000;
+            slider.FillAnimationEasing = Easing.None;
+        });
+
+        AddStep("Set value to 0", () => slider.Current.Value = 0f);
+        AddWaitStep("Let fill settle at 0", 200);
+
+        AddStep("Jump value to 100 and check it eases", () =>
+        {
+            slider.Current.Value = 100f;
+            Assert.That(slider.CurrentFillWidth, Is.LessThan(0.5f), "fill should still be animating, not snapped");
+        });
+
+        AddUntilStep("Fill eventually reaches full", () => Precision.AlmostEquals(slider.CurrentFillWidth, 1f, 0.02f));
     }
 }
