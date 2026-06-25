@@ -5,6 +5,7 @@ using NUnit.Framework;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
+using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Graphics.UserInterface;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
@@ -262,5 +263,40 @@ public partial class TestBasicSliderBar : ManualInputManagerTestScene
         AddStep("Click 1/4", () => InputManager.Click(MouseButton.Left));
         AddAssert("First slider value is roughly 25", () => Precision.AlmostEquals(slider.Current.Value, 25f, 2f));
         AddAssert("Second slider value is still roughly 75", () => Precision.AlmostEquals(slider2.Current.Value, 75f, 2f));
+    }
+
+    [Test]
+    public void TestContinuousDriveSnapsFill()
+    {
+        AddStep("Drive value continuously to 100", () =>
+        {
+            slider.Current.Value = 0f;
+
+            for (int i = 1; i <= 10; i++)
+                slider.Current.Value = i * 10f;
+            
+            Assert.That(slider.CurrentFillWidth, Is.EqualTo(1f).Within(0.01f), "continuous drive should snap the fill");
+        });
+    }
+
+    [Test]
+    public void TestIsolatedChangeAnimatesFill()
+    {
+        AddStep("Set up long linear fill animation", () =>
+        {
+            slider.FillAnimationDuration = 5000;
+            slider.FillAnimationEasing = Easing.None;
+        });
+
+        AddStep("Set value to 0", () => slider.Current.Value = 0f);
+        AddWaitStep("Let fill settle at 0", 200);
+
+        AddStep("Jump value to 100 and check it eases", () =>
+        {
+            slider.Current.Value = 100f;
+            Assert.That(slider.CurrentFillWidth, Is.LessThan(0.5f), "fill should still be animating, not snapped");
+        });
+
+        AddUntilStep("Fill eventually reaches full", () => Precision.AlmostEquals(slider.CurrentFillWidth, 1f, 0.02f));
     }
 }

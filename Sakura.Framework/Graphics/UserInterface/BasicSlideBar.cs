@@ -35,6 +35,18 @@ public partial class BasicSliderBar<T> : SliderBar<T> where T : struct, INumber<
     private readonly Box background;
     private readonly Box selection;
 
+    /// <summary>
+    /// Clock time (ms) at which the selection fill was last updated
+    /// </summary>
+    private double lastFillUpdateTime = double.NaN;
+
+    /// <summary>
+    /// The selection fill's current width as a fraction of the full track, in [0, 1].
+    /// While an animation is in flight this reflects the in-progress (eased) value rather than the
+    /// final target, so it can be used to observe the fill animation.
+    /// </summary>
+    public float CurrentFillWidth => selection.Size.X;
+
     public BasicSliderBar()
     {
         Size = new Vector2(200, 20);
@@ -61,11 +73,27 @@ public partial class BasicSliderBar<T> : SliderBar<T> where T : struct, INumber<
 
     protected override void OnValueChanged(T value)
     {
-        // Clear any in-flight resize so rapid changes (e.g. dragging) animate from the current
-        // size rather than fighting a stale transform. The selection box only ever runs resize
-        // transforms, so clearing all of them here is safe.
+        var target = new Vector2(GetFillFraction(), 1);
+
         selection.ClearTransforms();
-        selection.ResizeTo(new Vector2(GetFillFraction(), 1), FillAnimationDuration, FillAnimationEasing);
+
+        double now = selection.Clock.CurrentTime;
+        double sinceLast = now - lastFillUpdateTime;
+        lastFillUpdateTime = now;
+
+        // there are sometime that the easing time is more than the new value change event
+        // lead to the size not even update properly since it's clear transformation too quick
+        // just calculate whether it fast enough to considered it as just skip it
+        double frameTime = selection.Clock.ElapsedFrameTime;
+        double continuousWindow = frameTime > 0 ? frameTime * 2.5 : 0;
+
+        bool isContinuousDrive = !double.IsNaN(sinceLast)
+                                 && (sinceLast <= 0 || sinceLast <= continuousWindow);
+
+        if (isContinuousDrive || FillAnimationDuration <= 0)
+            selection.Size = target;
+        else
+            selection.ResizeTo(target, FillAnimationDuration, FillAnimationEasing);
     }
 
     protected override void OnFocusGained() => BorderColor = FocusColor;
