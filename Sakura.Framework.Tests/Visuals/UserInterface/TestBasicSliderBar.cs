@@ -268,22 +268,13 @@ public partial class TestBasicSliderBar : ManualInputManagerTestScene
     [Test]
     public void TestContinuousDriveSnapsFill()
     {
-        // Simulate a value driven repeatedly within the same frame (e.g. a slider tracking playback
-        // position, updated every Update()). Successive changes arrive with ~zero gap, so the slider
-        // should detect a continuous drive and snap to the latest target rather than easing.
-        //
-        // NOTE: driving across separate AddSteps would NOT reproduce this — the test runner leaves a
-        // gap between steps, which the heuristic correctly reads as isolated changes. The drive must
-        // happen within a single step to be same-frame.
         AddStep("Drive value continuously to 100", () =>
         {
             slider.Current.Value = 0f;
 
             for (int i = 1; i <= 10; i++)
                 slider.Current.Value = i * 10f;
-
-            // Snapped same-frame: the fill is already full, no transform pending. (An eased change
-            // would leave selection size unchanged this frame, i.e. CurrentFillWidth still ~0.)
+            
             Assert.That(slider.CurrentFillWidth, Is.EqualTo(1f).Within(0.01f), "continuous drive should snap the fill");
         });
     }
