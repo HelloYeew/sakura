@@ -26,7 +26,7 @@ Some incomplete documentation is in [wiki](https://github.com/HelloYeew/sakura/w
 - .NET 10.0 SDK
 - We recommend to use IDE like [Visual Studio](https://visualstudio.microsoft.com/vs/), [Rider](https://www.jetbrains.com/rider/) or [VS Code](https://code.visualstudio.com/) for development with this framework
 
-### Issue of BASS when using Windows ARM64
+### Issue of native library when using Windows ARM64
 
 On Windows ARM64, the BASS audio library (`bass.dll`) requires the **Visual C++ Redistributable for ARM64**. Without it you will see:
 
@@ -34,7 +34,13 @@ On Windows ARM64, the BASS audio library (`bass.dll`) requires the **Visual C++ 
 Unable to load DLL 'bass' or one of its dependencies: The specified module could not be found. (0x8007007E)
 ```
 
-So we fix these problem by pack `vcruntime140.dll` in our native library package. But if the problem still occured please install the VC++ Redistributable for ARM64 [https://aka.ms/vs/17/release/vc_redist.arm64.exe](https://aka.ms/vs/17/release/vc_redist.arm64.exe)
+Also our SPIRV library (`libsakura-spirv`) also depend on it too
+
+```
+Unable to load DLL 'libsakura-spirv' or one of its dependencies: The specified module could not be found. (0x8007007E)
+```
+
+So we fix these problem by pack `vcruntime140.dll` for BASS and `msvcp140.dll` for SPIRV in our native library package. But if the problem still occured please install the VC++ Redistributable for ARM64 [https://aka.ms/vs/17/release/vc_redist.arm64.exe](https://aka.ms/vs/17/release/vc_redist.arm64.exe)
 
 On release, running as x64 (via Windows ARM64's x64 emulation layer) avoids this issue entirely since the x64 `bass.dll` does not depend on the VC++ Redistributable. Most shipped games/apps targeting Windows ARM64 use this approach.
 
