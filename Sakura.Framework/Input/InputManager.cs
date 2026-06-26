@@ -416,9 +416,29 @@ public class InputManager : IFocusManager
 
         // A drag in progress stays with its captured target, even outside its bounds. The target's
         // IsDragged flag short-circuits its OnMouseMove straight to OnDrag, so this delivers the drag
-        // without re-routing into children (there is no recursive children-walk any more).
+        // without re-routing into children (there is no recursive children-walk any more). When a
+        // drag owns the move we do not also walk the queue: the captured target has exclusive claim.
         if (dragCaptureTarget != null && dragCaptureTarget.IsLoaded)
+        {
             handled = dragCaptureTarget.OnMouseMove(e);
+        }
+        else
+        {
+            for (int i = 0; i < positionalQueue.Count; i++)
+            {
+                var drawable = positionalQueue[i];
+
+                if (!drawable.IsLoaded || !drawable.IsAlive || drawable.IsHidden || ReferenceEquals(drawable, lastQueueRoot))
+                    continue;
+
+                if (drawable.OnMouseMove(e))
+                {
+                    LastPositionalHandler = drawable;
+                    handled = true;
+                    break;
+                }
+            }
+        }
 
         updateHover(e);
         return handled;

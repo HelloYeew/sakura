@@ -104,6 +104,32 @@ public class InputManagerDispatchTest
     }
 
     [Test]
+    public void TestInertDrawablesDoNotAffectKeyDelivery()
+    {
+        // narrowing the non-positional queue to actual handlers must not change
+        // observable dispatch behavior. Inert drawables (no key/text/gamepad override) are excluded
+        // from the queue, but a real handler still receives the key exactly as before whether the
+        // inert drawables are added before or after it in the tree.
+        var inertBefore = new InertBox { Size = new Vector2(10) };
+        var handler = new RecordingBox { Size = new Vector2(10), HandleKeyDown = true };
+        var inertAfter = new InertBox { Size = new Vector2(10) };
+        root.Add(inertBefore);
+        root.Add(handler);
+        root.Add(inertAfter);
+        settle();
+
+        manager.BuildQueues(root);
+        bool handled = manager.DispatchKeyDown(key());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(handled, Is.True);
+            Assert.That(handler.KeyDownCount, Is.EqualTo(1), "The handler receives the key regardless of inert siblings.");
+            Assert.That(manager.LastNonPositionalHandler, Is.SameAs(handler));
+        });
+    }
+
+    [Test]
     public void TestKeyDownFallsThroughUnhandled()
     {
         var ignorer = new RecordingBox { Size = new Vector2(10), HandleKeyDown = false };
@@ -281,6 +307,15 @@ public class InputManagerDispatchTest
         });
     }
 
+    /// <summary>
+    /// A drawable that overrides no non-positional handler, so it is inert for key/text/gamepad input
+    /// and excluded from the non-positional queue. Used to characterize that inert drawables do not
+    /// affect dispatch to real handlers.
+    /// </summary>
+    private partial class InertBox : Box
+    {
+    }
+
     private partial class RecordingBox : Box
     {
         public bool HandleKeyDown;
@@ -343,7 +378,7 @@ public class InputManagerDispatchTest
     {
         public override bool HandleNonPositionalInput => false;
     }
-    
+
     private partial class RecordingContainer : Container
     {
         public bool HandleKeyDown;

@@ -1327,21 +1327,11 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
 
     public virtual bool OnMouseMove(MouseEvent e)
     {
+        // While captured as a drag target, a move is delivered straight to OnDrag.
         if (IsDragged)
             return OnDrag(e);
 
-        if (!IsHovered && Contains(e.ScreenSpaceMousePosition))
-        {
-            IsHovered = true;
-            return OnHover(e);
-        }
-
-        if(IsHovered && !Contains(e.ScreenSpaceMousePosition))
-        {
-            IsHovered = false;
-            return OnHoverLost(e);
-        }
-
+        // Hover enter/leave is owned centrally by InputManager.updateHover
         return false;
     }
 

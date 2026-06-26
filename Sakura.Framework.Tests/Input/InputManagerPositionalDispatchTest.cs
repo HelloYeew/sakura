@@ -106,6 +106,116 @@ public class InputManagerPositionalDispatchTest
     }
 
     [Test]
+    public void TestMouseMoveDeliveredToTargetUnderPointWithoutDrag()
+    {
+        // Regression test from https://github.com/HelloYeew/sakura/commit/230eb8602f875a0ae3b6e42df50f50e17a829aed
+        // a plain mouse-move (no prior mouse-down, so no drag capture) must still be
+        // delivered to the drawable under the cursor. Previously DispatchMouseMove only routed to the
+        // drag-capture target, so a non-dragging drawable that overrides OnMouseMove (e.g. a nested
+        // input manager relaying to its subtree) only ever saw a move *after* a click.
+        var box = new RecordingBox { Position = new Vector2(100, 100), Size = new Vector2(100) };
+        root.Add(box);
+        settle();
+
+        manager.BuildQueues(root, new Vector2(150, 150));
+        manager.DispatchMouseMove(mouseMove(new Vector2(150, 150)));
+
+        Assert.That(box.MouseMoveCount, Is.EqualTo(1),
+            "The drawable under the cursor receives the move even with no drag in progress.");
+    }
+
+    [Test]
+    public void TestMouseMoveStopsAtFirstConsumer()
+    {
+        // Front-most consumer claims the move; the one behind it does not also receive it.
+        var back = new RecordingBox { Position = new Vector2(100, 100), Size = new Vector2(100), HandleMouseMove = true };
+        var front = new RecordingBox { Position = new Vector2(100, 100), Size = new Vector2(100), HandleMouseMove = true };
+        root.Add(back);
+        root.Add(front);
+        settle();
+
+        manager.BuildQueues(root, new Vector2(150, 150));
+        manager.DispatchMouseMove(mouseMove(new Vector2(150, 150)));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(front.MouseMoveCount, Is.EqualTo(1), "Front-most consumer receives the move.");
+            Assert.That(back.MouseMoveCount, Is.EqualTo(0), "A consumed move does not fall through.");
+        });
+    }
+
+    [Test]
+    public void TestMouseMoveDoesNotDriveHover()
+    {
+        // Regression test from https://github.com/HelloYeew/sakura/commit/230eb8602f875a0ae3b6e42df50f50e17a829aed
+        // hover is owned solely by updateHover. Delivering a move must NOT toggle hover
+        // through the base Drawable.OnMouseMove (which historically set IsHovered / fired OnHover).
+        // A move-consumer that stops the walk early must not leave hover in a half-applied state, and
+        // OnHover must be driven by the hover reconciliation, not the move delivery.
+        var box = new RecordingBox { Position = new Vector2(100, 100), Size = new Vector2(100), HandleMouseMove = true };
+        root.Add(box);
+        settle();
+
+        manager.BuildQueues(root, new Vector2(150, 150));
+        manager.DispatchMouseMove(mouseMove(new Vector2(150, 150)));
+
+        Assert.Multiple(() =>
+        {
+            // It is hovered — but via updateHover, which fires OnHover exactly once.
+            Assert.That(box.IsHovered, Is.True);
+            Assert.That(box.HoverCount, Is.EqualTo(1),
+                "OnHover fired once via hover reconciliation, not additionally from OnMouseMove.");
+            Assert.That(box.MouseMoveCount, Is.EqualTo(1), "The move was delivered.");
+        });
+    }
+
+    [Test]
+    public void TestMoveConsumerThatAlsoBlocksHoverIsIndependent()
+    {
+        // A front-most drawable that both consumes the move (stops the move walk) and blocks hover.
+        // The two mechanisms are independent: the move stops at it, and hover stops at it, but a
+        // drawable behind it receives neither.
+        var back = new RecordingBox { Position = new Vector2(100, 100), Size = new Vector2(200), HandleMouseMove = true };
+        var front = new BlockingMoveBox { Position = new Vector2(100, 100), Size = new Vector2(200) };
+        root.Add(back);
+        root.Add(front);
+        settle();
+
+        manager.BuildQueues(root, new Vector2(150, 150));
+        manager.DispatchMouseMove(mouseMove(new Vector2(150, 150)));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(front.MouseMoveCount, Is.EqualTo(1), "Front-most consumer receives and consumes the move.");
+            Assert.That(back.MouseMoveCount, Is.EqualTo(0), "The move does not fall through to the drawable behind.");
+            Assert.That(front.IsHovered, Is.True, "The blocker itself is hovered.");
+            Assert.That(back.IsHovered, Is.False, "A drawable behind a hover blocker is not hovered.");
+        });
+    }
+
+    [Test]
+    public void TestRelayReceivesMoveWithoutPriorClick()
+    {
+        // Regression test from https://github.com/HelloYeew/sakura/commit/230eb8602f875a0ae3b6e42df50f50e17a829aed
+        // a drawable that relays OnMouseMove to its own subtree (modelled
+        // here by RelayBox, which records the move it relayed) must receive a plain move with no prior
+        // mouse-down. Before the fix, DispatchMouseMove only routed to the drag-capture target, so a
+        // relay only saw moves after a click made it the capture target.
+        var relay = new RelayBox { Position = new Vector2(0, 0), Size = new Vector2(400) };
+        root.Add(relay);
+        settle();
+
+        manager.BuildQueues(root, new Vector2(200, 200));
+        manager.DispatchMouseMove(mouseMove(new Vector2(200, 200)));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(relay.RelayedMoveCount, Is.EqualTo(1), "The relay received the move with no prior click.");
+            Assert.That(relay.LastRelayedPosition, Is.EqualTo(new Vector2(200, 200)));
+        });
+    }
+
+    [Test]
     public void TestMouseDownSkipsChildNotUnderPoint()
     {
         var left = new RecordingBox { Position = new Vector2(0, 0), Size = new Vector2(100), HandleMouseDown = true };
@@ -147,7 +257,7 @@ public class InputManagerPositionalDispatchTest
     public void TestDragCaptureKeepsMovesOnTargetOutsideBounds()
     {
         var draggable = new RecordingBox { Position = new Vector2(0, 0), Size = new Vector2(100), HandleMouseDown = true, HandleDrag = true };
-        var other = new RecordingBox { Position = new Vector2(200, 0), Size = new Vector2(100), HandleDrag = true };
+        var other = new RecordingBox { Position = new Vector2(200, 0), Size = new Vector2(100), HandleDrag = true, HandleMouseMove = true };
         root.Add(draggable);
         root.Add(other);
         settle();
@@ -167,6 +277,8 @@ public class InputManagerPositionalDispatchTest
         {
             Assert.That(draggable.DragCount, Is.GreaterThanOrEqualTo(2), "The captured target keeps receiving moves outside its bounds.");
             Assert.That(other.DragCount, Is.EqualTo(0), "A drag in progress is not handed to another drawable under the cursor.");
+            Assert.That(other.MouseMoveCount, Is.EqualTo(0),
+                "While a drag owns the move, the queue is not walked, so a drawable under the cursor gets no OnMouseMove.");
         });
 
         // The captured target also receives the concluding mouse-up, and capture releases.
@@ -312,13 +424,27 @@ public class InputManagerPositionalDispatchTest
         public bool HandleMouseUp;
         public bool HandleScroll;
         public bool HandleDrag;
+        public bool HandleMouseMove;
 
         public int MouseDownCount;
         public int MouseUpCount;
         public int ScrollCount;
         public int DragCount;
+        public int MouseMoveCount;
         public int HoverCount;
         public int HoverLostCount;
+
+        public override bool OnMouseMove(MouseEvent e)
+        {
+            MouseMoveCount++;
+
+            // Preserve the base drag routing: when this box is the captured drag target, the base
+            // OnMouseMove short-circuits to OnDrag. Without calling base, drag delivery would break.
+            if (base.OnMouseMove(e))
+                return true;
+
+            return HandleMouseMove;
+        }
 
         public override bool OnMouseDown(MouseButtonEvent e)
         {
@@ -361,6 +487,41 @@ public class InputManagerPositionalDispatchTest
         {
             HoverLostCount++;
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Consumes the move (stops the move walk) and blocks hover (OnHover returns true), to verify the
+    /// two mechanisms are independent.
+    /// </summary>
+    private partial class BlockingMoveBox : RecordingBox
+    {
+        public BlockingMoveBox()
+        {
+            HandleMouseMove = true;
+        }
+
+        public override bool OnHover(MouseEvent e)
+        {
+            base.OnHover(e);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Models a drawable that relays plain mouse-moves to its own logic (like a nested input manager),
+    /// recording each relayed move. Consumes the move so the relay is the authoritative handler.
+    /// </summary>
+    private partial class RelayBox : Box
+    {
+        public int RelayedMoveCount;
+        public Vector2 LastRelayedPosition;
+
+        public override bool OnMouseMove(MouseEvent e)
+        {
+            RelayedMoveCount++;
+            LastRelayedPosition = e.ScreenSpaceMousePosition;
+            return true;
         }
     }
 
