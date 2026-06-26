@@ -372,13 +372,6 @@ public class SDLWindow : IWindow
             windowFlags |= SDL_WindowFlags.SDL_WINDOW_RESIZABLE;
         }
 
-        if (RuntimeInfo.IsMacOS && windowMode == WindowMode.Fullscreen)
-        {
-            // SDL's full screen on MacOS has a lot of issues so we force MacOS to use only window and borderless window modes
-            Logger.Warning("Fullscreen mode is not supported on MacOS due to a lot of issues with SDL implementation, falling back to Borderless window mode.");
-            windowMode = WindowMode.Borderless;
-        }
-
         // In SDL3 both borderless-desktop and exclusive fullscreen use SDL_WINDOW_FULLSCREEN;
         // the distinction is made after creation via SDL_SetWindowFullscreenMode
         // (null mode = borderless desktop, explicit mode = exclusive).
@@ -436,10 +429,15 @@ public class SDLWindow : IWindow
 
         if (windowMode == WindowMode.Fullscreen)
         {
-            // Exclusive fullscreen: pin the window to the display's current mode.
-            var mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window));
-            SDL_SetWindowFullscreenMode(window, mode);
-            SDL_SetWindowFullscreen(window, true);
+            WindowMode effectiveMode = applyExclusiveFullscreen();
+
+            if (effectiveMode != windowMode)
+            {
+                windowMode = effectiveMode;
+                WindowModeReactive.Value = effectiveMode;
+                if (windowConfig != null)
+                    windowConfig.Get<WindowMode>(FrameworkSetting.WindowMode).Value = effectiveMode;
+            }
         }
 
         SDL_AddEventWatch(&resizeEventWatch, IntPtr.Zero);
@@ -659,22 +657,105 @@ public class SDLWindow : IWindow
         return true;
     }
 
+    /// <summary>
+    /// Applies exclusive fullscreen: pins the window to the display's current mode. Returns the mode
+    /// that was actually applied — <see cref="WindowMode.Fullscreen"/> on success, or
+    /// <see cref="WindowMode.Borderless"/> if the display mode could not be resolved (in which case
+    /// borderless-desktop fullscreen is applied as a safe fallback).
+    /// </summary>
+    /// <remarks>
+    /// Exclusive fullscreen on macOS historically misbehaved under SDL (wrong drawable size, black
+    /// screens, stale refresh rate). We harden the transition here so it is reliable on every
+    /// platform: validate the display mode before handing it to SDL, fall back to borderless if it is
+    /// unavailable, then <c>SDL_SyncWindow</c> to force the mode change to complete before we read
+    /// back any sizes, and finally re-query the drawable size and refresh rate (both can change with
+    /// the mode, especially across HiDPI/Retina backing-scale boundaries).
+    /// </remarks>
+    private unsafe WindowMode applyExclusiveFullscreen()
+    {
+        var mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window));
+
+        if (mode == null)
+        {
+            Logger.Warning("Could not resolve the display mode for exclusive fullscreen; falling back to Borderless.");
+            SDL_SetWindowFullscreenMode(window, null);
+            SDL_SetWindowFullscreen(window, true);
+            SDL_SyncWindow(window);
+            return WindowMode.Borderless;
+        }
+
+        SDL_SetWindowFullscreenMode(window, mode);
+        SDL_SetWindowFullscreen(window, true);
+
+        // Block until the fullscreen transition is fully applied. Without this the window may still
+        // report its pre-fullscreen (or zero) size on the next query, which on macOS manifests as a
+        // black screen or half-resolution surface.
+        SDL_SyncWindow(window);
+
+        // The active display mode and Retina backing scale can differ in fullscreen, so refresh the
+        // cached refresh rate; size is refreshed by the caller via handleSizeChanged().
+        DisplayHz = getDisplayRefreshRate();
+
+        return WindowMode.Fullscreen;
+    }
+
     private unsafe void setWindowMode(WindowMode newMode)
     {
         if (windowMode == newMode)
             return;
 
-        if (RuntimeInfo.IsMacOS && newMode == WindowMode.Fullscreen)
+        // The effective mode may differ from the requested one if exclusive fullscreen falls back to
+        // borderless (see applyExclusiveFullscreen). We persist the effective mode below so config and
+        // the reactive reflect what is actually on screen.
+        WindowMode effectiveMode = newMode;
+
+        if (window != null)
         {
-            newMode = WindowMode.Borderless;
+            switch (newMode)
+            {
+                case WindowMode.Windowed:
+                    SDL_SetWindowFullscreen(window, false);
+                    SDL_SetWindowBordered(window, true);
+
+                    if (windowConfig != null)
+                    {
+                        int savedX = windowConfig.Get<int>(FrameworkSetting.WindowX).Value;
+                        int savedY = windowConfig.Get<int>(FrameworkSetting.WindowY).Value;
+                        int savedW = windowConfig.Get<int>(FrameworkSetting.WindowWidth).Value;
+                        int savedH = windowConfig.Get<int>(FrameworkSetting.WindowHeight).Value;
+
+                        if (savedW > 0 && savedH > 0)
+                            SDL_SetWindowSize(window, savedW, savedH);
+
+                        if (savedX != -1 && savedY != -1 && isPositionOnConnectedDisplay(savedX, savedY))
+                            SDL_SetWindowPosition(window, savedX, savedY);
+                        else
+                            SDL_SetWindowPosition(window, windowpos_centered, windowpos_centered);
+                    }
+                    else
+                    {
+                        SDL_SetWindowPosition(window, windowpos_centered, windowpos_centered);
+                    }
+                    break;
+
+                case WindowMode.Borderless:
+                    // null fullscreen mode = borderless fullscreen desktop in SDL3.
+                    SDL_SetWindowFullscreenMode(window, null);
+                    SDL_SetWindowFullscreen(window, true);
+                    break;
+
+                case WindowMode.Fullscreen:
+                    effectiveMode = applyExclusiveFullscreen();
+                    break;
+            }
         }
 
-        windowMode = newMode;
-        WindowModeReactive.Value = newMode;
+        windowMode = effectiveMode;
+        WindowModeReactive.Value = effectiveMode;
 
         if (windowConfig != null)
         {
-            windowConfig.Get<WindowMode>(FrameworkSetting.WindowMode).Value = newMode;
+            windowConfig.Get<WindowMode>(FrameworkSetting.WindowMode).Value = effectiveMode;
         }
         else
         {
@@ -683,51 +764,11 @@ public class SDLWindow : IWindow
 
         if (window == null) return;
 
-        switch (newMode)
-        {
-            case WindowMode.Windowed:
-                SDL_SetWindowFullscreen(window, false);
-                SDL_SetWindowBordered(window, true);
-
-                if (windowConfig != null)
-                {
-                    int savedX = windowConfig.Get<int>(FrameworkSetting.WindowX).Value;
-                    int savedY = windowConfig.Get<int>(FrameworkSetting.WindowY).Value;
-                    int savedW = windowConfig.Get<int>(FrameworkSetting.WindowWidth).Value;
-                    int savedH = windowConfig.Get<int>(FrameworkSetting.WindowHeight).Value;
-
-                    if (savedW > 0 && savedH > 0)
-                        SDL_SetWindowSize(window, savedW, savedH);
-
-                    if (savedX != -1 && savedY != -1 && isPositionOnConnectedDisplay(savedX, savedY))
-                        SDL_SetWindowPosition(window, savedX, savedY);
-                    else
-                        SDL_SetWindowPosition(window, windowpos_centered, windowpos_centered);
-                }
-                else
-                {
-                    SDL_SetWindowPosition(window, windowpos_centered, windowpos_centered);
-                }
-                break;
-
-            case WindowMode.Borderless:
-                // null fullscreen mode = borderless fullscreen desktop in SDL3.
-                SDL_SetWindowFullscreenMode(window, null);
-                SDL_SetWindowFullscreen(window, true);
-                break;
-
-            case WindowMode.Fullscreen:
-                var mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window));
-                SDL_SetWindowFullscreenMode(window, mode);
-                SDL_SetWindowFullscreen(window, true);
-                break;
-        }
-
         // Mode changes usually generate RESIZED events as well; handleSizeChanged dedupes
         // so whichever path runs first wins and the other is a no-op.
         handleSizeChanged();
 
-        Logger.Debug($"Window mode changed to {newMode}");
+        Logger.Debug($"Window mode changed to {effectiveMode}");
     }
 
     private unsafe void handleSdlEvents()
