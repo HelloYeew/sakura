@@ -44,6 +44,27 @@ public class ConstructionBenchmarks
         Size = new Vector2(100, 100),
     };
 
+    [Benchmark]
+    public Container NewAutoSizedContainer() => new Container
+    {
+        AutoSizeAxes = Axes.Both,
+        Children = new Drawable[]
+        {
+            new Box
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Size = new Vector2(10, 10)
+            },
+            new Box
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Size = new Vector2(30, 80)
+            }
+        }
+     };
+
     /// <summary>
     /// The full spawn path: construct, add to a loaded parent (triggers synchronous Load,
     /// dependency injection, clock re-wiring, topology invalidation), then remove.

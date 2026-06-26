@@ -3,6 +3,7 @@
 
 using System;
 using Sakura.Framework.Extensions.ColorExtensions;
+using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Maths;
@@ -239,6 +240,26 @@ public class SpinTransform : Transform
 
         double elapsed = time - StartTime;
         drawable.Rotation = (float)(elapsed / RevolutionDuration * 360.0) % 360f;
+    }
+}
+
+/// <summary>
+/// Animates a <see cref="Container"/>'s size toward an auto-size target computed from its children.
+/// Unlike <see cref="ResizeTransform"/>, the target can be re-pointed mid-flight (when children
+/// change) without restarting the animation from a hard snap — the start value is re-captured from
+/// the container's current size and the remaining duration is replayed toward the new target.
+/// </summary>
+public class AutoSizeTransform : Transform
+{
+    public Vector2 StartValue;
+    public Vector2 EndValue;
+
+    public override void Apply(Drawable drawable, double time)
+    {
+        if (drawable is not Container container)
+            return;
+
+        container.ApplyAutoSize(Vector2.Lerp(StartValue, EndValue, (float)GetEasedProgress(time)));
     }
 }
 
