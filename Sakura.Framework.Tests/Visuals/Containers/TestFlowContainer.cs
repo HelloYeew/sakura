@@ -3,10 +3,12 @@
 
 using System.Linq;
 using NUnit.Framework;
+using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
+using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Testing;
 using Sakura.Framework.Utilities;
@@ -62,7 +64,7 @@ public partial class TestFlowContainer : TestScene
                         Width = 1,
                         AutoSizeAxes = Axes.Y,
                         Direction = FlowDirection.Horizontal,
-                        Spacing = new Vector2(spacing, 0),
+                        Spacing = new Vector2(spacing),
                         Children = child_colors.Take(child_count).Select(c => (Drawable)new Box
                         {
                             Size = new Vector2(child_size),
@@ -119,5 +121,17 @@ public partial class TestFlowContainer : TestScene
         AddStep("Start", () => flow.Alignment = FlowAlignment.Start);
         AddStep("Center", () => flow.Alignment = FlowAlignment.Center);
         AddStep("End", () => flow.Alignment = FlowAlignment.End);
+    }
+
+    [Test]
+    public void TestResizeTransform()
+    {
+        AddStep("Add resize animation", () =>
+        {
+            foreach (var child in flow.Children)
+            {
+                child.ResizeTo(new Vector2(200), 1000, Easing.OutQuint);
+            }
+        });
     }
 }
