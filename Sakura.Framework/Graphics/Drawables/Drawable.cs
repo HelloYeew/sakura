@@ -514,6 +514,9 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
             Vector2 parentChildSize = Parent.ChildSize;
             Vector2 parentDrawSize = Parent.DrawSize;
 
+            Vector2 relativeToAbsolute = Parent.RelativeToAbsoluteFactor;
+            Vector2 relativeChildOffset = Parent.RelativeChildOffset;
+
             // prevent division by zero for drawables with no area.
             if (parentChildSize.X == 0)
                 parentChildSize.X = 1;
@@ -524,19 +527,24 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
             if (parentDrawSize.Y == 0)
                 parentDrawSize.Y = 1;
 
-            // Calculate scale relative to parent
+            if (relativeToAbsolute.X == 0)
+                relativeToAbsolute.X = 1;
+            if (relativeToAbsolute.Y == 0)
+                relativeToAbsolute.Y = 1;
+
             finalDrawSize = Size;
             if ((RelativeSizeAxes & Axes.X) != 0)
-                finalDrawSize.X = Math.Max(0, parentChildSize.X * Size.X - Margin.Total.X);
+                finalDrawSize.X = Math.Max(0, relativeToAbsolute.X * Size.X - Margin.Total.X);
             if ((RelativeSizeAxes & Axes.Y) != 0)
-                finalDrawSize.Y = Math.Max(0, parentChildSize.Y * Size.Y - Margin.Total.Y);
+                finalDrawSize.Y = Math.Max(0, relativeToAbsolute.Y * Size.Y - Margin.Total.Y);
 
-            // Calculate position relative to parent
+            // Calculate position relative to parent. The offset shifts the relative-space origin,
+            // so a child at Position == RelativeChildOffset resolves to pixel (0,0).
             Vector2 pixelPosition = Position;
             if ((RelativePositionAxes & Axes.X) != 0)
-                pixelPosition.X *= parentChildSize.X;
+                pixelPosition.X = (pixelPosition.X - relativeChildOffset.X) * relativeToAbsolute.X;
             if ((RelativePositionAxes & Axes.Y) != 0)
-                pixelPosition.Y *= parentChildSize.Y;
+                pixelPosition.Y = (pixelPosition.Y - relativeChildOffset.Y) * relativeToAbsolute.Y;
 
             Vector2 anchorOffset = GetAnchorOriginVector(Anchor);
             pixelPosition.X += anchorOffset.X * parentChildSize.X;

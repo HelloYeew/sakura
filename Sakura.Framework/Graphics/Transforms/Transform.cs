@@ -3,6 +3,7 @@
 
 using System;
 using Sakura.Framework.Extensions.ColorExtensions;
+using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Maths;
