@@ -704,6 +704,8 @@ public class SDLWindow : IWindow
         if (windowMode == newMode)
             return;
 
+        windowMode = newMode;
+
         // The effective mode may differ from the requested one if exclusive fullscreen falls back to
         // borderless (see applyExclusiveFullscreen). We persist the effective mode below so config and
         // the reactive reflect what is actually on screen.
