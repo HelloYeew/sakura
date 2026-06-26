@@ -151,26 +151,21 @@ public class InputManager : IFocusManager
     #region Non-positional dispatch
 
     /// <summary>
-    /// Dispatches a non-positional event down the current <see cref="NonPositionalInputQueue"/>
-    /// (front-to-back), invoking <paramref name="invoke"/> on each entry until one returns
-    /// <c>true</c>. Records the consuming entry in <see cref="LastNonPositionalHandler"/>.
+    /// Whether <paramref name="drawable"/> should be skipped during non-positional dispatch: not
+    /// loaded, or the queue root itself (the dispatcher, whose <c>OnX</c> *is* this dispatch entry
+    /// point — invoking it again would recurse infinitely).
     /// </summary>
-    /// <param name="invoke">Invokes the appropriate <c>OnX</c> handler on a queue entry.</param>
-    /// <returns><c>true</c> if a queue entry handled the event.</returns>
-    private bool dispatchNonPositional(System.Func<Drawable, bool> invoke)
+    private bool skipNonPositional(Drawable drawable) => !drawable.IsLoaded || ReferenceEquals(drawable, lastQueueRoot);
+
+    public bool DispatchKeyDown(KeyEvent e)
     {
-        // Snapshot count up front; handlers may mutate the tree, and entries are skipped if they
-        // were removed/unloaded mid-dispatch.
         for (int i = 0; i < nonPositionalQueue.Count; i++)
         {
             var drawable = nonPositionalQueue[i];
-
-            // The queue root is the dispatcher (App / ManualInputManager): its OnX *is* this dispatch
-            // entry point, so invoking it again would re-enter and recurse infinitely. Skip it.
-            if (!drawable.IsLoaded || ReferenceEquals(drawable, lastQueueRoot))
+            if (skipNonPositional(drawable))
                 continue;
 
-            if (invoke(drawable))
+            if (drawable.OnKeyDown(e))
             {
                 LastNonPositionalHandler = drawable;
                 return true;
@@ -181,19 +176,119 @@ public class InputManager : IFocusManager
         return false;
     }
 
-    public bool DispatchKeyDown(KeyEvent e) => dispatchNonPositional(d => d.OnKeyDown(e));
+    public bool DispatchKeyUp(KeyEvent e)
+    {
+        for (int i = 0; i < nonPositionalQueue.Count; i++)
+        {
+            var drawable = nonPositionalQueue[i];
+            if (skipNonPositional(drawable))
+                continue;
 
-    public bool DispatchKeyUp(KeyEvent e) => dispatchNonPositional(d => d.OnKeyUp(e));
+            if (drawable.OnKeyUp(e))
+            {
+                LastNonPositionalHandler = drawable;
+                return true;
+            }
+        }
 
-    public bool DispatchTextInput(TextInputEvent e) => dispatchNonPositional(d => d.OnTextInput(e));
+        LastNonPositionalHandler = null;
+        return false;
+    }
 
-    public bool DispatchTextEditing(TextEditingEvent e) => dispatchNonPositional(d => d.OnTextEditing(e));
+    public bool DispatchTextInput(TextInputEvent e)
+    {
+        for (int i = 0; i < nonPositionalQueue.Count; i++)
+        {
+            var drawable = nonPositionalQueue[i];
+            if (skipNonPositional(drawable))
+                continue;
 
-    public bool DispatchGamepadButtonDown(GamepadButtonEvent e) => dispatchNonPositional(d => d.OnGamepadButtonDown(e));
+            if (drawable.OnTextInput(e))
+            {
+                LastNonPositionalHandler = drawable;
+                return true;
+            }
+        }
 
-    public bool DispatchGamepadButtonUp(GamepadButtonEvent e) => dispatchNonPositional(d => d.OnGamepadButtonUp(e));
+        LastNonPositionalHandler = null;
+        return false;
+    }
 
-    public bool DispatchGamepadAxisMotion(GamepadAxisEvent e) => dispatchNonPositional(d => d.OnGamepadAxisMotion(e));
+    public bool DispatchTextEditing(TextEditingEvent e)
+    {
+        for (int i = 0; i < nonPositionalQueue.Count; i++)
+        {
+            var drawable = nonPositionalQueue[i];
+            if (skipNonPositional(drawable))
+                continue;
+
+            if (drawable.OnTextEditing(e))
+            {
+                LastNonPositionalHandler = drawable;
+                return true;
+            }
+        }
+
+        LastNonPositionalHandler = null;
+        return false;
+    }
+
+    public bool DispatchGamepadButtonDown(GamepadButtonEvent e)
+    {
+        for (int i = 0; i < nonPositionalQueue.Count; i++)
+        {
+            var drawable = nonPositionalQueue[i];
+            if (skipNonPositional(drawable))
+                continue;
+
+            if (drawable.OnGamepadButtonDown(e))
+            {
+                LastNonPositionalHandler = drawable;
+                return true;
+            }
+        }
+
+        LastNonPositionalHandler = null;
+        return false;
+    }
+
+    public bool DispatchGamepadButtonUp(GamepadButtonEvent e)
+    {
+        for (int i = 0; i < nonPositionalQueue.Count; i++)
+        {
+            var drawable = nonPositionalQueue[i];
+            if (skipNonPositional(drawable))
+                continue;
+
+            if (drawable.OnGamepadButtonUp(e))
+            {
+                LastNonPositionalHandler = drawable;
+                return true;
+            }
+        }
+
+        LastNonPositionalHandler = null;
+        return false;
+    }
+
+    public bool DispatchGamepadAxisMotion(GamepadAxisEvent e)
+    {
+        for (int i = 0; i < nonPositionalQueue.Count; i++)
+        {
+            var drawable = nonPositionalQueue[i];
+            if (skipNonPositional(drawable))
+                continue;
+
+            if (drawable.OnGamepadAxisMotion(e))
+            {
+                LastNonPositionalHandler = drawable;
+                return true;
+            }
+        }
+
+        LastNonPositionalHandler = null;
+        return false;
+    }
 
     /// <summary>
     /// Delivers a gamepad connected event to every entry in the non-positional queue (broadcast; no
@@ -245,6 +340,8 @@ public class InputManager : IFocusManager
     private readonly List<Drawable> hoveredDrawables = new List<Drawable>();
 
     private readonly HashSet<Drawable> hoverBlockers = new HashSet<Drawable>();
+
+    private readonly HashSet<Drawable> newlyHoveredScratch = new HashSet<Drawable>();
 
     public IReadOnlyList<Drawable> HoveredDrawables => hoveredDrawables;
 
@@ -378,7 +475,8 @@ public class InputManager : IFocusManager
         // returning true from OnHover (e.g. a visible OverlayContainer). Everything in front of and
         // including the blocker is hovered; everything behind it is treated as not hovered. This
         // mirrors the recursive path, where a child returning true from OnMouseMove broke the loop.
-        var newlyHovered = new HashSet<Drawable>();
+        var newlyHovered = newlyHoveredScratch;
+        newlyHovered.Clear();
         bool blocked = false;
 
         for (int i = 0; i < positionalQueue.Count && !blocked; i++)
