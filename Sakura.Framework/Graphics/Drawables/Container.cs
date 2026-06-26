@@ -148,10 +148,10 @@ public partial class Container : Drawable
         set
         {
             Clear();
-            foreach (var child in value)
-            {
-                Add(child);
-            }
+
+            int count = value.Count;
+            for (int i = 0; i < count; i++)
+                Add(value[i]);
         }
     }
 
@@ -301,7 +301,8 @@ public partial class Container : Drawable
 
         // Share our clock by reference (unless the child has an explicitly-assigned clock).
         // This must happen before Load() so anything scheduled during load uses the right timeline.
-        drawable.InheritClock(Clock);
+        if (IsLoaded)
+            drawable.InheritClock(Clock);
 
         // The (possibly re-added, previously clean) drawable needs a full geometry pass
         // relative to its new parent; its own Update cascades this through its subtree.
@@ -676,6 +677,7 @@ public partial class Container : Drawable
         base.Load();
         foreach (var child in children)
         {
+            child.InheritClock(Clock);
             child.Load();
         }
     }
