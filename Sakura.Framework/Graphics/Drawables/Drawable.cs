@@ -1152,6 +1152,14 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
     }
 
     /// <summary>
+    /// Removes a specific transform from this drawable, if present.
+    /// </summary>
+    internal void RemoveTransform(Transform transform)
+    {
+        transforms?.Remove(transform);
+    }
+
+    /// <summary>
     /// Number of transforms currently registered on this drawable.
     /// Used by <see cref="TransformSequence{T}"/> to detect newly added transforms.
     /// </summary>

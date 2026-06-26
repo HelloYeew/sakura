@@ -8,6 +8,7 @@ using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
+using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Utilities;
@@ -105,6 +106,41 @@ public partial class Container : Drawable
     /// Control which axes that this container automatically sized based on its children's sizes.
     /// </summary>
     public Axes AutoSizeAxes { get; set; } = Axes.None;
+
+    /// <summary>
+    /// The duration (in milliseconds) over which the container animates toward a new auto-size target.
+    /// When 0 (the default), the container snaps to its computed size instantly.
+    /// Only meaningful when <see cref="AutoSizeAxes"/> is not <see cref="Axes.None"/>.
+    /// </summary>
+    public double AutoSizeDuration { get; set; }
+
+    /// <summary>
+    /// The easing function used when animating toward a new auto-size target.
+    /// Only meaningful when <see cref="AutoSizeDuration"/> is greater than 0.
+    /// </summary>
+    public Easing AutoSizeEasing { get; set; } = Easing.None;
+
+    /// <summary>
+    /// The in-flight auto-size animation, if any. Re-targeted (rather than recreated) when the
+    /// computed auto-size changes mid-animation so children changing rapidly produce a smooth glide.
+    /// </summary>
+    private AutoSizeTransform? autoSizeTransform;
+
+    /// <summary>
+    /// The auto-size target the in-flight <see cref="autoSizeTransform"/> is currently heading toward.
+    /// Used to avoid re-targeting the animation when the computed size has not actually changed.
+    /// </summary>
+    private Vector2 autoSizeTarget;
+
+    /// <summary>
+    /// Assigns the container's size directly, bypassing the auto-size animation path.
+    /// Invoked by <see cref="AutoSizeTransform"/> as the animation progresses.
+    /// </summary>
+    internal void ApplyAutoSize(Vector2 newSize)
+    {
+        if (Size != newSize)
+            Size = newSize;
+    }
 
     public IReadOnlyList<Drawable> Children
     {
@@ -503,11 +539,42 @@ public partial class Container : Drawable
         if ((AutoSizeAxes & Axes.Y) != 0)
             currentSize.Y = maxBound.Y;
 
-        // Only assign if changed to prevent constant invalidation.
-        // The Size setter raises the own-geometry invalidation (cascading to children)
-        // and notifies an interested parent, so no explicit invalidation is needed here.
-        if (Size != currentSize)
-            Size = currentSize;
+        if (AutoSizeDuration <= 0)
+        {
+            if (autoSizeTransform != null)
+            {
+                RemoveTransform(autoSizeTransform);
+                autoSizeTransform = null;
+            }
+
+            if (Size != currentSize)
+                Size = currentSize;
+
+            return;
+        }
+
+        if (autoSizeTransform == null || autoSizeTarget != currentSize)
+        {
+            if (autoSizeTransform == null && Size == currentSize)
+                return;
+
+            if (autoSizeTransform != null)
+                RemoveTransform(autoSizeTransform);
+
+            autoSizeTarget = currentSize;
+            double startTime = Clock.CurrentTime;
+
+            autoSizeTransform = new AutoSizeTransform
+            {
+                StartValue = Size,
+                EndValue = currentSize,
+                Easing = AutoSizeEasing,
+                StartTime = startTime,
+                EndTime = startTime + AutoSizeDuration
+            };
+
+            AddTransform(autoSizeTransform);
+        }
     }
 
     protected override DrawNode CreateDrawNode() => new ContainerDrawNode();

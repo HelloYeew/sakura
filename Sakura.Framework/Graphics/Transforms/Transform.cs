@@ -243,6 +243,26 @@ public class SpinTransform : Transform
 }
 
 /// <summary>
+/// Animates a <see cref="Container"/>'s size toward an auto-size target computed from its children.
+/// Unlike <see cref="ResizeTransform"/>, the target can be re-pointed mid-flight (when children
+/// change) without restarting the animation from a hard snap — the start value is re-captured from
+/// the container's current size and the remaining duration is replayed toward the new target.
+/// </summary>
+public class AutoSizeTransform : Transform
+{
+    public Vector2 StartValue;
+    public Vector2 EndValue;
+
+    public override void Apply(Drawable drawable, double time)
+    {
+        if (drawable is not Container container)
+            return;
+
+        container.ApplyAutoSize(Vector2.Lerp(StartValue, EndValue, (float)GetEasedProgress(time)));
+    }
+}
+
+/// <summary>
 /// A zero-duration transform that fires completion/abort callbacks on behalf of a <see cref="TransformSequence{T}"/>.
 /// </summary>
 public class CallbackTransform<T> : Transform where T : Drawable
