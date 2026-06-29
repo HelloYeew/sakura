@@ -226,6 +226,43 @@ public static class TransformExtensions
     }
 
     /// <summary>
+    /// Animates the container's edge-effect color to a specific color over a duration.
+    /// </summary>
+    public static T FadeEdgeEffectTo<T>(this T container, Color newColour, double duration = 0, Easing easing = Easing.None) where T : Container
+    {
+        container.addTransform(new EdgeEffectColourTransform
+        {
+            EndValue = newColour,
+            Easing = easing
+        }, duration);
+        return container;
+    }
+
+    /// <summary>
+    /// Animates the alpha of the container's edge-effect color to a specific value over a duration,
+    /// keeping the current RGB.
+    /// </summary>
+    public static T FadeEdgeEffectTo<T>(this T container, float newAlpha, double duration = 0, Easing easing = Easing.None) where T : Container
+    {
+        var current = container.EdgeEffect.Colour;
+        var target = Color.FromArgb((int)Math.Clamp(newAlpha * 255f, 0f, 255f), current);
+        return container.FadeEdgeEffectTo(target, duration, easing);
+    }
+
+    /// <summary>
+    /// Animates the container's edge-effect blur radius to a specific value over a duration.
+    /// </summary>
+    public static T TweenEdgeEffectRadiusTo<T>(this T container, float newRadius, double duration = 0, Easing easing = Easing.None) where T : Container
+    {
+        container.addTransform(new EdgeEffectRadiusTransform
+        {
+            EndValue = newRadius,
+            Easing = easing
+        }, duration);
+        return container;
+    }
+
+    /// <summary>
     /// Schedules the next transform to start after a delay from the end of the last transform.
     /// </summary>
     public static Drawable Wait(this Drawable drawable, double duration)
