@@ -102,6 +102,24 @@ public partial class Container : Drawable
         }
     }
 
+    private EdgeEffectParameters edgeEffect;
+
+    /// <summary>
+    /// A soft glow or drop shadow rendered around this container's rounded-rectangle shape.
+    /// Unlike <see cref="Masking"/>, the edge effect renders regardless of whether masking is enabled,
+    /// using the container's draw rectangle, <see cref="CornerRadius"/> and the effect's own parameters.
+    /// </summary>
+    public EdgeEffectParameters EdgeEffect
+    {
+        get => edgeEffect;
+        set
+        {
+            if (edgeEffect == value) return;
+            edgeEffect = value;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+    }
+
     /// <summary>
     /// Control which axes that this container automatically sized based on its children's sizes.
     /// </summary>

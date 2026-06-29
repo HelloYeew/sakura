@@ -455,12 +455,12 @@ public sealed class MetalRenderer : IMetalRenderer
 
         // Enter the border pass: populate and upload the MaskBlock the fragment shader reads.
         maskState.IsBorder = 1;
-        maskState.MaskCenter = new System.Numerics.Vector2(maskCenter.X, maskCenter.Y);
-        maskState.MaskHalfSize = new System.Numerics.Vector2(maskHalfSize.X, maskHalfSize.Y);
+        maskState.MaskCenter = new Vector2(maskCenter.X, maskCenter.Y);
+        maskState.MaskHalfSize = new Vector2(maskHalfSize.X, maskHalfSize.Y);
         maskState.ShearX = shearX;
         maskState.CornerRadius = cornerRadius;
         maskState.BorderThickness = borderThickness;
-        maskState.BorderColor = new System.Numerics.Vector4(
+        maskState.BorderColor = new Vector4(
             borderColor.R / 255f, borderColor.G / 255f, borderColor.B / 255f, borderColor.A / 255f);
         uploadMaskState();
 
@@ -473,6 +473,41 @@ public sealed class MetalRenderer : IMetalRenderer
         // Leave the border pass so subsequent draws render normally.
         maskState.IsBorder = 0;
         uploadMaskState();
+    }
+
+    /// <summary>
+    /// Draws a soft edge effect (glow/shadow) via the main shader's edge-effect path
+    /// (u_IsEdgeEffect). Mirrors <c>GLRenderer.DrawEdgeEffect</c>; clip data is injected into the
+    /// quad vertices by <see cref="DrawQuads"/>, so it is not applied here.
+    /// </summary>
+    public void DrawEdgeEffect(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float edgeRadius, Vector2 offset, Color color, bool glow, bool hollow, ReadOnlySpan<SakuraVertex> quadVertices)
+    {
+        if (color.A == 0 || quadVertices.Length < 4)
+            return;
+
+        var previousBlend = currentBlendMode;
+        if (glow)
+            SetBlendMode(BlendingMode.Additive);
+
+        maskState.IsEdgeEffect = 1;
+        maskState.MaskCenter = new Vector2(maskCenter.X, maskCenter.Y);
+        maskState.MaskHalfSize = new Vector2(maskHalfSize.X, maskHalfSize.Y);
+        maskState.ShearX = shearX;
+        maskState.CornerRadius = cornerRadius;
+        maskState.EdgeRadius = edgeRadius;
+        maskState.EdgeOffset = new Vector2(offset.X, offset.Y);
+        maskState.EdgeHollow = hollow ? 1 : 0;
+        maskState.EdgeGlow = glow ? 1 : 0;
+        maskState.BorderColor = new Vector4(color.R / 255f, color.G / 255f, color.B / 255f, color.A / 255f);
+        uploadMaskState();
+
+        DrawQuads(quadVertices[..4], WhitePixel);
+
+        maskState.IsEdgeEffect = 0;
+        uploadMaskState();
+
+        if (glow)
+            SetBlendMode(previousBlend);
     }
 
     #endregion

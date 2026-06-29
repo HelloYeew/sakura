@@ -5,6 +5,7 @@ using System;
 using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Colors;
+using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Utilities;
@@ -221,6 +222,56 @@ public class ColorTransform : Transform
         double easedProgress = GetEasedProgress(time);
 
         drawable.Color = ColorExtensions.Lerp(StartValue, EndValue, (float)easedProgress);
+    }
+}
+
+/// <summary>
+/// Animates the <see cref="EdgeEffectParameters.Colour"/> of a <see cref="Container"/>'s edge effect.
+/// </summary>
+public class EdgeEffectColourTransform : Transform
+{
+    private bool valueCaptured;
+    public Color StartValue;
+    public Color EndValue;
+
+    public override void Apply(Drawable drawable, double time)
+    {
+        var container = (Container)drawable;
+
+        if (!valueCaptured)
+        {
+            StartValue = container.EdgeEffect.Colour;
+            valueCaptured = true;
+        }
+
+        var ee = container.EdgeEffect;
+        ee.Colour = ColorExtensions.Lerp(StartValue, EndValue, (float)GetEasedProgress(time));
+        container.EdgeEffect = ee;
+    }
+}
+
+/// <summary>
+/// Animates the <see cref="EdgeEffectParameters.Radius"/> of a <see cref="Container"/>'s edge effect.
+/// </summary>
+public class EdgeEffectRadiusTransform : Transform
+{
+    private bool valueCaptured;
+    public float StartValue;
+    public float EndValue;
+
+    public override void Apply(Drawable drawable, double time)
+    {
+        var container = (Container)drawable;
+
+        if (!valueCaptured)
+        {
+            StartValue = container.EdgeEffect.Radius;
+            valueCaptured = true;
+        }
+
+        var ee = container.EdgeEffect;
+        ee.Radius = (float)(StartValue + (EndValue - StartValue) * GetEasedProgress(time));
+        container.EdgeEffect = ee;
     }
 }
 

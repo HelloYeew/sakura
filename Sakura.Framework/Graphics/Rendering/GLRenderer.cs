@@ -534,6 +534,49 @@ public class GLRenderer : IGLRenderer
         lastBoundTextureHandle = uint.MaxValue;
     }
 
+    public void DrawEdgeEffect(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float edgeRadius, Vector2 offset, Color color, bool glow, bool hollow, ReadOnlySpan<SakuraVertex> quadVertices)
+    {
+        if (color.A == 0 || quadVertices.Length < 4)
+            return;
+
+        triangleBatch.Draw();
+
+        var previousBlend = currentBlendMode;
+        if (glow)
+            SetBlendMode(BlendingMode.Additive);
+
+        maskState.IsEdgeEffect = 1;
+        maskState.MaskCenter = new System.Numerics.Vector2(maskCenter.X, maskCenter.Y);
+        maskState.MaskHalfSize = new System.Numerics.Vector2(maskHalfSize.X, maskHalfSize.Y);
+        maskState.ShearX = shearX;
+        maskState.CornerRadius = cornerRadius;
+        maskState.EdgeRadius = edgeRadius;
+        maskState.EdgeOffset = new System.Numerics.Vector2(offset.X, offset.Y);
+        maskState.EdgeHollow = hollow ? 1 : 0;
+        maskState.EdgeGlow = glow ? 1 : 0;
+        maskState.BorderColor = new System.Numerics.Vector4(
+            color.R / 255f, color.G / 255f, color.B / 255f, color.A / 255f);
+        uploadMaskState();
+
+        if (boundTextureCount == 0 || whiteGLTexture.GLHandle != boundTextureHandles[0])
+        {
+            triangleBatch.Draw();
+            whiteGLTexture.Bind();
+            boundTextureHandles[0] = whiteGLTexture.GLHandle;
+            if (boundTextureCount == 0) boundTextureCount = 1;
+        }
+
+        triangleBatch.AddQuad(quadVertices.Slice(0, 4), 0f, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
+        triangleBatch.Draw();
+
+        maskState.IsEdgeEffect = 0;
+        uploadMaskState();
+        lastBoundTextureHandle = uint.MaxValue;
+
+        if (glow)
+            SetBlendMode(previousBlend);
+    }
+
     public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius)
     {
         clipStack.Push(currentClip);
