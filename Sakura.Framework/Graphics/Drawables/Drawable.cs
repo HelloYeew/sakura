@@ -466,6 +466,9 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
     public RectangleF DrawRectangle { get; protected set; }
     public Vector2 DrawSize { get; private set; }
 
+    public float DrawWidth => DrawSize.X;
+    public float DrawHeight => DrawSize.Y;
+
     /// <summary>
     /// The affine screen-space transform of this drawable. 2D rendering never needs a full
     /// 4x4 matrix; a 3x2 affine matrix is roughly half the storage and FLOPs per concatenation.
