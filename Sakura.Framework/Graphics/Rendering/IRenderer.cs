@@ -46,6 +46,23 @@ public interface IRenderer
     void PopMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<Vertex.Vertex> maskVertices = default);
 
     /// <summary>
+    /// Draws a soft edge effect (glow or shadow) shaped like a rounded parallelogram.
+    /// The effect is rendered as a single screen-space quad expanded by <paramref name="edgeRadius"/>
+    /// (and <paramref name="offset"/>) around the given shape; the SDF falloff is performed in the shader.
+    /// </summary>
+    /// <param name="maskCenter">Screen-space center of the container shape.</param>
+    /// <param name="maskHalfSize">Un-sheared half size of the container shape.</param>
+    /// <param name="shearX">Horizontal shear multiplier.</param>
+    /// <param name="cornerRadius">Corner radius of the shape (already including any roundness).</param>
+    /// <param name="edgeRadius">Soft falloff radius in screen pixels.</param>
+    /// <param name="offset">Screen-space offset of the effect from the shape center.</param>
+    /// <param name="color">Effect color (with alpha).</param>
+    /// <param name="glow">True for a glow (additive blending), false for a shadow (alpha blending).</param>
+    /// <param name="hollow">If true, the interior covered by the container is cut out.</param>
+    /// <param name="quadVertices">Four vertices (TL, TR, BR, BL) of the expanded effect quad.</param>
+    void DrawEdgeEffect(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float edgeRadius, Vector2 offset, Color color, bool glow, bool hollow, ReadOnlySpan<Vertex.Vertex> quadVertices);
+
+    /// <summary>
     /// Sets the blend mode for subsequent draw calls. This will affect how colors are blended when drawing.
     /// </summary>
     /// <param name="blendingMode">The blend mode to set.</param>

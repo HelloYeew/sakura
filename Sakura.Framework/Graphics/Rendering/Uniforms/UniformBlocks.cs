@@ -26,18 +26,21 @@ namespace Sakura.Framework.Graphics.Rendering.Uniforms;
 [StructLayout(LayoutKind.Explicit, Size = 64)]
 public struct ProjectionBlock
 {
-    /// <summary>The orthographic projection matrix. Maps to <c>mat4 u_Projection</c>.</summary>
+    /// <summary>
+    /// The orthographic projection matrix. Maps to <c>mat4 u_Projection</c>.
+    /// </summary>
     [FieldOffset(0)] public Matrix4x4 Projection;
 }
 
 /// <summary>
 /// Masking + border state for the main shader. Matches <c>MaskBlock</c> in shader.frag.
 /// </summary>
-[StructLayout(LayoutKind.Explicit, Size = 64)]
+[StructLayout(LayoutKind.Explicit, Size = 80)]
 public struct MaskBlock
 {
     /// <summary>
     /// Border colour (premultiplied as elsewhere). Maps to <c>vec4 u_BorderColor</c>.
+    /// Also reused as the edge-effect colour during the edge-effect pass.
     /// </summary>
     [FieldOffset(0)]
     public Vector4 BorderColor;
@@ -83,6 +86,37 @@ public struct MaskBlock
     /// </summary>
     [FieldOffset(48)]
     public int IsBorder;
+
+    /// <summary>
+    /// Edge-effect pass enabled (0/1). Maps to <c>int u_IsEdgeEffect</c> (GLSL bool).
+    /// </summary>
+    [FieldOffset(52)]
+    public int IsEdgeEffect;
+
+    /// <summary>
+    /// Edge-effect soft falloff radius in screen pixels. Maps to <c>float u_EdgeRadius</c>.
+    /// </summary>
+    [FieldOffset(56)]
+    public float EdgeRadius;
+
+    /// <summary>
+    /// Edge-effect offset in screen space (added to the shape centre). Maps to <c>vec2 u_EdgeOffset</c>.
+    /// Aligned to 8 bytes per std140; placed at offset 64 so it does not straddle a 16-byte boundary.
+    /// </summary>
+    [FieldOffset(64)]
+    public Vector2 EdgeOffset;
+
+    /// <summary>
+    /// Hollow edge effect (cut out the interior) (0/1). Maps to <c>int u_EdgeHollow</c> (GLSL bool).
+    /// </summary>
+    [FieldOffset(72)]
+    public int EdgeHollow;
+
+    /// <summary>
+    /// Glow (1) vs shadow (0) edge effect. Affects falloff shaping. Maps to <c>int u_EdgeGlow</c> (GLSL bool).
+    /// </summary>
+    [FieldOffset(76)]
+    public int EdgeGlow;
 }
 
 /// <summary>

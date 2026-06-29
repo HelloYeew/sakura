@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using Sakura.Framework.Graphics.Colors;
+using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Statistic;
@@ -32,6 +33,8 @@ public class ContainerDrawNode : DrawNode
     public Vector2 DrawSize { get; private set; }
     public Matrix3x2 ModelMatrix { get; private set; }
 
+    public EdgeEffectParameters EdgeEffect { get; private set; }
+
     public override void ApplyState(Drawable source)
     {
         base.ApplyState(source);
@@ -43,6 +46,7 @@ public class ContainerDrawNode : DrawNode
         ShearX = container.Shear.X;
         DrawSize = container.DrawSize;
         ModelMatrix = container.ModelMatrix;
+        EdgeEffect = container.EdgeEffect;
     }
 
     public override void Draw(IRenderer renderer)
@@ -59,6 +63,18 @@ public class ContainerDrawNode : DrawNode
             Vector2.Distance(topLeft, topRight) / 2f,
             Math.Abs(bottomLeft.Y - topLeft.Y) / 2f
         );
+
+        // Local-to-screen scale factors, used to convert local-pixel edge-effect parameters
+        // (radius, roundness, corner radius, offset) into screen space.
+        float scaleX = DrawSize.X > 0 ? screenHalfSize.X / (DrawSize.X * 0.5f) : 1f;
+        float scaleY = DrawSize.Y > 0 ? screenHalfSize.Y / (DrawSize.Y * 0.5f) : 1f;
+        float uniformScale = (scaleX + scaleY) * 0.5f;
+
+        bool hasEdgeEffect = EdgeEffect.Type != EdgeEffectType.None && EdgeEffect.Colour.A > 0;
+
+        // Shadows render behind the container's contents.
+        if (hasEdgeEffect && EdgeEffect.Type == EdgeEffectType.Shadow)
+            drawEdgeEffect(renderer, screenCenter, screenHalfSize, scaleX, scaleY, uniformScale);
 
         if (Masking)
             renderer.PushMask(screenCenter, screenHalfSize, ShearX, CornerRadius);
@@ -87,5 +103,66 @@ public class ContainerDrawNode : DrawNode
 
         if (Masking)
             renderer.PopMask(screenCenter, screenHalfSize, ShearX, CornerRadius, BorderThickness, BorderColor, Vertices);
+
+        // Glows render on top of the container's contents.
+        if (hasEdgeEffect && EdgeEffect.Type == EdgeEffectType.Glow)
+            drawEdgeEffect(renderer, screenCenter, screenHalfSize, scaleX, scaleY, uniformScale);
+    }
+
+    /// <summary>
+    /// Builds the expanded screen-space quad and submits the edge effect to the renderer.
+    /// The quad covers the container shape inflated by the (screen-space) edge radius so that the
+    /// shader's signed-distance falloff has room to render; the shape itself is shaded in the fragment shader.
+    /// </summary>
+    private void drawEdgeEffect(IRenderer renderer, Vector2 screenCenter, Vector2 screenHalfSize, float scaleX, float scaleY, float uniformScale)
+    {
+        float edgeRadiusScreen = Math.Max(0f, EdgeEffect.Radius) * uniformScale;
+
+        // The effect must follow the container's exact corner curvature, so it uses the SAME
+        // corner-radius convention as the masking/border path (unscaled CornerRadius against the
+        // screen-space half size). Roundness is an optional adjustment expressed in the same units.
+        // Using the scaled value here would make the glow corners visibly rounder than the box.
+        float cornerRadius = CornerRadius + Math.Max(0f, EdgeEffect.Roundness);
+
+        Vector2 offsetScreen = new Vector2(EdgeEffect.Offset.X * scaleX, EdgeEffect.Offset.Y * scaleY);
+
+        // Inflate the half-size by the falloff radius so the quad covers the soft edge.
+        Vector2 expandedHalf = new Vector2(
+            screenHalfSize.X + edgeRadiusScreen,
+            screenHalfSize.Y + edgeRadiusScreen
+        );
+
+        Vector2 quadCenter = screenCenter + offsetScreen;
+
+        // Account for shear when laying out the corners (matches the masking shape's shear handling).
+        float skew = ShearX * expandedHalf.Y;
+
+        Vector2 tl = new Vector2(quadCenter.X - expandedHalf.X + skew, quadCenter.Y - expandedHalf.Y);
+        Vector2 tr = new Vector2(quadCenter.X + expandedHalf.X + skew, quadCenter.Y - expandedHalf.Y);
+        Vector2 br = new Vector2(quadCenter.X + expandedHalf.X - skew, quadCenter.Y + expandedHalf.Y);
+        Vector2 bl = new Vector2(quadCenter.X - expandedHalf.X - skew, quadCenter.Y + expandedHalf.Y);
+
+        var quad = new Vertex.Vertex[4];
+        quad[0] = new Vertex.Vertex { Position = tl, TexCoords = new Vector2(0, 0), Color = new Vector4(1, 1, 1, 1) };
+        quad[1] = new Vertex.Vertex { Position = tr, TexCoords = new Vector2(1, 0), Color = new Vector4(1, 1, 1, 1) };
+        quad[2] = new Vertex.Vertex { Position = br, TexCoords = new Vector2(1, 1), Color = new Vector4(1, 1, 1, 1) };
+        quad[3] = new Vertex.Vertex { Position = bl, TexCoords = new Vector2(0, 1), Color = new Vector4(1, 1, 1, 1) };
+
+        // Premultiply the effect alpha by the container's overall draw alpha so it fades with the container.
+        var color = EdgeEffect.Colour;
+        if (DrawAlpha < 1f)
+            color = Color.FromArgb((int)Math.Clamp(color.A * DrawAlpha, 0f, 255f), color);
+
+        renderer.DrawEdgeEffect(
+            screenCenter,
+            screenHalfSize,
+            ShearX,
+            cornerRadius,
+            edgeRadiusScreen,
+            offsetScreen,
+            color,
+            EdgeEffect.Type == EdgeEffectType.Glow,
+            EdgeEffect.Hollow,
+            quad);
     }
 }

@@ -23,6 +23,11 @@ layout(set = 1, binding = 0) uniform sampler2D u_Textures[8];
 //   float u_BorderThickness(offset 40)
 //   int u_IsMasking (offset 44)
 //   int u_IsBorder (offset 48)
+//   int u_IsEdgeEffect (offset 52)
+//   float u_EdgeRadius (offset 56)
+//   vec2 u_EdgeOffset (offset 64)
+//   int u_EdgeHollow (offset 72)
+//   int u_EdgeGlow (offset 76)
 layout(set = 0, binding = 1, std140) uniform MaskBlock
 {
     vec4 u_BorderColor;
@@ -33,10 +38,48 @@ layout(set = 0, binding = 1, std140) uniform MaskBlock
     float u_BorderThickness;
     int u_IsMasking;
     int u_IsBorder;
+    int u_IsEdgeEffect;
+    float u_EdgeRadius;
+    vec2 u_EdgeOffset;
+    int u_EdgeHollow;
+    int u_EdgeGlow;
 };
 
 void main()
 {
+    if (u_IsEdgeEffect != 0)
+    {
+        // The edge effect is shaped like the container's rounded parallelogram, optionally offset.
+        vec2 posInRect = v_FragPos - (u_MaskCenter + u_EdgeOffset);
+        float sk = u_ShearX * u_MaskHalfSize.y;
+
+        float dist = sdRoundParallelogram(posInRect, u_MaskHalfSize, sk, u_CornerRadius);
+
+        // Soft falloff: alpha is 1 inside the shape and fades to 0 over u_EdgeRadius outside it.
+        float r = max(u_EdgeRadius, 0.5);
+        float alpha = 1.0 - smoothstep(0.0, r, dist);
+
+        // Hollow effects cut out the interior, leaving only the surrounding ring.
+        if (u_EdgeHollow != 0)
+        {
+            // Distance to the (un-offset) container shape; remove anything covered by the container.
+            vec2 innerPos = v_FragPos - u_MaskCenter;
+            float innerDist = sdRoundParallelogram(innerPos, u_MaskHalfSize, sk, u_CornerRadius);
+            alpha *= smoothstep(-0.5, 0.5, innerDist);
+        }
+
+        vec4 finalColor = u_BorderColor;
+        finalColor.a *= alpha;
+        if (finalColor.a <= 0.0) discard;
+
+        FragColor = finalColor;
+
+        // Edge effects still honour any enclosing parent mask.
+        if (!applyClipping(v_FragPos, v_ClipData, v_ClipShearX, v_ClipRadius, FragColor))
+            discard;
+        return;
+    }
+
     if (u_IsBorder != 0)
     {
         vec2 posInRect = v_FragPos - u_MaskCenter;

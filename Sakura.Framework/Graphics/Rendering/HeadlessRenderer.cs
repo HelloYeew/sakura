@@ -75,6 +75,11 @@ public class HeadlessRenderer : IRenderer
 
     }
 
+    public void DrawEdgeEffect(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float edgeRadius, Vector2 offset, Color color, bool glow, bool hollow, ReadOnlySpan<Vertex.Vertex> quadVertices)
+    {
+
+    }
+
     public void SetBlendMode(BlendingMode blendingMode)
     {
 
