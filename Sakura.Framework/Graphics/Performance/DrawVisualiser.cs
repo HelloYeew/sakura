@@ -411,10 +411,19 @@ public partial class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVi
 
     public override bool OnKeyDown(KeyEvent e)
     {
-        if (isInspecting && e.Key == Key.Escape)
+        if (e.Key == Key.Escape)
         {
-            ToggleInspectMode();
-            return true;
+            if (isInspecting)
+            {
+                ToggleInspectMode();
+                return true;
+            }
+
+            if (State == Visibility.Visible)
+            {
+                Hide();
+                return true;
+            }
         }
 
         return base.OnKeyDown(e);

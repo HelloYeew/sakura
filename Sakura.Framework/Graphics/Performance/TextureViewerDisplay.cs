@@ -370,7 +370,7 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
 
     public override bool OnKeyDown(KeyEvent e)
     {
-        if (e.Key == Key.Escape)
+        if (State == Visibility.Visible && e.Key == Key.Escape)
         {
             Hide();
             return true;
