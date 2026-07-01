@@ -3,6 +3,7 @@
 
 using System;
 using Sakura.Framework.Graphics.Drawables;
+using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
 
@@ -19,6 +20,20 @@ public partial class Screen : Container
     public ScreenStack? Stack { get; internal set; }
 
     private ScreenState state = ScreenState.Idle;
+
+    /// <summary>
+    /// Whether the most recent <see cref="OnSuspending"/> defined its own transition. When it did
+    /// not, the stack hides this screen while it is suspended so it doesn't remain visible behind
+    /// the screen pushed on top of it.
+    /// </summary>
+    private bool suspendTransitionDefined;
+
+    public Screen()
+    {
+        Anchor = Anchor.Centre;
+        Origin = Anchor.Centre;
+        RelativeSizeAxes = Axes.Both;
+    }
 
     /// <summary>
     /// The current state of the screen.
@@ -104,6 +119,32 @@ public partial class Screen : Container
 
         State = ScreenState.NotCurrent;
         OnSuspending(next);
+
+        suspendTransitionDefined = GetLatestTransformEndTime() > Clock.CurrentTime;
+    }
+
+    /// <summary>
+    /// Called by the stack once the incoming screen has entered. If this suspended screen defined
+    /// no suspend transition of its own, it is hidden so it doesn't stay visible behind the new
+    /// screen. Hiding is deferred until the incoming screen finishes its enter transition so that
+    /// transition still plays over this screen.
+    /// </summary>
+    /// <param name="incoming">The screen that was just pushed on top of this one.</param>
+    internal void HideBehindIfNoTransition(Screen incoming)
+    {
+        if (suspendTransitionDefined)
+            return;
+
+        double enterDuration = incoming.GetLatestTransformEndTime() - Clock.CurrentTime;
+
+        if (enterDuration <= 0)
+            Hide();
+        else
+            Scheduler.AddDelayed(() =>
+            {
+                if (State == ScreenState.NotCurrent)
+                    Hide();
+            }, enterDuration);
     }
 
     internal void InternalResume(Screen? last)
@@ -113,6 +154,9 @@ public partial class Screen : Container
 
         State = ScreenState.Active;
         OnResuming(last);
+
+        if (GetLatestTransformEndTime() <= Clock.CurrentTime)
+            Show();
     }
 
     internal void InternalExit(Screen? next)

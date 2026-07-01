@@ -166,9 +166,55 @@ public partial class TestScreenStack : TestScene
         AddAssert("New screen is null", () => reportedNewScreen == null);
     }
 
+    [Test]
+    public void TestScreenDefaultsToFullScreen()
+    {
+        PlainScreen screen = null!;
+
+        AddStep("Push plain screen", () => stack.Push(screen = new PlainScreen()));
+        AddAssert("RelativeSizeAxes is Both", () => screen.RelativeSizeAxes == Axes.Both);
+        AddAssert("Anchor is Centre", () => screen.Anchor == Anchor.Centre);
+        AddAssert("Origin is Centre", () => screen.Origin == Anchor.Centre);
+    }
+
+    [Test]
+    public void TestSuspendedScreenHiddenByDefault()
+    {
+        PlainScreen first = null!;
+        PlainScreen second = null!;
+
+        AddStep("Push first plain screen", () => stack.Push(first = new PlainScreen()));
+        AddAssert("First screen visible", () => !first.IsHidden);
+
+        // Neither screen defines a suspend transition, so the stack should hide the one behind.
+        AddStep("Push second plain screen", () => stack.Push(second = new PlainScreen()));
+        AddAssert("Suspended screen hidden", () => first.Alpha == 0);
+        AddAssert("New screen visible", () => !second.IsHidden);
+
+        AddStep("Exit second screen", () => stack.Exit());
+        AddAssert("Resumed screen visible again", () => !first.IsHidden);
+    }
+
     private void addWaitForTransition()
     {
         AddWaitStep("Wait for transition", 700);
+    }
+
+    private partial class PlainScreen : Screen
+    {
+        public override void Load()
+        {
+            base.Load();
+
+            Add(new Box
+            {
+                RelativeSizeAxes = Axes.Both,
+                Size = new Vector2(1),
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Color = ColorExtensions.GetRandomColor()
+            });
+        }
     }
 
     private partial class DummyScreen : Screen
