@@ -49,6 +49,8 @@ public partial class ScreenStack : Container
 
         screen.InternalEnter(lastScreen);
 
+        lastScreen?.HideBehindIfNoTransition(screen);
+
         Logger.Verbose($"📺 Screen stack {this} pushed screen {screen} (depth: {screenStack.Count}).");
 
         OnScreenChange?.Invoke(lastScreen, screen);

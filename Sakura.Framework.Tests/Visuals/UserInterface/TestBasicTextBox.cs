@@ -444,4 +444,46 @@ public partial class TestBasicTextBox : ManualInputManagerTestScene
         AddAssert("Appended after trailing spaces", () => textBox.Text.Value == spaced + "!");
         AddAssert("Caret at new end", () => textBox.CaretIndex == (spaced + "!").Length);
     }
+
+    [Test]
+    public void TestClickCaretPlacementAcrossSpace()
+    {
+        const string text = "hello world";
+
+        AddStep("Focus and type", () =>
+        {
+            InputManager.MoveMouseTo(textBox);
+            InputManager.Click(MouseButton.Left);
+            InputManager.TypeText(text);
+        });
+
+        AddAssert("Text typed with space intact", () => textBox.Text.Value == text);
+
+        if (IsVisualRunner)
+        {
+            AddStep("Click on start of 'world' (index 6)", () =>
+            {
+                var pos = textBox.GetScreenPositionForCaretIndex(6);
+                InputManager.MoveMouseTo(new Vector2(pos.X, textBox.DrawRectangle.Center.Y));
+                InputManager.Click(MouseButton.Left);
+            });
+            AddAssert("Caret placed just after the space", () => textBox.CaretIndex == 6);
+
+            AddStep("Click on start of 'hello' (index 0)", () =>
+            {
+                var pos = textBox.GetScreenPositionForCaretIndex(0);
+                InputManager.MoveMouseTo(new Vector2(pos.X, textBox.DrawRectangle.Center.Y));
+                InputManager.Click(MouseButton.Left);
+            });
+            AddAssert("Caret placed at start", () => textBox.CaretIndex == 0);
+
+            AddStep("Click at end of text", () =>
+            {
+                var pos = textBox.GetScreenPositionForCaretIndex(text.Length);
+                InputManager.MoveMouseTo(new Vector2(pos.X, textBox.DrawRectangle.Center.Y));
+                InputManager.Click(MouseButton.Left);
+            });
+            AddAssert("Caret placed at end", () => textBox.CaretIndex == text.Length);
+        }
+    }
 }

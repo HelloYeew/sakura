@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System.Linq;
 using NUnit.Framework;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
@@ -52,16 +53,11 @@ public partial class TestBasicDropdown : ManualInputManagerTestScene
     {
         AddAssert("No value selected initially", () => dropdown.Current.Value == null);
 
-        AddStep("Move to dropdown header", () => InputManager.MoveMouseTo(dropdown));
+        AddStep("Move to dropdown header", () => InputManager.MoveMouseTo(dropdown.Header));
         AddStep("Click dropdown to open", () => InputManager.Click(MouseButton.Left));
         AddWaitStep("Wait a bit", 50);
 
-        // the header is 30 pixels high. B is the second item (index 1).
-        // y offset = header height + (item Height * index) + (item Height / 2 for center)
-        // offset = 30 + (30 * 1) + 15 = 75
-        AddStep("Move to B item", () =>
-            InputManager.MoveMouseTo(new Vector2(dropdown.DrawRectangle.X + 100, dropdown.DrawRectangle.Y + 75)));
-
+        AddStep("Move to B item", () => InputManager.MoveMouseTo(dropdown.MenuItems[1]));
         AddStep("Click B", () => InputManager.Click(MouseButton.Left));
 
         AddAssert("B was selected", () => dropdown.Current.Value == "B");
@@ -72,12 +68,10 @@ public partial class TestBasicDropdown : ManualInputManagerTestScene
     {
         AddStep("Change items", () => dropdown.Items = new[] { "X", "Y", "Z" });
 
-        AddStep("Move to dropdown header", () => InputManager.MoveMouseTo(dropdown));
+        AddStep("Move to dropdown header", () => InputManager.MoveMouseTo(dropdown.Header));
         AddStep("Click dropdown to open", () => InputManager.Click(MouseButton.Left));
 
-        AddStep("Move to Y item", () =>
-            InputManager.MoveMouseTo(new Vector2(dropdown.DrawRectangle.X + 100, dropdown.DrawRectangle.Y + 75)));
-
+        AddStep("Move to Y item", () => InputManager.MoveMouseTo(dropdown.MenuItems[1]));
         AddStep("Click Y", () => InputManager.Click(MouseButton.Left));
 
         AddAssert("Y was selected", () => dropdown.Current.Value == "Y");
@@ -86,7 +80,7 @@ public partial class TestBasicDropdown : ManualInputManagerTestScene
     [Test]
     public void TestChangeItemsDuringOpen()
     {
-        AddStep("Move to dropdown header", () => InputManager.MoveMouseTo(dropdown));
+        AddStep("Move to dropdown header", () => InputManager.MoveMouseTo(dropdown.Header));
         AddStep("Click dropdown to open", () => InputManager.Click(MouseButton.Left));
 
         AddStep("Change items while open", () => dropdown.Items = new[]
@@ -94,22 +88,50 @@ public partial class TestBasicDropdown : ManualInputManagerTestScene
             "X", "Y", "Z"
         });
 
-        AddStep("Move to Y item", () =>
-            InputManager.MoveMouseTo(new Vector2(dropdown.DrawRectangle.X + 100, dropdown.DrawRectangle.Y + 75)));
-
+        AddStep("Move to Y item", () => InputManager.MoveMouseTo(dropdown.MenuItems[1]));
         AddStep("Click Y", () => InputManager.Click(MouseButton.Left));
 
         AddAssert("Y was selected", () => dropdown.Current.Value == "Y");
-        AddStep("Move to dropdown header", () => InputManager.MoveMouseTo(dropdown));
+        AddStep("Move to dropdown header", () => InputManager.MoveMouseTo(dropdown.Header));
         AddStep("Click dropdown to open again", () => InputManager.Click(MouseButton.Left));
         AddStep("Add more items", () => dropdown.Items = new[]
         {
             "X", "Y", "Z", "W"
         });
-        AddStep("Move to W item", () =>
-            InputManager.MoveMouseTo(new Vector2(dropdown.DrawRectangle.X + 100, dropdown.DrawRectangle.Y + 135)));
+        AddStep("Move to W item", () => InputManager.MoveMouseTo(dropdown.MenuItems[3]));
         AddStep("Click W", () => InputManager.Click(MouseButton.Left));
 
         AddAssert("W was selected", () => dropdown.Current.Value == "W");
+    }
+
+    [Test]
+    public void TestManyItemsClampHeight()
+    {
+        AddStep("Add many items", () => dropdown.Items = Enumerable.Range(0, 20).Select(i => $"Item {i}").ToArray());
+
+        AddStep("Move to dropdown header", () => InputManager.MoveMouseTo(dropdown.Header));
+        AddStep("Click dropdown to open", () => InputManager.Click(MouseButton.Left));
+        AddWaitStep("Wait a bit", 5);
+
+        AddAssert("Menu height is clamped to MaxHeight", () =>
+            dropdown.DrawSize.Y <= 30 + dropdown.MaxHeight + 1);
+    }
+
+    [Test]
+    public void TestScrollToSelectBottomItem()
+    {
+        AddStep("Add many items", () => dropdown.Items = Enumerable.Range(0, 20).Select(i => $"Item {i}").ToArray());
+
+        AddStep("Move to dropdown header", () => InputManager.MoveMouseTo(dropdown.Header));
+        AddStep("Click dropdown to open", () => InputManager.Click(MouseButton.Left));
+        AddWaitStep("Wait a bit", 5);
+
+        AddStep("Scroll last item into view", () => dropdown.ScrollItemIntoView(19));
+        AddWaitStep("Wait for scroll to settle", 100);
+
+        AddStep("Move to last item", () => InputManager.MoveMouseTo(dropdown.MenuItems[19]));
+        AddStep("Click last item", () => InputManager.Click(MouseButton.Left));
+
+        AddAssert("Scrolled-to item was selected", () => dropdown.Current.Value == "Item 19");
     }
 }
