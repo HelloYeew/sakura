@@ -52,12 +52,6 @@ public partial class CursorContainer : Container, IRemoveFromDrawVisualiser
         }
     }
 
-    public override bool OnMouseMove(MouseEvent e)
-    {
-        lastScreenSpaceMousePosition = e.ScreenSpaceMousePosition;
-        return base.OnMouseMove(e);
-    }
-
     public override void Update()
     {
         base.Update();
