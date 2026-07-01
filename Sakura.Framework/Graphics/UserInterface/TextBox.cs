@@ -336,18 +336,25 @@ public abstract partial class TextBox : Container
         window?.StopTextInput();
     }
 
-    private int getIndexFromMouseX(float screenX)
+    /// <summary>
+    /// Returns the screen-space position of the caret slot for the character at <paramref name="index"/>.
+    /// Mainly used for testing so tests can click precisely on a character boundary regardless of the
+    /// content scaling applied by the host.
+    /// </summary>
+    public Vector2 GetScreenPositionForCaretIndex(int index)
+        => SpriteText.ToScreenSpace(SpriteText.GetCharacterPosition(index));
+
+    private int getIndexFromMouseX(Vector2 screenPos)
     {
-        float localX = screenX - DrawRectangle.X;
-        float textSpaceX = localX - TextContainer.X;
+        float localX = SpriteText.ToLocalSpace(screenPos).X;
 
         int closestIndex = 0;
         float minDistance = float.MaxValue;
 
         for (int i = 0; i <= Text.Value.Length; i++)
         {
-            float charX = SpriteText.Margin.Left + SpriteText.GetCharacterPosition(i).X;
-            float distance = Math.Abs(textSpaceX - charX);
+            float charX = SpriteText.GetCharacterPosition(i).X;
+            float distance = Math.Abs(localX - charX);
 
             if (distance < minDistance)
             {
@@ -367,7 +374,7 @@ public abstract partial class TextBox : Container
         {
             if (e.Clicks == 1)
             {
-                caretIndex = getIndexFromMouseX(e.ScreenSpaceMousePosition.X);
+                caretIndex = getIndexFromMouseX(e.ScreenSpaceMousePosition);
                 if (!shiftHeld)
                     selectionStart = caretIndex;
                 caretMoved();
@@ -382,7 +389,7 @@ public abstract partial class TextBox : Container
 
     public override bool OnDrag(MouseEvent e)
     {
-        caretIndex = getIndexFromMouseX(e.ScreenSpaceMousePosition.X);
+        caretIndex = getIndexFromMouseX(e.ScreenSpaceMousePosition);
         caretMoved();
         return true;
     }
@@ -643,7 +650,7 @@ public abstract partial class TextBox : Container
         if (e.Button == MouseButton.Left)
         {
             string text = Text.Value;
-            int index = Math.Clamp(getIndexFromMouseX(e.ScreenSpaceMousePosition.X), 0, text.Length);
+            int index = Math.Clamp(getIndexFromMouseX(e.ScreenSpaceMousePosition), 0, text.Length);
             int start = index, end = index;
 
             if (text.Length > 0)
