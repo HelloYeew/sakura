@@ -13,6 +13,7 @@ using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Graphics.Transforms;
+using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
@@ -163,6 +164,16 @@ public partial class AudioMixerVisualiser : FocusedOverlayContainer, IRemoveFrom
 
         currentTimeText.Text = $"{DateTime.Now:dd MMMM yyyy HH:mm:ss tt}";
         runningTimeText.Text = $"Has been running for {TimeSpan.FromSeconds(host.UpdateClock.CurrentTime / 1000):hh\\:mm\\:ss}";
+    }
+
+    public override bool OnKeyDown(KeyEvent e)
+    {
+        if (State == Visibility.Visible && e.Key == Key.Escape)
+        {
+            Hide();
+            return true;
+        }
+        return base.OnKeyDown(e);
     }
 
     protected override void PopIn() => this.FadeIn(200, Easing.OutQuint);

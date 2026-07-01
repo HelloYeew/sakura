@@ -228,7 +228,7 @@ public partial class GlobalStatisticsDisplay : FocusedOverlayContainer, IRemoveF
 
     public override bool OnKeyDown(KeyEvent e)
     {
-        if (e.Key == Key.Escape)
+        if (State == Visibility.Visible && e.Key == Key.Escape)
         {
             Hide();
             return true;
