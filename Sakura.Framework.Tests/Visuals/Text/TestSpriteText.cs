@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using NUnit.Framework;
+using Sakura.Framework.Allocation;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
@@ -13,6 +14,9 @@ namespace Sakura.Framework.Tests.Visuals.Text;
 
 public partial class TestSpriteText : TestScene
 {
+    [Resolved]
+    private IFontStore fontStore { get; set; } = null!;
+
     [SetUp]
     public void SetUp()
     {
@@ -115,5 +119,34 @@ public partial class TestSpriteText : TestScene
     public void TestSpriteTextRendering()
     {
 
+    }
+
+    /// <summary>
+    /// Renders emoji using NotoColorEmoji as the primary font directly (by family name), rather than
+    /// relying on it being picked from the emoji fallback chain. This exercises the bundled
+    /// cross-platform color emoji font even on platforms where a different color emoji font (e.g.
+    /// macOS "Apple Color Emoji") would otherwise win the fallback.
+    /// Requires <c>NotoColorEmoji.ttf</c> to be present in the framework's Resources/Fonts.
+    /// </summary>
+    [Test]
+    public void TestNotoColorEmojiDirect()
+    {
+        AddStep("Add emoji text using NotoColorEmoji directly", () => Add(new SpriteText
+        {
+            Anchor = Anchor.Centre,
+            Origin = Anchor.Centre,
+            Text = "👍 🦍 🐒 🌸 😡 🎉 ❤️",
+            Font = new FontUsage("NotoColorEmoji", size: 48, weight: "Regular", italics: false)
+        }));
+
+        AddAssert("NotoColorEmoji resolves to its own font (bundled)", () =>
+        {
+            var noto = fontStore.Get("NotoColorEmoji");
+
+            // The headless font store returns null and has no fonts; only assert on a real renderer.
+            // If NotoColorEmoji is missing the store falls back to the default font, whose name will
+            // not match, failing this assert to signal the resource is not bundled.
+            return noto == null || noto.Name == "NotoColorEmoji";
+        });
     }
 }

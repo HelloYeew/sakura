@@ -21,6 +21,13 @@ public class RendererFontStore : IFontStore
     private readonly TextureAtlas atlas;
     private readonly Dictionary<string, Lazy<Font>> fontCache = new Dictionary<string, Lazy<Font>>();
     private readonly List<string> fallbackFamilies = new List<string>();
+
+    /// <summary>
+    /// Fallback family names we have already warned about being unloaded, so the warning in
+    /// GetFallbacks fires once per family rather than on every text layout.
+    /// </summary>
+    private readonly HashSet<string> warnedMissingFallbacks = new HashSet<string>();
+
     public int CacheVersion { get; private set; }
 
     private Font defaultFont;
@@ -66,12 +73,7 @@ public class RendererFontStore : IFontStore
             AddFallbackFamily(family);
         }
 
-        // Use NotoEmoji for fallback of emoji and other symbols
-        // Since to use NotoColorEmoji need to change the freetype to compile with libpng so just use monochrome NotoEmoji for now
-        // which is still better than missing glyphs.
-        // TODO: Add support for color emoji in the future
-        loadFamily(resourceStorage, "NotoEmoji", hasItalics: false);
-        AddFallbackFamily("NotoEmoji");
+        loadEmojiFonts(resourceStorage);
 
         // Material Symbols for IconSprite
         // TODO: The material symbols font support variable font with different weights and italics, should add support in future.
@@ -109,6 +111,63 @@ public class RendererFontStore : IFontStore
         }
     }
 
+    /// <summary>
+    /// Registers emoji fallback fonts in priority order:
+    /// <list type="number">
+    /// <item>On desktop macOS, the system "Apple Color Emoji" font (best native appearance, always
+    /// up to date). Loaded from an absolute system path (skipped on iOS, which sandboxes system fonts)</item>
+    /// <item>The bundled cross-platform <c>NotoColorEmoji.ttf</c></item>
+    /// <item>Monochrome <c>NotoEmoji</c></item>
+    /// </list>
+    /// </summary>
+    private void loadEmojiFonts(Storage resourceStorage)
+    {
+        bool notoColorAvailable = resourceStorage.Exists("NotoColorEmoji-Regular.ttf");
+        if (notoColorAvailable)
+            AddFont(resourceStorage, "NotoColorEmoji-Regular.ttf", alias: "NotoColorEmoji");
+
+        Logger.Debug($"NotoColorEmoji.ttf is {(notoColorAvailable ? "available" : "not available")} in the resource storage.");
+        // TODO: Add but not rendered
+
+        bool colorEmojiInChain = false;
+
+        // macOS system Apple Color Emoji
+        if (RuntimeInfo.IsMacOS)
+        {
+            string[] appleEmojiPaths =
+            {
+                "/System/Library/Fonts/Apple Color Emoji.ttc",
+                "/Library/Fonts/Apple Color Emoji.ttc"
+            };
+
+            foreach (string path in appleEmojiPaths)
+            {
+                if (!File.Exists(path))
+                    continue;
+
+                AddFontFromFile(path, alias: "AppleColorEmoji");
+                AddFallbackFamily("AppleColorEmoji");
+                colorEmojiInChain = true;
+                Logger.Debug($"Using system Apple Color Emoji font from {path}");
+                break;
+            }
+        }
+
+        // NotoColorEmoji
+        if (!colorEmojiInChain && notoColorAvailable)
+        {
+            AddFallbackFamily("NotoColorEmoji");
+            colorEmojiInChain = true;
+        }
+
+        // Monochrome NotoEmoji
+        loadFamily(resourceStorage, "NotoEmoji", hasItalics: false);
+        AddFallbackFamily("NotoEmoji");
+
+        if (!colorEmojiInChain)
+            Logger.Debug("No color emoji font available; falling back to monochrome NotoEmoji.");
+    }
+
     public void LoadDefaultFont(Storage resourceStorage)
     {
         loadFrameworkFonts(resourceStorage);
@@ -139,6 +198,42 @@ public class RendererFontStore : IFontStore
             catch (Exception ex)
             {
                 Logger.Error($"Failed to load font {filename}: {ex.Message}");
+                return null!;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Adds a font from an absolute path on the local filesystem, rather than from a
+    /// <see cref="Storage"/>. Used for platform-provided system fonts (e.g. macOS "Apple Color Emoji").
+    /// Loading is deferred until the font is first requested.
+    /// </summary>
+    /// <param name="filePath">Absolute path to the font file.</param>
+    /// <param name="alias">Cache key for the font. If null, uses the filename without extension.</param>
+    public void AddFontFromFile(string filePath, string alias = null!)
+    {
+        string name = alias ?? Path.GetFileNameWithoutExtension(filePath);
+
+        fontCache[name] = new Lazy<Font>(() =>
+        {
+            try
+            {
+                if (!File.Exists(filePath))
+                {
+                    Logger.Error($"Could not find font file: {filePath}");
+                    return null!;
+                }
+
+                var font = new Font(name, File.ReadAllBytes(filePath), atlas);
+                Logger.Debug($"Loaded font {name} from {filePath}");
+
+                GlobalStatistics.Get<int>("Fonts", "Loaded Fonts").Value++;
+
+                return font;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Failed to load font {filePath}: {ex.Message}");
                 return null!;
             }
         });
@@ -225,7 +320,18 @@ public class RendererFontStore : IFontStore
             if (fallbackFont == defaultFont || fallbackFont == null)
                 fallbackFont = Get(family);
 
-            if (fallbackFont != null && fallbackFont != defaultFont && returnedFonts.Add(fallbackFont))
+            // A registered fallback family that resolves to the default font was never loaded (its
+            // file is missing, or AddFallbackFamily was called without a matching AddFont/loadFamily).
+            // Such a family contributes nothing to glyph coverage; warn once so the misconfiguration
+            // is visible instead of silently rendering missing glyphs as .notdef ("tofu").
+            if (fallbackFont == null || fallbackFont == defaultFont)
+            {
+                if (warnedMissingFallbacks.Add(family))
+                    Logger.Warning($"Fallback family '{family}' is registered but not loaded; it will not contribute glyphs. Did you forget to load it?");
+                continue;
+            }
+
+            if (returnedFonts.Add(fallbackFont))
                 yield return fallbackFont;
         }
     }
