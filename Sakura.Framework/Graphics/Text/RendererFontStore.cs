@@ -70,6 +70,7 @@ public class RendererFontStore : IFontStore
         // Since to use NotoColorEmoji need to change the freetype to compile with libpng so just use monochrome NotoEmoji for now
         // which is still better than missing glyphs.
         // TODO: Add support for color emoji in the future
+        loadFamily(resourceStorage, "NotoEmoji", hasItalics: false);
         AddFallbackFamily("NotoEmoji");
 
         // Material Symbols for IconSprite
