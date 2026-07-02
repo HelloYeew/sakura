@@ -16,7 +16,14 @@ public abstract class Transform : ITransform
 {
     public double StartTime { get; set; }
     public double EndTime { get; set; }
-    public Easing Easing { get; set; }
+
+    /// <summary>
+    /// The easing applied to this transform's progress. Accepts any built-in easing curve
+    /// (via implicit conversion from the <c>Easing</c> enum) as well as parameterised curves such as
+    /// <see cref="CubicBezierEasing"/> and <see cref="SpringEasing"/>.
+    /// </summary>
+    public EasingFunction Easing { get; set; }
+
     public bool IsLooping { get; set; }
 
     /// <summary>
@@ -95,7 +102,7 @@ public abstract class Transform : ITransform
             progress = (time - StartTime) / duration;
         }
 
-        return EasingFunctions.Apply(Easing, progress);
+        return Easing.Apply(progress);
     }
 }
 
