@@ -48,6 +48,14 @@ public class Font : IDisposable
     private readonly bool isVariable;
 
     /// <summary>
+    /// Native byte width of a FreeType <c>FT_Fixed</c> / <c>FT_ULong</c> (C <c>long</c>) for the loaded
+    /// native binary, detected at runtime from the axis records. The host ABI is not a reliable guide:
+    /// some bundled FreeType builds (observed under virtualized Windows) are LP64 (8-byte <c>long</c>)
+    /// even though 64-bit Windows itself is LLP64 (4-byte). Defaults to pointer width until probed.
+    /// </summary>
+    private int axisLongSize = IntPtr.Size;
+
+    /// <summary>
     /// Variation axes exposed by this face, in the face's native axis order (order matters for
     /// <see cref="FreeTypeVariations.FT_Set_Var_Design_Coordinates"/>). Empty for static fonts.
     /// </summary>
@@ -135,19 +143,24 @@ public class Font : IDisposable
             // FT_MM_Var has only uint/pointer fields, so it marshals correctly on every data model.
             var header = Marshal.PtrToStructure<FT_MM_Var>(mm);
 
+            if (header.num_axis == 0)
+                return;
+
             // FT_Var_Axis must *not* go through Marshal.PtrToStructure: its FT_Fixed/FT_ULong fields are
-            // C 'long' (8 bytes on macOS/Linux, 4 bytes on 64-bit Windows), and neither CLong/CULong
-            // nor a fixed-width struct reproduces that layout portably. Walk the records by hand using
-            // the platform C-long width. Native layout of each record:
+            // C 'long', whose width the native binary does not always match to the host ABI (some
+            // FreeType builds under virtualized Windows are LP64 with an 8-byte long even though Windows
+            // is normally LLP64). So detect the width from the first record, then walk the records by
+            // hand. Native layout of each record:
             //   name  : FT_String*     (pointer-sized)
-            //   min   : FT_Fixed 16.16 (CLongSize)
-            //   def   : FT_Fixed 16.16 (CLongSize)
-            //   max   : FT_Fixed 16.16 (CLongSize)
-            //   tag   : FT_ULong       (CLongSize) — packed 4-char axis tag
+            //   min   : FT_Fixed 16.16 (longSize)
+            //   def   : FT_Fixed 16.16 (longSize)
+            //   max   : FT_Fixed 16.16 (longSize)
+            //   tag   : FT_ULong       (longSize) — packed 4-char axis tag
             //   strid : FT_UInt        (4)
             // https://github.com/HelloYeew/sakura/pull/132
-            int longSize = FreeTypeVariations.CLongSize;
             int ptrSize = IntPtr.Size;
+            int longSize = detectAxisLongSize(header.axis);
+            axisLongSize = longSize;
             int recSize = alignUp(ptrSize + 4 * longSize + 4, ptrSize);
 
             for (int i = 0; i < header.num_axis; i++)
@@ -340,12 +353,12 @@ public class Font : IDisposable
         currentVariation = variation;
 
         int n = axisTable.Count;
-        int longSize = FreeTypeVariations.CLongSize;
+        int longSize = axisLongSize;
         var hbVariations = new HarfBuzzSharp.Variation[n];
 
         // FreeType wants an array of native FT_Fixed (C 'long', 16.16). Build it in unmanaged memory at
-        // the platform-correct element width instead of relying on CLong[] marshalling, which mis-sizes
-        // elements on 64-bit Windows.
+        // the native library's element width (detected in readVariationAxes) instead of relying on
+        // CLong[] marshalling, which mis-sizes elements.
         nint coords = Marshal.AllocHGlobal(n * longSize);
 
         try
@@ -392,6 +405,62 @@ public class Font : IDisposable
     /// Rounds <paramref name="value"/> up to the next multiple of <paramref name="alignment"/>
     /// </summary>
     private static int alignUp(int value, int alignment) => (value + alignment - 1) & ~(alignment - 1);
+
+    private static int? cachedAxisLongSize;
+
+    /// <summary>
+    /// Probes the native byte width of FreeType's <c>FT_Fixed</c> / <c>FT_ULong</c> (C <c>long</c>) by
+    /// reading the first axis record both ways and keeping the interpretation that yields a printable
+    /// 4-character axis tag together with a sane, in-range <c>min &lt;= default &lt;= max</c> ordering.
+    /// This tolerates native libraries whose <c>long</c> width disagrees with the host ABI (observed
+    /// with FreeType under virtualized Windows, which reported LP64 8-byte longs). The result is the
+    /// same for every face in a process, so it is cached after the first successful probe.
+    /// </summary>
+    private static int detectAxisLongSize(nint firstRecord)
+    {
+        if (cachedAxisLongSize is int cached)
+            return cached;
+
+        // Try pointer width first (8 on LP64), then 4 (LLP64). On 32-bit both are 4, so only probe once.
+        ReadOnlySpan<int> candidates = IntPtr.Size == 4 ? stackalloc[] { 4 } : stackalloc[] { IntPtr.Size, 4 };
+
+        foreach (int size in candidates)
+        {
+            nint fields = firstRecord + IntPtr.Size; // skip the FT_String* name
+
+            int min = Marshal.ReadInt32(fields, 0 * size);
+            int def = Marshal.ReadInt32(fields, 1 * size);
+            int max = Marshal.ReadInt32(fields, 2 * size);
+            uint tag = (uint)Marshal.ReadInt32(fields, 3 * size);
+
+            bool plausibleRange = min <= def && def <= max
+                                  && MathF.Abs(max / 65536f) < 100_000f
+                                  && MathF.Abs(min / 65536f) < 100_000f;
+
+            if (isPrintableTag(tag) && plausibleRange)
+            {
+                cachedAxisLongSize = size;
+                return size;
+            }
+        }
+
+        // Nothing validated; fall back to pointer width (correct for the common LP64 desktop case).
+        cachedAxisLongSize = IntPtr.Size;
+        return cachedAxisLongSize.Value;
+    }
+
+    /// <summary>True when all four bytes of a packed OpenType axis tag are printable ASCII.</summary>
+    private static bool isPrintableTag(uint tag)
+    {
+        for (int shift = 0; shift < 32; shift += 8)
+        {
+            byte b = (byte)(tag >> shift);
+            if (b < 0x20 || b > 0x7E)
+                return false;
+        }
+
+        return true;
+    }
 
     private List<TextGlyph> shapeRun(string text, float renderFontSize, float dpiScale, float baselineY, FontVariation variation, int runOffset, ref float cursorX)
     {

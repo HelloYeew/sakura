@@ -18,12 +18,12 @@ namespace Sakura.Framework.Graphics.Text;
 /// <remarks>
 /// <para>
 /// <b>Cross-platform integer widths.</b> <c>FT_Fixed</c> and <c>FT_ULong</c> are C
-/// <c>long</c>/<c>unsigned long</c>: 8 bytes on macOS/Linux (LP64) but 4 bytes on 64-bit Windows
-/// (LLP64). The <see cref="CLong"/>/<see cref="CULong"/> runtime types do not reproduce that
-/// width when used as struct fields read via <see cref="Marshal.PtrToStructure{T}(nint)"/> (they are
-/// pointer-sized there), which silently corrupts the axis records on Windows. Instead we expose the
-/// platform C-long width via <see cref="CLongSize"/> and walk the <c>FT_Var_Axis</c> records by hand
-/// (see <c>Font.readVariationAxes</c>), and pass coordinates as a hand-built native buffer.
+/// <c>long</c>/<c>unsigned long</c>, whose byte width (4 or 8) depends on the native binary's data
+/// model and, as observed under virtualized Windows, does not always match the host ABI. The
+/// <see cref="CLong"/>/<see cref="CULong"/> runtime types also fail to reproduce that width when used
+/// as struct fields via <see cref="Marshal.PtrToStructure{T}(nint)"/>. So we neither marshal
+/// <c>FT_Var_Axis</c> as a struct nor assume a width: <c>Font.readVariationAxes</c> detects the width
+/// at runtime, walks the axis records by hand, and passes coordinates as a hand-built native buffer.
 /// </para>
 /// </remarks>
 internal static class FreeTypeVariations
@@ -32,14 +32,6 @@ internal static class FreeTypeVariations
     /// FreeType face flag indicating a variable ("Multiple Masters") font.
     /// </summary>
     internal const long FT_FACE_FLAG_MULTIPLE_MASTERS = 1 << 8;
-
-    /// <summary>
-    /// Width in bytes of a C <c>long</c>/<c>unsigned long</c> (i.e. <c>FT_Fixed</c>/<c>FT_ULong</c>)
-    /// on the current platform: 4 on Windows (LLP64), otherwise pointer-sized (8 on 64-bit LP64,
-    /// 4 on 32-bit ILP32). Used to compute native FreeType struct offsets and coordinate buffers.
-    /// </summary>
-    [SuppressMessage("ReSharper", "InconsistentNaming")]
-    internal static readonly int CLongSize = RuntimeInfo.IsWindows ? 4 : IntPtr.Size;
 
     /// <summary>
     /// Retrieves the variation axis and named-instance descriptors for a variable font. The returned
@@ -51,8 +43,8 @@ internal static class FreeTypeVariations
     /// <summary>
     /// Sets the design coordinates for the current variation instance. <paramref name="coords"/> points
     /// at an array of <c>numCoords</c> native <c>FT_Fixed</c> (C <c>long</c>, 16.16 fixed-point) values
-    /// in the face's axis order. The caller owns the buffer and must size each element at
-    /// <see cref="CLongSize"/> bytes.
+    /// in the face's axis order. The caller owns the buffer and sizes each element at the width detected
+    /// by <c>Font.readVariationAxes</c>.
     /// </summary>
     [DllImport("freetype")]
     internal static extern FT_Error FT_Set_Var_Design_Coordinates(nint face, uint numCoords, nint coords);
