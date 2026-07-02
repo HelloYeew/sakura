@@ -215,7 +215,6 @@ public class RendererFontStore : IFontStore
             AddFont(resourceStorage, "NotoColorEmoji-Regular.ttf", alias: "NotoColorEmoji");
 
         Logger.Debug($"NotoColorEmoji.ttf is {(notoColorAvailable ? "available" : "not available")} in the resource storage.");
-        // TODO: Add but not rendered
 
         bool colorEmojiInChain = false;
 
@@ -244,7 +243,7 @@ public class RendererFontStore : IFontStore
         // NotoColorEmoji
         // Note for me in future: Still can't render COLRv1 version, please use normal bitmap version
         // https://github.com/googlefonts/noto-emoji/blob/main/fonts/NotoColorEmoji.ttf
-        if (!colorEmojiInChain && notoColorAvailable)
+        if (notoColorAvailable)
         {
             AddFallbackFamily("NotoColorEmoji");
             colorEmojiInChain = true;
