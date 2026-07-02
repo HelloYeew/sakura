@@ -18,12 +18,12 @@ namespace Sakura.Framework.Graphics.Text;
 /// <remarks>
 /// <para>
 /// <b>Cross-platform integer widths.</b> <c>FT_Fixed</c> and <c>FT_ULong</c> are C
-/// <c>long</c>/<c>unsigned long</c>: 8 bytes on macOS/Linux (LP64) but 4 bytes on 64-bit Windows
-/// (LLP64). We marshal them with the runtime types <see cref="CLong"/>/<see cref="CULong"/>, which
-/// map to the platform-correct C <c>long</c> width automatically, and let
-/// <see cref="Marshal.SizeOf{T}()"/>/<see cref="Marshal.PtrToStructure{T}(nint)"/> compute the axis
-/// record stride. This keeps the struct layout correct on both data models without <c>#if</c>
-/// branches.
+/// <c>long</c>/<c>unsigned long</c>, whose byte width (4 or 8) depends on the native binary's data
+/// model and, as observed under virtualized Windows, does not always match the host ABI. The
+/// <see cref="CLong"/>/<see cref="CULong"/> runtime types also fail to reproduce that width when used
+/// as struct fields via <see cref="Marshal.PtrToStructure{T}(nint)"/>. So we neither marshal
+/// <c>FT_Var_Axis</c> as a struct nor assume a width: <c>Font.readVariationAxes</c> detects the width
+/// at runtime, walks the axis records by hand, and passes coordinates as a hand-built native buffer.
 /// </para>
 /// </remarks>
 internal static class FreeTypeVariations
@@ -41,11 +41,13 @@ internal static class FreeTypeVariations
     internal static extern FT_Error FT_Get_MM_Var(nint face, out nint aMaster);
 
     /// <summary>
-    /// Sets the design coordinates for the current variation instance. <paramref name="coords"/> are
-    /// 16.16 fixed-point values in the face's axis order.
+    /// Sets the design coordinates for the current variation instance. <paramref name="coords"/> points
+    /// at an array of <c>numCoords</c> native <c>FT_Fixed</c> (C <c>long</c>, 16.16 fixed-point) values
+    /// in the face's axis order. The caller owns the buffer and sizes each element at the width detected
+    /// by <c>Font.readVariationAxes</c>.
     /// </summary>
     [DllImport("freetype")]
-    internal static extern FT_Error FT_Set_Var_Design_Coordinates(nint face, uint numCoords, [In] CLong[] coords);
+    internal static extern FT_Error FT_Set_Var_Design_Coordinates(nint face, uint numCoords, nint coords);
 
     /// <summary>
     /// Frees an <c>FT_MM_Var</c> previously returned by <see cref="FT_Get_MM_Var"/>.
@@ -74,9 +76,11 @@ internal static class FreeTypeVariations
 }
 
 /// <summary>
-/// Managed mirror of FreeType's <c>FT_MM_Var</c> header. <see cref="LayoutKind.Sequential"/> with the
-/// <see cref="CLong"/>/<see cref="CULong"/> fields in <see cref="FT_Var_Axis"/> keeps it correct on
-/// both LP64 and LLP64.
+/// Managed mirror of FreeType's <c>FT_MM_Var</c> header. It contains only <c>uint</c> and pointer
+/// fields (no C <c>long</c>), so <see cref="Marshal.PtrToStructure{T}(nint)"/> lays it out correctly
+/// on both LP64 and LLP64. The <c>FT_Var_Axis</c> records it points at are read by hand (see
+/// <c>Font.readVariationAxes</c>) because their <c>FT_Fixed</c>/<c>FT_ULong</c> fields are C
+/// <c>long</c> and cannot be marshalled portably as struct fields.
 /// </summary>
 [StructLayout(LayoutKind.Sequential)]
 [SuppressMessage("ReSharper", "InconsistentNaming")]
@@ -87,19 +91,4 @@ internal struct FT_MM_Var
     public uint num_namedstyles;
     public nint axis;        // FT_Var_Axis*
     public nint namedstyle;  // FT_Var_Named_Style*
-}
-
-/// <summary>
-/// Managed mirror of FreeType's <c>FT_Var_Axis</c>.
-/// </summary>
-[StructLayout(LayoutKind.Sequential)]
-[SuppressMessage("ReSharper", "InconsistentNaming")]
-internal struct FT_Var_Axis
-{
-    public nint name;        // FT_String*
-    public CLong minimum;    // FT_Fixed (16.16)
-    public CLong def;        // FT_Fixed (16.16)
-    public CLong maximum;    // FT_Fixed (16.16)
-    public CULong tag;       // FT_ULong — packed 4-char axis tag
-    public uint strid;
 }

@@ -48,6 +48,14 @@ public class Font : IDisposable
     private readonly bool isVariable;
 
     /// <summary>
+    /// Native byte width of a FreeType <c>FT_Fixed</c> / <c>FT_ULong</c> (C <c>long</c>) for the loaded
+    /// native binary, detected at runtime from the axis records. The host ABI is not a reliable guide:
+    /// some bundled FreeType builds (observed under virtualized Windows) are LP64 (8-byte <c>long</c>)
+    /// even though 64-bit Windows itself is LLP64 (4-byte). Defaults to pointer width until probed.
+    /// </summary>
+    private int axisLongSize = IntPtr.Size;
+
+    /// <summary>
     /// Variation axes exposed by this face, in the face's native axis order (order matters for
     /// <see cref="FreeTypeVariations.FT_Set_Var_Design_Coordinates"/>). Empty for static fonts.
     /// </summary>
@@ -132,19 +140,42 @@ public class Font : IDisposable
 
         try
         {
+            // FT_MM_Var has only uint/pointer fields, so it marshals correctly on every data model.
             var header = Marshal.PtrToStructure<FT_MM_Var>(mm);
-            int stride = Marshal.SizeOf<FT_Var_Axis>();
+
+            if (header.num_axis == 0)
+                return;
+
+            // FT_Var_Axis must *not* go through Marshal.PtrToStructure: its FT_Fixed/FT_ULong fields are
+            // C 'long', whose width the native binary does not always match to the host ABI (some
+            // FreeType builds under virtualized Windows are LP64 with an 8-byte long even though Windows
+            // is normally LLP64). So detect the width from the first record, then walk the records by
+            // hand. Native layout of each record:
+            //   name  : FT_String*     (pointer-sized)
+            //   min   : FT_Fixed 16.16 (longSize)
+            //   def   : FT_Fixed 16.16 (longSize)
+            //   max   : FT_Fixed 16.16 (longSize)
+            //   tag   : FT_ULong       (longSize) — packed 4-char axis tag
+            //   strid : FT_UInt        (4)
+            // https://github.com/HelloYeew/sakura/pull/132
+            int ptrSize = IntPtr.Size;
+            int longSize = detectAxisLongSize(header.axis);
+            axisLongSize = longSize;
+            int recSize = alignUp(ptrSize + 4 * longSize + 4, ptrSize);
 
             for (int i = 0; i < header.num_axis; i++)
             {
-                var a = Marshal.PtrToStructure<FT_Var_Axis>(header.axis + i * stride);
+                nint fields = header.axis + i * recSize + ptrSize; // skip the FT_String* name
 
-                uint tag = (uint)a.tag.Value;
-                float min = (long)a.minimum.Value / 65536f;
-                float def = (long)a.def.Value / 65536f;
-                float max = (long)a.maximum.Value / 65536f;
+                // The 16.16 fixed values fit in 32 bits (including negatives, e.g. GRAD -50) and every
+                // supported target is little-endian, so reading the low Int32 of each field is correct
+                // regardless of the C-long width — only the field offsets depend on it.
+                int min = Marshal.ReadInt32(fields, 0 * longSize);
+                int def = Marshal.ReadInt32(fields, 1 * longSize);
+                int max = Marshal.ReadInt32(fields, 2 * longSize);
+                uint tag = (uint)Marshal.ReadInt32(fields, 3 * longSize);
 
-                axisTable.Add(new FontAxis(tag, min, def, max));
+                axisTable.Add(new FontAxis(tag, min / 65536f, def / 65536f, max / 65536f));
             }
         }
         catch (Exception ex)
@@ -322,30 +353,113 @@ public class Font : IDisposable
         currentVariation = variation;
 
         int n = axisTable.Count;
-        var coords = new CLong[n];
+        int longSize = axisLongSize;
         var hbVariations = new HarfBuzzSharp.Variation[n];
 
-        for (int i = 0; i < n; i++)
+        // FreeType wants an array of native FT_Fixed (C 'long', 16.16). Build it in unmanaged memory at
+        // the native library's element width (detected in readVariationAxes) instead of relying on
+        // CLong[] marshalling, which mis-sizes elements.
+        nint coords = Marshal.AllocHGlobal(n * longSize);
+
+        try
         {
-            var axis = axisTable[i];
+            for (int i = 0; i < n; i++)
+            {
+                var axis = axisTable[i];
 
-            // Use the requested value for this axis if present, else the axis default. Unknown axes in
-            // the request are simply never matched here, so they're ignored as intended.
-            float value = variation.Get(axis.Tag) ?? axis.Default;
-            value = Math.Clamp(value, axis.Minimum, axis.Maximum);
+                // Use the requested value for this axis if present, else the axis default. Unknown axes
+                // in the request are simply never matched here, so they're ignored as intended.
+                float value = variation.Get(axis.Tag) ?? axis.Default;
 
-            // FreeType wants 16.16 fixed point in the face's axis order. All axis values are small
-            // (< ~1000), so value * 65536 fits comfortably in int on both LP64 and LLP64.
-            coords[i] = new CLong((int)MathF.Round(value * 65536f));
-            hbVariations[i] = new HarfBuzzSharp.Variation { Tag = axis.Tag, Value = value };
+                // Guard against a degenerate axis range (min > max) so a bad axis read can never throw
+                // ArgumentException here; Math.Clamp requires min <= max.
+                float lo = MathF.Min(axis.Minimum, axis.Maximum);
+                float hi = MathF.Max(axis.Minimum, axis.Maximum);
+                value = Math.Clamp(value, lo, hi);
+
+                // All axis values are small (< ~1000), so value * 65536 fits comfortably in int.
+                int fixedValue = (int)MathF.Round(value * 65536f);
+
+                if (longSize == 4)
+                    Marshal.WriteInt32(coords, i * longSize, fixedValue);
+                else
+                    Marshal.WriteInt64(coords, i * longSize, fixedValue);
+
+                hbVariations[i] = new HarfBuzzSharp.Variation { Tag = axis.Tag, Value = value };
+            }
+
+            var err = FreeTypeVariations.FT_Set_Var_Design_Coordinates(faceHandle, (uint)n, coords);
+            if (err != FT_Error.FT_Err_Ok)
+                Logger.Error($"FT_Set_Var_Design_Coordinates failed for font '{Name}': {err}");
         }
-
-        var err = FreeTypeVariations.FT_Set_Var_Design_Coordinates(faceHandle, (uint)n, coords);
-        if (err != FT_Error.FT_Err_Ok)
-            Logger.Error($"FT_Set_Var_Design_Coordinates failed for font '{Name}': {err}");
+        finally
+        {
+            Marshal.FreeHGlobal(coords);
+        }
 
         // Keep HarfBuzz in sync so shaped advances match the rasterized weight.
         hbFont.SetVariations(hbVariations);
+    }
+
+    /// <summary>
+    /// Rounds <paramref name="value"/> up to the next multiple of <paramref name="alignment"/>
+    /// </summary>
+    private static int alignUp(int value, int alignment) => (value + alignment - 1) & ~(alignment - 1);
+
+    private static int? cachedAxisLongSize;
+
+    /// <summary>
+    /// Probes the native byte width of FreeType's <c>FT_Fixed</c> / <c>FT_ULong</c> (C <c>long</c>) by
+    /// reading the first axis record both ways and keeping the interpretation that yields a printable
+    /// 4-character axis tag together with a sane, in-range <c>min &lt;= default &lt;= max</c> ordering.
+    /// This tolerates native libraries whose <c>long</c> width disagrees with the host ABI (observed
+    /// with FreeType under virtualized Windows, which reported LP64 8-byte longs). The result is the
+    /// same for every face in a process, so it is cached after the first successful probe.
+    /// </summary>
+    private static int detectAxisLongSize(nint firstRecord)
+    {
+        if (cachedAxisLongSize is int cached)
+            return cached;
+
+        // Try pointer width first (8 on LP64), then 4 (LLP64). On 32-bit both are 4, so only probe once.
+        ReadOnlySpan<int> candidates = IntPtr.Size == 4 ? stackalloc[] { 4 } : stackalloc[] { IntPtr.Size, 4 };
+
+        foreach (int size in candidates)
+        {
+            nint fields = firstRecord + IntPtr.Size; // skip the FT_String* name
+
+            int min = Marshal.ReadInt32(fields, 0 * size);
+            int def = Marshal.ReadInt32(fields, 1 * size);
+            int max = Marshal.ReadInt32(fields, 2 * size);
+            uint tag = (uint)Marshal.ReadInt32(fields, 3 * size);
+
+            bool plausibleRange = min <= def && def <= max
+                                  && MathF.Abs(max / 65536f) < 100_000f
+                                  && MathF.Abs(min / 65536f) < 100_000f;
+
+            if (isPrintableTag(tag) && plausibleRange)
+            {
+                cachedAxisLongSize = size;
+                return size;
+            }
+        }
+
+        // Nothing validated; fall back to pointer width (correct for the common LP64 desktop case).
+        cachedAxisLongSize = IntPtr.Size;
+        return cachedAxisLongSize.Value;
+    }
+
+    /// <summary>True when all four bytes of a packed OpenType axis tag are printable ASCII.</summary>
+    private static bool isPrintableTag(uint tag)
+    {
+        for (int shift = 0; shift < 32; shift += 8)
+        {
+            byte b = (byte)(tag >> shift);
+            if (b < 0x20 || b > 0x7E)
+                return false;
+        }
+
+        return true;
     }
 
     private List<TextGlyph> shapeRun(string text, float renderFontSize, float dpiScale, float baselineY, FontVariation variation, int runOffset, ref float cursorX)
