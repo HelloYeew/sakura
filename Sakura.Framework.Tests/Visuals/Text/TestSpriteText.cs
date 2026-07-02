@@ -121,13 +121,6 @@ public partial class TestSpriteText : TestScene
 
     }
 
-    /// <summary>
-    /// Renders emoji using NotoColorEmoji as the primary font directly (by family name), rather than
-    /// relying on it being picked from the emoji fallback chain. This exercises the bundled
-    /// cross-platform color emoji font even on platforms where a different color emoji font (e.g.
-    /// macOS "Apple Color Emoji") would otherwise win the fallback.
-    /// Requires <c>NotoColorEmoji.ttf</c> to be present in the framework's Resources/Fonts.
-    /// </summary>
     [Test]
     public void TestNotoColorEmojiDirect()
     {
@@ -143,9 +136,7 @@ public partial class TestSpriteText : TestScene
         {
             var noto = fontStore.Get("NotoColorEmoji");
 
-            // The headless font store returns null and has no fonts; only assert on a real renderer.
-            // If NotoColorEmoji is missing the store falls back to the default font, whose name will
-            // not match, failing this assert to signal the resource is not bundled.
+            // The headless font store returns null and has no fonts
             return noto == null || noto.Name == "NotoColorEmoji";
         });
     }
