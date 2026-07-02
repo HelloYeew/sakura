@@ -342,16 +342,19 @@ public partial class SpriteText : Drawable
             availSpace.Y * originRel.Y
         );
 
-        // If the caret is at the very end of the string
-        if (index >= shapedText.Glyphs.Count)
+        // `index` is a UTF-16 index into the source text (what a caret uses), NOT a glyph-list
+        // index. One glyph can span several UTF-16 units (an emoji surrogate pair) or vice versa, so
+        // we locate the glyph whose cluster starts at/after `index`, the caret sits at its left edge.
+        var glyphs = shapedText.Glyphs;
+        for (int gi = 0; gi < glyphs.Count; gi++)
         {
-            var lastGlyph = shapedText.Glyphs[^1];
-            return new Vector2(lastGlyph.Position.X + lastGlyph.Size.X, lastGlyph.Position.Y) + textOffset;
+            if (glyphs[gi].StartIndex >= index)
+                return new Vector2(glyphs[gi].Position.X, glyphs[gi].Position.Y) + textOffset;
         }
 
-        // Caret is before or in the middle of the string
-        var glyph = shapedText.Glyphs[index];
-        return new Vector2(glyph.Position.X, glyph.Position.Y) + textOffset;
+        // Index is at (or past) the end of the text: place the caret at the right edge of the last glyph.
+        var lastGlyph = glyphs[^1];
+        return new Vector2(lastGlyph.Position.X + lastGlyph.Size.X, lastGlyph.Position.Y) + textOffset;
     }
 
     public class SpriteTextDrawNode : DrawNode

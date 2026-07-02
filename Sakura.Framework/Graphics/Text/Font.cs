@@ -198,9 +198,21 @@ public class Font : IDisposable
         int i = 0;
         while (i < text.Length)
         {
-            // Handle surrogate pairs properly (e.g., Emojis)
-            int charLen = char.IsSurrogatePair(text, i) ? 2 : 1;
-            uint codepoint = (uint)char.ConvertToUtf32(text, i);
+            // Handle surrogate pairs properly (e.g., Emojis). Guard against a lone/unpaired surrogate
+            // (which can briefly occur mid-edit, e.g. a caret split across an emoji): treat it as a
+            // single code unit and let it resolve to .notdef instead of throwing in ConvertToUtf32.
+            int charLen;
+            uint codepoint;
+            if (char.IsHighSurrogate(text[i]) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
+            {
+                codepoint = (uint)char.ConvertToUtf32(text[i], text[i + 1]);
+                charLen = 2;
+            }
+            else
+            {
+                codepoint = text[i];
+                charLen = 1;
+            }
 
             // Find which font supports this codepoint
             Font assignedFont = this;
@@ -225,7 +237,7 @@ public class Font : IDisposable
                 if (currentFont != null)
                 {
                     string runText = text.Substring(currentRunStart, i - currentRunStart);
-                    var runGlyphs = currentFont.shapeRun(runText, renderFontSize, dpiScale, ascenderPx, variation, ref cursorX);
+                    var runGlyphs = currentFont.shapeRun(runText, renderFontSize, dpiScale, ascenderPx, variation, currentRunStart, ref cursorX);
                     glyphs.AddRange(runGlyphs);
                 }
                 currentFont = assignedFont;
@@ -239,7 +251,7 @@ public class Font : IDisposable
         if (currentFont != null && currentRunStart < text.Length)
         {
             string runText = text.Substring(currentRunStart);
-            var runGlyphs = currentFont.shapeRun(runText, renderFontSize, dpiScale, ascenderPx, variation, ref cursorX);
+            var runGlyphs = currentFont.shapeRun(runText, renderFontSize, dpiScale, ascenderPx, variation, currentRunStart, ref cursorX);
             glyphs.AddRange(runGlyphs);
         }
 
@@ -336,7 +348,7 @@ public class Font : IDisposable
         hbFont.SetVariations(hbVariations);
     }
 
-    private List<TextGlyph> shapeRun(string text, float renderFontSize, float dpiScale, float baselineY, FontVariation variation, ref float cursorX)
+    private List<TextGlyph> shapeRun(string text, float renderFontSize, float dpiScale, float baselineY, FontVariation variation, int runOffset, ref float cursorX)
     {
         var glyphs = new List<TextGlyph>();
 
@@ -358,6 +370,12 @@ public class Font : IDisposable
             {
                 // HarfBuzz info[i].Codepoint is actually the specific glyph index for THIS font face.
                 uint glyphIndex = info[i].Codepoint;
+
+                // Cluster is the UTF-16 offset of this glyph within the run by add the run's start
+                // offset to get the index into the full text. Consumers (e.g. caret positioning)
+                // map a string index to a glyph through this, so an emoji (2 UTF-16 units, 1 glyph)
+                // stays aligned.
+                int startIndex = runOffset + (int)info[i].Cluster;
 
                 float xAdvance = pos[i].XAdvance / 64.0f;
 
@@ -385,7 +403,8 @@ public class Font : IDisposable
                         {
                             Texture = null,
                             Position = new Vector2(cursorX / dpiScale, baselineY / dpiScale),
-                            Size = new Vector2(xAdvance / dpiScale, 0)
+                            Size = new Vector2(xAdvance / dpiScale, 0),
+                            StartIndex = startIndex
                         });
                         cursorX += xAdvance;
                         continue;
@@ -407,7 +426,8 @@ public class Font : IDisposable
                 {
                     Texture = data.Texture,
                     Position = new Vector2(finalX / dpiScale, finalY / dpiScale),
-                    Size = new Vector2(scaledWidth / dpiScale, scaledHeight / dpiScale)
+                    Size = new Vector2(scaledWidth / dpiScale, scaledHeight / dpiScale),
+                    StartIndex = startIndex
                 });
 
                 cursorX += xAdvance;
@@ -583,6 +603,13 @@ public struct TextGlyph
     public Texture? Texture;
     public Vector2 Position;
     public Vector2 Size;
+
+    /// <summary>
+    /// The UTF-16 index into the source text where this glyph's cluster begins. Lets a caret map a
+    /// string index to a glyph position even when one glyph spans multiple UTF-16 units (e.g. an
+    /// emoji surrogate pair) or vice versa (ligatures).
+    /// </summary>
+    public int StartIndex;
 }
 
 public class ShapedText
