@@ -132,19 +132,37 @@ public class Font : IDisposable
 
         try
         {
+            // FT_MM_Var has only uint/pointer fields, so it marshals correctly on every data model.
             var header = Marshal.PtrToStructure<FT_MM_Var>(mm);
-            int stride = Marshal.SizeOf<FT_Var_Axis>();
+
+            // FT_Var_Axis must *not* go through Marshal.PtrToStructure: its FT_Fixed/FT_ULong fields are
+            // C 'long' (8 bytes on macOS/Linux, 4 bytes on 64-bit Windows), and neither CLong/CULong
+            // nor a fixed-width struct reproduces that layout portably. Walk the records by hand using
+            // the platform C-long width. Native layout of each record:
+            //   name  : FT_String*     (pointer-sized)
+            //   min   : FT_Fixed 16.16 (CLongSize)
+            //   def   : FT_Fixed 16.16 (CLongSize)
+            //   max   : FT_Fixed 16.16 (CLongSize)
+            //   tag   : FT_ULong       (CLongSize) — packed 4-char axis tag
+            //   strid : FT_UInt        (4)
+            // https://github.com/HelloYeew/sakura/pull/132
+            int longSize = FreeTypeVariations.CLongSize;
+            int ptrSize = IntPtr.Size;
+            int recSize = alignUp(ptrSize + 4 * longSize + 4, ptrSize);
 
             for (int i = 0; i < header.num_axis; i++)
             {
-                var a = Marshal.PtrToStructure<FT_Var_Axis>(header.axis + i * stride);
+                nint fields = header.axis + i * recSize + ptrSize; // skip the FT_String* name
 
-                uint tag = (uint)a.tag.Value;
-                float min = (long)a.minimum.Value / 65536f;
-                float def = (long)a.def.Value / 65536f;
-                float max = (long)a.maximum.Value / 65536f;
+                // The 16.16 fixed values fit in 32 bits (including negatives, e.g. GRAD -50) and every
+                // supported target is little-endian, so reading the low Int32 of each field is correct
+                // regardless of the C-long width — only the field offsets depend on it.
+                int min = Marshal.ReadInt32(fields, 0 * longSize);
+                int def = Marshal.ReadInt32(fields, 1 * longSize);
+                int max = Marshal.ReadInt32(fields, 2 * longSize);
+                uint tag = (uint)Marshal.ReadInt32(fields, 3 * longSize);
 
-                axisTable.Add(new FontAxis(tag, min, def, max));
+                axisTable.Add(new FontAxis(tag, min / 65536f, def / 65536f, max / 65536f));
             }
         }
         catch (Exception ex)
@@ -322,31 +340,58 @@ public class Font : IDisposable
         currentVariation = variation;
 
         int n = axisTable.Count;
-        var coords = new CLong[n];
+        int longSize = FreeTypeVariations.CLongSize;
         var hbVariations = new HarfBuzzSharp.Variation[n];
 
-        for (int i = 0; i < n; i++)
+        // FreeType wants an array of native FT_Fixed (C 'long', 16.16). Build it in unmanaged memory at
+        // the platform-correct element width instead of relying on CLong[] marshalling, which mis-sizes
+        // elements on 64-bit Windows.
+        nint coords = Marshal.AllocHGlobal(n * longSize);
+
+        try
         {
-            var axis = axisTable[i];
+            for (int i = 0; i < n; i++)
+            {
+                var axis = axisTable[i];
 
-            // Use the requested value for this axis if present, else the axis default. Unknown axes in
-            // the request are simply never matched here, so they're ignored as intended.
-            float value = variation.Get(axis.Tag) ?? axis.Default;
-            value = Math.Clamp(value, axis.Minimum, axis.Maximum);
+                // Use the requested value for this axis if present, else the axis default. Unknown axes
+                // in the request are simply never matched here, so they're ignored as intended.
+                float value = variation.Get(axis.Tag) ?? axis.Default;
 
-            // FreeType wants 16.16 fixed point in the face's axis order. All axis values are small
-            // (< ~1000), so value * 65536 fits comfortably in int on both LP64 and LLP64.
-            coords[i] = new CLong((int)MathF.Round(value * 65536f));
-            hbVariations[i] = new HarfBuzzSharp.Variation { Tag = axis.Tag, Value = value };
+                // Guard against a degenerate axis range (min > max) so a bad axis read can never throw
+                // ArgumentException here; Math.Clamp requires min <= max.
+                float lo = MathF.Min(axis.Minimum, axis.Maximum);
+                float hi = MathF.Max(axis.Minimum, axis.Maximum);
+                value = Math.Clamp(value, lo, hi);
+
+                // All axis values are small (< ~1000), so value * 65536 fits comfortably in int.
+                int fixedValue = (int)MathF.Round(value * 65536f);
+
+                if (longSize == 4)
+                    Marshal.WriteInt32(coords, i * longSize, fixedValue);
+                else
+                    Marshal.WriteInt64(coords, i * longSize, fixedValue);
+
+                hbVariations[i] = new HarfBuzzSharp.Variation { Tag = axis.Tag, Value = value };
+            }
+
+            var err = FreeTypeVariations.FT_Set_Var_Design_Coordinates(faceHandle, (uint)n, coords);
+            if (err != FT_Error.FT_Err_Ok)
+                Logger.Error($"FT_Set_Var_Design_Coordinates failed for font '{Name}': {err}");
         }
-
-        var err = FreeTypeVariations.FT_Set_Var_Design_Coordinates(faceHandle, (uint)n, coords);
-        if (err != FT_Error.FT_Err_Ok)
-            Logger.Error($"FT_Set_Var_Design_Coordinates failed for font '{Name}': {err}");
+        finally
+        {
+            Marshal.FreeHGlobal(coords);
+        }
 
         // Keep HarfBuzz in sync so shaped advances match the rasterized weight.
         hbFont.SetVariations(hbVariations);
     }
+
+    /// <summary>
+    /// Rounds <paramref name="value"/> up to the next multiple of <paramref name="alignment"/>
+    /// </summary>
+    private static int alignUp(int value, int alignment) => (value + alignment - 1) & ~(alignment - 1);
 
     private List<TextGlyph> shapeRun(string text, float renderFontSize, float dpiScale, float baselineY, FontVariation variation, int runOffset, ref float cursorX)
     {
