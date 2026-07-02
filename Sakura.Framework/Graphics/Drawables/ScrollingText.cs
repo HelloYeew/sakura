@@ -152,10 +152,13 @@ public partial class ScrollingText : Container
         float x = text.X - dx;
 
         if (-x >= loopExtent)
+        {
             x += loopExtent;
+            delayRemaining = StartDelay;
+        }
 
         text.X = x;
-        
+
         textCopy.X = x + loopExtent;
         textCopy.Alpha = 1f;
     }
