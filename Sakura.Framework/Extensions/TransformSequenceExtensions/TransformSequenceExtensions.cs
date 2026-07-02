@@ -31,51 +31,51 @@ namespace Sakura.Framework.Extensions.TransformSequenceExtensions;
 /// </summary>
 public static class TransformSequenceExtensions
 {
-    public static TransformSequence<T> MoveTo<T>(this TransformSequence<T> seq, Vector2 position, double duration = 0, Easing easing = Easing.None) where T : Drawable
+    public static TransformSequence<T> MoveTo<T>(this TransformSequence<T> seq, Vector2 position, double duration = 0, EasingFunction easing = default) where T : Drawable
         => seq.Append(d => d.MoveTo(position, duration, easing));
 
-    public static TransformSequence<T> MoveToX<T>(this TransformSequence<T> seq, float x, double duration = 0, Easing easing = Easing.None) where T : Drawable
+    public static TransformSequence<T> MoveToX<T>(this TransformSequence<T> seq, float x, double duration = 0, EasingFunction easing = default) where T : Drawable
         => seq.Append(d => d.MoveToX(x, duration, easing));
 
-    public static TransformSequence<T> MoveToY<T>(this TransformSequence<T> seq, float y, double duration = 0, Easing easing = Easing.None) where T : Drawable
+    public static TransformSequence<T> MoveToY<T>(this TransformSequence<T> seq, float y, double duration = 0, EasingFunction easing = default) where T : Drawable
         => seq.Append(d => d.MoveToY(y, duration, easing));
 
-    public static TransformSequence<T> MoveToOffset<T>(this TransformSequence<T> seq, Vector2 offset, double duration = 0, Easing easing = Easing.None) where T : Drawable
+    public static TransformSequence<T> MoveToOffset<T>(this TransformSequence<T> seq, Vector2 offset, double duration = 0, EasingFunction easing = default) where T : Drawable
         => seq.Append(d => d.MoveToOffset(offset, duration, easing));
 
-    public static TransformSequence<T> ResizeTo<T>(this TransformSequence<T> seq, Vector2 size, double duration = 0, Easing easing = Easing.None) where T : Drawable
+    public static TransformSequence<T> ResizeTo<T>(this TransformSequence<T> seq, Vector2 size, double duration = 0, EasingFunction easing = default) where T : Drawable
         => seq.Append(d => d.ResizeTo(size, duration, easing));
 
-    public static TransformSequence<T> ResizeTo<T>(this TransformSequence<T> seq, float size, double duration = 0, Easing easing = Easing.None) where T : Drawable
+    public static TransformSequence<T> ResizeTo<T>(this TransformSequence<T> seq, float size, double duration = 0, EasingFunction easing = default) where T : Drawable
         => seq.Append(d => d.ResizeTo(size, duration, easing));
 
-    public static TransformSequence<T> ScaleTo<T>(this TransformSequence<T> seq, Vector2 scale, double duration = 0, Easing easing = Easing.None) where T : Drawable
+    public static TransformSequence<T> ScaleTo<T>(this TransformSequence<T> seq, Vector2 scale, double duration = 0, EasingFunction easing = default) where T : Drawable
         => seq.Append(d => d.ScaleTo(scale, duration, easing));
 
-    public static TransformSequence<T> ScaleTo<T>(this TransformSequence<T> seq, float scale, double duration = 0, Easing easing = Easing.None) where T : Drawable
+    public static TransformSequence<T> ScaleTo<T>(this TransformSequence<T> seq, float scale, double duration = 0, EasingFunction easing = default) where T : Drawable
         => seq.Append(d => d.ScaleTo(scale, duration, easing));
 
-    public static TransformSequence<T> RotateTo<T>(this TransformSequence<T> seq, float rotation, double duration = 0, Easing easing = Easing.None) where T : Drawable
+    public static TransformSequence<T> RotateTo<T>(this TransformSequence<T> seq, float rotation, double duration = 0, EasingFunction easing = default) where T : Drawable
         => seq.Append(d => d.RotateTo(rotation, duration, easing));
 
     public static TransformSequence<T> Spin<T>(this TransformSequence<T> seq, double revolutionDuration, RotationDirection direction = RotationDirection.Clockwise) where T : Drawable
         => seq.Append(d => d.Spin(revolutionDuration, direction));
 
-    public static TransformSequence<T> FadeTo<T>(this TransformSequence<T> seq, float alpha, double duration = 0, Easing easing = Easing.None) where T : Drawable
+    public static TransformSequence<T> FadeTo<T>(this TransformSequence<T> seq, float alpha, double duration = 0, EasingFunction easing = default) where T : Drawable
         => seq.Append(d => d.FadeTo(alpha, duration, easing));
 
-    public static TransformSequence<T> FadeIn<T>(this TransformSequence<T> seq, double duration = 0, Easing easing = Easing.None) where T : Drawable
+    public static TransformSequence<T> FadeIn<T>(this TransformSequence<T> seq, double duration = 0, EasingFunction easing = default) where T : Drawable
         => seq.Append(d => d.FadeIn(duration, easing));
 
-    public static TransformSequence<T> FadeOut<T>(this TransformSequence<T> seq, double duration = 0, Easing easing = Easing.None) where T : Drawable
+    public static TransformSequence<T> FadeOut<T>(this TransformSequence<T> seq, double duration = 0, EasingFunction easing = default) where T : Drawable
         => seq.Append(d => d.FadeOut(duration, easing));
 
-    public static TransformSequence<T> FadeInFromZero<T>(this TransformSequence<T> seq, double duration = 0, Easing easing = Easing.None) where T : Drawable
+    public static TransformSequence<T> FadeInFromZero<T>(this TransformSequence<T> seq, double duration = 0, EasingFunction easing = default) where T : Drawable
         => seq.Append(d => d.FadeInFromZero(duration, easing));
 
-    public static TransformSequence<T> FadeToColour<T>(this TransformSequence<T> seq, Color colour, double duration = 0, Easing easing = Easing.None) where T : Drawable
+    public static TransformSequence<T> FadeToColour<T>(this TransformSequence<T> seq, Color colour, double duration = 0, EasingFunction easing = default) where T : Drawable
         => seq.Append(d => d.FadeToColour(colour, duration, easing));
 
-    public static TransformSequence<T> FlashColour<T>(this TransformSequence<T> seq, Color flashColour, double duration, Easing easing = Easing.None) where T : Drawable
+    public static TransformSequence<T> FlashColour<T>(this TransformSequence<T> seq, Color flashColour, double duration, EasingFunction easing = default) where T : Drawable
         => seq.Append(d => d.FlashColour(flashColour, duration, easing));
 }

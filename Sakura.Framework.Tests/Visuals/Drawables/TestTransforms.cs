@@ -265,6 +265,212 @@ public partial class TestTransforms : TestScene
         });
     }
 
+    [Test]
+    public void TestCubicBezierMove()
+    {
+        // CSS "ease-in-out" curve.
+        AddStep("Move with cubic-bezier(0.42,0,0.58,1)", () =>
+            subject.MoveTo(new Vector2(180, 0), 700, EasingFunction.CubicBezier(0.42, 0, 0.58, 1)));
+        AddWaitStep("Wait", 700);
+        AddStep("Move back with cubic-bezier ease-in-out", () =>
+            subject.MoveTo(Vector2.Zero, 700, EasingFunction.CubicBezier(0.42, 0, 0.58, 1)));
+        AddWaitStep("Wait", 700);
+        AddAssert("Back at centre", () => Precision.AlmostEquals(subject.Position, Vector2.Zero));
+    }
+
+    [Test]
+    public void TestSpringScale()
+    {
+        AddStep("Scale to 2x with spring", () =>
+            subject.ScaleTo(2f, 800, EasingFunction.Spring()));
+        AddWaitStep("Wait", 800);
+        AddAssert("Rests exactly at 2x", () => Precision.AlmostEquals(subject.Scale, new Vector2(2f)));
+        AddStep("Scale back to 1x with bouncy spring", () =>
+            subject.ScaleTo(1f, 800, EasingFunction.Spring(dampingRatio: 0.35, frequency: 2.5)));
+        AddWaitStep("Wait", 800);
+        AddAssert("Rests exactly at 1x", () => Precision.AlmostEquals(subject.Scale, Vector2.One));
+    }
+
+    [Test]
+    public void TestSpringMoveSequence()
+    {
+        AddStep("Sequence: spring right → spring back", () =>
+            subject.TransformSequence()
+                   .MoveTo(new Vector2(200, 0), 700, EasingFunction.Spring(0.4, 2f))
+                   .Then()
+                   .MoveTo(Vector2.Zero, 700, EasingFunction.Spring(0.4, 2f)));
+        AddWaitStep("Watch sequence", 1600);
+        AddAssert("Back at centre", () => Precision.AlmostEquals(subject.Position, Vector2.Zero));
+    }
+
+    [Test]
+    public void TestEasingComparisonCubicVsSpring()
+    {
+        Box boxA = null!, boxB = null!;
+
+        AddStep("Setup two boxes (CubicBezier vs Spring)", () =>
+        {
+            Clear();
+            Add(boxA = new Box
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Size = new Vector2(80),
+                Color = Color.CornflowerBlue,
+                Position = new Vector2(-100, 0)
+            });
+            Add(boxB = new Box
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Size = new Vector2(80),
+                Color = Color.LightPink,
+                Position = new Vector2(100, 0)
+            });
+        });
+
+        AddSliderStep("Scale amount", 0.5f, 3f, 1.5f, v =>
+        {
+            boxA?.ClearTransforms();
+            boxB?.ClearTransforms();
+            boxA?.ScaleTo(v, 700, EasingFunction.CubicBezier(0.42, 0, 0.58, 1));
+            boxB?.ScaleTo(v, 700, EasingFunction.Spring());
+        });
+    }
+
+    [Test]
+    public void TestSpringDampingComparison()
+    {
+        // Several boxes stacked vertically, each with a different damping ratio, all launched
+        // together so the effect of damping (bouncy → critical → over-damped) is visible side by side.
+        (double damping, Color colour)[] rows =
+        {
+            (0.2, Color.Tomato),
+            (0.4, Color.Orange),
+            (0.6, Color.MediumSeaGreen),
+            (1.0, Color.CornflowerBlue),
+            (1.6, Color.MediumPurple),
+        };
+
+        var boxes = new Box[rows.Length];
+
+        AddStep("Setup boxes (damping 0.2 → 1.6)", () =>
+        {
+            Clear();
+            for (int i = 0; i < rows.Length; i++)
+            {
+                float y = (i - (rows.Length - 1) / 2f) * 70f;
+                Add(boxes[i] = new Box
+                {
+                    Anchor = Anchor.Centre,
+                    Origin = Anchor.Centre,
+                    Size = new Vector2(50),
+                    Color = rows[i].colour,
+                    Position = new Vector2(-220, y)
+                });
+            }
+        });
+
+        AddStep("Spring all to the right", () =>
+        {
+            for (int i = 0; i < rows.Length; i++)
+                boxes[i].MoveToX(220, 900, EasingFunction.Spring(dampingRatio: rows[i].damping, frequency: 2f));
+        });
+        AddWaitStep("Watch settle", 1000);
+        AddAssert("All rested at target X", () =>
+        {
+            for (int i = 0; i < boxes.Length; i++)
+                if (!Precision.AlmostEquals(boxes[i].Position.X, 220f))
+                    return false;
+            return true;
+        });
+
+        AddStep("Spring all back", () =>
+        {
+            for (int i = 0; i < rows.Length; i++)
+                boxes[i].MoveToX(-220, 900, EasingFunction.Spring(dampingRatio: rows[i].damping, frequency: 2f));
+        });
+        AddWaitStep("Watch settle", 1000);
+    }
+
+    [Test]
+    public void TestSpringInteractive()
+    {
+        double damping = SpringEasing.DEFAULT_DAMPING_RATIO;
+        double frequency = SpringEasing.DEFAULT_FREQUENCY;
+        bool toRight = true;
+
+        AddStep("Reset subject to left", () => subject.MoveToX(-200));
+
+        AddSliderStep("Damping ratio", 0.1f, 2f, (float)SpringEasing.DEFAULT_DAMPING_RATIO, v => damping = v);
+        AddSliderStep("Frequency", 0.5f, 5f, (float)SpringEasing.DEFAULT_FREQUENCY, v => frequency = v);
+
+        AddStep("Spring to other side", () =>
+        {
+            float targetX = toRight ? 200 : -200;
+            toRight = !toRight;
+            subject.MoveToX(targetX, 900, EasingFunction.Spring(damping, frequency));
+        });
+    }
+
+    [Test]
+    public void TestCubicBezierPresets()
+    {
+        // Compares common CSS cubic-bezier presets driven off the same trigger.
+        Box ease = null!, easeIn = null!, easeOut = null!, easeInOut = null!;
+
+        AddStep("Setup preset boxes", () =>
+        {
+            Clear();
+            Add(ease = new Box
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Size = new Vector2(45),
+                Color = Color.CornflowerBlue,
+                Position = new Vector2(-220, -90)
+            });
+            Add(easeIn = new Box
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Size = new Vector2(45),
+                Color = Color.MediumSeaGreen,
+                Position = new Vector2(-220, -30)
+            });
+            Add(easeOut = new Box
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Size = new Vector2(45),
+                Color = Color.Orange,
+                Position = new Vector2(-220, 30)
+            });
+            Add(easeInOut = new Box
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Size = new Vector2(45),
+                Color = Color.MediumPurple,
+                Position = new Vector2(-220, 90)
+            });
+        });
+
+        AddStep("Run all presets", () =>
+        {
+            ease.MoveToX(220, 900, EasingFunction.CubicBezier(0.25, 0.1, 0.25, 1.0));   // ease
+            easeIn.MoveToX(220, 900, EasingFunction.CubicBezier(0.42, 0, 1, 1));         // ease-in
+            easeOut.MoveToX(220, 900, EasingFunction.CubicBezier(0, 0, 0.58, 1));        // ease-out
+            easeInOut.MoveToX(220, 900, EasingFunction.CubicBezier(0.42, 0, 0.58, 1));   // ease-in-out
+        });
+        AddWaitStep("Watch", 1000);
+        AddAssert("All reached target", () =>
+            Precision.AlmostEquals(ease.Position.X, 220f)
+            && Precision.AlmostEquals(easeIn.Position.X, 220f)
+            && Precision.AlmostEquals(easeOut.Position.X, 220f)
+            && Precision.AlmostEquals(easeInOut.Position.X, 220f));
+    }
+
     [TearDown]
     public void TearDown()
     {
