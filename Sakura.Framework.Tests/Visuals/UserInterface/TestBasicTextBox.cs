@@ -109,6 +109,30 @@ public partial class TestBasicTextBox : ManualInputManagerTestScene
     }
 
     [Test]
+    public void TestPlaceholderHiddenDuringComposition()
+    {
+        AddStep("Set placeholder", () => textBox.PlaceholderText = "Enter name...");
+        AddStep("Focus textbox", () =>
+        {
+            InputManager.MoveMouseTo(textBox);
+            InputManager.Click(MouseButton.Left);
+        });
+        AddAssert("Placeholder visible while empty", () => textBox.IsPlaceholderVisible);
+
+        AddStep("Start IME composition", () => InputManager.EditComposingText("この", 0, 2));
+        AddAssert("Text still empty during composition", () => textBox.Text.Value == "");
+        AddAssert("Placeholder hidden during composition", () => !textBox.IsPlaceholderVisible);
+
+        AddStep("Cancel composition", () => InputManager.EditComposingText("", 0, 0));
+        AddAssert("Placeholder visible again after cancel", () => textBox.IsPlaceholderVisible);
+
+        AddStep("Compose again", () => InputManager.EditComposingText("この", 0, 2));
+        AddStep("Commit text", () => InputManager.TypeText("この"));
+        AddAssert("Text committed", () => textBox.Text.Value == "この");
+        AddAssert("Placeholder hidden with committed text", () => !textBox.IsPlaceholderVisible);
+    }
+
+    [Test]
     public void TestKeyboardSelectionAndReplacement()
     {
         AddStep("Focus and type initial string", () =>

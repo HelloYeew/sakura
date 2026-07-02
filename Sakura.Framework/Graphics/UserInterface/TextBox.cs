@@ -128,6 +128,12 @@ public abstract partial class TextBox : Container
     }
 
     /// <summary>
+    /// Whether the placeholder hint is currently visible. False once there is committed text or an
+    /// IME composition is in progress.
+    /// </summary>
+    public bool IsPlaceholderVisible => PlaceholderSprite.Alpha > 0f;
+
+    /// <summary>
     /// Dimmed hint text shown while the box is empty.
     /// </summary>
     public string PlaceholderText
@@ -268,7 +274,8 @@ public abstract partial class TextBox : Container
     /// </summary>
     protected virtual void UpdatePlaceholderVisibility()
     {
-        PlaceholderSprite.Alpha = string.IsNullOrEmpty(Text.Value) ? 0.4f : 0f;
+        bool showPlaceholder = string.IsNullOrEmpty(Text.Value) && !isComposing;
+        PlaceholderSprite.Alpha = showPlaceholder ? 0.4f : 0f;
     }
 
     private void resetCaretBlink()
@@ -364,6 +371,7 @@ public abstract partial class TextBox : Container
         ImeText.Text = "";
         selectionStart = caretIndex;
         TextContainer.X = 0;
+        UpdatePlaceholderVisibility();
         window?.StopTextInput();
     }
 
@@ -733,6 +741,7 @@ public abstract partial class TextBox : Container
         isComposing = false;
         ImeText.Text = "";
         insertTextAtCaret(e.Text);
+        UpdatePlaceholderVisibility();
         return true;
     }
 
@@ -743,6 +752,7 @@ public abstract partial class TextBox : Container
         // An empty editing event signals that the composition was cancelled.
         isComposing = !string.IsNullOrEmpty(e.Text);
         ImeText.Text = e.Text;
+        UpdatePlaceholderVisibility();
         Invalidate(InvalidationFlags.DrawInfo);
         return true;
     }
