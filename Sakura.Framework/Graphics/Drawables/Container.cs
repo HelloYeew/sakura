@@ -404,37 +404,42 @@ public partial class Container : Drawable
     // changes. Draw nodes store the version they were generated against, letting fully
     // clean subtrees skip draw-node regeneration entirely.
     private long subtreeDrawVersion = 1;
-    private bool subtreeDirtyNotified;
-
-    private const int draw_node_buffer_count = 3;
-    private int forceRebuildBuffers;
 
     /// <summary>
-    /// Marks this container's (and all ancestors') cached draw-node subtree as stale.
-    /// The walk up the parent chain short-circuits once per frame per container.
+    ///  True while this container has a subtree change that has not yet been flushed into a
+    /// rebuilt draw node. Used purely to dedup the walk up the parent chain: while it is set,
+    /// our ancestors have already been notified and their versions are already ahead of their
+    /// cached draw nodes, so re-walking is redundant.
+    ///
+    /// Crucially the flag is cleared when this container's draw-node subtree is actually
+    /// rebuilt (see GenerateDrawNodeSubtree) — NOT on a frame boundary. The previous design
+    /// reset it in Update(), but MarkSubtreeDrawStateDirty can run before the update traversal
+    /// (input is dispatched at the very start of the update frame, so a click that clears or
+    /// removes drawables fires here). At that point the flag still held its stale value from the
+    /// previous frame; if it was set, the walk short-circuited and the ancestors' versions were
+    /// never bumped, so they kept skipping regeneration and drawing removed drawables from their
+    /// cached child lists. Tying the reset to the rebuild removes that ordering dependency.
+    /// </summary>
+    private bool subtreeDirty;
+
+    /// <summary>
+    /// Marks this container's (and all ancestors') cached draw-node subtree as stale so it is
+    /// rebuilt on the next generation. Safe to call at any point in the frame, including before
+    /// the update traversal (e.g. from input handlers).
     /// </summary>
     internal void MarkSubtreeDrawStateDirty()
     {
         subtreeDrawVersion++;
 
-        // Every buffered draw node is now stale, not just the one written this frame. Force all of
-        // them to rebuild over the next few frames. Set before the short-circuit (like the version
-        // bump) so ancestors reached by the walk also force-rebuild their own buffers — otherwise an
-        // ancestor whose node still version-matches would keep a reference to a removed child's node.
-        forceRebuildBuffers = draw_node_buffer_count;
-
-        if (subtreeDirtyNotified)
+        if (subtreeDirty)
             return;
 
-        subtreeDirtyNotified = true;
+        subtreeDirty = true;
         Parent?.MarkSubtreeDrawStateDirty();
     }
 
     public override void Update()
     {
-        // Allow a fresh subtree-dirty notification walk this frame.
-        subtreeDirtyNotified = false;
-
         // Check whether our layout was dirty before base.Update() is called, as it will clear our invalidation flags.
         bool layoutWasInvalidated = (Invalidation & InvalidationFlags.DrawInfo) != 0;
         bool colourWasInvalidated = (Invalidation & InvalidationFlags.Colour) != 0;
@@ -658,18 +663,17 @@ public partial class Container : Drawable
     {
         var node = (ContainerDrawNode)base.GenerateDrawNodeSubtree(frameIndex);
 
-        // If nothing in this subtree changed since this buffer's node was last generated
-        // (no invalidations, topology, lifetime or masking transitions), the cached child
-        // node list is still valid and the entire subtree walk can be skipped.
-        // forceRebuildBuffers overrides the cache: after a subtree change the version bumps once but
-        // there are draw_node_buffer_count buffer slots, so each must be rebuilt at least once before
-        // the cache is trusted again. Without this, a buffer not yet rewritten since the change keeps
-        // its stale child list and "ghosts" removed drawables for a few frames.
-        if (forceRebuildBuffers == 0 && node.AppliedSubtreeVersion == subtreeDrawVersion)
+        // Per-buffer cache. Each of the buffered draw nodes tracks the subtree version it was
+        // built against. A change bumps subtreeDrawVersion, so every buffer's node becomes stale
+        // and rebuilds the next time that buffer index is generated — no separate multi-buffer
+        // force counter is needed, and no buffer can retain a stale child list once the version
+        // moves ahead of it.
+        if (node.AppliedSubtreeVersion == subtreeDrawVersion)
             return node;
 
-        if (forceRebuildBuffers > 0)
-            forceRebuildBuffers--;
+        // This buffer is stale and about to be rebuilt, flushing the pending change. Allow the
+        // next change to walk the parent chain again.
+        subtreeDirty = false;
 
         node.Children.Clear();
 
