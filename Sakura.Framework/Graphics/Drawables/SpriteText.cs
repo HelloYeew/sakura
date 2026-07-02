@@ -159,7 +159,8 @@ public partial class SpriteText : Drawable
 
             if (dpiScale <= 0) dpiScale = 1.0f;
 
-            shapedText = resolvedFont.ProcessText(Text, fontUsage.Size, dpiScale, fallbacks);
+            var variation = fontStore.GetVariation(fontUsage);
+            shapedText = resolvedFont.ProcessText(Text, fontUsage.Size, dpiScale, fallbacks, variation);
             ContentSize = new Vector2(shapedText.BoundingBox.X, shapedText.BoundingBox.Y);
 
             // Read through base.Size to avoid re-entering layout via the overridden getter.

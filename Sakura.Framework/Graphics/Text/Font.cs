@@ -30,17 +30,45 @@ public class Font : IDisposable
 
     private readonly HarfBuzzSharp.Buffer sharedBuffer = new HarfBuzzSharp.Buffer();
 
-    // Cache stores GlyphData instead of just Texture, because we need bearing info per glyph
-    // Key by (CodePoint, Size) so multiple sizes can be cached in the same Font instance.
-    private readonly Dictionary<(uint CodePoint, float PhysicalSize), GlyphData> glyphCache = new();
+    /// <summary>
+    /// <remarks>
+    /// Cache stores <see cref="GlyphData"/> instead of just <see cref="Texture"/>, because we need bearing info per glyph.
+    /// Key by (glyph index, physical size, variation) so one <see cref="Font"/> instance can cache multiple sizes
+    /// and multiple variable-font instances (weights, fills, …) without collisions. For static fonts
+    /// the variation is always the default, so the extra key component is inert.
+    /// </remarks>
+    /// </summary>
+    private readonly Dictionary<(uint CodePoint, float PhysicalSize, FontVariation Variation), GlyphData> glyphCache = new Dictionary<(uint CodePoint, float PhysicalSize, FontVariation Variation), GlyphData>();
 
     private float currentPhysicalSize = 24;
     private float currentGlyphScale = 1.0f;
+
+    private FontVariation currentVariation = FontVariation.None;
+
+    private readonly bool isVariable;
+
+    /// <summary>
+    /// Variation axes exposed by this face, in the face's native axis order (order matters for
+    /// <see cref="FreeTypeVariations.FT_Set_Var_Design_Coordinates"/>). Empty for static fonts.
+    /// </summary>
+    private readonly List<FontAxis> axisTable = new List<FontAxis>();
 
     private readonly Lock stateLock = new Lock();
 
     public string Name { get; }
     public float Size { get; private set; } = 24;
+
+    /// <summary>
+    /// True when this font is an OpenType variable font (has a <c>MULTIPLE_MASTERS</c> / <c>fvar</c>
+    /// table). A single variable <see cref="Font"/> can render many weights/fills from one file.
+    /// </summary>
+    public bool IsVariable => isVariable;
+
+    /// <summary>
+    /// The variation axes this face exposes (tag + min/default/max), in the face's native order.
+    /// Empty for static fonts.
+    /// </summary>
+    public IReadOnlyList<FontAxis> Axes => axisTable;
 
     /// <summary>
     /// Helper struct to cache texture and placement info
@@ -73,11 +101,69 @@ public class Font : IDisposable
         hbBlob = new Blob(fontPtr, fontData.Length, MemoryMode.Duplicate);
         hbFace = new Face(hbBlob, 0);
         hbFont = new HarfBuzzSharp.Font(hbFace);
+
+        // Detect variable fonts and read their axis table once at load time. Static fonts skip all
+        // of this and behave exactly as before.
+        unsafe
+        {
+            long faceFlags = (long)((FT_FaceRec_*)faceHandle)->face_flags;
+            isVariable = (faceFlags & FreeTypeVariations.FT_FACE_FLAG_MULTIPLE_MASTERS) != 0;
+        }
+
+        if (isVariable)
+        {
+            readVariationAxes();
+
+            if (axisTable.Count > 0)
+                Logger.Debug($"Font '{Name}' is variable with axes: {string.Join(", ", axisTable)}");
+            else
+                Logger.Debug($"Font '{Name}' reports variable but no axes could be read; treating as static.");
+        }
+    }
+
+    /// <summary>
+    /// Reads the variation axis descriptors from FreeType once, storing tag + min/default/max in the
+    /// face's native axis order so requested instances can be clamped and applied.
+    /// </summary>
+    private void readVariationAxes()
+    {
+        if (FreeTypeVariations.FT_Get_MM_Var(faceHandle, out nint mm) != FT_Error.FT_Err_Ok || mm == 0)
+            return;
+
+        try
+        {
+            var header = Marshal.PtrToStructure<FT_MM_Var>(mm);
+            int stride = Marshal.SizeOf<FT_Var_Axis>();
+
+            for (int i = 0; i < header.num_axis; i++)
+            {
+                var a = Marshal.PtrToStructure<FT_Var_Axis>(header.axis + i * stride);
+
+                uint tag = (uint)a.tag.Value;
+                float min = (long)a.minimum.Value / 65536f;
+                float def = (long)a.def.Value / 65536f;
+                float max = (long)a.maximum.Value / 65536f;
+
+                axisTable.Add(new FontAxis(tag, min, def, max));
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"Failed to read variation axes for font '{Name}': {ex.Message}");
+            axisTable.Clear();
+        }
+        finally
+        {
+            unsafe
+            {
+                FreeTypeVariations.FT_Done_MM_Var((nint)library.Native, mm);
+            }
+        }
     }
 
     private GCHandle pinnedFontData;
 
-    public ShapedText ProcessText(string text, float fontSize, float dpiScale = 1.0f, IEnumerable<Font>? fallbacks = null)
+    public ShapedText ProcessText(string text, float fontSize, float dpiScale = 1.0f, IEnumerable<Font>? fallbacks = null, FontVariation variation = default)
     {
         if (string.IsNullOrEmpty(text))
             return ShapedText.Empty;
@@ -91,6 +177,7 @@ public class Font : IDisposable
         lock (stateLock)
         {
             updateFontSize(renderFontSize);
+            updateVariation(variation);
             unsafe
             {
                 var face = (FT_FaceRec_*)faceHandle;
@@ -138,7 +225,7 @@ public class Font : IDisposable
                 if (currentFont != null)
                 {
                     string runText = text.Substring(currentRunStart, i - currentRunStart);
-                    var runGlyphs = currentFont.shapeRun(runText, renderFontSize, dpiScale, ascenderPx, ref cursorX);
+                    var runGlyphs = currentFont.shapeRun(runText, renderFontSize, dpiScale, ascenderPx, variation, ref cursorX);
                     glyphs.AddRange(runGlyphs);
                 }
                 currentFont = assignedFont;
@@ -148,11 +235,11 @@ public class Font : IDisposable
             i += charLen;
         }
 
-        // 3. Process the final remaining run
+        // Process the final remaining run
         if (currentFont != null && currentRunStart < text.Length)
         {
             string runText = text.Substring(currentRunStart);
-            var runGlyphs = currentFont.shapeRun(runText, renderFontSize, dpiScale, ascenderPx, ref cursorX);
+            var runGlyphs = currentFont.shapeRun(runText, renderFontSize, dpiScale, ascenderPx, variation, ref cursorX);
             glyphs.AddRange(runGlyphs);
         }
 
@@ -205,13 +292,58 @@ public class Font : IDisposable
         }
     }
 
-    private List<TextGlyph> shapeRun(string text, float renderFontSize, float dpiScale, float baselineY, ref float cursorX)
+    /// <summary>
+    /// Applies a variable-font instance to both FreeType (drives rasterization) and HarfBuzz (drives
+    /// shaping/advances and advance widths differ per weight, so the two must stay in sync). Runs under
+    /// <see cref="stateLock"/> like <see cref="updateFontSize"/> and only re-applies when the
+    /// coordinates actually change. No-op for static fonts, so passing a variation to a static font is
+    /// harmless (full backward compatibility).
+    /// </summary>
+    private void updateVariation(FontVariation variation)
+    {
+        if (!isVariable || axisTable.Count == 0)
+            return;
+
+        if (variation.Equals(currentVariation))
+            return;
+
+        currentVariation = variation;
+
+        int n = axisTable.Count;
+        var coords = new CLong[n];
+        var hbVariations = new HarfBuzzSharp.Variation[n];
+
+        for (int i = 0; i < n; i++)
+        {
+            var axis = axisTable[i];
+
+            // Use the requested value for this axis if present, else the axis default. Unknown axes in
+            // the request are simply never matched here, so they're ignored as intended.
+            float value = variation.Get(axis.Tag) ?? axis.Default;
+            value = Math.Clamp(value, axis.Minimum, axis.Maximum);
+
+            // FreeType wants 16.16 fixed point in the face's axis order. All axis values are small
+            // (< ~1000), so value * 65536 fits comfortably in int on both LP64 and LLP64.
+            coords[i] = new CLong((int)MathF.Round(value * 65536f));
+            hbVariations[i] = new HarfBuzzSharp.Variation { Tag = axis.Tag, Value = value };
+        }
+
+        var err = FreeTypeVariations.FT_Set_Var_Design_Coordinates(faceHandle, (uint)n, coords);
+        if (err != FT_Error.FT_Err_Ok)
+            Logger.Error($"FT_Set_Var_Design_Coordinates failed for font '{Name}': {err}");
+
+        // Keep HarfBuzz in sync so shaped advances match the rasterized weight.
+        hbFont.SetVariations(hbVariations);
+    }
+
+    private List<TextGlyph> shapeRun(string text, float renderFontSize, float dpiScale, float baselineY, FontVariation variation, ref float cursorX)
     {
         var glyphs = new List<TextGlyph>();
 
         lock (stateLock)
         {
             updateFontSize(renderFontSize);
+            updateVariation(variation);
 
             sharedBuffer.ClearContents();
             sharedBuffer.AddUtf16(text);
@@ -229,8 +361,9 @@ public class Font : IDisposable
 
                 float xAdvance = pos[i].XAdvance / 64.0f;
 
-                // Cache by glyph index and size.
-                var cacheKey = (glyphIndex, renderFontSize);
+                // Cache by glyph index, size, and variation so distinct weights/fills of the same
+                // glyph coexist as separate atlas entries instead of colliding.
+                var cacheKey = (glyphIndex, renderFontSize, variation);
 
                 if (!glyphCache.TryGetValue(cacheKey, out GlyphData data))
                 {
@@ -410,6 +543,35 @@ public class Font : IDisposable
         if (pinnedFontData.IsAllocated)
             pinnedFontData.Free();
     }
+}
+
+/// <summary>
+/// Describes a single OpenType variation axis exposed by a variable font: its packed 4-char tag and
+/// its minimum / default / maximum values (in user units, e.g. <c>wght</c> 100–900).
+/// </summary>
+public readonly struct FontAxis
+{
+    public uint Tag { get; }
+    public float Minimum { get; }
+    public float Default { get; }
+    public float Maximum { get; }
+
+    public FontAxis(uint tag, float minimum, float def, float maximum)
+    {
+        Tag = tag;
+        Minimum = minimum;
+        Default = def;
+        Maximum = maximum;
+    }
+
+    /// <summary>The axis tag as its 4-character string form (e.g. "wght").</summary>
+    public string TagString => new string(new[]
+    {
+        (char)((Tag >> 24) & 0xFF), (char)((Tag >> 16) & 0xFF),
+        (char)((Tag >> 8) & 0xFF), (char)(Tag & 0xFF)
+    });
+
+    public override string ToString() => $"{TagString}[{Minimum:0.#}..{Default:0.#}..{Maximum:0.#}]";
 }
 
 public struct TextGlyph

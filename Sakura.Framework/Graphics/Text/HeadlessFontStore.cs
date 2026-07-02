@@ -61,6 +61,8 @@ public class HeadlessFontStore : IFontStore
         return null;
     }
 
+    public FontVariation GetVariation(FontUsage usage) => usage.ToVariation();
+
     public void Dispose()
     {
         throw new System.NotImplementedException();

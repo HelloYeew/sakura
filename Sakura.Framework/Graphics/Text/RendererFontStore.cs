@@ -50,7 +50,7 @@ public class RendererFontStore : IFontStore
         }
         else
         {
-            Logger.Warning("FontLoader : NotoSans-Regular.ttf was not found. Default font is missing.");
+            Logger.Warning("[FontLoader] NotoSans-Regular.ttf was not found. Default font is missing.");
         }
 
         // fallback families for various languages
@@ -75,21 +75,109 @@ public class RendererFontStore : IFontStore
 
         loadEmojiFonts(resourceStorage);
 
-        // Material Symbols for IconSprite
-        // TODO: The material symbols font support variable font with different weights and italics, should add support in future.
-        // These are single-weight fonts, also add fallback with non-weight
-        AddFont(resourceStorage, "MaterialSymbolsOutlined-Regular.ttf", alias: "MaterialSymbolsOutlined-Regular");
-        addFontAlias("MaterialSymbolsOutlined-Regular", "MaterialSymbolsOutlined");
-        AddFont(resourceStorage, "MaterialSymbolsRounded-Regular.ttf", alias: "MaterialSymbolsRounded-Regular");
-        addFontAlias("MaterialSymbolsRounded-Regular", "MaterialSymbolsRounded");
-        AddFont(resourceStorage, "MaterialSymbolsSharp-Regular.ttf", alias: "MaterialSymbolsSharp-Regular");
-        addFontAlias("MaterialSymbolsSharp-Regular", "MaterialSymbolsSharp");
+        // Material Symbols for IconSprite. These files are themselves variable fonts (fvar axes
+        // wght / FILL / GRAD / opsz); the variable machinery lets IconSprite drive weight and
+        // fill per icon (see IconSprite / FontUsage.Fill). We keep the single-file registration
+        // here, the axes are applied at render time via FontVariation, not by loading extra files.
+        loadMaterialSymbol(resourceStorage, "MaterialSymbolsOutlined");
+        loadMaterialSymbol(resourceStorage, "MaterialSymbolsRounded");
+        loadMaterialSymbol(resourceStorage, "MaterialSymbolsSharp");
         AddFallbackFamily("MaterialSymbolsOutlined");
+    }
+
+    /// <summary>
+    /// Registers a single Material Symbols style, tolerating either the variable filename
+    /// (<c>{style}-VF.ttf</c>) or the legacy per-style filename (<c>{style}-Regular.ttf</c>).
+    /// Both the <c>{style}-Regular</c> and bare <c>{style}</c> keys resolve to the loaded font.
+    /// </summary>
+    private void loadMaterialSymbol(Storage storage, string style)
+    {
+        string filename = storage.Exists($"{style}-VF.ttf")
+            ? $"{style}-VF.ttf"
+            : $"{style}-Regular.ttf";
+
+        AddFont(storage, filename, alias: $"{style}-Regular");
+        addFontAlias($"{style}-Regular", style);
     }
 
     private void loadFamily(Storage storage, string family, bool hasItalics)
     {
-        string[] weights = Enum.GetNames(typeof(DefaultFontWeights));
+        // Prefer a single OpenType variable file when one is present (collapses 9+ per-weight files
+        // into one), otherwise fall back to the per-weight static files. Callers don't opt in — a
+        // variable file "just works" and a static family behaves exactly as before.
+        if (tryLoadVariableFamily(storage, family, hasItalics))
+            return;
+
+        loadStaticFamily(storage, family, hasItalics);
+    }
+
+    /// <summary>
+    /// Attempts to load <paramref name="family"/> from a single variable file (Google Fonts naming
+    /// <c>{family}[wght].ttf</c>, plus <c>{family}-Italic[wght].ttf</c> when italics are requested).
+    /// Registers one shared <see cref="Font"/> and aliases every <c>{family}-{weight}</c> key to it;
+    /// the requested weight is applied per-glyph at render time via <see cref="FontVariation"/>.
+    /// Returns false if no variable upright file exists (so the static path can take over).
+    /// </summary>
+    private bool tryLoadVariableFamily(Storage storage, string family, bool hasItalics)
+    {
+        string uprightFile = findVariableFile(storage, family, italic: false);
+        if (uprightFile == null)
+            return false;
+
+        string uprightKey = $"{family}-Variable";
+        AddFont(storage, uprightFile, alias: uprightKey);
+
+        // Every named weight resolves to the same variable instance.
+        foreach (string weight in Enum.GetNames(typeof(FontWeights)))
+            addFontAlias(uprightKey, $"{family}-{weight}");
+
+        // Bare family name resolves to the variable instance too.
+        addFontAlias(uprightKey, family);
+
+        if (hasItalics)
+        {
+            string italicFile = findVariableFile(storage, family, italic: true);
+            if (italicFile != null)
+            {
+                string italicKey = $"{family}-VariableItalic";
+                AddFont(storage, italicFile, alias: italicKey);
+
+                foreach (string weight in Enum.GetNames(typeof(FontWeights)))
+                    addFontAlias(italicKey, $"{family}-{weight}Italic");
+            }
+        }
+
+        Logger.Debug($"[FontLoader] loaded '{family}' as a variable font from {uprightFile}.");
+        return true;
+    }
+
+    /// <summary>
+    /// Locates a variable font file for <paramref name="family"/>, tolerating the common naming
+    /// conventions Google Fonts ships and a bracket-free short form
+    /// <c>{family}-VF.ttf</c>. Returns the first that exists or null.
+    /// </summary>
+    private static string findVariableFile(Storage storage, string family, bool italic)
+    {
+        string[] candidates = italic
+            ? new[] { $"{family}-Italic[wght].ttf", $"{family}-Italic-VariableFont_wght.ttf", $"{family}-ItalicVF.ttf" }
+            : new[] { $"{family}[wght].ttf", $"{family}-VariableFont_wght.ttf", $"{family}-VF.ttf" };
+
+        foreach (string candidate in candidates)
+        {
+            if (storage.Exists(candidate))
+                return candidate;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Legacy path: one static TTF per weight (<c>{family}-{weight}.ttf</c>) plus optional italics.
+    /// Unchanged behaviour, preserved so third-party apps that ship per-weight fonts keep working.
+    /// </summary>
+    private void loadStaticFamily(Storage storage, string family, bool hasItalics)
+    {
+        string[] weights = Enum.GetNames(typeof(FontWeights));
 
         foreach (string weight in weights)
         {
@@ -100,7 +188,7 @@ public class RendererFontStore : IFontStore
             AddFont(storage, normalFileName, alias: $"{family}-{weight}");
 
             // Add regular font as normal fallback too
-            if (weight == nameof(DefaultFontWeights.Regular))
+            if (weight == nameof(FontWeights.Regular))
                 addFontAlias($"{family}-{weight}", family);
 
             if (hasItalics)
@@ -154,6 +242,8 @@ public class RendererFontStore : IFontStore
         }
 
         // NotoColorEmoji
+        // Note for me in future: Still can't render COLRv1 version, please use normal bitmap version
+        // https://github.com/googlefonts/noto-emoji/blob/main/fonts/NotoColorEmoji.ttf
         if (!colorEmojiInChain && notoColorAvailable)
         {
             AddFallbackFamily("NotoColorEmoji");
@@ -291,6 +381,12 @@ public class RendererFontStore : IFontStore
         if (fontCache.TryGetValue(name, out var font) && font.Value != null) return font.Value;
         return defaultFont;
     }
+
+    /// <summary>
+    /// Derives the <see cref="FontVariation"/> for the requested usage (weight → <c>wght</c>, plus any
+    /// Fill/Grade/OpticalSize overrides). Applied at render time; harmlessly ignored by static fonts.
+    /// </summary>
+    public FontVariation GetVariation(FontUsage usage) => usage.ToVariation();
 
     public void AddFallbackFamily(string familyName)
     {
