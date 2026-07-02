@@ -128,6 +128,12 @@ public abstract partial class TextBox : Container
     }
 
     /// <summary>
+    /// Whether the placeholder hint is currently visible. False once there is committed text or an
+    /// IME composition is in progress.
+    /// </summary>
+    public bool IsPlaceholderVisible => PlaceholderSprite.Alpha > 0f;
+
+    /// <summary>
     /// Dimmed hint text shown while the box is empty.
     /// </summary>
     public string PlaceholderText
@@ -268,7 +274,8 @@ public abstract partial class TextBox : Container
     /// </summary>
     protected virtual void UpdatePlaceholderVisibility()
     {
-        PlaceholderSprite.Alpha = string.IsNullOrEmpty(Text.Value) ? 0.4f : 0f;
+        bool showPlaceholder = string.IsNullOrEmpty(Text.Value) && !isComposing;
+        PlaceholderSprite.Alpha = showPlaceholder ? 0.4f : 0f;
     }
 
     private void resetCaretBlink()
@@ -291,6 +298,37 @@ public abstract partial class TextBox : Container
     }
 
     private static bool isWordChar(char c) => char.IsLetterOrDigit(c) || c == '_';
+
+    /// <summary>
+    /// Returns the index one code point before <paramref name="index"/>, stepping over a full
+    /// surrogate pair (e.g. an emoji) so the caret never lands between the two halves of one.
+    /// </summary>
+    private int previousCodePointIndex(int index)
+    {
+        string text = Text.Value;
+        if (index <= 1) return Math.Max(0, index - 1);
+
+        // A low surrogate preceded by a high surrogate is one code point — step over both.
+        if (char.IsLowSurrogate(text[index - 1]) && char.IsHighSurrogate(text[index - 2]))
+            return index - 2;
+
+        return index - 1;
+    }
+
+    /// <summary>
+    /// Returns the index one code point after <paramref name="index"/>, stepping over a full
+    /// surrogate pair so the caret never lands between the two halves of one.
+    /// </summary>
+    private int nextCodePointIndex(int index)
+    {
+        string text = Text.Value;
+        if (index >= text.Length) return text.Length;
+
+        if (char.IsHighSurrogate(text[index]) && index + 1 < text.Length && char.IsLowSurrogate(text[index + 1]))
+            return index + 2;
+
+        return index + 1;
+    }
 
     private int findPreviousWordBoundary(int from)
     {
@@ -333,6 +371,7 @@ public abstract partial class TextBox : Container
         ImeText.Text = "";
         selectionStart = caretIndex;
         TextContainer.X = 0;
+        UpdatePlaceholderVisibility();
         window?.StopTextInput();
     }
 
@@ -351,7 +390,9 @@ public abstract partial class TextBox : Container
         int closestIndex = 0;
         float minDistance = float.MaxValue;
 
-        for (int i = 0; i <= Text.Value.Length; i++)
+        // only consider code-point boundaries so a click never lands between the two halves of a
+        // surrogate pair (e.g. an emoji). Walk 0, next boundary, up to and including the end.
+        for (int i = 0; ; i = nextCodePointIndex(i))
         {
             float charX = SpriteText.GetCharacterPosition(i).X;
             float distance = Math.Abs(localX - charX);
@@ -361,6 +402,9 @@ public abstract partial class TextBox : Container
                 minDistance = distance;
                 closestIndex = i;
             }
+
+            if (i >= Text.Value.Length)
+                break;
         }
 
         return closestIndex;
@@ -563,11 +607,11 @@ public abstract partial class TextBox : Container
             }
             else if (shiftPressed)
             {
-                caretIndex = Math.Max(0, caretIndex - 1);
+                caretIndex = previousCodePointIndex(caretIndex);
             }
             else
             {
-                caretIndex = hasSelection ? Math.Min(selectionStart, caretIndex) : Math.Max(0, caretIndex - 1);
+                caretIndex = hasSelection ? Math.Min(selectionStart, caretIndex) : previousCodePointIndex(caretIndex);
                 selectionStart = caretIndex;
             }
             caretMoved();
@@ -583,11 +627,11 @@ public abstract partial class TextBox : Container
             }
             else if (shiftPressed)
             {
-                caretIndex = Math.Min(Text.Value.Length, caretIndex + 1);
+                caretIndex = nextCodePointIndex(caretIndex);
             }
             else
             {
-                caretIndex = hasSelection ? Math.Max(selectionStart, caretIndex) : Math.Min(Text.Value.Length, caretIndex + 1);
+                caretIndex = hasSelection ? Math.Max(selectionStart, caretIndex) : nextCodePointIndex(caretIndex);
                 selectionStart = caretIndex;
             }
             caretMoved();
@@ -599,9 +643,11 @@ public abstract partial class TextBox : Container
             if (hasSelection) { deleteSelection(); caretMoved(); return true; }
             if (caretIndex > 0)
             {
-                caretIndex--;
-                selectionStart = caretIndex;
-                setTextFromUserEdit(Text.Value.Remove(caretIndex, 1));
+                // Delete a whole code point (a surrogate pair such as an emoji counts as one).
+                int start = previousCodePointIndex(caretIndex);
+                setTextFromUserEdit(Text.Value.Remove(start, caretIndex - start));
+                caretIndex = start;
+                selectionStart = start;
                 caretMoved();
                 return true;
             }
@@ -609,10 +655,16 @@ public abstract partial class TextBox : Container
 
         if (e.Key == Key.Delete)
         {
-            if (hasSelection) { deleteSelection(); caretMoved(); return true; }
+            if (hasSelection)
+            {
+                deleteSelection();
+                caretMoved();
+                return true;
+            }
             if (caretIndex < Text.Value.Length)
             {
-                setTextFromUserEdit(Text.Value.Remove(caretIndex, 1));
+                int end = nextCodePointIndex(caretIndex);
+                setTextFromUserEdit(Text.Value.Remove(caretIndex, end - caretIndex));
                 caretMoved();
                 return true;
             }
@@ -689,6 +741,7 @@ public abstract partial class TextBox : Container
         isComposing = false;
         ImeText.Text = "";
         insertTextAtCaret(e.Text);
+        UpdatePlaceholderVisibility();
         return true;
     }
 
@@ -699,6 +752,7 @@ public abstract partial class TextBox : Container
         // An empty editing event signals that the composition was cancelled.
         isComposing = !string.IsNullOrEmpty(e.Text);
         ImeText.Text = e.Text;
+        UpdatePlaceholderVisibility();
         Invalidate(InvalidationFlags.DrawInfo);
         return true;
     }

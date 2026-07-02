@@ -109,6 +109,30 @@ public partial class TestBasicTextBox : ManualInputManagerTestScene
     }
 
     [Test]
+    public void TestPlaceholderHiddenDuringComposition()
+    {
+        AddStep("Set placeholder", () => textBox.PlaceholderText = "Enter name...");
+        AddStep("Focus textbox", () =>
+        {
+            InputManager.MoveMouseTo(textBox);
+            InputManager.Click(MouseButton.Left);
+        });
+        AddAssert("Placeholder visible while empty", () => textBox.IsPlaceholderVisible);
+
+        AddStep("Start IME composition", () => InputManager.EditComposingText("この", 0, 2));
+        AddAssert("Text still empty during composition", () => textBox.Text.Value == "");
+        AddAssert("Placeholder hidden during composition", () => !textBox.IsPlaceholderVisible);
+
+        AddStep("Cancel composition", () => InputManager.EditComposingText("", 0, 0));
+        AddAssert("Placeholder visible again after cancel", () => textBox.IsPlaceholderVisible);
+
+        AddStep("Compose again", () => InputManager.EditComposingText("この", 0, 2));
+        AddStep("Commit text", () => InputManager.TypeText("この"));
+        AddAssert("Text committed", () => textBox.Text.Value == "この");
+        AddAssert("Placeholder hidden with committed text", () => !textBox.IsPlaceholderVisible);
+    }
+
+    [Test]
     public void TestKeyboardSelectionAndReplacement()
     {
         AddStep("Focus and type initial string", () =>
@@ -484,6 +508,121 @@ public partial class TestBasicTextBox : ManualInputManagerTestScene
                 InputManager.Click(MouseButton.Left);
             });
             AddAssert("Caret placed at end", () => textBox.CaretIndex == text.Length);
+        }
+    }
+
+    private static readonly string emoji = char.ConvertFromUtf32(0x1F44D); // 👍
+
+    [Test]
+    public void TestEmojiBackspaceDeletesWholeCodePoint()
+    {
+        AddStep("Focus and type letter + emoji", () =>
+        {
+            InputManager.MoveMouseTo(textBox);
+            InputManager.Click(MouseButton.Left);
+            InputManager.TypeText("a" + emoji);
+        });
+        AddAssert("Text is letter + emoji", () => textBox.Text.Value == "a" + emoji);
+        AddAssert("Caret at end (3 UTF-16 units)", () => textBox.CaretIndex == 3);
+
+        // Backspace must remove the whole surrogate pair, not leave a dangling half (which used to
+        // crash layout with "low surrogate without a preceding high surrogate").
+        AddStep("Press Backspace", () => InputManager.PressKey(Key.BackSpace));
+        AddAssert("Whole emoji removed, only 'a' remains", () => textBox.Text.Value == "a");
+        AddAssert("Caret moved back one code point", () => textBox.CaretIndex == 1);
+
+        AddStep("Press Backspace again", () => InputManager.PressKey(Key.BackSpace));
+        AddAssert("Text empty", () => textBox.Text.Value == "");
+        AddAssert("Caret at start", () => textBox.CaretIndex == 0);
+    }
+
+    [Test]
+    public void TestEmojiDeleteForwardRemovesWholeCodePoint()
+    {
+        AddStep("Focus and type emoji + letter", () =>
+        {
+            InputManager.MoveMouseTo(textBox);
+            InputManager.Click(MouseButton.Left);
+            InputManager.TypeText(emoji + "a");
+        });
+
+        AddStep("Move caret to start", () => InputManager.PressKey(Key.Home));
+        AddAssert("Caret at start", () => textBox.CaretIndex == 0);
+
+        AddStep("Press Delete", () => InputManager.PressKey(Key.Delete));
+        AddAssert("Whole emoji removed, only 'a' remains", () => textBox.Text.Value == "a");
+        AddAssert("Caret stays at start", () => textBox.CaretIndex == 0);
+    }
+
+    [Test]
+    public void TestEmojiArrowNavigationStepsOverPair()
+    {
+        AddStep("Focus and type letter + emoji + letter", () =>
+        {
+            InputManager.MoveMouseTo(textBox);
+            InputManager.Click(MouseButton.Left);
+            InputManager.TypeText("a" + emoji + "b");
+        });
+        AddAssert("Text has expected length (4 UTF-16 units)", () => textBox.Text.Value.Length == 4);
+
+        AddStep("Home", () => InputManager.PressKey(Key.Home));
+        AddStep("Right once", () => InputManager.PressKey(Key.Right));
+        AddAssert("Caret after 'a'", () => textBox.CaretIndex == 1);
+
+        AddStep("Right over emoji", () => InputManager.PressKey(Key.Right));
+        AddAssert("Caret jumped past the whole pair", () => textBox.CaretIndex == 3);
+
+        AddStep("Right once", () => InputManager.PressKey(Key.Right));
+        AddAssert("Caret after 'b'", () => textBox.CaretIndex == 4);
+
+        AddStep("Left over 'b'", () => InputManager.PressKey(Key.Left));
+        AddAssert("Caret back before 'b'", () => textBox.CaretIndex == 3);
+
+        AddStep("Left over emoji", () => InputManager.PressKey(Key.Left));
+        AddAssert("Caret jumped back past the whole pair", () => textBox.CaretIndex == 1);
+    }
+
+    [Test]
+    public void TestEmojiTypingAndDeletingDoesNotCrash()
+    {
+        AddStep("Focus and type multiple emoji", () =>
+        {
+            InputManager.MoveMouseTo(textBox);
+            InputManager.Click(MouseButton.Left);
+            InputManager.TypeText(emoji + emoji + emoji);
+        });
+        AddAssert("Three emoji present (6 UTF-16 units)", () => textBox.Text.Value.Length == 6);
+
+        AddStep("Backspace three times", () =>
+        {
+            InputManager.PressKey(Key.BackSpace);
+            InputManager.PressKey(Key.BackSpace);
+            InputManager.PressKey(Key.BackSpace);
+        });
+        AddAssert("All emoji removed cleanly", () => textBox.Text.Value == "");
+    }
+
+    [Test]
+    public void TestEmojiCaretVisualPositionAdvances()
+    {
+        AddStep("Focus and type letter + emoji + letter", () =>
+        {
+            InputManager.MoveMouseTo(textBox);
+            InputManager.Click(MouseButton.Left);
+            InputManager.TypeText("a" + emoji + "b");
+        });
+
+        if (IsVisualRunner)
+        {
+            AddAssert("Caret X strictly increases over the emoji", () =>
+            {
+                float x0 = textBox.GetScreenPositionForCaretIndex(0).X;
+                float x1 = textBox.GetScreenPositionForCaretIndex(1).X; // after 'a'
+                float x3 = textBox.GetScreenPositionForCaretIndex(3).X; // after the emoji
+                float x4 = textBox.GetScreenPositionForCaretIndex(4).X; // after 'b'
+
+                return x0 < x1 && x1 < x3 && x3 < x4;
+            });
         }
     }
 }

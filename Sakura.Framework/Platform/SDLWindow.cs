@@ -71,6 +71,11 @@ public class SDLWindow : IWindow
     private RectangleF? pendingTextInputRect;
     private readonly Lock textInputLock = new Lock();
 
+    // Whether SDL text input is currently active (a text field is focused). Set on the main thread
+    // when the pending start/stop is applied. Used to gate the macOS emoji-palette shortcut so it
+    // only opens when there's somewhere to insert.
+    private bool textInputActive;
+
     private WindowMode windowMode = WindowMode.Windowed;
 
     // Base flags — no graphics API flag yet; added by SetGraphicsApi() before Create().
@@ -788,6 +793,10 @@ public class SDLWindow : IWindow
                     break;
 
                 case SDL_EventType.SDL_EVENT_KEY_DOWN:
+                    // macOS: open the system Character Viewer (emoji picker) on Ctrl+Cmd+Space.
+                    // Handled here (and swallowed) because there is no dedicated macOS window type yet.
+                    if (tryHandleMacEmojiPalette(sdlEvent.key))
+                        break;
                     handleKeyEvent(sdlEvent.key, OnKeyDown);
                     break;
 
@@ -940,6 +949,40 @@ public class SDLWindow : IWindow
                 CursorInWindow = false;
                 break;
         }
+    }
+
+    /// <summary>
+    /// On macOS, opens the system Character Viewer (emoji &amp; symbols picker) when the user presses
+    /// the standard Ctrl+Cmd+Space shortcut while a text field is focused. A plain (unbundled) SDL app
+    /// has no standard Edit menu, so the OS has nothing to bind that shortcut to, we invoke
+    /// <c>[NSApp orderFrontCharacterPalette:]</c> ourselves instead. Picked characters arrive as normal
+    /// <c>SDL_EVENT_TEXT_INPUT</c> events, so no other wiring is needed.
+    /// Returns true if the event was consumed (so normal key dispatch is skipped).
+    /// </summary>
+    private bool tryHandleMacEmojiPalette(SDL_KeyboardEvent keyboardEvent)
+    {
+        if (!RuntimeInfo.IsMacOS)
+            return false;
+
+        // Only when a text field is focused, so the picker has somewhere to insert.
+        if (!textInputActive)
+            return false;
+
+        if (keyboardEvent.scancode != SDL_Scancode.SDL_SCANCODE_SPACE)
+            return false;
+
+        bool ctrl = (keyboardEvent.mod & SDL_Keymod.SDL_KMOD_CTRL) != 0;
+        bool cmd = (keyboardEvent.mod & SDL_Keymod.SDL_KMOD_GUI) != 0;
+
+        if (!ctrl || !cmd)
+            return false;
+
+        // Ignore auto-repeat: open once per physical press, but still swallow repeats so the combo
+        // never leaks into normal key handling.
+        if (!keyboardEvent.repeat)
+            MacOSNative.ShowCharacterPalette();
+
+        return true;
     }
 
     private void handleKeyEvent(SDL_KeyboardEvent keyboardEvent, Action<KeyEvent> action)
@@ -1140,6 +1183,8 @@ public class SDLWindow : IWindow
                 SDL_StartTextInput(window);
             else
                 SDL_StopTextInput(window);
+
+            textInputActive = targetState.Value;
         }
 
         // apply IME composition box positions on the main thread

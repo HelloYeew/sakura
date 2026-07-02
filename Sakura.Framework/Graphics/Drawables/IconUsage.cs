@@ -56,6 +56,8 @@ public enum IconUsage : uint
     _24mp = 0xe962,
     /// <summary>2d (U+ef37)</summary>
     _2d = 0xef37,
+    /// <summary>2d_2 (U+fff0e)</summary>
+    _2d2 = 0xfff0e,
     /// <summary>2k (U+e963)</summary>
     _2k = 0xe963,
     /// <summary>2k_plus (U+e964)</summary>
@@ -70,6 +72,8 @@ public enum IconUsage : uint
     _360 = 0xe577,
     /// <summary>3d (U+ed38)</summary>
     _3d = 0xed38,
+    /// <summary>3d_2 (U+fff0f)</summary>
+    _3d2 = 0xfff0f,
     /// <summary>3d_rotation (U+e84d)</summary>
     _3dRotation = 0xe84d,
     /// <summary>3g_mobiledata (U+efd0)</summary>
@@ -224,10 +228,10 @@ public enum IconUsage : uint
     AddCard = 0xeb86,
     /// <summary>add_chart (U+ef3c)</summary>
     AddChart = 0xef3c,
-    /// <summary>add_circle (U+e3ba)</summary>
-    AddCircle = 0xe3ba,
-    /// <summary>add_circle_outline (U+e3ba)</summary>
-    AddCircleOutline = 0xe3ba,
+    /// <summary>add_circle (U+e990)</summary>
+    AddCircle = 0xe990,
+    /// <summary>add_circle_outline (U+e990)</summary>
+    AddCircleOutline = 0xe990,
     /// <summary>add_column_left (U+f425)</summary>
     AddColumnLeft = 0xf425,
     /// <summary>add_column_right (U+f424)</summary>
@@ -638,8 +642,8 @@ public enum IconUsage : uint
     ArrowsUpDownCircle = 0xeee3,
     /// <summary>art_track (U+e060)</summary>
     ArtTrack = 0xe060,
-    /// <summary>article (U+ef42)</summary>
-    Article = 0xef42,
+    /// <summary>article (U+ef87)</summary>
+    Article = 0xef87,
     /// <summary>article_person (U+f368)</summary>
     ArticlePerson = 0xf368,
     /// <summary>article_shortcut (U+f587)</summary>
@@ -708,6 +712,8 @@ public enum IconUsage : uint
     Attractions = 0xea52,
     /// <summary>attribution (U+efdb)</summary>
     Attribution = 0xefdb,
+    /// <summary>audio_capture (U+fff03)</summary>
+    AudioCapture = 0xfff03,
     /// <summary>audio_description (U+f58c)</summary>
     AudioDescription = 0xf58c,
     /// <summary>audio_file (U+eb82)</summary>
@@ -956,18 +962,30 @@ public enum IconUsage : uint
     BatteryChange = 0xf7eb,
     /// <summary>battery_charging_20 (U+f0a2)</summary>
     BatteryCharging20 = 0xf0a2,
+    /// <summary>battery_charging_20_2 (U+fff3e)</summary>
+    BatteryCharging202 = 0xfff3e,
     /// <summary>battery_charging_30 (U+f0a3)</summary>
     BatteryCharging30 = 0xf0a3,
+    /// <summary>battery_charging_30_2 (U+fff3d)</summary>
+    BatteryCharging302 = 0xfff3d,
     /// <summary>battery_charging_50 (U+f0a4)</summary>
     BatteryCharging50 = 0xf0a4,
+    /// <summary>battery_charging_50_2 (U+fff3c)</summary>
+    BatteryCharging502 = 0xfff3c,
     /// <summary>battery_charging_60 (U+f0a5)</summary>
     BatteryCharging60 = 0xf0a5,
+    /// <summary>battery_charging_60_2 (U+fff3b)</summary>
+    BatteryCharging602 = 0xfff3b,
     /// <summary>battery_charging_80 (U+f0a6)</summary>
     BatteryCharging80 = 0xf0a6,
+    /// <summary>battery_charging_80_2 (U+fff3a)</summary>
+    BatteryCharging802 = 0xfff3a,
     /// <summary>battery_charging_90 (U+f0a7)</summary>
     BatteryCharging90 = 0xf0a7,
     /// <summary>battery_charging_full (U+e1a3)</summary>
     BatteryChargingFull = 0xe1a3,
+    /// <summary>battery_charging_full_2 (U+fff39)</summary>
+    BatteryChargingFull2 = 0xfff39,
     /// <summary>battery_error (U+f7ea)</summary>
     BatteryError = 0xf7ea,
     /// <summary>battery_full (U+e1a5)</summary>
@@ -1048,6 +1066,10 @@ public enum IconUsage : uint
     Blind = 0xf8d6,
     /// <summary>blinds (U+e286)</summary>
     Blinds = 0xe286,
+    /// <summary>blinds_2 (U+fff78)</summary>
+    Blinds2 = 0xfff78,
+    /// <summary>blinds_2_closed (U+fff79)</summary>
+    Blinds2Closed = 0xfff79,
     /// <summary>blinds_closed (U+ec1f)</summary>
     BlindsClosed = 0xec1f,
     /// <summary>block (U+f08c)</summary>
@@ -1090,6 +1112,8 @@ public enum IconUsage : uint
     BodySystem = 0xe099,
     /// <summary>bolt (U+ea0b)</summary>
     Bolt = 0xea0b,
+    /// <summary>bolt_boost (U+fff6a)</summary>
+    BoltBoost = 0xfff6a,
     /// <summary>bomb (U+f568)</summary>
     Bomb = 0xf568,
     /// <summary>book (U+e86e)</summary>
@@ -1272,8 +1296,6 @@ public enum IconUsage : uint
     BusAlert = 0xe98f,
     /// <summary>bus_map_pin (U+fffa2)</summary>
     BusMapPin = 0xfffa2,
-    /// <summary>bus_map_pin_2 (U+fff90)</summary>
-    BusMapPin2 = 0xfff90,
     /// <summary>bus_railway (U+f36b)</summary>
     BusRailway = 0xf36b,
     /// <summary>business (U+e7ee)</summary>
@@ -1422,6 +1444,8 @@ public enum IconUsage : uint
     CarFanMidRight = 0xf339,
     /// <summary>car_fan_recirculate (U+f338)</summary>
     CarFanRecirculate = 0xf338,
+    /// <summary>car_fan_recirculate_2 (U+fff40)</summary>
+    CarFanRecirculate2 = 0xfff40,
     /// <summary>car_gear (U+f337)</summary>
     CarGear = 0xf337,
     /// <summary>car_lock (U+f336)</summary>
@@ -1476,8 +1500,8 @@ public enum IconUsage : uint
     CastWarning = 0xf5ef,
     /// <summary>castle (U+eab1)</summary>
     Castle = 0xeab1,
-    /// <summary>category (U+e574)</summary>
-    Category = 0xe574,
+    /// <summary>category (U+e72c)</summary>
+    Category = 0xe72c,
     /// <summary>category_search (U+f437)</summary>
     CategorySearch = 0xf437,
     /// <summary>celebration (U+ea65)</summary>
@@ -1536,10 +1560,12 @@ public enum IconUsage : uint
     ChatPasteGo = 0xf6bd,
     /// <summary>chat_paste_go_2 (U+f3cb)</summary>
     ChatPasteGo2 = 0xf3cb,
-    /// <summary>check (U+e5ca)</summary>
-    Check = 0xe5ca,
-    /// <summary>check_box (U+e834)</summary>
-    CheckBox = 0xe834,
+    /// <summary>check (U+e668)</summary>
+    Check = 0xe668,
+    /// <summary>check_alert (U+fff85)</summary>
+    CheckAlert = 0xfff85,
+    /// <summary>check_box (U+e9de)</summary>
+    CheckBox = 0xe9de,
     /// <summary>check_box_outline_blank (U+e835)</summary>
     CheckBoxOutlineBlank = 0xe835,
     /// <summary>check_circle (U+f0be)</summary>
@@ -1604,8 +1630,8 @@ public enum IconUsage : uint
     ChevronRight = 0xe5cc,
     /// <summary>child_care (U+eb41)</summary>
     ChildCare = 0xeb41,
-    /// <summary>child_friendly (U+eb42)</summary>
-    ChildFriendly = 0xeb42,
+    /// <summary>child_friendly (U+ef80)</summary>
+    ChildFriendly = 0xef80,
     /// <summary>child_hat (U+ef30)</summary>
     ChildHat = 0xef30,
     /// <summary>chip_extraction (U+f821)</summary>
@@ -1858,8 +1884,8 @@ public enum IconUsage : uint
     ContrastSquare = 0xf4a0,
     /// <summary>control_camera (U+e074)</summary>
     ControlCamera = 0xe074,
-    /// <summary>control_point (U+e3ba)</summary>
-    ControlPoint = 0xe3ba,
+    /// <summary>control_point (U+e990)</summary>
+    ControlPoint = 0xe990,
     /// <summary>control_point_duplicate (U+e3bb)</summary>
     ControlPointDuplicate = 0xe3bb,
     /// <summary>controller_gen (U+e83d)</summary>
@@ -1938,6 +1964,10 @@ public enum IconUsage : uint
     Crop = 0xe3be,
     /// <summary>crop_16_9 (U+e3bc)</summary>
     Crop169 = 0xe3bc,
+    /// <summary>crop_21_9 (U+fff0a)</summary>
+    Crop219 = 0xfff0a,
+    /// <summary>crop_2_3 (U+fff0b)</summary>
+    Crop23 = 0xfff0b,
     /// <summary>crop_3_2 (U+e3bd)</summary>
     Crop32 = 0xe3bd,
     /// <summary>crop_5_4 (U+e3bf)</summary>
@@ -2012,6 +2042,8 @@ public enum IconUsage : uint
     Dashboard = 0xe871,
     /// <summary>dashboard_2 (U+f3ea)</summary>
     Dashboard2 = 0xf3ea,
+    /// <summary>dashboard_2_add (U+ffee9)</summary>
+    Dashboard2Add = 0xffee9,
     /// <summary>dashboard_2_edit (U+fffd7)</summary>
     Dashboard2Edit = 0xfffd7,
     /// <summary>dashboard_2_gear (U+fffd6)</summary>
@@ -2386,8 +2418,8 @@ public enum IconUsage : uint
     DownloadForOffline = 0xf000,
     /// <summary>downloading (U+f001)</summary>
     Downloading = 0xf001,
-    /// <summary>draft (U+e66d)</summary>
-    Draft = 0xe66d,
+    /// <summary>draft (U+e674)</summary>
+    Draft = 0xe674,
     /// <summary>draft_orders (U+e7b3)</summary>
     DraftOrders = 0xe7b3,
     /// <summary>drafts (U+e151)</summary>
@@ -2420,6 +2452,8 @@ public enum IconUsage : uint
     DriveFileMoveOutline = 0xe9a1,
     /// <summary>drive_file_move_rtl (U+e9a1)</summary>
     DriveFileMoveRtl = 0xe9a1,
+    /// <summary>drive_file_rename (U+e676)</summary>
+    DriveFileRename = 0xe676,
     /// <summary>drive_file_rename_outline (U+e9a2)</summary>
     DriveFileRenameOutline = 0xe9a2,
     /// <summary>drive_folder_upload (U+e9a3)</summary>
@@ -2432,6 +2466,8 @@ public enum IconUsage : uint
     Drone2 = 0xf259,
     /// <summary>dropdown (U+e9a4)</summary>
     Dropdown = 0xe9a4,
+    /// <summary>dropdown_menu (U+ffef0)</summary>
+    DropdownMenu = 0xffef0,
     /// <summary>dropper_eye (U+f351)</summary>
     DropperEye = 0xf351,
     /// <summary>dry (U+f1b3)</summary>
@@ -2744,6 +2780,8 @@ public enum IconUsage : uint
     Eyeglasses2 = 0xf2c7,
     /// <summary>eyeglasses_2_sound (U+f265)</summary>
     Eyeglasses2Sound = 0xf265,
+    /// <summary>eyeglasses_3 (U+ffef1)</summary>
+    Eyeglasses3 = 0xffef1,
     /// <summary>face (U+f008)</summary>
     Face = 0xf008,
     /// <summary>face_2 (U+f8da)</summary>
@@ -2970,8 +3008,6 @@ public enum IconUsage : uint
     FitScreen = 0xea10,
     /// <summary>fit_width (U+f779)</summary>
     FitWidth = 0xf779,
-    /// <summary>fitbit_raquetball (U+fffc5)</summary>
-    FitbitRaquetball = 0xfffc5,
     /// <summary>fitness_center (U+eb43)</summary>
     FitnessCenter = 0xeb43,
     /// <summary>fitness_tracker (U+f463)</summary>
@@ -3374,6 +3410,8 @@ public enum IconUsage : uint
     GarageCheck = 0xf28d,
     /// <summary>garage_door (U+e714)</summary>
     GarageDoor = 0xe714,
+    /// <summary>garage_door_open (U+fff77)</summary>
+    GarageDoorOpen = 0xfff77,
     /// <summary>garage_home (U+e82d)</summary>
     GarageHome = 0xe82d,
     /// <summary>garage_money (U+f28c)</summary>
@@ -3758,6 +3796,8 @@ public enum IconUsage : uint
     HomeSpeaker = 0xf11c,
     /// <summary>home_storage (U+f86c)</summary>
     HomeStorage = 0xf86c,
+    /// <summary>home_storage_gear (U+fff7e)</summary>
+    HomeStorageGear = 0xfff7e,
     /// <summary>home_work (U+f030)</summary>
     HomeWork = 0xf030,
     /// <summary>horizontal_align_center (U+fff9c)</summary>
@@ -3850,6 +3890,8 @@ public enum IconUsage : uint
     Icecream = 0xea69,
     /// <summary>id_card (U+f4ca)</summary>
     IdCard = 0xf4ca,
+    /// <summary>id_card_2 (U+ffeea)</summary>
+    IdCard2 = 0xffeea,
     /// <summary>identity_aware_proxy (U+e2dd)</summary>
     IdentityAwareProxy = 0xe2dd,
     /// <summary>identity_platform (U+ebb7)</summary>
@@ -3864,8 +3906,8 @@ public enum IconUsage : uint
     Image = 0xe3f4,
     /// <summary>image_arrow_up (U+f317)</summary>
     ImageArrowUp = 0xf317,
-    /// <summary>image_aspect_ratio (U+e3f5)</summary>
-    ImageAspectRatio = 0xe3f5,
+    /// <summary>image_aspect_ratio (U+e6a6)</summary>
+    ImageAspectRatio = 0xe6a6,
     /// <summary>image_inset (U+f247)</summary>
     ImageInset = 0xf247,
     /// <summary>image_not_supported (U+f116)</summary>
@@ -3920,6 +3962,8 @@ public enum IconUsage : uint
     InkHighlighter = 0xe6d1,
     /// <summary>ink_highlighter_move (U+f524)</summary>
     InkHighlighterMove = 0xf524,
+    /// <summary>ink_highlighter_off (U+fff14)</summary>
+    InkHighlighterOff = 0xfff14,
     /// <summary>ink_marker (U+e6d2)</summary>
     InkMarker = 0xe6d2,
     /// <summary>ink_pen (U+e6d3)</summary>
@@ -3940,8 +3984,8 @@ public enum IconUsage : uint
     InsertChartOutlined = 0xf0cc,
     /// <summary>insert_comment (U+e24c)</summary>
     InsertComment = 0xe24c,
-    /// <summary>insert_drive_file (U+e66d)</summary>
-    InsertDriveFile = 0xe66d,
+    /// <summary>insert_drive_file (U+e674)</summary>
+    InsertDriveFile = 0xe674,
     /// <summary>insert_emoticon (U+ea22)</summary>
     InsertEmoticon = 0xea22,
     /// <summary>insert_invitation (U+e878)</summary>
@@ -4014,12 +4058,12 @@ public enum IconUsage : uint
     Kayaking = 0xe50c,
     /// <summary>kebab_dining (U+e842)</summary>
     KebabDining = 0xe842,
-    /// <summary>keep (U+f026)</summary>
-    Keep = 0xf026,
+    /// <summary>keep (U+f027)</summary>
+    Keep = 0xf027,
     /// <summary>keep_off (U+e6f9)</summary>
     KeepOff = 0xe6f9,
-    /// <summary>keep_pin (U+f026)</summary>
-    KeepPin = 0xf026,
+    /// <summary>keep_pin (U+f027)</summary>
+    KeepPin = 0xf027,
     /// <summary>keep_public (U+f56f)</summary>
     KeepPublic = 0xf56f,
     /// <summary>kettle (U+e2b9)</summary>
@@ -4128,8 +4172,8 @@ public enum IconUsage : uint
     Landscape2Off = 0xf4c3,
     /// <summary>landslide (U+ebd7)</summary>
     Landslide = 0xebd7,
-    /// <summary>language (U+e894)</summary>
-    Language = 0xe894,
+    /// <summary>language (U+ea07)</summary>
+    Language = 0xea07,
     /// <summary>language_chinese_array (U+f766)</summary>
     LanguageChineseArray = 0xf766,
     /// <summary>language_chinese_cangjie (U+f765)</summary>
@@ -4224,8 +4268,12 @@ public enum IconUsage : uint
     Light = 0xf02a,
     /// <summary>light_group (U+e28b)</summary>
     LightGroup = 0xe28b,
+    /// <summary>light_group_2 (U+fff76)</summary>
+    LightGroup2 = 0xfff76,
     /// <summary>light_mode (U+e518)</summary>
     LightMode = 0xe518,
+    /// <summary>light_mode_auto (U+fff00)</summary>
+    LightModeAuto = 0xfff00,
     /// <summary>light_off (U+e9b8)</summary>
     LightOff = 0xe9b8,
     /// <summary>lightbulb (U+e90f)</summary>
@@ -4238,6 +4286,8 @@ public enum IconUsage : uint
     LightbulbOutline = 0xe90f,
     /// <summary>lightning_stand (U+efa4)</summary>
     LightningStand = 0xefa4,
+    /// <summary>lightstrip (U+fff75)</summary>
+    Lightstrip = 0xfff75,
     /// <summary>line_axis (U+ea9a)</summary>
     LineAxis = 0xea9a,
     /// <summary>line_curve (U+f757)</summary>
@@ -4288,12 +4338,14 @@ public enum IconUsage : uint
     Liquor = 0xea60,
     /// <summary>list (U+e896)</summary>
     List = 0xe896,
-    /// <summary>list_alt (U+e0ee)</summary>
-    ListAlt = 0xe0ee,
+    /// <summary>list_alt (U+e677)</summary>
+    ListAlt = 0xe677,
     /// <summary>list_alt_add (U+f756)</summary>
     ListAltAdd = 0xf756,
     /// <summary>list_alt_check (U+f3de)</summary>
     ListAltCheck = 0xf3de,
+    /// <summary>list_arrow (U+fff33)</summary>
+    ListArrow = 0xfff33,
     /// <summary>lists (U+e9b9)</summary>
     Lists = 0xe9b9,
     /// <summary>live_help (U+e0c6)</summary>
@@ -4692,6 +4744,8 @@ public enum IconUsage : uint
     MobileCheck = 0xf073,
     /// <summary>mobile_code (U+f2e2)</summary>
     MobileCode = 0xf2e2,
+    /// <summary>mobile_dock (U+f2e0)</summary>
+    MobileDock = 0xf2e0,
     /// <summary>mobile_dots (U+f2d0)</summary>
     MobileDots = 0xf2d0,
     /// <summary>mobile_friendly (U+f073)</summary>
@@ -4920,12 +4974,14 @@ public enum IconUsage : uint
     MoveUp = 0xeb64,
     /// <summary>moved_location (U+e594)</summary>
     MovedLocation = 0xe594,
-    /// <summary>movie (U+e404)</summary>
-    Movie = 0xe404,
-    /// <summary>movie_creation (U+e404)</summary>
-    MovieCreation = 0xe404,
+    /// <summary>movie (U+e684)</summary>
+    Movie = 0xe684,
+    /// <summary>movie_creation (U+e684)</summary>
+    MovieCreation = 0xe684,
     /// <summary>movie_edit (U+f840)</summary>
     MovieEdit = 0xf840,
+    /// <summary>movie_edit_off (U+fff7d)</summary>
+    MovieEditOff = 0xfff7d,
     /// <summary>movie_filter (U+e43a)</summary>
     MovieFilter = 0xe43a,
     /// <summary>movie_info (U+e02d)</summary>
@@ -5238,8 +5294,8 @@ public enum IconUsage : uint
     NotListedLocation = 0xe575,
     /// <summary>not_started (U+f0d1)</summary>
     NotStarted = 0xf0d1,
-    /// <summary>note (U+e66d)</summary>
-    Note = 0xe66d,
+    /// <summary>note (U+e674)</summary>
+    Note = 0xe674,
     /// <summary>note_add (U+e89c)</summary>
     NoteAdd = 0xe89c,
     /// <summary>note_alt (U+f040)</summary>
@@ -5424,8 +5480,8 @@ public enum IconUsage : uint
     PanToolAlt = 0xebb9,
     /// <summary>pan_zoom (U+f655)</summary>
     PanZoom = 0xf655,
-    /// <summary>panorama (U+e40b)</summary>
-    Panorama = 0xe40b,
+    /// <summary>panorama (U+e691)</summary>
+    Panorama = 0xe691,
     /// <summary>panorama_fish_eye (U+e40c)</summary>
     PanoramaFishEye = 0xe40c,
     /// <summary>panorama_horizontal (U+e40d)</summary>
@@ -5658,8 +5714,8 @@ public enum IconUsage : uint
     PhonelinkRingOff = 0xf7aa,
     /// <summary>phonelink_setup (U+f2d9)</summary>
     PhonelinkSetup = 0xf2d9,
-    /// <summary>photo (U+e432)</summary>
-    Photo = 0xe432,
+    /// <summary>photo (U+e693)</summary>
+    Photo = 0xe693,
     /// <summary>photo_album (U+e411)</summary>
     PhotoAlbum = 0xe411,
     /// <summary>photo_auto_merge (U+f530)</summary>
@@ -5678,8 +5734,8 @@ public enum IconUsage : uint
     PhotoLibrary = 0xe413,
     /// <summary>photo_prints (U+efb2)</summary>
     PhotoPrints = 0xefb2,
-    /// <summary>photo_size_select_actual (U+e432)</summary>
-    PhotoSizeSelectActual = 0xe432,
+    /// <summary>photo_size_select_actual (U+e693)</summary>
+    PhotoSizeSelectActual = 0xe693,
     /// <summary>photo_size_select_large (U+e433)</summary>
     PhotoSizeSelectLarge = 0xe433,
     /// <summary>photo_size_select_small (U+e434)</summary>
@@ -5730,8 +5786,14 @@ public enum IconUsage : uint
     PinDrop = 0xe55e,
     /// <summary>pin_end (U+e767)</summary>
     PinEnd = 0xe767,
+    /// <summary>pin_history (U+fff2e)</summary>
+    PinHistory = 0xfff2e,
     /// <summary>pin_invoke (U+e763)</summary>
     PinInvoke = 0xe763,
+    /// <summary>pin_road (U+fff2d)</summary>
+    PinRoad = 0xfff2d,
+    /// <summary>pin_road_2 (U+ffeeb)</summary>
+    PinRoad2 = 0xffeeb,
     /// <summary>pinboard (U+f3ab)</summary>
     Pinboard = 0xf3ab,
     /// <summary>pinboard_unread (U+f3ac)</summary>
@@ -5888,8 +5950,8 @@ public enum IconUsage : uint
     PrintError = 0xf7a0,
     /// <summary>print_lock (U+f651)</summary>
     PrintLock = 0xf651,
-    /// <summary>priority (U+e19f)</summary>
-    Priority = 0xe19f,
+    /// <summary>priority (U+efb4)</summary>
+    Priority = 0xefb4,
     /// <summary>priority_high (U+e645)</summary>
     PriorityHigh = 0xe645,
     /// <summary>privacy (U+f148)</summary>
@@ -6146,6 +6208,8 @@ public enum IconUsage : uint
     RequestQuote = 0xf1b6,
     /// <summary>reset_brightness (U+f482)</summary>
     ResetBrightness = 0xf482,
+    /// <summary>reset_colors (U+ffee2)</summary>
+    ResetColors = 0xffee2,
     /// <summary>reset_exposure (U+f266)</summary>
     ResetExposure = 0xf266,
     /// <summary>reset_focus (U+f481)</summary>
@@ -6390,8 +6454,8 @@ public enum IconUsage : uint
     SdStorage = 0xe623,
     /// <summary>sdk (U+e720)</summary>
     Sdk = 0xe720,
-    /// <summary>search (U+e8b6)</summary>
-    Search = 0xe8b6,
+    /// <summary>search (U+ef7a)</summary>
+    Search = 0xef7a,
     /// <summary>search_activity (U+f3e5)</summary>
     SearchActivity = 0xf3e5,
     /// <summary>search_check (U+f800)</summary>
@@ -6418,6 +6482,8 @@ public enum IconUsage : uint
     SeatVentLeft = 0xf32d,
     /// <summary>seat_vent_right (U+f32c)</summary>
     SeatVentRight = 0xf32c,
+    /// <summary>seat_window (U+ffee1)</summary>
+    SeatWindow = 0xffee1,
     /// <summary>security (U+e32a)</summary>
     Security = 0xe32a,
     /// <summary>security_key (U+f503)</summary>
@@ -6450,6 +6516,8 @@ public enum IconUsage : uint
     SelfImprovement = 0xea78,
     /// <summary>sell (U+f05b)</summary>
     Sell = 0xf05b,
+    /// <summary>sell_cloud (U+fff7b)</summary>
+    SellCloud = 0xfff7b,
     /// <summary>send (U+e163)</summary>
     Send = 0xe163,
     /// <summary>send_and_archive (U+ea0c)</summary>
@@ -6580,6 +6648,10 @@ public enum IconUsage : uint
     SettopComponent = 0xe2ac,
     /// <summary>severe_cold (U+ebd3)</summary>
     SevereCold = 0xebd3,
+    /// <summary>shades (U+fff73)</summary>
+    Shades = 0xfff73,
+    /// <summary>shades_closed (U+fff74)</summary>
+    ShadesClosed = 0xfff74,
     /// <summary>shadow (U+e9df)</summary>
     Shadow = 0xe9df,
     /// <summary>shadow_add (U+f584)</summary>
@@ -6616,6 +6688,8 @@ public enum IconUsage : uint
     Shelves = 0xf86e,
     /// <summary>shield (U+e9e0)</summary>
     Shield = 0xe9e0,
+    /// <summary>shield_card (U+fff30)</summary>
+    ShieldCard = 0xfff30,
     /// <summary>shield_lock (U+f686)</summary>
     ShieldLock = 0xf686,
     /// <summary>shield_locked (U+f592)</summary>
@@ -6626,6 +6700,8 @@ public enum IconUsage : uint
     ShieldPerson = 0xf650,
     /// <summary>shield_question (U+f529)</summary>
     ShieldQuestion = 0xf529,
+    /// <summary>shield_radar (U+fff2f)</summary>
+    ShieldRadar = 0xfff2f,
     /// <summary>shield_toggle (U+f2ad)</summary>
     ShieldToggle = 0xf2ad,
     /// <summary>shield_watch (U+f30f)</summary>
@@ -6690,6 +6766,8 @@ public enum IconUsage : uint
     SignLanguage = 0xebe5,
     /// <summary>sign_language_2 (U+f258)</summary>
     SignLanguage2 = 0xf258,
+    /// <summary>sign_language_off (U+ffee4)</summary>
+    SignLanguageOff = 0xffee4,
     /// <summary>signal_cellular_0_bar (U+f0a8)</summary>
     SignalCellular0Bar = 0xf0a8,
     /// <summary>signal_cellular_1_bar (U+f0a9)</summary>
@@ -6708,6 +6786,8 @@ public enum IconUsage : uint
     SignalCellularAlt1Bar = 0xebdf,
     /// <summary>signal_cellular_alt_2_bar (U+ebe3)</summary>
     SignalCellularAlt2Bar = 0xebe3,
+    /// <summary>signal_cellular_alt_off (U+fff8a)</summary>
+    SignalCellularAltOff = 0xfff8a,
     /// <summary>signal_cellular_connected_no_internet_0_bar (U+f0ac)</summary>
     SignalCellularConnectedNoInternet0Bar = 0xf0ac,
     /// <summary>signal_cellular_connected_no_internet_4_bar (U+e1cd)</summary>
@@ -6868,6 +6948,8 @@ public enum IconUsage : uint
     SoundDetectionLoudSound = 0xf14b,
     /// <summary>sound_sampler (U+f6b4)</summary>
     SoundSampler = 0xf6b4,
+    /// <summary>soundbar (U+fff72)</summary>
+    Soundbar = 0xfff72,
     /// <summary>soup_kitchen (U+e7d3)</summary>
     SoupKitchen = 0xe7d3,
     /// <summary>source (U+f1c8)</summary>
@@ -6902,6 +6984,8 @@ public enum IconUsage : uint
     SpatialTracking = 0xebea,
     /// <summary>speaker (U+e32d)</summary>
     Speaker = 0xe32d,
+    /// <summary>speaker_2 (U+fff71)</summary>
+    Speaker2 = 0xfff71,
     /// <summary>speaker_group (U+e32e)</summary>
     SpeakerGroup = 0xe32e,
     /// <summary>speaker_notes (U+e8cd)</summary>
@@ -6944,14 +7028,22 @@ public enum IconUsage : uint
     Speed175 = 0xf4d1,
     /// <summary>speed_1_7x (U+f493)</summary>
     Speed17x = 0xf493,
+    /// <summary>speed_2 (U+fff38)</summary>
+    Speed2 = 0xfff38,
     /// <summary>speed_2x (U+f4eb)</summary>
     Speed2x = 0xf4eb,
+    /// <summary>speed_3 (U+fff37)</summary>
+    Speed3 = 0xfff37,
+    /// <summary>speed_4 (U+fff36)</summary>
+    Speed4 = 0xfff36,
     /// <summary>speed_camera (U+f470)</summary>
     SpeedCamera = 0xf470,
     /// <summary>spellcheck (U+e8ce)</summary>
     Spellcheck = 0xe8ce,
     /// <summary>split_scene (U+f3bf)</summary>
     SplitScene = 0xf3bf,
+    /// <summary>split_scene_2 (U+ffef7)</summary>
+    SplitScene2 = 0xffef7,
     /// <summary>split_scene_down (U+f2ff)</summary>
     SplitSceneDown = 0xf2ff,
     /// <summary>split_scene_left (U+f2fe)</summary>
@@ -7228,6 +7320,8 @@ public enum IconUsage : uint
     Subway = 0xe56f,
     /// <summary>subway_walk (U+f287)</summary>
     SubwayWalk = 0xf287,
+    /// <summary>subwoofer (U+fff70)</summary>
+    Subwoofer = 0xfff70,
     /// <summary>summarize (U+f071)</summary>
     Summarize = 0xf071,
     /// <summary>sunny (U+e81a)</summary>
@@ -7310,6 +7404,8 @@ public enum IconUsage : uint
     SwitchCamera = 0xe41e,
     /// <summary>switch_left (U+f1d1)</summary>
     SwitchLeft = 0xf1d1,
+    /// <summary>switch_off (U+fff6f)</summary>
+    SwitchOff = 0xfff6f,
     /// <summary>switch_right (U+f1d2)</summary>
     SwitchRight = 0xf1d2,
     /// <summary>switch_video (U+e41f)</summary>
@@ -7598,6 +7694,10 @@ public enum IconUsage : uint
     TileMedium = 0xf3c2,
     /// <summary>tile_small (U+f3c1)</summary>
     TileSmall = 0xf3c1,
+    /// <summary>tilt_arrow_down (U+fff26)</summary>
+    TiltArrowDown = 0xfff26,
+    /// <summary>tilt_arrow_up (U+fff25)</summary>
+    TiltArrowUp = 0xfff25,
     /// <summary>time_auto (U+f0e4)</summary>
     TimeAuto = 0xf0e4,
     /// <summary>time_to_leave (U+eff7)</summary>
@@ -7700,6 +7800,8 @@ public enum IconUsage : uint
     TouchApp = 0xe913,
     /// <summary>touch_double (U+f38b)</summary>
     TouchDouble = 0xf38b,
+    /// <summary>touch_double_2 (U+fff35)</summary>
+    TouchDouble2 = 0xfff35,
     /// <summary>touch_long (U+f38a)</summary>
     TouchLong = 0xf38a,
     /// <summary>touch_triple (U+f389)</summary>
@@ -7934,6 +8036,10 @@ public enum IconUsage : uint
     Vaccines = 0xe138,
     /// <summary>vacuum (U+efc5)</summary>
     Vacuum = 0xefc5,
+    /// <summary>vacuum_2 (U+fff6d)</summary>
+    Vacuum2 = 0xfff6d,
+    /// <summary>vacuum_2_on (U+fff6e)</summary>
+    Vacuum2On = 0xfff6e,
     /// <summary>valve (U+e224)</summary>
     Valve = 0xe224,
     /// <summary>vape_free (U+ebc6)</summary>
@@ -7986,6 +8092,10 @@ public enum IconUsage : uint
     VideoChat = 0xf8a0,
     /// <summary>video_file (U+eb87)</summary>
     VideoFile = 0xeb87,
+    /// <summary>video_frame_copy (U+fff0d)</summary>
+    VideoFrameCopy = 0xfff0d,
+    /// <summary>video_frame_save (U+fff0c)</summary>
+    VideoFrameSave = 0xfff0c,
     /// <summary>video_label (U+e071)</summary>
     VideoLabel = 0xe071,
     /// <summary>video_library (U+e04a)</summary>
@@ -8124,6 +8234,8 @@ public enum IconUsage : uint
     Vr180Create2dOff = 0xf571,
     /// <summary>vrpano (U+f082)</summary>
     Vrpano = 0xf082,
+    /// <summary>walk_bike (U+fff01)</summary>
+    WalkBike = 0xfff01,
     /// <summary>wall_art (U+efcb)</summary>
     WallArt = 0xefcb,
     /// <summary>wall_lamp (U+e2b4)</summary>
@@ -8160,6 +8272,8 @@ public enum IconUsage : uint
     WatchArrow = 0xf2ca,
     /// <summary>watch_arrow_down (U+fffcf)</summary>
     WatchArrowDown = 0xfffcf,
+    /// <summary>watch_button (U+fff20)</summary>
+    WatchButton = 0xfff20,
     /// <summary>watch_button_press (U+f6aa)</summary>
     WatchButtonPress = 0xf6aa,
     /// <summary>watch_check (U+f468)</summary>
@@ -8232,6 +8346,8 @@ public enum IconUsage : uint
     WbSunny = 0xe430,
     /// <summary>wb_twilight (U+e1c6)</summary>
     WbTwilight = 0xe1c6,
+    /// <summary>wb_twilight_2 (U+fff1f)</summary>
+    WbTwilight2 = 0xfff1f,
     /// <summary>wc (U+e63d)</summary>
     Wc = 0xe63d,
     /// <summary>weather_hail (U+f67f)</summary>
@@ -8240,8 +8356,8 @@ public enum IconUsage : uint
     WeatherMix = 0xf60b,
     /// <summary>weather_snowy (U+e2cd)</summary>
     WeatherSnowy = 0xe2cd,
-    /// <summary>web (U+e051)</summary>
-    Web = 0xe051,
+    /// <summary>web (U+e681)</summary>
+    Web = 0xe681,
     /// <summary>web_asset (U+e069)</summary>
     WebAsset = 0xe069,
     /// <summary>web_asset_off (U+ef47)</summary>
@@ -8308,6 +8424,8 @@ public enum IconUsage : uint
     WifiCallingBar3 = 0xf44a,
     /// <summary>wifi_channel (U+eb6a)</summary>
     WifiChannel = 0xeb6a,
+    /// <summary>wifi_device (U+fff34)</summary>
+    WifiDevice = 0xfff34,
     /// <summary>wifi_find (U+eb31)</summary>
     WifiFind = 0xeb31,
     /// <summary>wifi_home (U+f671)</summary>

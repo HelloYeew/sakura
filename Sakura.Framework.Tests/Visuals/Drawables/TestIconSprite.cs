@@ -96,7 +96,7 @@ public partial class TestIconSprite : TestScene
                 Anchor = Anchor.Centre,
                 Origin = Anchor.Centre,
                 Color = Color.White,
-                Font = FontUsage.Default.With(size: 40, weight: nameof(DefaultFontWeights.Bold)),
+                Font = FontUsage.Default.With(size: 40, weight: nameof(FontWeights.Bold)),
                 Text = $"Bold alarm {IconUsage.Alarm.ToGlyph()}"
             };
             Add(text);
@@ -107,8 +107,8 @@ public partial class TestIconSprite : TestScene
     public void TestIconFallbackSurvivesWeightOverride()
     {
         AddAssert("Material font is a fallback for Regular", () => iconFontIsFallbackFor(FontUsage.Default));
-        AddAssert("Material font is a fallback for Bold", () => iconFontIsFallbackFor(FontUsage.Default.With(weight: nameof(DefaultFontWeights.Bold))));
-        AddAssert("Material font is a fallback for Bold Italic", () => iconFontIsFallbackFor(FontUsage.Default.With(weight: nameof(DefaultFontWeights.Bold), italics: true)));
+        AddAssert("Material font is a fallback for Bold", () => iconFontIsFallbackFor(FontUsage.Default.With(weight: nameof(FontWeights.Bold))));
+        AddAssert("Material font is a fallback for Bold Italic", () => iconFontIsFallbackFor(FontUsage.Default.With(weight: nameof(FontWeights.Bold), italics: true)));
     }
 
     private bool iconFontIsFallbackFor(FontUsage usage)

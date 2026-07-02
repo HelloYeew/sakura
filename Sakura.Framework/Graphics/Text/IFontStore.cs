@@ -57,6 +57,13 @@ public interface IFontStore : IDisposable
     Font Get(string name);
 
     /// <summary>
+    /// Retrieves the <see cref="FontVariation"/> (variable-font axis coordinates) that should be
+    /// applied for the requested usage. Static fonts ignore it; variable fonts render the matching
+    /// weight/fill/optical-size instance.
+    /// </summary>
+    FontVariation GetVariation(FontUsage usage);
+
+    /// <summary>
     /// A version number that increments whenever the font store's cache is updated.
     /// Will increment mostly when <see cref="ClearCaches"/> is called.
     /// </summary>
