@@ -135,7 +135,7 @@ public class ClearGhostDrawNodeTest
     public void TestClearNeverGhostsAcrossManyRandomizedRepetitions()
     {
         const int repetitions = 5000;
-        var rng = new Random();
+        var rng = new Random(1234);
 
         for (int rep = 0; rep < repetitions; rep++)
         {
