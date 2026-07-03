@@ -10,6 +10,7 @@ using HarfBuzzSharp;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Statistic;
+using Sakura.Framework.Utilities;
 using Logger = Sakura.Framework.Logging.Logger;
 
 namespace Sakura.Framework.Graphics.Text;
@@ -319,7 +320,7 @@ public class Font : IDisposable
         // Always run on the first call: the face has no size/strike selected until we set one, so a
         // request that coincidentally matches the initial currentPhysicalSize must not be skipped
         // (otherwise bitmap-only fonts never select a strike and produce no glyphs).
-        if (!fontSizeApplied || Math.Abs(currentPhysicalSize - renderFontSize) > 0.01f)
+        if (!fontSizeApplied || !Precision.AlmostEquals(currentPhysicalSize, renderFontSize, 0.01f))
         {
             fontSizeApplied = true;
             currentPhysicalSize = renderFontSize;
