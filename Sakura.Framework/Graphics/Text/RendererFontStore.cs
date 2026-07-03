@@ -100,6 +100,13 @@ public class RendererFontStore : IFontStore
         addFontAlias($"{style}-Regular", style);
     }
 
+    /// <summary>
+    /// Public entry point for applications to register their own font family with the same
+    /// variable-aware loading the framework uses for its built-in fonts. Delegates to <see cref="loadFamily"/>.
+    /// </summary>
+    public void AddFontFamily(Storage storage, string family, bool hasItalics = false)
+        => loadFamily(storage, family, hasItalics);
+
     private void loadFamily(Storage storage, string family, bool hasItalics)
     {
         // Prefer a single OpenType variable file when one is present (collapses 9+ per-weight files
@@ -262,6 +269,13 @@ public class RendererFontStore : IFontStore
         loadFrameworkFonts(resourceStorage);
     }
 
+    /// <summary>
+    /// Adds a single font file under one lookup key (<paramref name="alias"/>, or the filename without
+    /// extension). Low-level primitive as it does not create <c>{family}-{weight}</c> keys or expand a
+    /// variable font into weights, so <see cref="Get(FontUsage)"/> will only resolve it via an exact
+    /// key/bare-family match. For loading a font family prefer <see cref="AddFontFamily"/>; reach for
+    /// <see cref="AddFont"/> only when you deliberately want manual control over a single key.
+    /// </summary>
     public void AddFont(Storage storage, string filename, string alias = null!)
     {
         string name = alias ?? Path.GetFileNameWithoutExtension(filename);

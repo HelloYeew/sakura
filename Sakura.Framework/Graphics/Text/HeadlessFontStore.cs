@@ -31,6 +31,11 @@ public class HeadlessFontStore : IFontStore
 
     }
 
+    public void AddFontFamily(Storage storage, string family, bool hasItalics = false)
+    {
+
+    }
+
     public void AddFallbackFamily(string familyName)
     {
 
