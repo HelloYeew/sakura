@@ -75,7 +75,12 @@ public partial class IconSprite : SpriteText
     public float? Grade
     {
         get => Font.Grade;
-        set => Font = Font.With(grade: value);
+        // FontUsage.With merges with ?? and so treats a null argument as "leave unchanged", which
+        // means it can never clear an existing override. Rebuild the usage directly when clearing so
+        // Grade = null actually removes the GRAD axis (as the property contract promises).
+        set => Font = value == null
+            ? new FontUsage(Font.Family, Font.Size, Font.Weight, Font.Italics, Font.Fill, null, Font.OpticalSize)
+            : Font.With(grade: value);
     }
 
     /// <summary>
