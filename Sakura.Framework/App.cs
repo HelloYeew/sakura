@@ -256,6 +256,15 @@ public partial class App : Container, IFocusManager, IInputManagerProvider, IDis
         Scheduler?.Update();
     }
 
+    /// <summary>
+    /// Called on the update thread when the user requests to close the window (e.g. the title-bar
+    /// close button). Override to intercept the close — for example, show a confirmation dialog and
+    /// return <c>true</c> to keep the app open, then call <see cref="AppHost.Exit"/> via
+    /// <see cref="Host"/> once the user confirms. Return <c>false</c> (the default) to allow the close.
+    /// A rapid second request (double-clicking the close button) forces the close regardless.
+    /// </summary>
+    protected internal virtual bool OnExitRequested() => false;
+
     public InputManager InputManager { get; } = new InputManager();
 
     private void rebuildInputQueues() => InputManager.BuildQueues(this);

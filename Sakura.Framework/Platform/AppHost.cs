@@ -75,6 +75,7 @@ public abstract class AppHost : IDisposable
         GamepadAxisMotion,
         GamepadConnected,
         GamepadDisconnected,
+        ExitRequested,
     }
 
     /// <summary>
@@ -169,6 +170,10 @@ public abstract class AppHost : IDisposable
 
             case PendingInputType.GamepadDisconnected:
                 OnGamepadDisconnected(input.GamepadDisconnected);
+                break;
+
+            case PendingInputType.ExitRequested:
+                handleExitRequested();
                 break;
         }
     }
@@ -427,6 +432,12 @@ public abstract class AppHost : IDisposable
                     ResizeLogicalHeight = h
                 });
             };
+            // Route the close request through the input queue so it is handled on the update thread,
+            // where the scene graph lives (a confirmation dialog etc. can be shown safely).
+            Window.ExitRequested += () => inputQueue.Enqueue(new PendingInput
+            {
+                Type = PendingInputType.ExitRequested
+            });
             Window.FocusLost += updateTargetUpdateHz;
             Window.FocusGained += updateTargetUpdateHz;
             Window.Minimized += updateTargetUpdateHz;
@@ -639,6 +650,62 @@ public abstract class AppHost : IDisposable
             Dispose(true);
             host_running_mutex.Release();
         }
+    }
+
+    /// <summary>
+    /// Invoked when the user requests to close the window (e.g. the title-bar close button), on the
+    /// update thread. Return <c>true</c> from a handler to block the automatic exit — typically to
+    /// show an in-app confirmation, after which the app calls <see cref="Exit"/> itself once confirmed.
+    /// If no handler blocks, the host exits. A second request within <see cref="force_exit_threshold_ms"/>
+    /// (e.g. double-clicking the close button) forces an immediate exit, bypassing any block.
+    /// </summary>
+    public event Func<bool> ExitRequested;
+
+    /// <summary>
+    /// Window (in ms, on the update clock) within which a second close request is treated as a
+    /// "force close" that bypasses any <see cref="ExitRequested"/>/<see cref="App.OnExitRequested"/> veto.
+    /// </summary>
+    private const double force_exit_threshold_ms = 1000;
+
+    private double lastExitRequestMs = double.NegativeInfinity;
+
+    /// <summary>
+    /// Handles a close request on the update thread: honors a veto on the first request, but forces an
+    /// immediate exit if a second request arrives quickly (double-clicking the close button).
+    /// </summary>
+    private void handleExitRequested()
+    {
+        double now = UpdateClock.CurrentTime;
+        bool isSecondRequest = now - lastExitRequestMs <= force_exit_threshold_ms;
+        lastExitRequestMs = now;
+
+        if (isSecondRequest || !shouldBlockExit())
+        {
+            // Close the window; the main loop's IsExiting check then drives Exit().
+            Window?.Close();
+        }
+        // Otherwise a handler took responsibility (e.g. showed a dialog) and will call Exit() later.
+    }
+
+    /// <summary>
+    /// Asks the app and any <see cref="ExitRequested"/> subscribers whether the close should be blocked.
+    /// All handlers run (no short-circuit), so each gets a chance to react.
+    /// </summary>
+    private bool shouldBlockExit()
+    {
+        bool blocked = app?.OnExitRequested() ?? false;
+
+        var handlers = ExitRequested;
+        if (handlers != null)
+        {
+            foreach (var @delegate in handlers.GetInvocationList())
+            {
+                var handler = (Func<bool>)@delegate;
+                blocked |= handler();
+            }
+        }
+
+        return blocked;
     }
 
     /// <summary>

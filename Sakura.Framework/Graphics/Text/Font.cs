@@ -10,6 +10,7 @@ using HarfBuzzSharp;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Statistic;
+using Sakura.Framework.Utilities;
 using Logger = Sakura.Framework.Logging.Logger;
 
 namespace Sakura.Framework.Graphics.Text;
@@ -42,6 +43,17 @@ public class Font : IDisposable
 
     private float currentPhysicalSize = 24;
     private float currentGlyphScale = 1.0f;
+
+    /// <summary>
+    /// Whether the FreeType face size / bitmap strike has actually been applied at least once. The
+    /// face starts out with no size selected, so the very first <see cref="updateFontSize"/> must run
+    /// even when the requested size happens to equal <see cref="currentPhysicalSize"/>'s initial value.
+    /// This matters for bitmap-only color fonts (e.g. NotoColorEmoji, CBDT/CBLC): if the strike is
+    /// never selected, glyph loading yields no bitmap and the emoji renders as nothing. The bug only
+    /// surfaced at exactly the default size with an unscaled display (dpiScale 1, size 24 → renderFontSize 24),
+    /// which is why it appeared on Windows but was masked on HiDPI/retina macOS (dpiScale ≥ 2).
+    /// </summary>
+    private bool fontSizeApplied;
 
     private FontVariation currentVariation = FontVariation.None;
 
@@ -305,8 +317,12 @@ public class Font : IDisposable
 
     private void updateFontSize(float renderFontSize)
     {
-        if (Math.Abs(currentPhysicalSize - renderFontSize) > 0.01f)
+        // Always run on the first call: the face has no size/strike selected until we set one, so a
+        // request that coincidentally matches the initial currentPhysicalSize must not be skipped
+        // (otherwise bitmap-only fonts never select a strike and produce no glyphs).
+        if (!fontSizeApplied || !Precision.AlmostEquals(currentPhysicalSize, renderFontSize, 0.01f))
         {
+            fontSizeApplied = true;
             currentPhysicalSize = renderFontSize;
             currentGlyphScale = 1.0f; // Reset scale for normal fonts
 

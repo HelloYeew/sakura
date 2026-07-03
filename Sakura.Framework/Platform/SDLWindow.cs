@@ -237,6 +237,8 @@ public class SDLWindow : IWindow
         windowConfig = config;
 
         var savedMode = config.Get<WindowMode>(FrameworkSetting.WindowMode).Value;
+
+        windowMode = savedMode;
         WindowModeReactive.Value = savedMode;
 
         // Relative (raw input) mouse mode and sensitivity follow the config both at startup
@@ -789,7 +791,6 @@ public class SDLWindow : IWindow
             {
                 case SDL_EventType.SDL_EVENT_QUIT:
                     ExitRequested.Invoke();
-                    IsExiting = true;
                     break;
 
                 case SDL_EventType.SDL_EVENT_KEY_DOWN:
@@ -1444,7 +1445,7 @@ public class SDLWindow : IWindow
     {
         SDL_RemoveEventWatch(&resizeEventWatch, IntPtr.Zero);
 
-        foreach (var ptr in openGamepads.Values)
+        foreach (IntPtr ptr in openGamepads.Values)
             SDL_CloseGamepad((SDL_Gamepad*)ptr);
         openGamepads.Clear();
         gamepadStates.Clear();
