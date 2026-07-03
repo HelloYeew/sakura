@@ -4,16 +4,13 @@
 using System;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Threading;
+using Sakura.Framework.Logging;
 
 namespace Sakura.Framework.Threading;
 
 /// <summary>
-/// High-precision sleep on Windows using a high-resolution waitable timer by
-/// use <c>CreateWaitableTimerEx</c> with <c>CREATE_WAITABLE_TIMER_HIGH_RESOLUTION</c>
-/// (available since Windows 10 1803) which lets the kernel wake us at the exact requested
-/// time without requiring any spin-wait or timer resolution hacks, will fall back
-/// to a standard waitable timer if the high-resolution flag is unsupported,
-/// and returns false (falling back to Thread.Sleep) if the timer cannot be created at all.
+/// High-precision sleep on Windows.
 /// </summary>
 [SupportedOSPlatform("windows")]
 internal class WindowsNativeSleep : INativeSleep
@@ -58,12 +55,47 @@ internal class WindowsNativeSleep : INativeSleep
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr hObject);
 
+    // ntdll timer-resolution APIs. Values are in 100ns units. These let us request the
+    // finest resolution the platform supports (typically 5000 = 0.5ms), which is finer than
+    // winmm's timeBeginPeriod (limited to whole milliseconds). status == 0 (STATUS_SUCCESS).
+    [DllImport("ntdll.dll", SetLastError = true)]
+    private static extern int NtQueryTimerResolution(out uint minimumResolution, out uint maximumResolution, out uint currentResolution);
+
+    [DllImport("ntdll.dll", SetLastError = true)]
+    private static extern int NtSetTimerResolution(uint desiredResolution, [MarshalAs(UnmanagedType.U1)] bool setResolution, out uint currentResolution);
+
+    // winmm fallback used only if ntdll is unavailable for some reason.
+    [DllImport("winmm.dll", EntryPoint = "timeBeginPeriod")]
+    private static extern uint timeBeginPeriod(uint uMilliseconds);
+
+    [DllImport("winmm.dll", EntryPoint = "timeEndPeriod")]
+    private static extern uint timeEndPeriod(uint uMilliseconds);
+
     private const uint create_waitable_timer_high_resolution = 0x00000002;
     private const uint timer_all_access = 2031619U;
     private const uint infinite = 0xFFFFFFFF;
     private const uint wait_object_0 = 0x00000000;
+    private const int status_success = 0;
+
+    /// <summary>
+    /// Fallback resolution requested from winmm, in whole milliseconds.
+    /// </summary>
+    private const uint fallback_period_ms = 1;
 
     private readonly IntPtr waitableTimer;
+
+    /// <summary>
+    /// Whether the timer was created with the high-resolution flag. When false we are using a
+    /// standard waitable timer, whose accuracy is bounded by the current system timer resolution
+    /// (which is why we also raise it below).
+    /// </summary>
+    public bool IsHighResolution { get; }
+
+    // Process-wide reference counting for the timer-resolution bump. Every AppThread creates its own
+    // WindowsNativeSleep, so we must only raise the resolution once and restore it exactly once.
+    private static int resolutionRefCount;
+    private static uint appliedNtResolution; // 0 when ntdll path not in use
+    private static bool appliedWinmmPeriod;
 
     public WindowsNativeSleep()
     {
@@ -73,14 +105,24 @@ internal class WindowsNativeSleep : INativeSleep
             create_waitable_timer_high_resolution,
             timer_all_access);
 
-        if (waitableTimer == IntPtr.Zero)
+        if (waitableTimer != IntPtr.Zero)
         {
-            // Fall back to standard auto-reset waitable timer — still more accurate than Thread.Sleep.
+            IsHighResolution = true;
+        }
+        else
+        {
+            // Fall back to standard auto-reset waitable timer — still more accurate than Thread.Sleep,
+            // especially once we have raised the system timer resolution below.
             waitableTimer = CreateWaitableTimerEx(
                 IntPtr.Zero, null,
                 0,
                 timer_all_access);
+            IsHighResolution = false;
         }
+
+        acquireTimerResolution();
+
+        Logger.Debug($"WindowsNativeSleep initialized (highResolution: {IsHighResolution}, timerResolution: {describeResolution()})");
     }
 
     public bool Sleep(TimeSpan duration)
@@ -107,5 +149,71 @@ internal class WindowsNativeSleep : INativeSleep
     {
         if (waitableTimer != IntPtr.Zero)
             _ = CloseHandle(waitableTimer);
+
+        releaseTimerResolution();
+    }
+
+    /// <summary>
+    /// Raises the process-wide timer resolution to the finest supported value. Reference counted so
+    /// that multiple instances (one per thread) only apply the change once.
+    /// </summary>
+    private static void acquireTimerResolution()
+    {
+        if (Interlocked.Increment(ref resolutionRefCount) != 1)
+            return;
+
+        // Prefer ntdll: it can request finer-than-1ms resolution and reports the value actually applied.
+        try
+        {
+            if (NtQueryTimerResolution(out _, out uint maximumResolution, out _) == status_success
+                && NtSetTimerResolution(maximumResolution, true, out uint applied) == status_success)
+            {
+                appliedNtResolution = applied;
+                return;
+            }
+        }
+        catch (DllNotFoundException)
+        {
+            // ntdll missing (extremely unlikely on Windows) — fall through to winmm.
+        }
+        catch (EntryPointNotFoundException)
+        {
+            // fall through to winmm.
+        }
+
+        // Fallback: winmm's whole-millisecond period.
+        if (timeBeginPeriod(fallback_period_ms) == 0 /* TIMERR_NOERROR */)
+            appliedWinmmPeriod = true;
+    }
+
+    /// <summary>
+    /// Restores the timer resolution once the last live instance is disposed.
+    /// </summary>
+    private static void releaseTimerResolution()
+    {
+        if (Interlocked.Decrement(ref resolutionRefCount) != 0)
+            return;
+
+        if (appliedNtResolution != 0)
+        {
+            _ = NtSetTimerResolution(appliedNtResolution, false, out _);
+            appliedNtResolution = 0;
+        }
+
+        if (appliedWinmmPeriod)
+        {
+            _ = timeEndPeriod(fallback_period_ms);
+            appliedWinmmPeriod = false;
+        }
+    }
+
+    private static string describeResolution()
+    {
+        if (appliedNtResolution != 0)
+            return $"{appliedNtResolution / 10000.0:0.###}ms (ntdll)";
+        if (appliedWinmmPeriod)
+            return $"{fallback_period_ms}ms (winmm)";
+
+        return "system default";
     }
 }
