@@ -187,8 +187,8 @@ public partial class FlowContainer : Container
                     child.Position = finalPos;
 
                 // track content size (for auto-sizing).
-                float childRight = childPosPixels.X + drawSize.X + child.Margin.Right;
-                float childBottom = childPosPixels.Y + drawSize.Y + child.Margin.Bottom;
+                float childRight = finalPos.X + drawSize.X + child.Margin.Right;
+                float childBottom = finalPos.Y + drawSize.Y + child.Margin.Bottom;
 
                 if (childRight > maxRight) maxRight = childRight;
                 if (childBottom > maxBottom) maxBottom = childBottom;

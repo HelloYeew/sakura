@@ -542,6 +542,14 @@ public abstract class AppHost : IDisposable
                 threadRunner.SetExecutionMode(Threading.ExecutionMode.MultiThread);
             }
 
+            FrameworkConfigManager.Get<WindowMode>(FrameworkSetting.WindowMode).ValueChanged += e =>
+            {
+                mainThreadActions.Enqueue(() =>
+                {
+                    Window.WindowMode = e.NewValue;
+                });
+            };
+
             appLoopStopwatch.Start();
 
             long timestampFrequency = Stopwatch.Frequency;
