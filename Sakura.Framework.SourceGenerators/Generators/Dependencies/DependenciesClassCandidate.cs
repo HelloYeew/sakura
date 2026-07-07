@@ -1,7 +1,9 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Sakura.Framework.SourceGenerators.Generators.Dependencies;
 
@@ -9,7 +11,7 @@ namespace Sakura.Framework.SourceGenerators.Generators.Dependencies;
 /// Data describing a single class that should have DI source code generated for it.
 /// Built from Roslyn semantic analysis and handed to the code emitter.
 /// </summary>
-internal sealed class DependenciesClassCandidate
+internal sealed class DependenciesClassCandidate : IEquatable<DependenciesClassCandidate>
 {
     /// <summary>
     /// Fully qualified type name, e.g. "global::Sakura.Framework.Graphics.Drawables.Drawable".
@@ -74,12 +76,50 @@ internal sealed class DependenciesClassCandidate
     /// True if this type level needs a cache delegate.
     /// </summary>
     public bool HasCache => CachedClassEntries.Count > 0 || CachedMembers.Count > 0;
+
+    public bool Equals(DependenciesClassCandidate? other)
+    {
+        if (other is null) return false;
+        if (ReferenceEquals(this, other)) return true;
+
+        return FullyQualifiedName == other.FullyQualifiedName &&
+               ClassName == other.ClassName &&
+               Namespace == other.Namespace &&
+               BaseTypeIsCandidate == other.BaseTypeIsCandidate &&
+               EnclosingTypes.SequenceEqual(other.EnclosingTypes) &&
+               TypeParameters.SequenceEqual(other.TypeParameters) &&
+               ResolvedMembers.SequenceEqual(other.ResolvedMembers) &&
+               Equals(BackgroundLoader, other.BackgroundLoader) &&
+               CachedClassEntries.SequenceEqual(other.CachedClassEntries) &&
+               CachedMembers.SequenceEqual(other.CachedMembers);
+    }
+
+    public override bool Equals(object? obj) => obj is DependenciesClassCandidate other && Equals(other);
+
+    public override int GetHashCode()
+    {
+        unchecked
+        {
+            int hash = 17;
+            hash = hash * 31 + FullyQualifiedName.GetHashCode();
+            hash = hash * 31 + ClassName.GetHashCode();
+            hash = hash * 31 + (Namespace?.GetHashCode() ?? 0);
+            hash = hash * 31 + BaseTypeIsCandidate.GetHashCode();
+            foreach (string? e in EnclosingTypes) hash = hash * 31 + e.GetHashCode();
+            foreach (string? t in TypeParameters) hash = hash * 31 + t.GetHashCode();
+            foreach (var r in ResolvedMembers) hash = hash * 31 + r.GetHashCode();
+            hash = hash * 31 + (BackgroundLoader?.GetHashCode() ?? 0);
+            foreach (var c in CachedClassEntries) hash = hash * 31 + c.GetHashCode();
+            foreach (var m in CachedMembers) hash = hash * 31 + m.GetHashCode();
+            return hash;
+        }
+    }
 }
 
 /// <summary>
 /// A field or property marked with [Resolved].
 /// </summary>
-internal sealed class ResolvedMemberData
+internal sealed class ResolvedMemberData : IEquatable<ResolvedMemberData>
 {
     /// <summary>
     /// Member name as it appears in source code.
@@ -101,12 +141,24 @@ internal sealed class ResolvedMemberData
     /// resolved via <c>TryGet&lt;T&gt;</c> (null when missing) rather than <c>Get&lt;T&gt;</c>.
     /// </summary>
     public bool CanBeNull { get; set; }
+
+    public bool Equals(ResolvedMemberData? other)
+        => other != null &&
+           MemberName == other.MemberName &&
+           FullyQualifiedTypeName == other.FullyQualifiedTypeName &&
+           IsField == other.IsField &&
+           CanBeNull == other.CanBeNull;
+
+    public override bool Equals(object? obj) => obj is ResolvedMemberData other && Equals(other);
+
+    public override int GetHashCode()
+        => unchecked((MemberName.GetHashCode() * 31 + FullyQualifiedTypeName.GetHashCode()) * 31 + IsField.GetHashCode() * 31 + CanBeNull.GetHashCode());
 }
 
 /// <summary>
 /// A [BackgroundDependencyLoader] method and the parameters it expects.
 /// </summary>
-internal sealed class BackgroundDependencyLoaderData
+internal sealed class BackgroundDependencyLoaderData : IEquatable<BackgroundDependencyLoaderData>
 {
     /// <summary>
     /// Method name
@@ -117,12 +169,29 @@ internal sealed class BackgroundDependencyLoaderData
     /// Ordered list of parameters that should be resolved from the container
     /// </summary>
     public IReadOnlyList<BackgroundLoaderParameterData> Parameters { get; set; } = new List<BackgroundLoaderParameterData>();
+
+    public bool Equals(BackgroundDependencyLoaderData? other)
+        => other != null &&
+           MethodName == other.MethodName &&
+           Parameters.SequenceEqual(other.Parameters);
+
+    public override bool Equals(object? obj) => obj is BackgroundDependencyLoaderData other && Equals(other);
+
+    public override int GetHashCode()
+    {
+        unchecked
+        {
+            int hash = MethodName.GetHashCode();
+            foreach (var p in Parameters) hash = hash * 31 + p.GetHashCode();
+            return hash;
+        }
+    }
 }
 
 /// <summary>
 /// A single parameter of a [BackgroundDependencyLoader] method
 /// </summary>
-internal sealed class BackgroundLoaderParameterData
+internal sealed class BackgroundLoaderParameterData : IEquatable<BackgroundLoaderParameterData>
 {
     /// <summary>
     /// Fully qualified type, e.g. "global::Sakura.Framework.AppHost"
@@ -134,24 +203,38 @@ internal sealed class BackgroundLoaderParameterData
     /// type, meaning it should be resolved via <c>TryGet&lt;T&gt;</c> rather than <c>Get&lt;T&gt;</c>.
     /// </summary>
     public bool CanBeNull { get; set; }
+
+    public bool Equals(BackgroundLoaderParameterData? other)
+        => other != null && FullyQualifiedTypeName == other.FullyQualifiedTypeName && CanBeNull == other.CanBeNull;
+
+    public override bool Equals(object? obj) => obj is BackgroundLoaderParameterData other && Equals(other);
+
+    public override int GetHashCode() => unchecked(FullyQualifiedTypeName.GetHashCode() * 31 + CanBeNull.GetHashCode());
 }
 
 /// <summary>
 /// A class-level [Cached] attribute — caches <c>this</c> under a specific type.
 /// </summary>
-internal sealed class CachedClassData
+internal sealed class CachedClassData : IEquatable<CachedClassData>
 {
     /// <summary>
     /// The type to cache under. When the attribute has no CacheAs argument this equals
     /// the class's own fully qualified type name.
     /// </summary>
     public string CacheAsFullyQualifiedType { get; set; } = string.Empty;
+
+    public bool Equals(CachedClassData? other)
+        => other != null && CacheAsFullyQualifiedType == other.CacheAsFullyQualifiedType;
+
+    public override bool Equals(object? obj) => obj is CachedClassData other && Equals(other);
+
+    public override int GetHashCode() => CacheAsFullyQualifiedType.GetHashCode();
 }
 
 /// <summary>
 /// A field or property decorated with [Cached].
 /// </summary>
-internal sealed class CachedMemberData
+internal sealed class CachedMemberData : IEquatable<CachedMemberData>
 {
     /// <summary>
     /// Member name as it appears in source code.
@@ -168,4 +251,15 @@ internal sealed class CachedMemberData
     /// True if this is a field; false if it is a property.
     /// </summary>
     public bool IsField { get; set; }
+
+    public bool Equals(CachedMemberData? other)
+        => other != null &&
+           MemberName == other.MemberName &&
+           CacheAsFullyQualifiedType == other.CacheAsFullyQualifiedType &&
+           IsField == other.IsField;
+
+    public override bool Equals(object? obj) => obj is CachedMemberData other && Equals(other);
+
+    public override int GetHashCode()
+        => unchecked((MemberName.GetHashCode() * 31 + CacheAsFullyQualifiedType.GetHashCode()) * 31 + IsField.GetHashCode());
 }

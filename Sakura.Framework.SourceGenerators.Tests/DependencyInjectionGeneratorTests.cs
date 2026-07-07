@@ -753,4 +753,47 @@ public class DependencyInjectionGeneratorTests
             Assert.That(zoneSrc, Does.Contain("self.service = deps.Get<global::WaguriApp.IService>()"));
         });
     }
+
+    // Test hot reload multiple file name regression
+    [Test]
+    public void Type_split_across_two_candidate_declarations_emits_exactly_one_file()
+    {
+        const string sourceA = """
+            using Sakura.Framework.Allocation;
+            namespace WaguriApp
+            {
+                public abstract partial class Drawable : IDependencyInjectionCandidate { }
+
+                public partial class SplitButton : Drawable
+                {
+                    [Resolved]
+                    private IService service { get; set; } = null!;
+                }
+
+                public interface IService { }
+            }
+            """;
+
+        const string sourceB = """
+            namespace WaguriApp
+            {
+                public partial class SplitButton : Drawable
+                {
+                    public void Extra() { }
+                }
+            }
+            """;
+
+        var result = GeneratorTestHelper.RunGenerator<DependencyInjectionGenerator>(stubs, sourceA, sourceB);
+
+        GeneratorTestHelper.AssertNoDiagnostics(result);
+
+        var matches = result.Results
+            .SelectMany(r => r.GeneratedSources)
+            .Where(s => s.HintName.EndsWith("WaguriApp_SplitButton.DI.g.cs"))
+            .ToList();
+
+        Assert.That(matches, Has.Count.EqualTo(1), "Exactly one generated file should exist for a type split across multiple candidate-matching declarations");
+        Assert.That(matches[0].SourceText.ToString(), Does.Contain("self.service = deps.Get<global::WaguriApp.IService>()"));
+    }
 }

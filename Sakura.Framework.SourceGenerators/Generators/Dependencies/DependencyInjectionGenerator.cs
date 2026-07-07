@@ -42,7 +42,11 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
                 predicate: isCandidate,
                 transform: transform)
             .Where(c => c != null)
-            .Select((c, _) => c!);
+            .Select((c, _) => c!)
+            .Collect()
+            .SelectMany((array, _) => array
+                .GroupBy(c => c.FullyQualifiedName)
+                .Select(g => g.First()));
 
         context.RegisterSourceOutput(candidates, emit);
     }
@@ -510,9 +514,7 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
     {
         if (attr.ConstructorArguments.Length == 0)
             return null;
-        if (attr.ConstructorArguments[0].Value is not ITypeSymbol typeArg)
-            return null;
-        return toGlobalName(typeArg);
+        return attr.ConstructorArguments[0].Value is not ITypeSymbol typeArg ? null : toGlobalName(typeArg);
     }
 
     private static string toGlobalName(ITypeSymbol symbol)
