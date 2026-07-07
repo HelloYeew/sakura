@@ -210,7 +210,7 @@ public partial class TestBrowserApp : App
         var volumeReactive = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.MasterVolume);
         volumeSlider.Current.Value = volumeReactive.Value;
 
-        volumeReactive.BindTo(volumeSlider.Current);
+        volumeReactive.BindValueChanged(e => volumeSlider.Current.Value = e.NewValue, true);
 
         headerFlow.Add(new SpriteText
         {
