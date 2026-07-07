@@ -1249,8 +1249,15 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
             foreach (var t in transforms)
                 t.Apply(this, t.EndTime);
         }
+        
+        transforms?.Clear();
+        TimeUntilTransformsCanStart = 0;
 
-        ClearTransforms(propagateToChildren);
+        if (propagateToChildren && this is Container c)
+        {
+            foreach (var child in c.Children)
+                child.FinishTransforms(true);
+        }
     }
 
     #endregion
