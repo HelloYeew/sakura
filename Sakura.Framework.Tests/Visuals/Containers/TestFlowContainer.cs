@@ -115,6 +115,25 @@ public partial class TestFlowContainer : TestScene
     }
 
     [Test]
+    public void TestAutoSizeAccountsForLeadingPadding()
+    {
+        const float padding = 20;
+        AddStep("Auto-size both axes", () =>
+        {
+            flow.RelativeSizeAxes = Axes.None;
+            flow.AutoSizeAxes = Axes.Both;
+        });
+        AddStep("Set padding", () => flow.Padding = new MarginPadding(padding));
+
+        AddAssert("Width includes left and right padding", () =>
+            Precision.AlmostEquals(flow.Width, content_width + padding * 2));
+        AddAssert("Height includes top and bottom padding", () =>
+            Precision.AlmostEquals(flow.Height, child_size + padding * 2));
+        AddAssert("First child offset by left/top padding", () =>
+            Precision.AlmostEquals(flow.Children.First().Position, new Vector2(padding, padding)));
+    }
+
+    [Test]
     public void TestCycleAlignment()
     {
         // visual sanity check: step through each alignment by hand.
