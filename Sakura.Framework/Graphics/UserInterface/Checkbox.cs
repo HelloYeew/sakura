@@ -26,8 +26,8 @@ public abstract partial class Checkbox : ClickableContainer
     {
         base.LoadComplete();
 
-        Current.ValueChanged += e => OnCheckChanged(e.NewValue);
-        Enabled.ValueChanged += e => OnEnabledChanged(e.NewValue);
+        Current.BindValueChanged(e => OnCheckChanged(e.NewValue), true);
+        Enabled.BindValueChanged(e => OnEnabledChanged(e.NewValue), true);
     }
 
     public override bool OnHover(MouseEvent e)
