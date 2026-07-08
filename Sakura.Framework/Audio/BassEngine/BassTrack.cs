@@ -35,11 +35,26 @@ internal class BassTrack : ITrack
         this.manager = manager;
         filePath = null;
 
-        using (var ms = new MemoryStream())
+        int initialCapacity = 0;
+        if (stream.CanSeek)
+        {
+            try
+            {
+                long length = stream.Length;
+                initialCapacity = length > 0 && length <= int.MaxValue ? (int)length : 0;
+            }
+            catch (NotSupportedException)
+            {
+                initialCapacity = 0;
+            }
+        }
+
+        using (var ms = initialCapacity > 0 ? new MemoryStream(initialCapacity) : new MemoryStream())
         {
             stream.CopyTo(ms);
-            byte[] data = ms.ToArray();
-            dataLength = data.Length;
+
+            byte[] data = ms.GetBuffer();
+            dataLength = ms.Length;
             dataHandle = GCHandle.Alloc(data, GCHandleType.Pinned);
             dataPtr = dataHandle.AddrOfPinnedObject();
 
