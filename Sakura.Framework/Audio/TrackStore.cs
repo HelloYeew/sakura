@@ -18,6 +18,8 @@ public class TrackStore : AudioStore<ITrack>
         this.audioManager = audioManager;
     }
 
+    protected override int MaxCachedComponents => 10;
+
     protected override ITrack CreateComponent(Stream stream)
     {
         return audioManager.CreateTrack(stream);
