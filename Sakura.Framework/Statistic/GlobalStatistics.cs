@@ -12,8 +12,11 @@ public static class GlobalStatistics
 
     public static GlobalStatistic<T> Get<T>(string group, string name)
     {
-        var groupStats = statistics.GetOrAdd(group, _ => new ConcurrentDictionary<string, IGlobalStatistic>());
-        var stat = groupStats.GetOrAdd(name, _ => new GlobalStatistic<T>(group, name));
+        if (statistics.TryGetValue(group, out var existingGroupStats) && existingGroupStats.TryGetValue(name, out var existingStat))
+            return (GlobalStatistic<T>)existingStat;
+
+        var groupStats = statistics.GetOrAdd(group, static _ => new ConcurrentDictionary<string, IGlobalStatistic>());
+        var stat = groupStats.GetOrAdd(name, static (n, g) => new GlobalStatistic<T>(g, n), group);
 
         return (GlobalStatistic<T>)stat;
     }
