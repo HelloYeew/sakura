@@ -30,7 +30,7 @@
     <PackageReference Include="ManagedBass.Mix" Version="4.0.2" />
     <PackageReference Include="NUnit" Version="4.6.1" />
     <PackageReference Include="Sakura.Framework.NativeLibraries" Version="2026.625.0" />
-    <PackageReference Include="Sakura.Framework.SourceGenerators" Version="2026.622.0">
+    <PackageReference Include="Sakura.Framework.SourceGenerators" Version="2026.708.0">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
