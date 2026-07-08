@@ -16,7 +16,7 @@ internal static class KnownColorTable
     public const byte KnownColorKindUnknown = 2;
 
     // All known color values (in order of definition in the KnownColor enum).
-    public static ReadOnlySpan<uint> ColorValueTable =>
+    private static readonly uint[] s_colorValueTable =
     [
         // "not a known color"
         0,
@@ -241,8 +241,9 @@ internal static class KnownColorTable
         0xFF663399,     // RebeccaPurple
     ];
 
-    // All known color kinds (in order of definition in the KnownColor enum).
-    public static ReadOnlySpan<byte> ColorKindTable =>
+    public static ReadOnlySpan<uint> ColorValueTable => s_colorValueTable;
+
+    private static readonly byte[] s_colorKindTable =
     [
         // "not a known color"
         KnownColorKindUnknown,
@@ -431,12 +432,14 @@ internal static class KnownColorTable
         KnownColorKindWeb,      // RebeccaPurple
     ];
 
+    public static ReadOnlySpan<byte> ColorKindTable => s_colorKindTable;
+
     // These values were based on manual investigation of dark mode themes in the
     // Win32 Common Controls and WinUI. There aren't direct mappings published by
     // Windows, these may change slightly when this feature is finalized to make
     // sure we have the best experience in hybrid dark mode scenarios (mixing
     // WPF, WinForms, and WinUI).
-    private static ReadOnlySpan<uint> AlternateSystemColors =>
+    private static readonly uint[] s_alternateSystemColors =
     [
         0,          // To align with KnownColor.ActiveBorder = 1
 
@@ -475,6 +478,8 @@ internal static class KnownColorTable
         0xFF373737, // FFF0F0F0 - FF373737: MenuBar - Same as Normal Menu Background
         0xFF2A80D2  // FF3399FF - FF2A80D2: MenuHighlight - Same as Highlighted Menu Background
     ];
+
+    private static ReadOnlySpan<uint> AlternateSystemColors => s_alternateSystemColors;
 
     internal static Color ArgbToKnownColor(uint argb)
     {

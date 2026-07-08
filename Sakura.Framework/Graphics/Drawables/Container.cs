@@ -456,6 +456,14 @@ public partial class Container : Drawable
 
         base.Update();
 
+        if (colourWasInvalidated)
+        {
+            foreach (var child in children)
+            {
+                child.Invalidate(InvalidationFlags.Colour, false);
+            }
+        }
+
         if (!AlwaysPresent && Precision.AlmostEqualZero(Alpha))
             return;
 
@@ -483,14 +491,6 @@ public partial class Container : Drawable
             foreach (var child in children)
             {
                 child.Invalidate(InvalidationFlags.DrawInfo, false);
-            }
-        }
-
-        if (colourWasInvalidated)
-        {
-            foreach (var child in children)
-            {
-                child.Invalidate(InvalidationFlags.Colour, false);
             }
         }
     }

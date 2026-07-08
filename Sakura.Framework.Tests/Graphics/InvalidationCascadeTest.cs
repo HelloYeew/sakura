@@ -444,6 +444,37 @@ public class InvalidationCascadeTest
     }
 
     [Test]
+    public void TestContainerFadeOutCascadesZeroAlphaToChildren()
+    {
+        // a container (without AlwaysPresent) fading itself out to exactly zero alpha
+        // must still tell its children their effective alpha dropped to zero. Container.Update()
+        // previously returned early as soon as its own Alpha reached zero, before ever reaching the
+        // Colour-invalidation cascade so a child's cached DrawAlpha stayed stuck at its last
+        // nonzero value forever (until the parent faded back in, which isn't affected by the same
+        // early return).
+        var screen = new Container { Size = new Vector2(400, 300) };
+        var content = new Box { Size = new Vector2(100) };
+        screen.Add(content);
+        root.Add(screen);
+        settle();
+
+        Assert.That(content.DrawAlpha, Is.EqualTo(1f).Within(0.001f));
+
+        screen.FadeOut(100);
+
+        manual.CurrentTime += 150;
+        root.UpdateSubTree();
+        root.UpdateSubTree();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(screen.Alpha, Is.EqualTo(0f).Within(0.001f));
+            Assert.That(content.DrawAlpha, Is.EqualTo(0f).Within(0.001f),
+                "Child DrawAlpha must reach 0 when a (non-AlwaysPresent) parent fades itself out to invisible.");
+        });
+    }
+
+    [Test]
     public void TestContainerMoveTransformCascadesToChildren()
     {
         var screen = new Container { Position = new Vector2(0, 300), Size = new Vector2(400, 300) };
