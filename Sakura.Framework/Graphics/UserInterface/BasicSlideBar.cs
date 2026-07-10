@@ -11,7 +11,7 @@ using Vector2 = Sakura.Framework.Maths.Vector2;
 
 namespace Sakura.Framework.Graphics.UserInterface;
 
-public partial class BasicSliderBar<T> : SliderBar<T> where T : struct, INumber<T>
+public partial class BasicSliderBar<T> : SliderBar<T> where T : struct, INumber<T>, IMinMaxValue<T>
 {
     public Color BackgroundColor { get; set; } = Color.DarkGreen;
     public Color SelectionColor { get; set; } = Color.LimeGreen;

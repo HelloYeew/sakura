@@ -825,7 +825,7 @@ public partial class TestBrowserApp : App
         stepsFlow.Add(stepButton);
     }
 
-    private void generateStepVisual<T>(SliderStep<T> step) where T : struct, INumber<T>
+    private void generateStepVisual<T>(SliderStep<T> step) where T : struct, INumber<T>, IMinMaxValue<T>
     {
         stepsFlow.Add(new TestSliderStepControl<T>(step));
     }
@@ -1009,7 +1009,7 @@ public partial class TestBrowserApp : App
         }
     }
 
-    private partial class TestSliderStepControl<T> : Container where T : struct, INumber<T>
+    private partial class TestSliderStepControl<T> : Container where T : struct, INumber<T>, IMinMaxValue<T>
     {
         public TestSliderStepControl(SliderStep<T> step)
         {
