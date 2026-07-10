@@ -112,7 +112,7 @@ public abstract partial class TestScene : Container
         });
     }
 
-    public void AddSliderStep<T>(string description, T min, T max, T start, Action<T> valueChanged) where T : struct, INumber<T>
+    public void AddSliderStep<T>(string description, T min, T max, T start, Action<T> valueChanged) where T : struct, INumber<T>, IMinMaxValue<T>
     {
         steps.Add(new SliderStep<T>
         {

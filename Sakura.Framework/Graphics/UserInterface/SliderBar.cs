@@ -12,21 +12,40 @@ namespace Sakura.Framework.Graphics.UserInterface;
 /// <summary>
 /// Abstract base for slider/scrubber controls.
 /// </summary>
-public abstract partial class SliderBar<T> : Container where T : struct, INumber<T>
+public abstract partial class SliderBar<T> : Container where T : struct, INumber<T>, IMinMaxValue<T>
 {
     /// <summary>
-    /// The current value, clamped between <see cref="MinValue"/> and <see cref="MaxValue"/>.
+    /// The current value. Assigning to <see cref="ReactiveNumber{T}.Value"/> (directly, via binding,
+    /// or via mouse/keyboard input) is always clamped between <see cref="MinValue"/> and <see cref="MaxValue"/>.
     /// </summary>
-    public Reactive<T> Current { get; } = new Reactive<T>(T.Zero);
-
-    public T MinValue { get; set; }
-    public T MaxValue { get; set; }
+    public ReactiveNumber<T> Current { get; } = new ReactiveNumber<T>(T.Zero);
 
     /// <summary>
-    /// How much one arrow-key press moves the value as a fraction of the total range.
-    /// Defaults to 1/100 (1 %). Ctrl+Arrow uses 10× this step.
+    /// The minimum value of the slider. Backed by <see cref="Current"/>'s own min bound, so the
+    /// current value is re-clamped automatically whenever this changes.
     /// </summary>
-    public float KeyboardStep { get; set; } = 0.01f;
+    public T MinValue
+    {
+        get => Current.MinValue;
+        set => Current.MinValue = value;
+    }
+
+    /// <summary>
+    /// The maximum value of the slider. Backed by <see cref="Current"/>'s own max bound, so the
+    /// current value is re-clamped automatically whenever this changes.
+    /// </summary>
+    public T MaxValue
+    {
+        get => Current.MaxValue;
+        set => Current.MaxValue = value;
+    }
+
+    /// <summary>
+    /// How much one arrow-key press moves the value, in the same units as <see cref="MinValue"/> /
+    /// <see cref="MaxValue"/> (i.e. an absolute step, not a fraction of the range).
+    /// Defaults to 1. Ctrl+Arrow moves 10× this amount.
+    /// </summary>
+    public T KeyboardStep { get; set; } = T.One;
 
     public override bool AcceptsFocus => true;
 
@@ -79,29 +98,32 @@ public abstract partial class SliderBar<T> : Container where T : struct, INumber
         if (!HasFocus) return false;
 
         bool ctrl = (e.Modifiers & KeyModifiers.Control) > 0;
-        float step = KeyboardStep * (ctrl ? 10f : 1f);
+        T step = ctrl ? KeyboardStep * T.CreateTruncating(10) : KeyboardStep;
 
-        float min = float.CreateTruncating(MinValue);
-        float max = float.CreateTruncating(MaxValue);
-        float cur = float.CreateTruncating(Current.Value);
-        float range = max - min;
+        T min = MinValue;
+        T max = MaxValue;
+        T cur = Current.Value;
 
-        if (range <= 0) return false;
+        if (max <= min) return false;
 
-        float delta = 0;
+        T newValue;
 
+        // Bounded via headroom (cur - min / max - cur, both always >= 0 since Current is kept
+        // within range) rather than a raw "cur ± step" followed by clamping, so unsigned numeric
+        // types (byte, uint, ulong, ...) never underflow/overflow when stepping near an edge.
         if (e.Key == Key.Left || e.Key == Key.Down)
-            delta = -step * range;
+            newValue = cur - T.Min(step, cur - min);
         else if (e.Key == Key.Right || e.Key == Key.Up)
-            delta = step * range;
+            newValue = cur + T.Min(step, max - cur);
         else if (e.Key == Key.Home)
-            delta = min - cur;
+            newValue = min;
         else if (e.Key == Key.End)
-            delta = max - cur;
+            newValue = max;
         else
             return false;
 
-        Current.Value = T.CreateTruncating(Math.Clamp(cur + delta, min, max));
+        // Current is a ReactiveNumber<T>, so this is clamped to [MinValue, MaxValue] as a safety net.
+        Current.Value = newValue;
         return true;
     }
 

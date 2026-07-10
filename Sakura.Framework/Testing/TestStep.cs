@@ -27,7 +27,7 @@ public class WaitStep : TestStep
     public double Timeout { get; set; } = 10000;
 }
 
-public class SliderStep<T> : TestStep where T : struct, INumber<T>
+public class SliderStep<T> : TestStep where T : struct, INumber<T>, IMinMaxValue<T>
 {
     public T MinValue { get; set; }
     public T MaxValue { get; set; }
