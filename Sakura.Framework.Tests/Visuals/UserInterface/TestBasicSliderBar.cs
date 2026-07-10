@@ -305,12 +305,6 @@ public partial class TestBasicSliderBar : ManualInputManagerTestScene
         AddUntilStep("Fill eventually reaches full", () => Precision.AlmostEquals(slider.CurrentFillWidth, 1f, 0.02f));
     }
 
-    /// <summary>
-    /// Regression test for the reported bug: a 0-255 slider with <see cref="SliderBar{T}.KeyboardStep"/>
-    /// set to 1 (e.g. a "Green level" colour slider) used to jump across the entire range per key
-    /// press, because KeyboardStep was interpreted as a fraction of the range (1 = 100% of range)
-    /// rather than an absolute step. It must now move by exactly 1.
-    /// </summary>
     [Test]
     public void TestKeyboardStepIsAbsoluteNotFractionOfRange()
     {
@@ -351,10 +345,6 @@ public partial class TestBasicSliderBar : ManualInputManagerTestScene
         AddAssert("Ctrl+Right moves by 10x KeyboardStep (10)", () => levelSlider.Current.Value == 20);
     }
 
-    /// <summary>
-    /// Regression test for the reported clamping bug: assigning to <see cref="SliderBar{T}.Current"/>
-    /// directly (not through mouse or keyboard input) must still be clamped to [MinValue, MaxValue].
-    /// </summary>
     [Test]
     public void TestDirectAssignmentClampsToBounds()
     {
@@ -364,11 +354,7 @@ public partial class TestBasicSliderBar : ManualInputManagerTestScene
         AddStep("Set value far below MinValue directly", () => slider.Current.Value = -9999f);
         AddAssert("Value clamped to MinValue", () => slider.Current.Value == slider.MinValue);
     }
-
-    /// <summary>
-    /// Narrowing MinValue/MaxValue after the fact must re-clamp whatever value is currently held,
-    /// not just future input.
-    /// </summary>
+    
     [Test]
     public void TestNarrowingBoundsReClampsCurrentValue()
     {
@@ -387,11 +373,6 @@ public partial class TestBasicSliderBar : ManualInputManagerTestScene
         });
     }
 
-    /// <summary>
-    /// Mirrors a real construction pattern (e.g. a "min area" slider with MinValue = 1): the
-    /// reactive's own default value (0) starts out below MinValue, and must be clamped up
-    /// immediately when MinValue is set - not left invalid until the user first interacts.
-    /// </summary>
     [Test]
     public void TestOutOfRangeDefaultValueClampsOnConstruction()
     {
