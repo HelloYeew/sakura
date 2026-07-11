@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Timing;
@@ -17,6 +18,10 @@ public class Scheduler
     private readonly List<ScheduledTask> tasks = new List<ScheduledTask>();
     private readonly List<ScheduledTask> tasksToAdd = new List<ScheduledTask>();
     private IClock? clock;
+
+    private readonly Lock locker = new Lock();
+    
+    private readonly List<ScheduledTask> dueBuffer = new List<ScheduledTask>();
 
     public Scheduler(IClock? clock = null)
     {
@@ -35,11 +40,14 @@ public class Scheduler
         if (delta == 0)
             return;
 
-        foreach (var task in tasks)
-            task.ExecutionTime += delta;
+        lock (locker)
+        {
+            foreach (var task in tasks)
+                task.ExecutionTime += delta;
 
-        foreach (var task in tasksToAdd)
-            task.ExecutionTime += delta;
+            foreach (var task in tasksToAdd)
+                task.ExecutionTime += delta;
+        }
     }
 
     /// <summary>
@@ -61,7 +69,8 @@ public class Scheduler
             throw new InvalidOperationException("Scheduler requires a clock to be set before adding delayed tasks.");
 
         var task = new ScheduledTask(action, clock.CurrentTime + delay);
-        tasksToAdd.Add(task);
+        lock (locker)
+            tasksToAdd.Add(task);
         return task;
     }
 
@@ -80,7 +89,8 @@ public class Scheduler
             throw new ArgumentException("Repeat interval must be greater than zero.", nameof(repeatInterval));
 
         var task = new ScheduledTask(action, clock.CurrentTime + delay, repeatInterval);
-        tasksToAdd.Add(task);
+        lock (locker)
+            tasksToAdd.Add(task);
         return task;
     }
 
@@ -94,12 +104,15 @@ public class Scheduler
         if (task == null)
             return false;
 
-        bool removed = tasksToAdd.Remove(task);
+        lock (locker)
+        {
+            bool removed = tasksToAdd.Remove(task);
 
-        if (tasks.Remove(task))
-            removed = true;
+            if (tasks.Remove(task))
+                removed = true;
 
-        return removed;
+            return removed;
+        }
     }
 
     /// <summary>
@@ -107,8 +120,11 @@ public class Scheduler
     /// </summary>
     public void Clear()
     {
-        tasks.Clear();
-        tasksToAdd.Clear();
+        lock (locker)
+        {
+            tasks.Clear();
+            tasksToAdd.Clear();
+        }
     }
 
 
@@ -137,38 +153,51 @@ public class Scheduler
     {
         if (clock == null) return;
 
-        stat_pending_tasks.Value = tasks.Count + tasksToAdd.Count;
-
         double currentTime = clock.CurrentTime;
+        bool anyDue;
 
-        if (tasksToAdd.Count > 0)
+        lock (locker)
         {
-            for (int i = 0; i < tasksToAdd.Count; i++)
-                insertSorted(tasksToAdd[i]);
-            tasksToAdd.Clear();
-        }
+            stat_pending_tasks.Value = tasks.Count + tasksToAdd.Count;
 
-        // The list is sorted by execution time: run due tasks from the front, then remove
-        // them in one range operation. Index-based iteration tolerates a task action
-        // mutating the scheduler (e.g. cancelling another task) without throwing.
-        int executed = 0;
-
-        while (executed < tasks.Count && currentTime >= tasks[executed].ExecutionTime)
-        {
-            var task = tasks[executed];
-            executed++;
-
-            task.Action();
-
-            if (task.RepeatInterval > 0)
+            if (tasksToAdd.Count > 0)
             {
-                task.ExecutionTime += task.RepeatInterval;
-                tasksToAdd.Add(task);
+                for (int i = 0; i < tasksToAdd.Count; i++)
+                    insertSorted(tasksToAdd[i]);
+                tasksToAdd.Clear();
+            }
+
+            int executed = 0;
+            while (executed < tasks.Count && currentTime >= tasks[executed].ExecutionTime)
+                executed++;
+
+            anyDue = executed > 0;
+
+            if (anyDue)
+            {
+                dueBuffer.Clear();
+                for (int i = 0; i < executed; i++)
+                    dueBuffer.Add(tasks[i]);
+
+                tasks.RemoveRange(0, executed);
+
+                for (int i = 0; i < dueBuffer.Count; i++)
+                {
+                    var task = dueBuffer[i];
+                    if (task.RepeatInterval > 0)
+                    {
+                        task.ExecutionTime += task.RepeatInterval;
+                        tasksToAdd.Add(task);
+                    }
+                }
             }
         }
 
-        if (executed > 0)
-            tasks.RemoveRange(0, Math.Min(executed, tasks.Count));
+        if (!anyDue)
+            return;
+
+        for (int i = 0; i < dueBuffer.Count; i++)
+            dueBuffer[i].Action();
     }
 }
 
