@@ -116,6 +116,7 @@ public sealed class MetalRenderer : IMetalRenderer
         // sample this white texel so the result is white × v_Color. Bound to slot 0 each frame.
         var whiteTex = new MetalTexture(device, 1, 1);
         whiteTex.Upload(new byte[] { 255, 255, 255, 255 });
+        MetalTexture.WhitePixel = whiteTex; // shared fallback for un-uploaded textures (see MetalTexture.Bind)
         WhitePixel = new Texture(whiteTex);
 
         logDeviceInfo();

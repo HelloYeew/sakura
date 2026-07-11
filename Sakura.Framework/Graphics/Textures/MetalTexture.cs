@@ -21,6 +21,14 @@ public sealed class MetalTexture : INativeTexture
     public int Height { get; }
     public bool Available { get; private set; }
 
+    /// <summary>
+    /// Shared 1×1 white fallback, set once by <see cref="Rendering.Metal.MetalRenderer"/> at startup.
+    /// Bound in place of any texture that isn't <see cref="Available"/> yet (or has been disposed), so
+    /// an un-uploaded texture samples white (mirroring <see cref="GLTexture"/>'s behavior instead of
+    /// sampling a freshly allocated MTLTexture whose contents are undefined).
+    /// </summary>
+    public static MetalTexture WhitePixel { get; internal set; }
+
     public MetalTexture(nint device, int width, int height)
     {
         this.device = device;
@@ -81,8 +89,19 @@ public sealed class MetalTexture : INativeTexture
 
     public void Bind(int slot = 0)
     {
-        if (handle != nint.Zero)
-            SakuraMetalNative.sakura_metal_set_fragment_texture(device, handle, slot);
+        nint h = handle;
+
+        // fallback to white pixel, matching GLTexture.Bind behavior
+        if (!Available || h == nint.Zero)
+        {
+            var white = WhitePixel;
+            if (white == null || ReferenceEquals(white, this))
+                return;
+            h = white.handle;
+        }
+
+        if (h != nint.Zero)
+            SakuraMetalNative.sakura_metal_set_fragment_texture(device, h, slot);
     }
 
     public void Dispose()
