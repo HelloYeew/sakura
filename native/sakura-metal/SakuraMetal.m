@@ -217,6 +217,17 @@ void sakura_metal_destroy(SakuraMetalDevice* device)
     {
         for (int i = 0; i < SAKURA_METAL_MAX_FRAMES_IN_FLIGHT; i++)
             dispatch_semaphore_wait(device->frameSemaphore, DISPATCH_TIME_FOREVER);
+
+        // The drain above always leaves dsema_value at 0 (every slot re-acquired), regardless of how
+        // many frames were actually in flight when destroy was called. libdispatch requires
+        // dsema_value >= dsema_orig (the value passed to dispatch_semaphore_create) at the moment the
+        // semaphore is deallocated — see _dispatch_semaphore_dispose in libdispatch's semaphore.c —
+        // otherwise it raises "Semaphore object deallocated while in use" (a fatal trap). We've just
+        // drained every in-flight frame ourselves and no further begin_frame will run during teardown,
+        // so nothing can legitimately be blocked on this semaphore anymore; these signals only restore
+        // the bookkeeping value libdispatch expects before the CFRelease below frees it.
+        for (int i = 0; i < SAKURA_METAL_MAX_FRAMES_IN_FLIGHT; i++)
+            dispatch_semaphore_signal(device->frameSemaphore);
     }
 
     if (device->device) CFRelease((__bridge CFTypeRef)device->device);
@@ -885,6 +896,17 @@ void sakura_metal_upload_texture_region(SakuraMetalTexture* texture, int x, int 
 
     // Regenerate the mip chain so minified sampling stays crisp (mirrors GL's per-upload
     // glGenerateMipmap). Uploads are infrequent after warmup, so a one-shot blit here is fine.
+    //
+    // waitUntilCompleted is required, not optional: GL's glGenerateMipmap is synchronous within
+    // GL's single in-order command stream, so a subsequent draw call on the same thread is
+    // guaranteed to see the finished mips. This blit has no equivalent implicit ordering with the
+    // *next* frame's render pass from the caller's point of view, so without waiting here, a sprite
+    // sampled below 100% scale (Rem's fit-to-window zoom, mip level > 0) can read stale or (for a
+    // brand-new texture) uninitialized mip data for one or more frames after Upload() returns —
+    // visible as a flash on slower GPUs, where the blit takes longer relative to frame time, and
+    // invisible on fast ones (e.g. M3 Max) where it usually finishes before the next sample. Uploads
+    // are already infrequent (see above), so the CPU stall here is cheap and removes the race
+    // entirely instead of relying on timing luck.
     if (texture->hasMips && texture->queue != nil)
     {
         id<MTLCommandBuffer> cb = [texture->queue commandBuffer];
@@ -892,6 +914,7 @@ void sakura_metal_upload_texture_region(SakuraMetalTexture* texture, int x, int 
         [blit generateMipmapsForTexture:texture->texture];
         [blit endEncoding];
         [cb commit];
+        [cb waitUntilCompleted];
     }
 }
 
@@ -900,9 +923,9 @@ void sakura_metal_destroy_texture(SakuraMetalTexture* texture)
     if (texture == NULL)
         return;
 
-    if (texture->texture) 
+    if (texture->texture)
         CFRelease((__bridge CFTypeRef)texture->texture);
-    if (texture->queue)   
+    if (texture->queue)
         CFRelease((__bridge CFTypeRef)texture->queue);
     free(texture);
 }
