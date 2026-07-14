@@ -22,6 +22,11 @@ public partial class BasicSliderBar<T> : SliderBar<T> where T : struct, INumber<
     public Color FocusColor { get; set; } = Color.GreenYellow;
 
     /// <summary>
+    /// Color the track fades to while hovered and not disabled.
+    /// </summary>
+    public Color HoverColor { get; set; } = Color.Green;
+
+    /// <summary>
     /// Duration in milliseconds over which the selection fill animates towards a new value.
     /// Set to 0 to snap instantly. Defaults to 150ms.
     /// </summary>
@@ -99,4 +104,10 @@ public partial class BasicSliderBar<T> : SliderBar<T> where T : struct, INumber<
     protected override void OnFocusGained() => BorderColor = FocusColor;
 
     protected override void OnFocusLost() => BorderColor = Color.Transparent;
+
+    protected override void OnHovered() => background.FadeToColour(HoverColor, 100, Easing.OutQuint);
+
+    protected override void OnHoverLost() => background.FadeToColour(BackgroundColor, 100, Easing.OutQuint);
+
+    protected override void OnEnabledChanged(bool enabled) => this.FadeTo(enabled ? 1f : 0.5f, 100, Easing.OutQuint);
 }

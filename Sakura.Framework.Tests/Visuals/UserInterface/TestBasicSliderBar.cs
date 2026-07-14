@@ -1,9 +1,11 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using System.Numerics;
 using NUnit.Framework;
 using Sakura.Framework.Graphics.Colors;
+using Sakura.Framework.Graphics.Cursor;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Transforms;
@@ -23,6 +25,8 @@ public partial class TestBasicSliderBar : ManualInputManagerTestScene
     [SetUp]
     public void SetUp()
     {
+        AddStep("Add tooltip container", () => InputManager.Add(new TooltipContainer()));
+
         AddStep("Add text and slider", () =>
         {
             TestContent.Add(valueText = new SpriteText
@@ -354,7 +358,7 @@ public partial class TestBasicSliderBar : ManualInputManagerTestScene
         AddStep("Set value far below MinValue directly", () => slider.Current.Value = -9999f);
         AddAssert("Value clamped to MinValue", () => slider.Current.Value == slider.MinValue);
     }
-    
+
     [Test]
     public void TestNarrowingBoundsReClampsCurrentValue()
     {
@@ -392,6 +396,30 @@ public partial class TestBasicSliderBar : ManualInputManagerTestScene
         });
 
         AddAssert("Current value was clamped up to MinValue immediately, not left at 0", () => Precision.AlmostEquals(areaSlider.Current.Value, 1));
+    }
+
+    [Test]
+    public void TestSymmetricRangeFillStartsAtMiddleWithoutInteraction()
+    {
+        BasicSliderBar<float> symmetricSlider = null!;
+
+        AddStep("Add slider [-80, 80] - default value 0 doesn't need to change to satisfy that range", () =>
+        {
+            TestContent.Add(symmetricSlider = new BasicSliderBar<float>
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Position = new Vector2(0, 160),
+                Size = new Vector2(200, 18),
+                MinValue = -80f,
+                MaxValue = 80f
+            });
+        });
+
+        AddWaitStep("Let the slider finish loading", 100);
+
+        AddAssert("Value is 0", () => symmetricSlider.Current.Value == 0f);
+        AddAssert("Fill starts at the middle of the track", () => Precision.AlmostEquals(symmetricSlider.CurrentFillWidth, 0.5f, 0.01f));
     }
 
     private void runKeyboardStepAndClampingCase<T>(string typeLabel, T min, T max, T step, T outOfRangeLow, T outOfRangeHigh)
@@ -508,5 +536,328 @@ public partial class TestBasicSliderBar : ManualInputManagerTestScene
 
         AddStep("Directly assign a value below range", () => decimalSlider.Current.Value = -9999m);
         AddAssert("Assignment below range clamps to MinValue", () => decimalSlider.Current.Value == decimalSlider.MinValue);
+    }
+
+    private void clickSliderAt<T>(BasicSliderBar<T> target, float progress) where T : struct, INumber<T>, IMinMaxValue<T>
+    {
+        var position = new Vector2(
+            target.DrawRectangle.X + target.DrawRectangle.Width * progress,
+            target.DrawRectangle.Y + target.DrawRectangle.Height / 2f);
+
+        InputManager.MoveMouseTo(position);
+        InputManager.Click(MouseButton.Left);
+    }
+
+    [Test]
+    public void TestNarrowIntRangeSnapsToEvenBuckets()
+    {
+        BasicSliderBar<int> narrowSlider = null!;
+
+        AddStep("Add int slider [1, 3]", () =>
+        {
+            TestContent.Add(narrowSlider = new BasicSliderBar<int>
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Position = new Vector2(0, 220),
+                Size = new Vector2(300, 18),
+                MinValue = 1,
+                MaxValue = 3
+            });
+        });
+
+        AddStep("Drag to 10%", () => clickSliderAt(narrowSlider, 0.10f));
+        AddAssert("Value is 1", () => narrowSlider.Current.Value == 1);
+
+        AddStep("Drag to 40%", () => clickSliderAt(narrowSlider, 0.40f));
+        AddAssert("Value is 2", () => narrowSlider.Current.Value == 2);
+
+        AddStep("Drag to 60%", () => clickSliderAt(narrowSlider, 0.60f));
+        AddAssert("Value is 2", () => narrowSlider.Current.Value == 2);
+
+        AddStep("Drag to 90%", () => clickSliderAt(narrowSlider, 0.90f));
+        AddAssert("Value is 3 without needing progress == 1.0 exactly", () => narrowSlider.Current.Value == 3);
+    }
+
+    [Test]
+    public void TestStepSnapsToGrid()
+    {
+        BasicSliderBar<float> steppedSlider = null!;
+
+        AddStep("Add float slider [0, 1] with Step = 0.25", () =>
+        {
+            TestContent.Add(steppedSlider = new BasicSliderBar<float>
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Position = new Vector2(0, 250),
+                Size = new Vector2(200, 18),
+                MinValue = 0f,
+                MaxValue = 1f,
+                Step = 0.25f
+            });
+        });
+
+        AddStep("Drag to 10% (nearest grid point is 0)", () => clickSliderAt(steppedSlider, 0.10f));
+        AddAssert("Value snapped to 0", () => Precision.AlmostEquals(steppedSlider.Current.Value, 0f, 0.001f));
+
+        AddStep("Drag to 60% (nearest grid point is 0.5)", () => clickSliderAt(steppedSlider, 0.60f));
+        AddAssert("Value snapped to 0.5", () => Precision.AlmostEquals(steppedSlider.Current.Value, 0.5f, 0.001f));
+
+        AddStep("Drag to 90% (nearest grid point is 1.0)", () => clickSliderAt(steppedSlider, 0.90f));
+        AddAssert("Value snapped to 1.0", () => Precision.AlmostEquals(steppedSlider.Current.Value, 1f, 0.001f));
+
+        AddStep("Directly assign an off-grid value", () => steppedSlider.Current.Value = 0.32f);
+        AddAssert("Direct assignment also snaps to the grid (0.25)", () => Precision.AlmostEquals(steppedSlider.Current.Value, 0.25f, 0.001f));
+    }
+
+    [Test]
+    public void TestDecimalPlacesRoundsContinuousDragging()
+    {
+        BasicSliderBar<float> precisionSlider = null!;
+
+        AddStep("Add float slider [0, 1] with DecimalPlaces = 2", () =>
+        {
+            TestContent.Add(precisionSlider = new BasicSliderBar<float>
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Position = new Vector2(0, 280),
+                Size = new Vector2(200, 18),
+                MinValue = 0f,
+                MaxValue = 1f,
+                DecimalPlaces = 2
+            });
+        });
+
+        AddStep("Drag to a noisy, arbitrary progress", () => clickSliderAt(precisionSlider, 0.74827483f));
+        AddAssert("Value is rounded to 2 decimal places", () =>
+            Precision.AlmostEquals(precisionSlider.Current.Value, MathF.Round(precisionSlider.Current.Value, 2), 0.0001f));
+
+        AddStep("Directly assign a noisy value", () => precisionSlider.Current.Value = 0.748274837f);
+        AddAssert("Direct assignment is also rounded (0.748274837 -> 0.75)", () =>
+            Precision.AlmostEquals(precisionSlider.Current.Value, 0.75f, 0.0001f));
+
+        AddStep("Disable rounding", () => precisionSlider.DecimalPlaces = null);
+        AddStep("Directly assign a noisy value again", () => precisionSlider.Current.Value = 0.123456f);
+        AddAssert("Value is no longer rounded once DecimalPlaces is null", () =>
+            Precision.AlmostEquals(precisionSlider.Current.Value, 0.123456f, 0.0001f));
+    }
+
+    [Test]
+    public void TestDecimalPlacesIsNoOpForIntegerType()
+    {
+        BasicSliderBar<int> intSlider = null!;
+
+        AddStep("Add int slider [0, 100] with DecimalPlaces = 2 (meaningless for whole numbers)", () =>
+        {
+            TestContent.Add(intSlider = new BasicSliderBar<int>
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Position = new Vector2(0, 100),
+                Size = new Vector2(200, 18),
+                MinValue = 0,
+                MaxValue = 100,
+                DecimalPlaces = 2
+            });
+        });
+
+        AddStep("Set value to 42", () => intSlider.Current.Value = 42);
+        AddAssert("Value is unaffected", () => intSlider.Current.Value == 42);
+    }
+
+    private partial class HoverTrackingSlider : BasicSliderBar<float>
+    {
+        public int HoverCount;
+        public int HoverLostCount;
+
+        protected override void OnHovered()
+        {
+            HoverCount++;
+            base.OnHovered();
+        }
+
+        protected override void OnHoverLost()
+        {
+            HoverLostCount++;
+            base.OnHoverLost();
+        }
+    }
+
+    [Test]
+    public void TestHoverState()
+    {
+        HoverTrackingSlider hoverSlider = null!;
+
+        AddStep("Add hover-tracking slider", () =>
+        {
+            TestContent.Add(hoverSlider = new HoverTrackingSlider
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Position = new Vector2(0, 130),
+                Size = new Vector2(200, 18),
+                MinValue = 0f,
+                MaxValue = 1f
+            });
+        });
+
+        AddWaitStep("Let the slider finish loading", 100);
+
+        AddStep("Move mouse away first", () => InputManager.MoveMouseTo(new Vector2(10, 10)));
+        AddAssert("Not hovered", () => !hoverSlider.IsHovered);
+
+        AddStep("Move mouse onto slider", () => InputManager.MoveMouseTo(hoverSlider));
+        AddWaitStep("Let hover reconciliation settle", 50);
+        AddAssert("Is hovered", () => hoverSlider.IsHovered);
+        AddAssert("OnHovered fired once", () => hoverSlider.HoverCount == 1);
+
+        AddStep("Move mouse away", () => InputManager.MoveMouseTo(new Vector2(10, 10)));
+        AddWaitStep("Let hover reconciliation settle", 50);
+        AddAssert("No longer hovered", () => !hoverSlider.IsHovered);
+        AddAssert("OnHoverLost fired once", () => hoverSlider.HoverLostCount == 1);
+    }
+
+    [Test]
+    public void TestDisabledSliderIgnoresInput()
+    {
+        BasicSliderBar<float> disabledSlider = null!;
+
+        AddStep("Add disabled slider", () =>
+        {
+            TestContent.Add(disabledSlider = new BasicSliderBar<float>
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Position = new Vector2(0, 160),
+                Size = new Vector2(200, 18),
+                MinValue = 0f,
+                MaxValue = 100f
+            });
+
+            disabledSlider.Enabled.Value = false;
+        });
+
+        AddWaitStep("Let the slider finish loading", 100);
+
+        AddStep("Click center", () =>
+        {
+            InputManager.MoveMouseTo(disabledSlider);
+            InputManager.Click(MouseButton.Left);
+        });
+        AddAssert("Value unaffected by click", () => disabledSlider.Current.Value == 0f);
+        AddAssert("Disabled slider does not take focus", () => !disabledSlider.HasFocus);
+
+        AddStep("Try dragging across the whole track", () =>
+        {
+            InputManager.MoveMouseTo(disabledSlider);
+            InputManager.PressButton(MouseButton.Left);
+            InputManager.MoveMouseTo(new Vector2(
+                disabledSlider.DrawRectangle.X + disabledSlider.DrawRectangle.Width,
+                disabledSlider.DrawRectangle.Y + 10));
+            InputManager.ReleaseButton(MouseButton.Left);
+        });
+        AddAssert("Value still unaffected by drag", () => disabledSlider.Current.Value == 0f);
+
+        AddStep("Re-enable and click", () =>
+        {
+            disabledSlider.Enabled.Value = true;
+            InputManager.MoveMouseTo(disabledSlider);
+            InputManager.Click(MouseButton.Left);
+        });
+        AddWaitStep("Let the re-enable and click settle", 50);
+        AddAssert("Value now roughly 50 after re-enabling", () => Precision.AlmostEquals(disabledSlider.Current.Value, 50f, 2f));
+    }
+
+    [Test]
+    public void TestDoubleClickResetsToDefaultValue()
+    {
+        BasicSliderBar<float> resettableSlider = null!;
+
+        AddStep("Add slider with DefaultValue = 25", () =>
+        {
+            TestContent.Add(resettableSlider = new BasicSliderBar<float>
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Position = new Vector2(0, 190),
+                Size = new Vector2(200, 18),
+                MinValue = 0f,
+                MaxValue = 100f,
+                DefaultValue = 25f
+            });
+        });
+
+        AddWaitStep("Let the slider finish loading", 100);
+
+        AddStep("Drag value away from default", () => clickSliderAt(resettableSlider, 0.9f));
+        AddAssert("Value is roughly 90, not 25", () => !Precision.AlmostEquals(resettableSlider.Current.Value, 25f, 1f));
+
+        AddStep("Double-click the slider", () =>
+        {
+            InputManager.MoveMouseTo(resettableSlider);
+            InputManager.DoubleClick(MouseButton.Left);
+        });
+        AddWaitStep("Let the double-click settle", 50);
+        AddAssert("Value reset to DefaultValue (25)", () => Precision.AlmostEquals(resettableSlider.Current.Value, 25f, 0.01f));
+    }
+
+    [Test]
+    public void TestDoubleClickWithoutDefaultValueActsAsNormalClick()
+    {
+        BasicSliderBar<float> noDefaultSlider = null!;
+
+        AddStep("Add slider without DefaultValue set", () =>
+        {
+            TestContent.Add(noDefaultSlider = new BasicSliderBar<float>
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Position = new Vector2(0, 220),
+                Size = new Vector2(200, 18),
+                MinValue = 0f,
+                MaxValue = 100f
+            });
+        });
+
+        AddWaitStep("Let the slider finish loading", 100);
+
+        AddStep("Move mouse to 3/4 and double-click", () =>
+        {
+            InputManager.MoveMouseTo(new Vector2(
+                noDefaultSlider.DrawRectangle.X + noDefaultSlider.DrawRectangle.Width * 0.75f,
+                noDefaultSlider.DrawRectangle.Y + 10));
+            InputManager.DoubleClick(MouseButton.Left);
+        });
+        AddWaitStep("Let the double-click settle", 50);
+        AddAssert("Value moved to click position like a normal click", () => Precision.AlmostEquals(noDefaultSlider.Current.Value, 75f, 2f));
+    }
+
+    [Test]
+    public void TestTooltipTextReflectsCurrentValue()
+    {
+        BasicSliderBar<float> tooltipSlider = null!;
+
+        AddStep("Add slider with DecimalPlaces = 1", () =>
+        {
+            TestContent.Add(tooltipSlider = new BasicSliderBar<float>
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Position = new Vector2(0, 250),
+                Size = new Vector2(200, 18),
+                MinValue = 0f,
+                MaxValue = 1f,
+                DecimalPlaces = 1
+            });
+        });
+
+        AddStep("Set value to a noisy float", () => tooltipSlider.Current.Value = 0.748274837f);
+        AddAssert("TooltipText shows the value formatted to 1 decimal place", () =>
+            ((IHasTooltip)tooltipSlider).TooltipText == tooltipSlider.Current.Value.ToString("F1", null));
+
+        AddStep("Hover the slider", () => InputManager.MoveMouseTo(tooltipSlider));
+        AddWaitStep("Wait for tooltip popup to appear", 400);
     }
 }
