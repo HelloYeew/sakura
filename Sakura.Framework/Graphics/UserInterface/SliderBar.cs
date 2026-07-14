@@ -3,6 +3,7 @@
 
 using System;
 using System.Numerics;
+using Sakura.Framework.Graphics.Cursor;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Input;
 using Sakura.Framework.Reactive;
@@ -12,7 +13,7 @@ namespace Sakura.Framework.Graphics.UserInterface;
 /// <summary>
 /// Abstract base for slider/scrubber controls.
 /// </summary>
-public abstract partial class SliderBar<T> : Container where T : struct, INumber<T>, IMinMaxValue<T>
+public abstract partial class SliderBar<T> : Container, IHasTooltip where T : struct, INumber<T>, IMinMaxValue<T>
 {
     /// <summary>
     /// The current value. Assigning to <see cref="ReactiveNumber{T}.Value"/> (directly, via binding,
@@ -47,11 +48,81 @@ public abstract partial class SliderBar<T> : Container where T : struct, INumber
     /// </summary>
     public T KeyboardStep { get; set; } = T.One;
 
-    public override bool AcceptsFocus => true;
+    /// <summary>
+    /// Grid spacing that <see cref="Current"/> snaps to on every change from mouse drag/click,
+    /// keyboard, or a direct/bound assignment. Thin pass-through to
+    /// <see cref="ReactiveNumber{T}.Precision"/>. Independent of <see cref="KeyboardStep"/>,
+    /// which controls how far one arrow-key press moves the value rather than which values are
+    /// reachable at all. e.g. Step = 0.25 on a continuous float slider only allows
+    /// 0, 0.25, 0.5, 0.75, 1, etc.
+    /// </summary>
+    public T Step
+    {
+        get => Current.Precision;
+        set => Current.Precision = value;
+    }
+
+    private int? decimalPlaces;
+
+    /// <summary>
+    /// Rounds <see cref="Current"/> to this many decimal places on every change, trimming
+    /// floating-point drift from continuous dragging (e.g. 0.748274837 -> 0.75 when set to 2).
+    /// Only meaningful for fractional <typeparamref name="T"/> (float/double/decimal), a no-op
+    /// for integer types, which are already whole numbers. Null (default) disables rounding.
+    /// </summary>
+    public int? DecimalPlaces
+    {
+        get => decimalPlaces;
+        set => decimalPlaces = value;
+    }
+
+    /// <summary>
+    /// Value <see cref="Current"/> resets to on double-click. Null (default) disables
+    /// double-click-to-reset entirely.
+    /// </summary>
+    public T? DefaultValue { get; set; }
+
+    /// <summary>
+    /// Whether this slider responds to mouse, keyboard, and double-click input. Disabling also
+    /// prevents it from taking keyboard focus.
+    /// </summary>
+    public readonly ReactiveBool Enabled = new ReactiveBool(true);
+
+    public override bool AcceptsFocus => Enabled.Value;
+
+    public virtual string? TooltipText => DecimalPlaces is int places && !Current.IsInteger
+        ? Current.Value.ToString($"F{places}", null)
+        : Current.Value.ToString();
 
     protected SliderBar()
     {
-        Current.ValueChanged += e => OnValueChanged(e.NewValue);
+        Current.ValueChanged += onCurrentValueChanged;
+    }
+
+    public override void LoadComplete()
+    {
+        base.LoadComplete();
+        Enabled.BindValueChanged(e => OnEnabledChanged(e.NewValue), true);
+
+        // invoke value change one time to make it properly update using true value
+        onCurrentValueChanged(new ValueChangedEvent<T>(Current.Value, Current.Value));
+    }
+
+    private void onCurrentValueChanged(ValueChangedEvent<T> e)
+    {
+        if (decimalPlaces is int places && !Current.IsInteger)
+        {
+            double roundedRaw = Math.Round(double.CreateTruncating(e.NewValue), places, MidpointRounding.AwayFromZero);
+            T rounded = T.Clamp(T.CreateTruncating(roundedRaw), MinValue, MaxValue);
+
+            if (rounded != e.NewValue)
+            {
+                Current.Value = rounded;
+                return;
+            }
+        }
+
+        OnValueChanged(e.NewValue);
     }
 
     public override void OnFocus(FocusEvent e)
@@ -66,17 +137,50 @@ public abstract partial class SliderBar<T> : Container where T : struct, INumber
         OnFocusLost();
     }
 
+    public override bool OnHover(MouseEvent e)
+    {
+        if (!Enabled.Value) return false;
+
+        OnHovered();
+        return base.OnHover(e);
+    }
+
+    public override bool OnHoverLost(MouseEvent e)
+    {
+        if (!Enabled.Value) return false;
+
+        OnHoverLost();
+        return base.OnHoverLost(e);
+    }
+
     public override bool OnMouseDown(MouseButtonEvent e)
     {
+        if (!Enabled.Value) return false;
+
         applyMousePosition(e.ScreenSpaceMousePosition);
         base.OnMouseDown(e);
         return true;
     }
 
-    public override bool OnDragStart(MouseButtonEvent e) => true;
+    public override bool OnDoubleClick(MouseButtonEvent e)
+    {
+        if (!Enabled.Value) return false;
+
+        if (DefaultValue is T resetValue)
+        {
+            Current.Value = resetValue;
+            return true;
+        }
+
+        return base.OnDoubleClick(e);
+    }
+
+    public override bool OnDragStart(MouseButtonEvent e) => Enabled.Value;
 
     public override bool OnDrag(MouseEvent e)
     {
+        if (!Enabled.Value) return false;
+
         applyMousePosition(e.ScreenSpaceMousePosition);
         return true;
     }
@@ -90,12 +194,17 @@ public abstract partial class SliderBar<T> : Container where T : struct, INumber
 
         float min = float.CreateTruncating(MinValue);
         float max = float.CreateTruncating(MaxValue);
-        Current.Value = T.CreateTruncating(min + progress * (max - min));
+        float raw = min + progress * (max - min);
+
+        if (Current.IsInteger)
+            raw = MathF.Round(raw, MidpointRounding.AwayFromZero);
+
+        Current.Value = T.CreateTruncating(raw);
     }
 
     public override bool OnKeyDown(KeyEvent e)
     {
-        if (!HasFocus) return false;
+        if (!HasFocus || !Enabled.Value) return false;
 
         bool ctrl = (e.Modifiers & KeyModifiers.Control) > 0;
         T step = ctrl ? KeyboardStep * T.CreateTruncating(10) : KeyboardStep;
@@ -154,4 +263,19 @@ public abstract partial class SliderBar<T> : Container where T : struct, INumber
     /// Called when the slider loses keyboard focus. Override to hide the focus ring.
     /// </summary>
     protected new virtual void OnFocusLost() { }
+
+    /// <summary>
+    /// Called when hover begins and the slider is enabled. Override to apply hover visuals.
+    /// </summary>
+    protected virtual void OnHovered() { }
+
+    /// <summary>
+    /// Called when hover ends and the slider is enabled. Override to revert hover visuals.
+    /// </summary>
+    protected virtual void OnHoverLost() { }
+
+    /// <summary>
+    /// Called when <see cref="Enabled"/> changes. Override to apply disabled visuals.
+    /// </summary>
+    protected virtual void OnEnabledChanged(bool enabled) { }
 }
