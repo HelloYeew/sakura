@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Sakura.Framework.Graphics.Rendering.Uniforms;
 using Sakura.Framework.Graphics.Textures;
@@ -78,6 +79,12 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
     private SakuraVertex[] drawScratch = new SakuraVertex[256];
 
+    // Currently-bound render target + viewport, so BindFrameBuffer can save/restore across nesting.
+    private ID3D11RenderTargetView currentRtv;
+    private int currentViewportW;
+    private int currentViewportH;
+    private readonly Stack<FrameBufferState> frameBufferStack = new();
+
     private readonly struct ClipState
     {
         public readonly Vector4 ClipData;
@@ -93,6 +100,24 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
         // (0,0,-1,-1) means "no active clip" to the fragment shader's applyClipping.
         public static ClipState None => new ClipState(new Vector4(0, 0, -1, -1), 0, 0);
+    }
+
+    private readonly struct FrameBufferState
+    {
+        public readonly ID3D11RenderTargetView Rtv;
+        public readonly int ViewportW;
+        public readonly int ViewportH;
+        public readonly Matrix4x4 Projection;
+        public readonly ClipState Clip;
+
+        public FrameBufferState(ID3D11RenderTargetView rtv, int viewportW, int viewportH, Matrix4x4 projection, ClipState clip)
+        {
+            Rtv = rtv;
+            ViewportW = viewportW;
+            ViewportH = viewportH;
+            Projection = projection;
+            Clip = clip;
+        }
     }
 
     public Texture WhitePixel { get; private set; }
@@ -316,8 +341,8 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         while (drawThreadQueue.TryDequeue(out var action))
             action();
 
-        context.OMSetRenderTargets(backBufferRtv);
-        context.RSSetViewport(0, 0, backBufferWidth, backBufferHeight);
+        frameBufferStack.Clear();
+        setRenderTarget(backBufferRtv, backBufferWidth, backBufferHeight);
         context.ClearRenderTargetView(backBufferRtv, clear_colour);
 
         currentShader = mainShader;
@@ -326,6 +351,19 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         maskState = default;
 
         rebindFrameState();
+    }
+
+    /// <summary>
+    /// Binds a render target + full-surface viewport and records them, so <see cref="BindFrameBuffer"/> can
+    /// save/restore across nested offscreen passes.
+    /// </summary>
+    private void setRenderTarget(ID3D11RenderTargetView rtv, int width, int height)
+    {
+        currentRtv = rtv;
+        currentViewportW = width;
+        currentViewportH = height;
+        context.OMSetRenderTargets(rtv);
+        context.RSSetViewport(0, 0, width, height);
     }
 
     /// <summary>
@@ -541,15 +579,46 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         throw new NotImplementedException("D3D11 video textures land in Phase 6 (see DIRECT3D11.md).");
 
     public IFrameBuffer CreateFrameBuffer(int width, int height, bool pixelSnapping = false) =>
-        new D3D11FrameBuffer(width, height);
+        new D3D11FrameBuffer(device, context, width, height);
 
+    /// <summary>
+    /// Redirects rendering into <paramref name="frameBuffer"/>. Saves the current render target,
+    /// viewport, projection and clip, remaps the projection so children render with their unchanged
+    /// screen-space coordinates onto the buffer. The inverted top/bottom (vs the window projection)
+    /// cancels the HLSL vertex shader's per-pass Y-flip so the GL-tuned BufferedContainer chain stays
+    /// correct
+    /// </summary>
     public void BindFrameBuffer(IFrameBuffer frameBuffer, RectangleF sourceRect, Color clearColour = default)
     {
+        if (device == null || frameBuffer is not D3D11FrameBuffer fb)
+            return;
+
+        frameBufferStack.Push(new FrameBufferState(currentRtv, currentViewportW, currentViewportH, projectionMatrix, currentClip));
+
+        projectionMatrix = Matrix4x4.CreateOrthographicOffCenter(
+            sourceRect.X, sourceRect.X + sourceRect.Width,
+            sourceRect.Y + sourceRect.Height, sourceRect.Y,
+            -1, 1);
+        currentClip = ClipState.None;
+
+        setRenderTarget(fb.RenderTargetView, fb.Width, fb.Height);
+        context.ClearRenderTargetView(fb.RenderTargetView, toColor4(clearColour));
+        uploadProjection();
     }
 
     public void UnbindFrameBuffer()
     {
+        if (device == null || frameBufferStack.Count == 0)
+            return;
+
+        var state = frameBufferStack.Pop();
+        projectionMatrix = state.Projection;
+        currentClip = state.Clip;
+        setRenderTarget(state.Rtv, state.ViewportW, state.ViewportH);
+        uploadProjection();
     }
+
+    private static Color4 toColor4(Color c) => new Color4(c.R / 255f, c.G / 255f, c.B / 255f, c.A / 255f);
 
     public void Dispose()
     {

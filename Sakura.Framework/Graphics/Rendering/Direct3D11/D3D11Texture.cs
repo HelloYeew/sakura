@@ -19,6 +19,7 @@ public sealed class D3D11Texture : INativeTexture
 
     private ID3D11Texture2D texture;
     private ID3D11ShaderResourceView srv;
+    private ID3D11RenderTargetView rtv;
 
     public nint Handle => srv?.NativePointer ?? nint.Zero;
     public int Width { get; }
@@ -26,6 +27,7 @@ public sealed class D3D11Texture : INativeTexture
     public bool Available { get; private set; }
 
     internal ID3D11ShaderResourceView ShaderResourceView => srv;
+    internal ID3D11RenderTargetView RenderTargetView => rtv;
 
     /// <summary>
     /// Shared 1×1 white fallback, set once by <see cref="D3D11Renderer"/> at startup. Bound in place
@@ -57,6 +59,42 @@ public sealed class D3D11Texture : INativeTexture
         texture = device.CreateTexture2D(desc);
         srv = device.CreateShaderResourceView(texture);
     }
+
+    private D3D11Texture(ID3D11Device device, ID3D11DeviceContext context, int width, int height, bool renderTarget)
+    {
+        this.device = device;
+        this.context = context;
+        Width = Math.Max(1, width);
+        Height = Math.Max(1, height);
+
+        var desc = new Texture2DDescription
+        {
+            Width = (uint)Width,
+            Height = (uint)Height,
+            MipLevels = 1,
+            ArraySize = 1,
+            Format = Format.B8G8R8A8_UNorm_SRgb,
+            SampleDescription = new SampleDescription(1, 0),
+            Usage = ResourceUsage.Default,
+            BindFlags = BindFlags.RenderTarget | BindFlags.ShaderResource,
+            CPUAccessFlags = CpuAccessFlags.None,
+            MiscFlags = ResourceOptionFlags.None,
+        };
+
+        texture = device.CreateTexture2D(desc);
+        srv = device.CreateShaderResourceView(texture);
+        rtv = device.CreateRenderTargetView(texture);
+
+        // GPU-only: filled by rendering into it, so it's available immediately (no CPU upload).
+        Available = true;
+    }
+
+    /// <summary>
+    /// Creates a GPU-only render-target texture (renderable + sampleable) for use as an offscreen
+    /// framebuffer attachment. Mirrors <see cref="MetalTexture.CreateRenderTarget"/>.
+    /// </summary>
+    public static D3D11Texture CreateRenderTarget(ID3D11Device device, ID3D11DeviceContext context, int width, int height) =>
+        new D3D11Texture(device, context, width, height, renderTarget: true);
 
     public unsafe void Upload(ReadOnlySpan<byte> data)
     {
@@ -106,6 +144,8 @@ public sealed class D3D11Texture : INativeTexture
 
     public void Dispose()
     {
+        rtv?.Dispose();
+        rtv = null;
         srv?.Dispose();
         srv = null;
         texture?.Dispose();
