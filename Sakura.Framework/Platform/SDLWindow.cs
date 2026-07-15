@@ -1252,12 +1252,9 @@ public class SDLWindow : IWindow
 
     public unsafe void SwapBuffers()
     {
-        if (graphicsApi == RendererType.Metal)
-        {
-            // Metal: presentation is handled by the renderer's command buffer commit.
-            // Nothing to do at the window layer.
-        }
-        else
+        // Only OpenGL presents at the window layer. Metal and Direct3D11 present from inside their
+        // renderers (command-buffer commit / DXGI swapchain), so there's nothing to do here.
+        if (graphicsApi == RendererType.OpenGL)
         {
             if (window != null)
                 SDL_GL_SwapWindow(window);
@@ -1266,23 +1263,21 @@ public class SDLWindow : IWindow
 
     /// <summary>
     /// Makes the graphics context current on the calling thread.
-    /// For OpenGL: binds the GL context.
-    /// For Metal: no-op.
+    /// For OpenGL: binds the GL context. For Metal and Direct3D11: no-op.
     /// </summary>
     public void MakeCurrent()
     {
-        if (graphicsApi != RendererType.Metal)
+        if (graphicsApi == RendererType.OpenGL)
             glSurface.MakeCurrent();
     }
 
     /// <summary>
     /// Releases the graphics context from the calling thread.
-    /// For OpenGL: unbinds the GL context.
-    /// For Metal: no-op.
+    /// For OpenGL: unbinds the GL context. For Metal and Direct3D11: no-op.
     /// </summary>
     public void ClearCurrent()
     {
-        if (graphicsApi != RendererType.Metal)
+        if (graphicsApi == RendererType.OpenGL)
             glSurface.ClearCurrent();
     }
 
@@ -1291,9 +1286,10 @@ public class SDLWindow : IWindow
     /// </summary>
     public void SetVSync(bool enabled)
     {
-        if (graphicsApi != RendererType.Metal)
+        // OpenGL only. Metal VSync is controlled via CAMetalLayer.displaySyncEnabled; Direct3D11
+        // via the swapchain Present interval — both handled inside their renderers.
+        if (graphicsApi == RendererType.OpenGL)
             SDL_GL_SetSwapInterval(enabled ? 1 : 0);
-        // Metal VSync is controlled via CAMetalLayer.displaySyncEnabled, will handled in MetalRenderer.
     }
 
     private unsafe void setTitle(string newTitle)
