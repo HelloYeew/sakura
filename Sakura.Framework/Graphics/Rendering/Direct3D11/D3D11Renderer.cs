@@ -232,8 +232,11 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
     private void createStateObjects()
     {
-        blendStates[(int)BlendingMode.Alpha] = createBlend(Blend.SourceAlpha, Blend.InverseSourceAlpha, Blend.One, Blend.InverseSourceAlpha);
-        blendStates[(int)BlendingMode.Additive] = createBlend(Blend.SourceAlpha, Blend.One, Blend.One, Blend.One);
+        // Note: D3D forbids the *_Color blend factors on the alpha channel, so Multiply's DestColor
+        // and Screen's InverseSourceColor can't be replicated on alpha, those keep a valid
+        // approximation (only affects direct rendering, where the backbuffer alpha is unused).
+        blendStates[(int)BlendingMode.Alpha] = createBlend(Blend.SourceAlpha, Blend.InverseSourceAlpha, Blend.SourceAlpha, Blend.InverseSourceAlpha);
+        blendStates[(int)BlendingMode.Additive] = createBlend(Blend.SourceAlpha, Blend.One, Blend.SourceAlpha, Blend.One);
         blendStates[(int)BlendingMode.Opaque] = createBlend(Blend.One, Blend.Zero, Blend.One, Blend.Zero);
         blendStates[(int)BlendingMode.Multiply] = createBlend(Blend.DestinationColor, Blend.InverseSourceAlpha, Blend.One, Blend.InverseSourceAlpha);
         blendStates[(int)BlendingMode.Screen] = createBlend(Blend.One, Blend.InverseSourceColor, Blend.One, Blend.InverseSourceAlpha);
