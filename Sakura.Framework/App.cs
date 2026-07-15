@@ -160,9 +160,11 @@ public partial class App : Container, IFocusManager, IInputManagerProvider, IDis
                 break;
 
             case D3D11Renderer:
-                // TODO: Connect with real thing
-                TextureManager = new HeadlessTextureManager();
-                FontStore = new HeadlessFontStore((HeadlessTextureManager)TextureManager);
+                TextureManager = new D3D11TextureManager(Host.Renderer, embeddedResourceStorage.GetStorageForDirectory("Textures"), CreateImageLoader());
+                FontStore = new RendererFontStore(Host.Renderer);
+                var d3d11FrameworkFontStorage = Host.FrameworkStorage.GetStorageForDirectory("Fonts");
+                var d3d11FontStorage = new CompositeStorage(d3d11FrameworkFontStorage, embeddedResourceStorage.GetStorageForDirectory("Fonts"));
+                FontStore.LoadDefaultFont(d3d11FontStorage);
                 VideoStore = new VideoStore(embeddedResourceStorage.GetStorageForDirectory("Videos"), Host.Renderer, TextureManager);
                 break;
 
