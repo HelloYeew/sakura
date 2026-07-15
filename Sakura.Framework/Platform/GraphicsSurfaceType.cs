@@ -10,4 +10,5 @@ public enum GraphicsSurfaceType
     [SuppressMessage("ReSharper", "InconsistentNaming")]
     OpenGL,
     Metal,
+    Direct3D11,
 }

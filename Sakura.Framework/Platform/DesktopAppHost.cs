@@ -11,6 +11,7 @@ using JetBrains.Annotations;
 using Sakura.Framework.Configurations;
 using Sakura.Framework.Extensions;
 using Sakura.Framework.Graphics.Rendering;
+using Sakura.Framework.Graphics.Rendering.Direct3D11;
 using Sakura.Framework.Graphics.Rendering.Metal;
 using Sakura.Framework.Logging;
 
@@ -51,6 +52,9 @@ public class DesktopAppHost : AppHost
         if (RuntimeInfo.IsApple)
             return [RendererType.Metal, RendererType.OpenGL];
 
+        if (RuntimeInfo.IsWindows)
+            return [RendererType.Direct3D11, RendererType.OpenGL];
+
         return [RendererType.OpenGL];
     }
 
@@ -68,6 +72,9 @@ public class DesktopAppHost : AppHost
 
             case RendererType.Metal:
                 return RuntimeInfo.IsMacOS ? new MetalRenderer() : null;
+
+            case RendererType.Direct3D11:
+                return RuntimeInfo.IsWindows ? new D3D11Renderer() : null;
 
             default:
                 return null;
@@ -132,6 +139,10 @@ public class DesktopAppHost : AppHost
         {
             case RendererType.Metal:
                 sdlWindow.InitializeMetalSurface();
+                break;
+
+            case RendererType.Direct3D11:
+                sdlWindow.InitializeWin32Surface();
                 break;
 
             default:

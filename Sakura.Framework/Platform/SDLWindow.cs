@@ -38,6 +38,7 @@ public class SDLWindow : IWindow
     // Graphics surfaces — only one will be active depending on the selected renderer.
     private readonly SDLGraphicsSurface glSurface = new SDLGraphicsSurface();
     private readonly MetalGraphicsSurface metalSurface = new MetalGraphicsSurface();
+    private readonly Win32GraphicsSurface win32Surface = new Win32GraphicsSurface();
     private IGraphicsSurface activeSurface;
 
     private RendererType graphicsApi = RendererType.OpenGL;
@@ -265,6 +266,12 @@ public class SDLWindow : IWindow
             case RendererType.Metal:
                 windowFlags |= SDL_WindowFlags.SDL_WINDOW_METAL;
                 activeSurface = metalSurface;
+                break;
+
+            case RendererType.Direct3D11:
+                // D3D11 renders into a plain Win32 window — no graphics-API window flag. The DXGI
+                // swapchain is created against the HWND resolved in InitializeWin32Surface().
+                activeSurface = win32Surface;
                 break;
 
             default:
@@ -526,6 +533,37 @@ public class SDLWindow : IWindow
         metalSurface.MetalLayer = layer;
 
         Logger.Verbose("Metal surface initialised successfully");
+    }
+
+    /// <summary>
+    /// Resolves the native Win32 window handle (HWND) via SDL's window-properties API and stores it
+    /// on the <see cref="Win32GraphicsSurface"/>. Must be called after <see cref="Create()"/> when
+    /// the selected renderer is Direct3D11.
+    /// </summary>
+    public unsafe void InitializeWin32Surface()
+    {
+        SDL_PropertiesID props = SDL_GetWindowProperties(window);
+        if ((uint)props == 0)
+        {
+            Logger.Error("Failed to get SDL window properties: " + SDL_GetError());
+            throw new Exception("SDL window property retrieval failed.");
+        }
+
+        // The property-name constants are UTF-8 (u8) ReadOnlySpan<byte>; the API takes a byte*,
+        // so pin the span for the call.
+        IntPtr hwnd;
+        fixed (byte* namePtr = SDL_PROP_WINDOW_WIN32_HWND_POINTER)
+            hwnd = SDL_GetPointerProperty(props, namePtr, IntPtr.Zero);
+
+        if (hwnd == IntPtr.Zero)
+        {
+            Logger.Error("Failed to get Win32 HWND from SDL window.");
+            throw new Exception("HWND retrieval failed.");
+        }
+
+        win32Surface.WindowHandle = hwnd;
+
+        Logger.Verbose("Win32 (Direct3D11) surface initialised successfully");
     }
 
     public void Close()
