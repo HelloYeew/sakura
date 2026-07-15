@@ -31,9 +31,25 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     private ID3D11DeviceContext context;
 
     private IDXGISwapChain1 swapChain;
+    private IDXGISwapChain2 waitableSwapChain;
     private ID3D11RenderTargetView backBufferRtv;
     private int backBufferWidth;
     private int backBufferHeight;
+
+    // The swapchain is created waitable with a max frame latency of 1,
+    // the draw thread waits on this handle at the top of each frame so CPU work aligns with the
+    // display and input-to-photon latency stays low.
+    private nint frameLatencyWaitableObject;
+
+    // Whether the output supports tearing (required for uncapped/no-VSync present via AllowTearing).
+    private bool allowTearing;
+
+    // The flags the swapchain was created with, must be reused on ResizeBuffers.
+    private SwapChainFlags swapChainFlags = SwapChainFlags.FrameLatencyWaitableObject;
+
+    // Present sync interval: 1 = VSync (default, safe), 0 = uncapped. Driven by the framework frame
+    // limiter through SetVSync. See Draw for the interval/flag mapping.
+    private int presentSyncInterval = 1;
 
     private nint windowHandle;
 
@@ -190,6 +206,14 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         using IDXGIAdapter adapter = dxgiDevice.GetAdapter();
         using IDXGIFactory2 factory = adapter.GetParent<IDXGIFactory2>();
 
+        allowTearing = queryTearingSupport(factory);
+
+        // Waitable for low latency; AllowTearing (if supported) so an uncapped/no-VSync present can
+        // tear instead of stalling. These are fixed for the swapchain's lifetime and reused on resize.
+        swapChainFlags = SwapChainFlags.FrameLatencyWaitableObject;
+        if (allowTearing)
+            swapChainFlags |= SwapChainFlags.AllowTearing;
+
         var desc = new SwapChainDescription1
         {
             Width = 0,
@@ -202,13 +226,38 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
             Scaling = Scaling.None,
             SwapEffect = SwapEffect.FlipDiscard,
             AlphaMode = AlphaMode.Ignore,
-            Flags = SwapChainFlags.None,
+            Flags = swapChainFlags,
         };
 
         swapChain = factory.CreateSwapChainForHwnd(device, windowHandle, desc);
         factory.MakeWindowAssociation(windowHandle, WindowAssociationFlags.IgnoreAltEnter);
 
+        // Retrieve the waitable object and cap queued frames to 1 (the low-latency path).
+        waitableSwapChain = swapChain.QueryInterfaceOrNull<IDXGISwapChain2>();
+        if (waitableSwapChain != null)
+        {
+            waitableSwapChain.MaximumFrameLatency = 1;
+            frameLatencyWaitableObject = waitableSwapChain.FrameLatencyWaitableObject;
+        }
+
         createBackBufferView();
+    }
+
+    /// <summary>
+    /// Queries whether the output supports tearing (needed for uncapped / no-VSync present). Falls back
+    /// to <c>false</c> (VSync-only, no tearing) if the feature query is unavailable.
+    /// </summary>
+    private static bool queryTearingSupport(IDXGIFactory2 factory)
+    {
+        try
+        {
+            using var factory5 = factory.QueryInterfaceOrNull<IDXGIFactory5>();
+            return factory5 != null && factory5.PresentAllowTearing;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private void createBackBufferView()
@@ -342,6 +391,12 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         if (device == null || swapChain == null)
             return;
 
+        // Low-latency pacing: block until the swapchain is ready for a new frame (max latency 1), so
+        // the CPU doesn't run ahead of the display. Timeout-guarded so a lost/uninitialised handle can
+        // never hang the draw thread. Initial state is signalled, so the first wait returns at once.
+        if (frameLatencyWaitableObject != nint.Zero)
+            WaitForSingleObjectEx(frameLatencyWaitableObject, 1000, true);
+
         while (drawThreadQueue.TryDequeue(out var action))
             action();
 
@@ -423,8 +478,10 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         backBufferRtv?.Dispose();
         backBufferRtv = null;
 
+        // Must reuse the creation flags (FrameLatencyWaitableObject / AllowTearing) — the waitable
+        // handle stays valid across a resize, so no need to re-fetch it.
         swapChain.ResizeBuffers(0, (uint)Math.Max(1, physicalWidth), (uint)Math.Max(1, physicalHeight),
-            Format.Unknown, SwapChainFlags.None);
+            Format.Unknown, swapChainFlags);
 
         createBackBufferView();
 
@@ -439,8 +496,23 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
         rootNode?.Draw(this);
 
-        swapChain.Present(1, PresentFlags.None);
+        // VSync -> sync interval 1, no flags. Uncapped -> interval 0, tear (if the output supports it)
+        // rather than stall on a flip-model swapchain. AllowTearing is illegal with interval > 0.
+        if (presentSyncInterval == 0)
+            swapChain.Present(0, allowTearing ? PresentFlags.AllowTearing : PresentFlags.None);
+        else
+            swapChain.Present(1, PresentFlags.None);
     }
+
+    /// <summary>
+    /// Sets the present sync interval from the framework frame limiter: <c>VSync</c> presents at the
+    /// display rate (interval 1); every other mode presents uncapped (interval 0) and is paced by the
+    /// draw clock, tearing if the output allows it. On a flip-model swapchain, mixing a non-VSync
+    /// limiter with a VSync-locked present alternates buffers and visibly flashes — this mapping is
+    /// what keeps the two in step. <c>SDLWindow.SetVSync</c> is a no-op for D3D11, so this is the single
+    /// source of truth for the present interval.
+    /// </summary>
+    public void SetVSync(bool enabled) => presentSyncInterval = enabled ? 1 : 0;
 
     #region Draw path
 
@@ -752,8 +824,14 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         vertexBuffer?.Dispose();
 
         backBufferRtv?.Dispose();
+        waitableSwapChain?.Dispose();
         swapChain?.Dispose();
         context?.Dispose();
         device?.Dispose();
     }
+
+    // The frame-latency waitable object is a Win32 event handle; there's no managed wrapper for it, so
+    // wait on it via the kernel32 primitive. Alertable so the draw thread stays responsive to APCs.
+    [DllImport("kernel32", SetLastError = true)]
+    private static extern uint WaitForSingleObjectEx(nint handle, uint milliseconds, bool alertable);
 }
