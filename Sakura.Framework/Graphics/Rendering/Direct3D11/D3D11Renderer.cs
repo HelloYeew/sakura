@@ -689,7 +689,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         };
 
     public INativeVideoTexture CreateVideoTexture(int width, int height) =>
-        throw new NotImplementedException("D3D11 video textures land in Phase 6 (see DIRECT3D11.md).");
+        throw new NotImplementedException("D3D11 video textures have not been implemented yet");
 
     public IFrameBuffer CreateFrameBuffer(int width, int height, bool pixelSnapping = false) =>
         new D3D11FrameBuffer(device, context, width, height);
