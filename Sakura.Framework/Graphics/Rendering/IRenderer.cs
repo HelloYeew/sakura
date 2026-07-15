@@ -33,6 +33,14 @@ public interface IRenderer
 
     void Draw(IClock clock);
 
+    /// <summary>
+    /// Sets whether presentation is synced to the display refresh. Called by the host when the frame
+    /// limiter changes (VSync vs any capped/unlimited mode). Backends that present at the window layer
+    /// (OpenGL, via the SDL swap interval) or rely on a compositor/layer default (Metal) handle VSync
+    /// elsewhere and leave this a no-op; Direct3D11 maps it to the swapchain present interval.
+    /// </summary>
+    void SetVSync(bool enabled) { }
+
     void DrawVertices(ReadOnlySpan<Vertex.Vertex> vertices, Texture textureGl);
 
     /// <summary>

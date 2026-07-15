@@ -74,6 +74,26 @@ public class SpirvCompilationTest
     }
 
     [Test]
+    public void FrameworkMainShader_CompilesTo_HLSL()
+    {
+        if (shaderVert == null)
+            Assert.Ignore("Framework shader files not found — skipping.");
+        if (!shadersAreSpirVCompatible(shaderVert))
+            Assert.Ignore("Framework shaders are not #version 450 yet.");
+
+        var result = compileVertexFragment(shaderVert!, shaderFrag!, CrossCompileTarget.HLSL,
+            options: new CrossCompileOptions(fixClipSpaceZ: true, invertVertexOutputY: true));
+
+        // SPIRV-Cross emits HLSL system-value semantics: SV_Position on the vertex output and
+        // SV_Target on the fragment output.
+        Assert.That(result.VertexShader, Does.Contain("SV_Position"));
+        Assert.That(result.FragmentShader, Does.Contain("SV_Target"));
+
+        Console.WriteLine($"main shader → HLSL: vert={result.VertexShader.Length}b, frag={result.FragmentShader.Length}b");
+        Console.WriteLine(result.VertexShader[..Math.Min(500, result.VertexShader.Length)]);
+    }
+
+    [Test]
     public void FrameworkVideoShader_CompilesTo_GLSL()
     {
         if (videoVert == null)
@@ -103,6 +123,23 @@ public class SpirvCompilationTest
         Assert.That(result.VertexShader, Does.Contain("#include <metal_stdlib>"));
 
         Console.WriteLine($"video shader → MSL: vert={result.VertexShader.Length}b, frag={result.FragmentShader.Length}b");
+    }
+
+    [Test]
+    public void FrameworkVideoShader_CompilesTo_HLSL()
+    {
+        if (videoVert == null)
+            Assert.Ignore("Framework video shader files not found — skipping.");
+        if (!shadersAreSpirVCompatible(videoVert))
+            Assert.Ignore("Framework video shaders are not #version 450 yet.");
+
+        var result = compileVertexFragment(videoVert!, videoFrag!, CrossCompileTarget.HLSL,
+            options: new CrossCompileOptions(fixClipSpaceZ: true, invertVertexOutputY: true));
+
+        Assert.That(result.VertexShader, Does.Contain("SV_Position"));
+        Assert.That(result.FragmentShader, Does.Contain("SV_Target"));
+
+        Console.WriteLine($"video shader → HLSL: vert={result.VertexShader.Length}b, frag={result.FragmentShader.Length}b");
     }
 
     #endregion

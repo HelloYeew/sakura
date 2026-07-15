@@ -79,9 +79,13 @@ public static partial class ShaderCompiler
         Logger.Verbose($"☀️ Shader cache miss for {label} → {target}, compiling");
 
         var options = new CrossCompileOptions(
-            fixClipSpaceZ: false,
-            // Metal's framebuffer origin is top-left vs OpenGL's bottom-left, so flip Y for MSL only.
-            invertVertexOutputY: target == CrossCompileTarget.MSL);
+            // D3D clip space is [0,1] on Z (vs OpenGL/Metal's [-1,1]), so the depth range must be
+            // remapped for HLSL only.
+            fixClipSpaceZ: target == CrossCompileTarget.HLSL,
+            // Metal and Direct3D both use a top-left framebuffer origin (vs OpenGL's bottom-left),
+            // so flip Y for MSL and HLSL.
+            invertVertexOutputY: target == CrossCompileTarget.MSL || target == CrossCompileTarget.HLSL
+        );
 
         VertexFragmentCompilationResult result = SpirvCompilation.CompileVertexFragment(
             Encoding.UTF8.GetBytes(vertexSource),

@@ -15,6 +15,7 @@ using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Graphics.Rendering;
+using Sakura.Framework.Graphics.Rendering.Direct3D11;
 using Sakura.Framework.Graphics.Rendering.Metal;
 using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Graphics.Textures;
@@ -155,6 +156,15 @@ public partial class App : Container, IFocusManager, IInputManagerProvider, IDis
                 var metalFrameworkFontStorage = Host.FrameworkStorage.GetStorageForDirectory("Fonts");
                 var metalFontStorage = new CompositeStorage(metalFrameworkFontStorage, embeddedResourceStorage.GetStorageForDirectory("Fonts"));
                 FontStore.LoadDefaultFont(metalFontStorage);
+                VideoStore = new VideoStore(embeddedResourceStorage.GetStorageForDirectory("Videos"), Host.Renderer, TextureManager);
+                break;
+
+            case D3D11Renderer:
+                TextureManager = new D3D11TextureManager(Host.Renderer, embeddedResourceStorage.GetStorageForDirectory("Textures"), CreateImageLoader());
+                FontStore = new RendererFontStore(Host.Renderer);
+                var d3d11FrameworkFontStorage = Host.FrameworkStorage.GetStorageForDirectory("Fonts");
+                var d3d11FontStorage = new CompositeStorage(d3d11FrameworkFontStorage, embeddedResourceStorage.GetStorageForDirectory("Fonts"));
+                FontStore.LoadDefaultFont(d3d11FontStorage);
                 VideoStore = new VideoStore(embeddedResourceStorage.GetStorageForDirectory("Videos"), Host.Renderer, TextureManager);
                 break;
 

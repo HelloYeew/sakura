@@ -41,5 +41,10 @@ void main()
         totalWeight += 2.0 * weight;
     }
 
-    FragColor = sum / totalWeight;
+    // Modulate by v_Color (always 1,1,1,1 for the effect pass, so a no-op visually) so the varying is
+    // not optimised out. Without it the fragment shader's input signature starts at location 1, and a
+    // register-based VS->PS linkage (the Direct3D translation layer) then feeds
+    // v_TexCoords from the vertex shader's location-0 output (v_Color) instead — sampling a constant
+    // texcoord. Keeping location 0 present makes the interpolator registers line up.
+    FragColor = (sum / totalWeight) * v_Color;
 }

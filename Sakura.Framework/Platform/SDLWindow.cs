@@ -38,6 +38,7 @@ public class SDLWindow : IWindow
     // Graphics surfaces — only one will be active depending on the selected renderer.
     private readonly SDLGraphicsSurface glSurface = new SDLGraphicsSurface();
     private readonly MetalGraphicsSurface metalSurface = new MetalGraphicsSurface();
+    private readonly Win32GraphicsSurface win32Surface = new Win32GraphicsSurface();
     private IGraphicsSurface activeSurface;
 
     private RendererType graphicsApi = RendererType.OpenGL;
@@ -265,6 +266,12 @@ public class SDLWindow : IWindow
             case RendererType.Metal:
                 windowFlags |= SDL_WindowFlags.SDL_WINDOW_METAL;
                 activeSurface = metalSurface;
+                break;
+
+            case RendererType.Direct3D11:
+                // D3D11 renders into a plain Win32 window — no graphics-API window flag. The DXGI
+                // swapchain is created against the HWND resolved in InitializeWin32Surface().
+                activeSurface = win32Surface;
                 break;
 
             default:
@@ -526,6 +533,37 @@ public class SDLWindow : IWindow
         metalSurface.MetalLayer = layer;
 
         Logger.Verbose("Metal surface initialised successfully");
+    }
+
+    /// <summary>
+    /// Resolves the native Win32 window handle (HWND) via SDL's window-properties API and stores it
+    /// on the <see cref="Win32GraphicsSurface"/>. Must be called after <see cref="Create()"/> when
+    /// the selected renderer is Direct3D11.
+    /// </summary>
+    public unsafe void InitializeWin32Surface()
+    {
+        SDL_PropertiesID props = SDL_GetWindowProperties(window);
+        if ((uint)props == 0)
+        {
+            Logger.Error("Failed to get SDL window properties: " + SDL_GetError());
+            throw new Exception("SDL window property retrieval failed.");
+        }
+
+        // The property-name constants are UTF-8 (u8) ReadOnlySpan<byte>; the API takes a byte*,
+        // so pin the span for the call.
+        IntPtr hwnd;
+        fixed (byte* namePtr = SDL_PROP_WINDOW_WIN32_HWND_POINTER)
+            hwnd = SDL_GetPointerProperty(props, namePtr, IntPtr.Zero);
+
+        if (hwnd == IntPtr.Zero)
+        {
+            Logger.Error("Failed to get Win32 HWND from SDL window.");
+            throw new Exception("HWND retrieval failed.");
+        }
+
+        win32Surface.WindowHandle = hwnd;
+
+        Logger.Verbose("Win32 (Direct3D11) surface initialised successfully");
     }
 
     public void Close()
@@ -1214,12 +1252,9 @@ public class SDLWindow : IWindow
 
     public unsafe void SwapBuffers()
     {
-        if (graphicsApi == RendererType.Metal)
-        {
-            // Metal: presentation is handled by the renderer's command buffer commit.
-            // Nothing to do at the window layer.
-        }
-        else
+        // Only OpenGL presents at the window layer. Metal and Direct3D11 present from inside their
+        // renderers (command-buffer commit / DXGI swapchain), so there's nothing to do here.
+        if (graphicsApi == RendererType.OpenGL)
         {
             if (window != null)
                 SDL_GL_SwapWindow(window);
@@ -1228,23 +1263,21 @@ public class SDLWindow : IWindow
 
     /// <summary>
     /// Makes the graphics context current on the calling thread.
-    /// For OpenGL: binds the GL context.
-    /// For Metal: no-op.
+    /// For OpenGL: binds the GL context. For Metal and Direct3D11: no-op.
     /// </summary>
     public void MakeCurrent()
     {
-        if (graphicsApi != RendererType.Metal)
+        if (graphicsApi == RendererType.OpenGL)
             glSurface.MakeCurrent();
     }
 
     /// <summary>
     /// Releases the graphics context from the calling thread.
-    /// For OpenGL: unbinds the GL context.
-    /// For Metal: no-op.
+    /// For OpenGL: unbinds the GL context. For Metal and Direct3D11: no-op.
     /// </summary>
     public void ClearCurrent()
     {
-        if (graphicsApi != RendererType.Metal)
+        if (graphicsApi == RendererType.OpenGL)
             glSurface.ClearCurrent();
     }
 
@@ -1253,9 +1286,10 @@ public class SDLWindow : IWindow
     /// </summary>
     public void SetVSync(bool enabled)
     {
-        if (graphicsApi != RendererType.Metal)
+        // OpenGL only. Metal VSync is controlled via CAMetalLayer.displaySyncEnabled; Direct3D11
+        // via the swapchain Present interval — both handled inside their renderers.
+        if (graphicsApi == RendererType.OpenGL)
             SDL_GL_SetSwapInterval(enabled ? 1 : 0);
-        // Metal VSync is controlled via CAMetalLayer.displaySyncEnabled, will handled in MetalRenderer.
     }
 
     private unsafe void setTitle(string newTitle)

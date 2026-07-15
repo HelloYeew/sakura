@@ -808,8 +808,14 @@ public abstract class AppHost : IDisposable
 
     private void onFrameLimiterChanged(ValueChangedEvent<FrameSync> e)
     {
+        bool vsync = e.NewValue == FrameSync.VSync;
+
         // VSync need to be set on window, other frame limiters are handled in the clock.
-        Window?.SetVSync(e.NewValue == FrameSync.VSync);
+        // OpenGL syncs at the window layer (SDL swap interval), Direct3D11 has no window-layer VSync,
+        // so the renderer maps this to its swapchain present interval. Both are notified, each backend
+        // acts on the one that applies to it.
+        Window?.SetVSync(vsync);
+        Renderer?.SetVSync(vsync);
     }
 
     /// <summary>
