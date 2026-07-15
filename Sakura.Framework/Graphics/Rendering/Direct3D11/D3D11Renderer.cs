@@ -185,6 +185,24 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         return result.Success && device != null;
     }
 
+    public static bool IsSupported()
+    {
+        try
+        {
+            FeatureLevel[] featureLevels = { FeatureLevel.Level_11_1, FeatureLevel.Level_11_0 };
+            var result = D3D11CreateDevice(null, DriverType.Hardware, DeviceCreationFlags.BgraSupport,
+                featureLevels, out ID3D11Device probeDevice, out ID3D11DeviceContext probeContext);
+
+            probeContext?.Dispose();
+            probeDevice?.Dispose();
+            return result.Success && probeDevice != null;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private void logDeviceInfo()
     {
         try

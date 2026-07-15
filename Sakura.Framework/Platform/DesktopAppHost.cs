@@ -74,7 +74,7 @@ public class DesktopAppHost : AppHost
                 return RuntimeInfo.IsMacOS ? new MetalRenderer() : null;
 
             case RendererType.Direct3D11:
-                return RuntimeInfo.IsWindows ? new D3D11Renderer() : null;
+                return RuntimeInfo.IsWindows && D3D11Renderer.IsSupported() ? new D3D11Renderer() : null;
 
             default:
                 return null;
