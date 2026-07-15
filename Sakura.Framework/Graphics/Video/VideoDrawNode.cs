@@ -41,7 +41,8 @@ internal class VideoDrawNode : DrawNode
         // TODO: This is still really bad????
         bool isGL = renderer is IGLRenderer;
         bool isMetal = renderer is IMetalRenderer;
-        if (!isGL && !isMetal)
+        bool isD3D11 = renderer is Rendering.Direct3D11.ID3D11Renderer;
+        if (!isGL && !isMetal && !isD3D11)
             return;
 
         renderer.FlushBatch();
@@ -69,6 +70,8 @@ internal class VideoDrawNode : DrawNode
             glRenderer.DrawVerticesRaw(Vertices);
         else if (renderer is IMetalRenderer metalRenderer)
             metalRenderer.DrawVerticesRaw(Vertices);
+        else if (renderer is Rendering.Direct3D11.ID3D11Renderer d3D11Renderer)
+            d3D11Renderer.DrawVerticesRaw(Vertices);
 
         renderer.RestoreMainShader();
     }
