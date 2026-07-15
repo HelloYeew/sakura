@@ -83,9 +83,9 @@ public class BufferedContainerDrawNode : ContainerDrawNode
         int targetWidth = Math.Max(1, (int)MathF.Ceiling(rect.Width * renderScale.X * frameBufferScale.X));
         int targetHeight = Math.Max(1, (int)MathF.Ceiling(rect.Height * renderScale.Y * frameBufferScale.Y));
 
-        // Effect passes require a raw vertex upload + manual binds, available on both the GL and Metal
-        // backends (IGLRenderer / IMetalRenderer). Headless has no effect support.
-        bool effectsActive = (blurActive || grayscaleActive) && renderer is IGLRenderer or Metal.IMetalRenderer;
+        // Effect passes require a raw vertex upload + manual binds, available on the GL, Metal and
+        // Direct3D11 backends. Headless has no effect support.
+        bool effectsActive = (blurActive || grayscaleActive) && renderer is IGLRenderer or Metal.IMetalRenderer or Direct3D11.ID3D11Renderer;
 
         bool needsRedraw = !cacheDrawnFrameBuffer || shared.RenderedVersion != AppliedSubtreeVersion;
 
@@ -264,6 +264,10 @@ public class BufferedContainerDrawNode : ContainerDrawNode
 
             case Metal.IMetalRenderer metal:
                 metal.DrawVerticesRaw(vertices);
+                break;
+
+            case Direct3D11.ID3D11Renderer d3D11:
+                d3D11.DrawVerticesRaw(vertices);
                 break;
         }
     }

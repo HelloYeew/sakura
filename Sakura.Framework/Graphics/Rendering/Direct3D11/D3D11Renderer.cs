@@ -547,13 +547,13 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
     public void RestoreMainShader()
     {
+        // A custom shader's SetUniformBlock rebinds its own CBs to VS b0 / PS b1, so restore the full
+        // main-shader frame state (shader, CBs, sampler, textures) not just the projection content.
         currentShader = mainShader;
-        currentShader.Use();
-
         maskState.IsMasking = 0;
         maskState.IsBorder = 0;
-        uploadProjection();
-        uploadMaskState();
+        maskState.IsEdgeEffect = 0;
+        rebindFrameState();
     }
 
     /// <summary>
@@ -667,8 +667,26 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
     public INativeTexture CreateNativeTexture(int width, int height) => new D3D11Texture(device, context, width, height);
 
-    public IShader CreateShader(Storage storage, string vertexPath, string fragmentPath) =>
-        throw new NotImplementedException("D3D11 custom shaders land in Phase 5 (see DIRECT3D11.md).");
+    public IShader CreateShader(Storage storage, string vertexPath, string fragmentPath)
+    {
+        var (vert, frag) = ShaderCompiler.GetOrCompile(
+            storage, vertexPath, fragmentPath, SPIRV.CrossCompileTarget.HLSL, ShaderCache);
+        return new D3D11Shader(device, context, vert, frag, buildInputElements(), customShaderUniformBindings());
+    }
+
+    /// <summary>
+    /// Block -> (stage, cbuffer register) map for the BufferedContainer effect shaders (blur/grayscale)
+    /// and video. Same shape as the main shader (ProjectionBlock → VS b0; the single fragment block ->
+    /// PS b1) — the sakura-spirv per-kind counter assigns them identically.
+    /// </summary>
+    private static IReadOnlyDictionary<string, D3D11Shader.UniformBinding> customShaderUniformBindings() =>
+        new Dictionary<string, D3D11Shader.UniformBinding>
+        {
+            ["ProjectionBlock"] = new D3D11Shader.UniformBinding(D3D11Shader.Stage.Vertex, projection_cb_slot),
+            ["BlurBlock"] = new D3D11Shader.UniformBinding(D3D11Shader.Stage.Fragment, mask_cb_slot),
+            ["GrayscaleBlock"] = new D3D11Shader.UniformBinding(D3D11Shader.Stage.Fragment, mask_cb_slot),
+            ["VideoBlock"] = new D3D11Shader.UniformBinding(D3D11Shader.Stage.Fragment, mask_cb_slot),
+        };
 
     public INativeVideoTexture CreateVideoTexture(int width, int height) =>
         throw new NotImplementedException("D3D11 video textures land in Phase 6 (see DIRECT3D11.md).");
