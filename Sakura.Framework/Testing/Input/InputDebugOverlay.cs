@@ -40,9 +40,6 @@ public partial class InputDebugOverlay : Container
     private string lastNonPositionalEvent = "(none)";
     private Drawable lastNonPositionalConsumer;
 
-    // The overlay carries its own dormant InputManager so it can show the live queues built over the
-    // observed content subtree. This is the Phase 1 answer to "where did my key go?" — it makes the
-    // non-positional and positional queues visible for the hovered point.
     private readonly InputManager inputManager = new InputManager();
 
     /// <summary>
