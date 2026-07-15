@@ -72,8 +72,9 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     // White-pixel SRVs bound to all 8 texture slots so the shader's u_Textures[] array is fully bound.
     private ID3D11ShaderResourceView[] whiteSrvs;
 
-    // No-clip state injected into every vertex until masking implementation
+    // No-clip state injected into every vertex, PushMask/PopMask maintain the stack.
     private ClipState currentClip = ClipState.None;
+    private readonly Stack<ClipState> clipStack = new();
 
     private MaskBlock maskState;
 
@@ -348,6 +349,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         currentShader = mainShader;
         currentBlendMode = BlendingMode.Alpha;
         currentClip = ClipState.None;
+        clipStack.Clear();
         maskState = default;
 
         rebindFrameState();
@@ -554,16 +556,109 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         uploadMaskState();
     }
 
+    /// <summary>
+    /// Pushes a clip region
+    /// </summary>
     public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius)
     {
+        clipStack.Push(currentClip);
+
+        // True AABB of this new mask, taking horizontal shear into account.
+        float skewOffset = Math.Abs(shearX * maskHalfSize.Y);
+        float left = maskCenter.X - maskHalfSize.X - skewOffset;
+        float right = maskCenter.X + maskHalfSize.X + skewOffset;
+        float top = maskCenter.Y - maskHalfSize.Y;
+        float bottom = maskCenter.Y + maskHalfSize.Y;
+
+        // If already inside a parent mask (Z > 0), intersect their bounding boxes.
+        if (currentClip.ClipData.Z > 0)
+        {
+            float parentSkew = Math.Abs(currentClip.ShearX * currentClip.ClipData.W);
+            float pLeft = currentClip.ClipData.X - currentClip.ClipData.Z - parentSkew;
+            float pRight = currentClip.ClipData.X + currentClip.ClipData.Z + parentSkew;
+            float pTop = currentClip.ClipData.Y - currentClip.ClipData.W;
+            float pBottom = currentClip.ClipData.Y + currentClip.ClipData.W;
+
+            left = Math.Max(left, pLeft);
+            right = Math.Min(right, pRight);
+            top = Math.Max(top, pTop);
+            bottom = Math.Min(bottom, pBottom);
+        }
+
+        var newCenter = new Vector2((left + right) / 2f, (top + bottom) / 2f);
+        var newHalfSize = new Vector2((right - left) / 2f, (bottom - top) / 2f);
+
+        // Collapsed intersection (child entirely outside parent) → shrink to ~zero so the shader
+        // discards every fragment.
+        if (left >= right || top >= bottom)
+            newHalfSize = new Vector2(0.0001f, 0.0001f);
+        else
+            newHalfSize.X = Math.Max(0.0001f, newHalfSize.X - skewOffset);
+
+        currentClip = new ClipState(new Vector4(newCenter.X, newCenter.Y, newHalfSize.X, newHalfSize.Y), shearX, cornerRadius);
     }
 
     public void PopMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<SakuraVertex> maskVertices = default)
     {
+        currentClip = clipStack.Count > 0 ? clipStack.Pop() : currentClip;
+        drawBorder(maskCenter, maskHalfSize, shearX, cornerRadius, borderThickness, borderColor, maskVertices);
     }
 
+    /// <summary>
+    /// Draws the rounded/sheared border ring via the main shader's border path (u_IsBorder). Border
+    /// geometry + colour travel through the MaskBlock CB (PS b1)
+    /// </summary>
+    private void drawBorder(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<SakuraVertex> vertices)
+    {
+        if (borderThickness <= 0 || vertices.Length < 4)
+            return;
+
+        maskState.IsBorder = 1;
+        maskState.MaskCenter = new Vector2(maskCenter.X, maskCenter.Y);
+        maskState.MaskHalfSize = new Vector2(maskHalfSize.X, maskHalfSize.Y);
+        maskState.ShearX = shearX;
+        maskState.CornerRadius = cornerRadius;
+        maskState.BorderThickness = borderThickness;
+        maskState.BorderColor = new Vector4(borderColor.R / 255f, borderColor.G / 255f, borderColor.B / 255f, borderColor.A / 255f);
+        uploadMaskState();
+
+        DrawQuads(vertices[..4], WhitePixel);
+
+        maskState.IsBorder = 0;
+        uploadMaskState();
+    }
+
+    /// <summary>
+    /// Draws a soft edge effect (glow/shadow) via the main shader's edge-effect path (u_IsEdgeEffect)
+    /// </summary>
     public void DrawEdgeEffect(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float edgeRadius, Vector2 offset, Color color, bool glow, bool hollow, ReadOnlySpan<SakuraVertex> quadVertices)
     {
+        if (color.A == 0 || quadVertices.Length < 4)
+            return;
+
+        var previousBlend = currentBlendMode;
+        if (glow)
+            SetBlendMode(BlendingMode.Additive);
+
+        maskState.IsEdgeEffect = 1;
+        maskState.MaskCenter = new Vector2(maskCenter.X, maskCenter.Y);
+        maskState.MaskHalfSize = new Vector2(maskHalfSize.X, maskHalfSize.Y);
+        maskState.ShearX = shearX;
+        maskState.CornerRadius = cornerRadius;
+        maskState.EdgeRadius = edgeRadius;
+        maskState.EdgeOffset = new Vector2(offset.X, offset.Y);
+        maskState.EdgeHollow = hollow ? 1 : 0;
+        maskState.EdgeGlow = glow ? 1 : 0;
+        maskState.BorderColor = new Vector4(color.R / 255f, color.G / 255f, color.B / 255f, color.A / 255f);
+        uploadMaskState();
+
+        DrawQuads(quadVertices[..4], WhitePixel);
+
+        maskState.IsEdgeEffect = 0;
+        uploadMaskState();
+
+        if (glow)
+            SetBlendMode(previousBlend);
     }
 
     #endregion
