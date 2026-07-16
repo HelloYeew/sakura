@@ -310,6 +310,8 @@ public class GLRenderer : IGLRenderer, IDisposable
     {
         if (rootNode == null) return;
 
+        throttleFramesInFlight();
+
         resetTextureSlots();
 
         stat_draw_calls.Value = 0;
@@ -364,6 +366,45 @@ public class GLRenderer : IGLRenderer, IDisposable
         // Publish a stable snapshot of this frame's totals for cross-thread consumers (e.g. the
         // texture viewer). Done after the final batch flush so all binds for the frame are counted.
         stat_texture_binds_last_frame.Value = stat_texture_binds.Value;
+
+        insertFrameFence();
+    }
+
+    private const int max_frames_in_flight = 1;
+    private readonly Queue<nint> frameFences = new Queue<nint>();
+
+    /// <summary>
+    /// Blocks until the oldest outstanding frame fence signals whenever the in-flight limit is
+    /// reached, so the draw thread never runs more than <see cref="max_frames_in_flight"/> frames
+    /// ahead of the GPU. Sync objects require GL 3.2+ / ARB_sync (always present in 4.x context).
+    /// </summary>
+    private void throttleFramesInFlight()
+    {
+        while (frameFences.Count >= max_frames_in_flight)
+        {
+            nint fence = frameFences.Dequeue();
+            if (fence == nint.Zero)
+                continue;
+
+            // SyncFlushCommandsBit guarantees the fence is reached by the GPU. Wait over a finite
+            // timeout, retrying a few times so a never-signalled fence can't hang the draw thread.
+            GLEnum result;
+            int guard = 0;
+            do
+            {
+                result = gl.ClientWaitSync(fence, (uint)GLEnum.SyncFlushCommandsBit, 1_000_000_000UL);
+            }
+            while (result == GLEnum.TimeoutExpired && ++guard < 3);
+
+            gl.DeleteSync(fence);
+        }
+    }
+
+    private void insertFrameFence()
+    {
+        nint fence = gl.FenceSync(SyncCondition.SyncGpuCommandsComplete, 0u);
+        if (fence != nint.Zero)
+            frameFences.Enqueue(fence);
     }
 
     public Vector2 RenderScale => new Vector2(renderScaleX, renderScaleY);
@@ -778,6 +819,13 @@ public class GLRenderer : IGLRenderer, IDisposable
             return;
 
         disposed = true;
+
+        while (frameFences.Count > 0)
+        {
+            nint fence = frameFences.Dequeue();
+            if (fence != nint.Zero)
+                gl.DeleteSync(fence);
+        }
 
         shader?.Dispose();
         triangleBatch?.Dispose();
