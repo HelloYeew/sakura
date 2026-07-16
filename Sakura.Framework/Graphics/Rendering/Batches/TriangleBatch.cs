@@ -17,7 +17,7 @@ namespace Sakura.Framework.Graphics.Rendering.Batches;
 /// Buffers are orphaned on every flush so the GPU never stalls waiting on a region
 /// it is still reading from the previous draw.
 /// </summary>
-public class TriangleBatch
+public class TriangleBatch : IDisposable
 {
     private static readonly GlobalStatistic<int> stat_buffer_full_flushes = GlobalStatistics.Get<int>("Renderer", "Buffer Full Flushes");
     private static readonly GlobalStatistic<int> stat_draw_calls = GlobalStatistics.Get<int>("Renderer", "Draw Calls");
@@ -222,5 +222,20 @@ public class TriangleBatch
         vertexCount = 0;
         indexCount = 0;
         return count;
+    }
+
+    private bool disposed;
+
+    public void Dispose()
+    {
+        if (disposed)
+            return;
+
+        disposed = true;
+
+        gl.DeleteVertexArray(vao);
+        gl.DeleteBuffer(vbo);
+        gl.DeleteBuffer(ebo);
+        GC.SuppressFinalize(this);
     }
 }
