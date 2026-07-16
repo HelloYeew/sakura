@@ -28,6 +28,10 @@ public class TriangleBatch : IDisposable
     private readonly uint vbo;
     private readonly uint ebo;
 
+    private readonly uint quadEbo;
+
+    private bool batchHasNonQuad;
+
     private readonly SakuraVertex[] vertices;
     private readonly uint[] indices;
     private int vertexCount;
@@ -50,6 +54,7 @@ public class TriangleBatch : IDisposable
         vao = gl.GenVertexArray();
         vbo = gl.GenBuffer();
         ebo = gl.GenBuffer();
+        quadEbo = gl.GenBuffer();
 
         gl.BindVertexArray(vao);
         gl.BindBuffer(BufferTargetARB.ArrayBuffer, vbo);
@@ -92,6 +97,27 @@ public class TriangleBatch : IDisposable
         gl.VertexAttribPointer(6, 1, VertexAttribPointerType.Float, false, (uint)vertexSize, (void*)Marshal.OffsetOf<SakuraVertex>(nameof(SakuraVertex.ClipRadius)));
 
         gl.BindVertexArray(0);
+
+        // Fill the static quad index buffer once. Done with no VAO bound so it doesn't disturb the
+        // VAO's element-buffer binding, Draw() explicitly binds whichever EBO it needs each flush.
+        int maxQuads = maxVertices / 4;
+        var quadIndices = new uint[maxQuads * 6];
+        for (int q = 0; q < maxQuads; q++)
+        {
+            uint baseIndex = (uint)(q * 4);
+            int o = q * 6;
+            quadIndices[o + 0] = baseIndex;
+            quadIndices[o + 1] = baseIndex + 1;
+            quadIndices[o + 2] = baseIndex + 2;
+            quadIndices[o + 3] = baseIndex + 2;
+            quadIndices[o + 4] = baseIndex + 3;
+            quadIndices[o + 5] = baseIndex;
+        }
+
+        gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, quadEbo);
+        fixed (uint* ptr = quadIndices)
+            gl.BufferData(BufferTargetARB.ElementArrayBuffer, (nuint)(quadIndices.Length * sizeof(uint)), ptr, BufferUsageARB.StaticDraw);
+        gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, 0);
     }
 
     private void ensureCapacity(int vertexSpace, int indexSpace)
@@ -137,6 +163,9 @@ public class TriangleBatch : IDisposable
     /// </summary>
     public void AddRange(ReadOnlySpan<SakuraVertex> newVertices, float textureIndex = 0f, Vector4? clipData = null, float clipShearX = 0f, float clipRadius = 0f)
     {
+        // Triangle-list vertices break the quad alignment, so this flush must use the dynamic index buffer.
+        batchHasNonQuad = true;
+
         // If no clip rect is provided, use an invalid rect so let shader ignore it
         Vector4 actualClipData = clipData ?? new Vector4(0, 0, -1, -1);
 
@@ -205,12 +234,22 @@ public class TriangleBatch : IDisposable
             gl.BufferSubData(BufferTargetARB.ArrayBuffer, 0, (nuint)(vertexCount * vertexSize), ptr);
         }
 
-        gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, ebo);
-        gl.BufferData(BufferTargetARB.ElementArrayBuffer, (nuint)(maxIndices * sizeof(uint)), null, BufferUsageARB.DynamicDraw);
-
-        fixed (uint* ptr = indices)
+        if (batchHasNonQuad)
         {
-            gl.BufferSubData(BufferTargetARB.ElementArrayBuffer, 0, (nuint)(indexCount * sizeof(uint)), ptr);
+            // upload the CPU-built indices into the dynamic buffer.
+            gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, ebo);
+            gl.BufferData(BufferTargetARB.ElementArrayBuffer, (nuint)(maxIndices * sizeof(uint)), null, BufferUsageARB.DynamicDraw);
+
+            fixed (uint* ptr = indices)
+            {
+                gl.BufferSubData(BufferTargetARB.ElementArrayBuffer, 0, (nuint)(indexCount * sizeof(uint)), ptr);
+            }
+        }
+        else
+        {
+            // the static quad index buffer already holds the exact pattern for
+            // indices [0, indexCount) — no per-flush index upload needed.
+            gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, quadEbo);
         }
 
         gl.DrawElements(PrimitiveType.Triangles, (uint)indexCount, DrawElementsType.UnsignedInt, null);
@@ -221,6 +260,7 @@ public class TriangleBatch : IDisposable
         int count = vertexCount;
         vertexCount = 0;
         indexCount = 0;
+        batchHasNonQuad = false;
         return count;
     }
 
@@ -236,6 +276,7 @@ public class TriangleBatch : IDisposable
         gl.DeleteVertexArray(vao);
         gl.DeleteBuffer(vbo);
         gl.DeleteBuffer(ebo);
+        gl.DeleteBuffer(quadEbo);
         GC.SuppressFinalize(this);
     }
 }

@@ -205,6 +205,9 @@ public class GLRenderer : IGLRenderer, IDisposable
         if (!shader.BindUniformBlock("MaskBlock", mask_binding))
             Logger.Error("GLRenderer: main shader is missing expected uniform block 'MaskBlock'.");
 
+        shader.Use();
+        shader.SetUniformIntArray("u_Textures", texture_samplers);
+
         maskState = default;
 
         triangleBatch = new TriangleBatch(gl, 1000 * 12);
@@ -261,7 +264,6 @@ public class GLRenderer : IGLRenderer, IDisposable
     public void RestoreMainShader()
     {
         shader.Use();
-        shader.SetUniformIntArray("u_Textures", texture_samplers);
 
         uploadProjection();
         projectionBuffer.Bind();
@@ -324,7 +326,6 @@ public class GLRenderer : IGLRenderer, IDisposable
         stat_drawables_drawn.Value = 0;
 
         shader.Use();
-        shader.SetUniformIntArray("u_Textures", texture_samplers);
 
         uploadProjection();
         projectionBuffer.Bind();
