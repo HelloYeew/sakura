@@ -26,6 +26,8 @@ public class GLTexture : INativeTexture
     private readonly GL gl;
     private bool disposed;
 
+    private bool mipmapsDirty;
+
     public static GLTexture WhitePixel { get; private set; }
 
     /// <summary>
@@ -73,7 +75,7 @@ public class GLTexture : INativeTexture
         gl.BindTexture(TextureTarget.Texture2D, GLHandle);
 
         gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Srgb8Alpha8, (uint)Width, (uint)Height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, data);
-        gl.GenerateMipmap(TextureTarget.Texture2D);
+        mipmapsDirty = true;
 
         gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.Repeat);
         gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.Repeat);
@@ -91,7 +93,7 @@ public class GLTexture : INativeTexture
         gl.ActiveTexture(TextureUnit.Texture0);
         gl.BindTexture(TextureTarget.Texture2D, GLHandle);
         gl.TexSubImage2D(TextureTarget.Texture2D, 0, x, y, (uint)width, (uint)height, PixelFormat.Rgba, PixelType.UnsignedByte, data);
-        gl.GenerateMipmap(TextureTarget.Texture2D);
+        mipmapsDirty = true;
     }
 
     public void Bind(int slot = 0)
@@ -106,6 +108,12 @@ public class GLTexture : INativeTexture
         }
 
         gl.BindTexture(TextureTarget.Texture2D, GLHandle);
+        
+        if (mipmapsDirty)
+        {
+            gl.GenerateMipmap(TextureTarget.Texture2D);
+            mipmapsDirty = false;
+        }
     }
 
     /// <summary>

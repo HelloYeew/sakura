@@ -362,9 +362,14 @@ public partial class GLShader : IShader
         gl.ShaderSource(shaderHandle, src);
         gl.CompileShader(shaderHandle);
 
+        gl.GetShader(shaderHandle, ShaderParameterName.CompileStatus, out int status);
         string infoLog = gl.GetShaderInfoLog(shaderHandle);
-        if (!string.IsNullOrWhiteSpace(infoLog))
+
+        if (status == 0)
             throw new Exception($"Error compiling shader ({label}): {infoLog}");
+
+        if (!string.IsNullOrWhiteSpace(infoLog))
+            Logger.Verbose($"Shader compile log ({label}): {infoLog.Trim()}");
 
         return shaderHandle;
     }

@@ -7,6 +7,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.InteropServices;
 using System.Text;
 using Sakura.Framework.Graphics.Rendering.Batches;
 using Sakura.Framework.Graphics.Textures;
@@ -24,7 +25,7 @@ using Texture = Sakura.Framework.Graphics.Textures.Texture;
 namespace Sakura.Framework.Graphics.Rendering;
 
 [SuppressMessage("ReSharper", "InconsistentNaming")]
-public class GLRenderer : IGLRenderer
+public class GLRenderer : IGLRenderer, IDisposable
 {
     private static readonly GlobalStatistic<int> stat_draw_calls = GlobalStatistics.Get<int>("Renderer", "Draw Calls");
     private static readonly GlobalStatistic<int> stat_vertices_drawn = GlobalStatistics.Get<int>("Renderer", "Vertices Drawn");
@@ -164,15 +165,18 @@ public class GLRenderer : IGLRenderer
         Logger.Verbose($"GL Shading Language Version: {new string((sbyte*)glInfo)}");
         glInfo = gl.GetString(StringName.Vendor);
         Logger.Verbose($"GL Vendor: {new string((sbyte*)glInfo)}");
-        Logger.Verbose($"GL Extensions: {GetExtensions()}");
+        string extensions = GetExtensions();
+        Logger.Verbose($"GL Extensions: {extensions}");
 
         Logger.Verbose("🚅 Hardware Acceleration Information");
         Logger.Verbose($"JIT intrinsic support: {RuntimeInfo.IsIntrinsicSupported}");
 
+        tryEnableDebugOutput(extensions);
+
         gl.ClearColor(Color.Black);
 
         gl.Enable(EnableCap.Blend);
-        gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+        applyBlend(BlendingMode.Alpha);
 
         gl.Enable(EnableCap.FramebufferSrgb);
 
@@ -200,6 +204,9 @@ public class GLRenderer : IGLRenderer
             Logger.Error("GLRenderer: main shader is missing expected uniform block 'ProjectionBlock'.");
         if (!shader.BindUniformBlock("MaskBlock", mask_binding))
             Logger.Error("GLRenderer: main shader is missing expected uniform block 'MaskBlock'.");
+
+        shader.Use();
+        shader.SetUniformIntArray("u_Textures", texture_samplers);
 
         maskState = default;
 
@@ -257,7 +264,6 @@ public class GLRenderer : IGLRenderer
     public void RestoreMainShader()
     {
         shader.Use();
-        shader.SetUniformIntArray("u_Textures", texture_samplers);
 
         uploadProjection();
         projectionBuffer.Bind();
@@ -304,6 +310,8 @@ public class GLRenderer : IGLRenderer
     {
         if (rootNode == null) return;
 
+        throttleFramesInFlight();
+
         resetTextureSlots();
 
         stat_draw_calls.Value = 0;
@@ -320,7 +328,6 @@ public class GLRenderer : IGLRenderer
         stat_drawables_drawn.Value = 0;
 
         shader.Use();
-        shader.SetUniformIntArray("u_Textures", texture_samplers);
 
         uploadProjection();
         projectionBuffer.Bind();
@@ -359,6 +366,45 @@ public class GLRenderer : IGLRenderer
         // Publish a stable snapshot of this frame's totals for cross-thread consumers (e.g. the
         // texture viewer). Done after the final batch flush so all binds for the frame are counted.
         stat_texture_binds_last_frame.Value = stat_texture_binds.Value;
+
+        insertFrameFence();
+    }
+
+    private const int max_frames_in_flight = 1;
+    private readonly Queue<nint> frameFences = new Queue<nint>();
+
+    /// <summary>
+    /// Blocks until the oldest outstanding frame fence signals whenever the in-flight limit is
+    /// reached, so the draw thread never runs more than <see cref="max_frames_in_flight"/> frames
+    /// ahead of the GPU. Sync objects require GL 3.2+ / ARB_sync (always present in 4.x context).
+    /// </summary>
+    private void throttleFramesInFlight()
+    {
+        while (frameFences.Count >= max_frames_in_flight)
+        {
+            nint fence = frameFences.Dequeue();
+            if (fence == nint.Zero)
+                continue;
+
+            // SyncFlushCommandsBit guarantees the fence is reached by the GPU. Wait over a finite
+            // timeout, retrying a few times so a never-signalled fence can't hang the draw thread.
+            GLEnum result;
+            int guard = 0;
+            do
+            {
+                result = gl.ClientWaitSync(fence, (uint)GLEnum.SyncFlushCommandsBit, 1_000_000_000UL);
+            }
+            while (result == GLEnum.TimeoutExpired && ++guard < 3);
+
+            gl.DeleteSync(fence);
+        }
+    }
+
+    private void insertFrameFence()
+    {
+        nint fence = gl.FenceSync(SyncCondition.SyncGpuCommandsComplete, 0u);
+        if (fence != nint.Zero)
+            frameFences.Enqueue(fence);
     }
 
     public Vector2 RenderScale => new Vector2(renderScaleX, renderScaleY);
@@ -641,32 +687,42 @@ public class GLRenderer : IGLRenderer
         triangleBatch.Draw();
 
         currentBlendMode = blendingMode;
+        applyBlend(blendingMode);
+    }
 
+    /// <summary>
+    /// Issues the GL blend state for a mode. The alpha channel is blended separately from RGB so
+    /// coverage accumulates correctly when rendering into a (possibly transparent) offscreen target:
+    /// a single <c>glBlendFunc</c> would apply the RGB source factor to alpha too, producing wrong
+    /// composited alpha for buffered containers and edge effects.
+    /// </summary>
+    private void applyBlend(BlendingMode blendingMode)
+    {
         switch (blendingMode)
         {
             case BlendingMode.Additive:
-                gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.One);
+                gl.BlendFuncSeparate(BlendingFactor.SrcAlpha, BlendingFactor.One, BlendingFactor.One, BlendingFactor.One);
                 break;
 
             case BlendingMode.Opaque:
-                gl.BlendFunc(BlendingFactor.One, BlendingFactor.Zero);
+                gl.BlendFuncSeparate(BlendingFactor.One, BlendingFactor.Zero, BlendingFactor.One, BlendingFactor.Zero);
                 break;
 
             case BlendingMode.Multiply:
-                gl.BlendFunc(BlendingFactor.DstColor, BlendingFactor.OneMinusSrcAlpha);
+                gl.BlendFuncSeparate(BlendingFactor.DstColor, BlendingFactor.OneMinusSrcAlpha, BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha);
                 break;
 
             case BlendingMode.Screen:
-                gl.BlendFunc(BlendingFactor.One, BlendingFactor.OneMinusSrcColor);
+                gl.BlendFuncSeparate(BlendingFactor.One, BlendingFactor.OneMinusSrcColor, BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha);
                 break;
 
             case BlendingMode.Premultiplied:
-                gl.BlendFunc(BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha);
+                gl.BlendFuncSeparate(BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha, BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha);
                 break;
 
             case BlendingMode.Alpha:
             default:
-                gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+                gl.BlendFuncSeparate(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha, BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha);
                 break;
         }
     }
@@ -708,5 +764,78 @@ public class GLRenderer : IGLRenderer
             }
         }
         return extensionStringBuilder.ToString().TrimEnd();
+    }
+
+    private DebugProc debugMessageCallback;
+
+    /// <summary>
+    /// Wires <c>glDebugMessageCallback</c> (KHR_debug / GL 4.3+) so driver errors surface in the log
+    /// instead of failing silently. Skipped when the driver doesn't expose the extension.
+    /// </summary>
+    private unsafe void tryEnableDebugOutput(string extensions)
+    {
+        if (!extensions.Contains("GL_KHR_debug"))
+            return;
+
+        try
+        {
+            debugMessageCallback = onDebugMessage;
+            gl.Enable(EnableCap.DebugOutput);
+            gl.DebugMessageCallback(debugMessageCallback, null);
+            Logger.Verbose("GL debug output enabled (KHR_debug).");
+        }
+        catch (Exception ex)
+        {
+            debugMessageCallback = null;
+            Logger.Verbose($"GL debug output unavailable: {ex.Message}");
+        }
+    }
+
+    private static void onDebugMessage(GLEnum source, GLEnum type, int id, GLEnum severity, int length, nint message, nint userParam)
+    {
+        string text = Marshal.PtrToStringAnsi(message, length);
+
+        switch (severity)
+        {
+            case GLEnum.DebugSeverityHigh:
+                Logger.Error($"[GL] {text}");
+                break;
+
+            case GLEnum.DebugSeverityMedium:
+                Logger.Warning($"[GL] {text}");
+                break;
+
+            default:
+                Logger.Verbose($"[GL] {text}");
+                break;
+        }
+    }
+
+    private bool disposed;
+
+    public void Dispose()
+    {
+        if (disposed)
+            return;
+
+        disposed = true;
+
+        while (frameFences.Count > 0)
+        {
+            nint fence = frameFences.Dequeue();
+            if (fence != nint.Zero)
+                gl.DeleteSync(fence);
+        }
+
+        shader?.Dispose();
+        triangleBatch?.Dispose();
+        projectionBuffer?.Dispose();
+        maskBuffer?.Dispose();
+        (WhitePixel?.BackendTexture as GLTexture)?.Dispose();
+
+        if (instance == this)
+            instance = null;
+
+        GC.SuppressFinalize(this);
     }
 }
