@@ -64,10 +64,14 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     private static readonly Color4 clear_colour = new Color4(0f, 0f, 0f, 1f);
 
     // Register mapping from the sakura-spirv HLSL cross-compile (resources ordered by (set,binding),
-    // per-kind counters): ProjectionBlock -> VS b0, MaskBlock -> PS b1, u_Textures[8] -> PS t0..t7 / s0.
+    // per-kind counters): ProjectionBlock -> VS b0, MaskBlock -> PS b1, u_Textures[16] -> PS t0..t15 / s0.
     private const int projection_cb_slot = 0;
     private const int mask_cb_slot = 1;
-    private const int texture_slot_count = 8;
+
+    // Matches u_Textures[] in shader.frag. D3D11 still draws one texture at slot 0 and forces
+    // TexIndex 0; the remaining slots are padded with the white SRV purely so the shader's declared
+    // array is fully bound.
+    private const int texture_slot_count = 16;
 
     private D3D11Shader mainShader;
     private D3D11Shader currentShader;

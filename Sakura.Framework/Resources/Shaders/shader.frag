@@ -12,7 +12,7 @@ layout(location = 6) in float v_ClipRadius;
 
 layout(location = 0) out vec4 FragColor;
 
-layout(set = 1, binding = 0) uniform sampler2D u_Textures[8];
+layout(set = 1, binding = 0) uniform sampler2D u_Textures[16];
 
 // Masking + border state. Field order matches the std140 layout in MaskBlock in C#
 //   vec4 u_BorderColor (offset 0)
@@ -109,6 +109,14 @@ void main()
     else if (index == 5) texColor = texture(u_Textures[5], v_TexCoords);
     else if (index == 6) texColor = texture(u_Textures[6], v_TexCoords);
     else if (index == 7) texColor = texture(u_Textures[7], v_TexCoords);
+    else if (index == 8) texColor = texture(u_Textures[8], v_TexCoords);
+    else if (index == 9) texColor = texture(u_Textures[9], v_TexCoords);
+    else if (index == 10) texColor = texture(u_Textures[10], v_TexCoords);
+    else if (index == 11) texColor = texture(u_Textures[11], v_TexCoords);
+    else if (index == 12) texColor = texture(u_Textures[12], v_TexCoords);
+    else if (index == 13) texColor = texture(u_Textures[13], v_TexCoords);
+    else if (index == 14) texColor = texture(u_Textures[14], v_TexCoords);
+    else if (index == 15) texColor = texture(u_Textures[15], v_TexCoords);
     else texColor = vec4(1.0);
 
     texColor *= v_Color;
