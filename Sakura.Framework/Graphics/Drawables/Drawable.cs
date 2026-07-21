@@ -100,7 +100,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
     private float rotation;
     private Axes relativeSizeAxes = Axes.None;
     private Axes relativePositionAxes = Axes.None;
-    private Color color = Color.White;
+    private ColorInfo colorInfo = Color.White;
     private float alpha = 1f;
     private MarginPadding margin;
     private MarginPadding padding;
@@ -309,15 +309,32 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
         }
     }
 
-    public Color Color
+    /// <summary>
+    /// The per-corner colour of this drawable. Set a <see cref="Colors.ColorInfo"/> gradient (e.g.
+    /// <see cref="Colors.ColorInfo.GradientHorizontal"/>) to have the renderer interpolate colour
+    /// across the quad, or a single <see cref="Colors.Color"/> (implicitly converted to a solid
+    /// <see cref="Colors.ColorInfo"/>) for a flat colour.
+    /// </summary>
+    public ColorInfo ColorInfo
     {
-        get => color;
+        get => colorInfo;
         set
         {
-            if (color == value) return;
-            color = value;
+            if (colorInfo.Equals(value)) return;
+            colorInfo = value;
             Invalidate(InvalidationFlags.Colour);
         }
+    }
+
+    /// <summary>
+    /// The flat colour of this drawable. This is a back-compat shim over <see cref="ColorInfo"/>:
+    /// the getter returns the top-left corner, and the setter collapses the whole drawable to a
+    /// solid colour. Use <see cref="ColorInfo"/> directly for gradients.
+    /// </summary>
+    public Color Color
+    {
+        get => colorInfo.TopLeft;
+        set => ColorInfo = value;
     }
 
     public float Alpha
@@ -587,16 +604,33 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
         GenerateVertices();
     }
 
+    /// <summary>
+    /// Converts an sRGB corner <see cref="Color"/> to a linear-space vertex colour, folding
+    /// <see cref="DrawAlpha"/> and the colour's own alpha into the <c>W</c> component (RGB is not
+    /// premultiplied). Shared by <see cref="GenerateVertices"/> and <see cref="UpdateDrawColour"/>
+    /// so both stay in sync.
+    /// </summary>
+    private Vector4 toLinear(Color c) => new Vector4(
+        ColorExtensions.SrgbToLinear(c.R),
+        ColorExtensions.SrgbToLinear(c.G),
+        ColorExtensions.SrgbToLinear(c.B),
+        DrawAlpha * (c.A / 255f));
+
+    /// <summary>
+    /// Writes the four corner colours of <see cref="colorInfo"/> into the existing quad vertices.
+    /// The corner→index mapping must match <see cref="GenerateVertices"/>
+    /// (0 = TopLeft, 1 = TopRight, 2 = BottomRight, 3 = BottomLeft).
+    /// </summary>
+    private void writeCornerColours()
+    {
+        Vertices[0].Color = toLinear(colorInfo.TopLeft);
+        Vertices[1].Color = toLinear(colorInfo.TopRight);
+        Vertices[2].Color = toLinear(colorInfo.BottomRight);
+        Vertices[3].Color = toLinear(colorInfo.BottomLeft);
+    }
+
     protected virtual void GenerateVertices()
     {
-        float rLinear = ColorExtensions.SrgbToLinear(Color.R);
-        float gLinear = ColorExtensions.SrgbToLinear(Color.G);
-        float bLinear = ColorExtensions.SrgbToLinear(Color.B);
-
-        float colorAlpha = Color.A / 255f;
-
-        var calculatedColor = new Vector4(rLinear, gLinear, bLinear, DrawAlpha * colorAlpha);
-
         // Default UVs (0 to 1)
         var uvRect = Texture?.UvRect ?? new RectangleF(0, 0, 1, 1);
         Vector2 uvTopLeft = new Vector2(uvRect.X, uvRect.Y);
@@ -673,10 +707,14 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
         var vBottomLeft = Vector2.Transform(new Vector2(drawTopLeft.X, drawBottomRight.Y), ModelMatrix);
         var vBottomRight = Vector2.Transform(new Vector2(drawBottomRight.X, drawBottomRight.Y), ModelMatrix);
 
-        Vertices[0] = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = calculatedColor };
-        Vertices[1] = new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(uvBottomRight.X, uvTopLeft.Y), Color = calculatedColor };
-        Vertices[2] = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight, Color = calculatedColor };
-        Vertices[3] = new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(uvTopLeft.X, uvBottomRight.Y), Color = calculatedColor };
+        Vertices[0] = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft };
+        Vertices[1] = new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(uvBottomRight.X, uvTopLeft.Y) };
+        Vertices[2] = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight };
+        Vertices[3] = new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(uvTopLeft.X, uvBottomRight.Y) };
+
+        // Per-corner colour (solid or gradient), converted to linear space. Must run after the
+        // vertices exist and match the corner→index mapping above.
+        writeCornerColours();
 
         // Calculate DrawRectangle in screen space
         float minX = Math.Min(vTopLeft.X, Math.Min(vTopRight.X, Math.Min(vBottomLeft.X, vBottomRight.X)));
@@ -1095,21 +1133,18 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
 
     /// <summary>
     /// Recomputes <see cref="DrawAlpha"/> and rewrites the color of the existing vertices
-    /// without regenerating geometry. Called for color-only invalidations.
-    /// Drawables whose vertices carry non-uniform colors must override this
+    /// without regenerating geometry. Called for color-only invalidations. Handles both solid
+    /// colours and per-corner gradients (via <see cref="ColorInfo"/>) for the default quad.
+    /// Drawables whose vertices don't follow the default quad layout must override this
     /// (falling back to <see cref="UpdateTransforms"/> is always correct).
     /// </summary>
     protected virtual void UpdateDrawColour()
     {
         DrawAlpha = (Parent?.DrawAlpha ?? 1f) * Alpha;
 
-        float rLinear = ColorExtensions.SrgbToLinear(Color.R);
-        float gLinear = ColorExtensions.SrgbToLinear(Color.G);
-        float bLinear = ColorExtensions.SrgbToLinear(Color.B);
-        var calculatedColor = new Vector4(rLinear, gLinear, bLinear, DrawAlpha * (Color.A / 255f));
-
-        for (int i = 0; i < Vertices.Length; i++)
-            Vertices[i].Color = calculatedColor;
+        // Rewrite per-corner colours so gradients survive the colour-only fast path (used by fades);
+        // toLinear folds the freshly-computed DrawAlpha into every corner.
+        writeCornerColours();
     }
 
     /// <summary>
