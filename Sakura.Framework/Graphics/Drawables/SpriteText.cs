@@ -37,11 +37,21 @@ public partial class SpriteText : Drawable
     [Resolved]
     private IWindow window { get; set; } = null!;
 
+    private Vector2 contentSize;
+
     /// <summary>
     /// The actual measured size of the text content in pixels.
     /// Use this if want to set the Drawable.Size to fit the text.
     /// </summary>
-    public Vector2 ContentSize { get; private set; }
+    public Vector2 ContentSize
+    {
+        get
+        {
+            ensureLayout();
+            return contentSize;
+        }
+        private set => contentSize = value;
+    }
 
     public string Text
     {
@@ -161,14 +171,16 @@ public partial class SpriteText : Drawable
 
             var variation = fontStore.GetVariation(fontUsage);
             shapedText = resolvedFont.ProcessText(Text, fontUsage.Size, dpiScale, fallbacks, variation);
-            ContentSize = new Vector2(shapedText.BoundingBox.X, shapedText.BoundingBox.Y);
+            // Assign the backing field directly; the ContentSize getter forces layout, which we're
+            // already inside of (guarded by computingLayout).
+            contentSize = new Vector2(shapedText.BoundingBox.X, shapedText.BoundingBox.Y);
 
             // Read through base.Size to avoid re-entering layout via the overridden getter.
-            if (Math.Abs(base.Size.X - ContentSize.X) > 1.0f || Math.Abs(base.Size.Y - ContentSize.Y) > 1.0f)
+            if (Math.Abs(base.Size.X - contentSize.X) > 1.0f || Math.Abs(base.Size.Y - contentSize.Y) > 1.0f)
             {
                 // The Size setter invalidates our geometry and notifies an interested parent
                 // (auto-size / flow), so no explicit parent invalidation is needed.
-                base.Size = ContentSize;
+                base.Size = contentSize;
             }
 
             layoutInvalidated = false;
@@ -207,7 +219,7 @@ public partial class SpriteText : Drawable
         );
 
         Vector2 originRelative = GetAnchorOriginVector(Origin);
-        Vector2 availableSpace = DrawSize - ContentSize;
+        Vector2 availableSpace = DrawSize - contentSize;
 
         Vector2 textOffset = new Vector2(
             availableSpace.X * originRelative.X,
@@ -336,7 +348,7 @@ public partial class SpriteText : Drawable
         }
 
         Vector2 originRel = GetAnchorOriginVector(Origin);
-        Vector2 availSpace = DrawSize - ContentSize;
+        Vector2 availSpace = DrawSize - contentSize;
         Vector2 textOffset = new Vector2(
             availSpace.X * originRel.X,
             availSpace.Y * originRel.Y
