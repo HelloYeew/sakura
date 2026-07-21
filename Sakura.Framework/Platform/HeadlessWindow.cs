@@ -6,6 +6,7 @@ using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
+using Sakura.Framework.Platform.Dialogs;
 using Sakura.Framework.Reactive;
 
 namespace Sakura.Framework.Platform;
@@ -111,6 +112,28 @@ public class HeadlessWindow : IWindow
     public void SetClipboardText(string text)
     {
         headlessClipboard = text;
+    }
+
+    public FileDialogResult FileDialogResult { get; set; } = FileDialogResult.Cancelled;
+
+    public FileDialogOptions? LastFileDialogOptions { get; private set; }
+
+    public void ShowOpenFileDialog(FileDialogOptions options, Action<FileDialogResult> callback)
+    {
+        LastFileDialogOptions = options;
+        callback?.Invoke(FileDialogResult);
+    }
+
+    public void ShowSaveFileDialog(FileDialogOptions options, Action<FileDialogResult> callback)
+    {
+        LastFileDialogOptions = options;
+        callback?.Invoke(FileDialogResult);
+    }
+
+    public void ShowOpenFolderDialog(FileDialogOptions options, Action<FileDialogResult> callback)
+    {
+        LastFileDialogOptions = options;
+        callback?.Invoke(FileDialogResult);
     }
 
     public event Action? Update;

@@ -4,6 +4,7 @@
 using System;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Input;
+using Sakura.Framework.Platform.Dialogs;
 using Sakura.Framework.Reactive;
 
 namespace Sakura.Framework.Platform;
@@ -269,4 +270,40 @@ public interface IWindow : IDisposable
     /// </summary>
     /// <param name="text">The text content to set to the clipboard.</param>
     void SetClipboardText(string text);
+
+    /// <summary>
+    /// Shows a native dialog for selecting one or more existing files to open.
+    /// </summary>
+    /// <remarks>
+    /// The dialog is non-blocking. <paramref name="callback"/> is invoked once the user finishes,
+    /// on the window's event thread (the OS main thread). Prefer <see cref="AppHost.ShowOpenFileDialog"/>,
+    /// which marshals the result onto the update thread where drawables are safe to touch.
+    /// </remarks>
+    /// <param name="options">The dialog configuration (title, starting location, filters, multi-select).</param>
+    /// <param name="callback">Invoked with the selection, an empty result on cancel, or an error.</param>
+    void ShowOpenFileDialog(FileDialogOptions options, Action<FileDialogResult> callback);
+
+    /// <summary>
+    /// Shows a native dialog for choosing a location and name to save a file to.
+    /// </summary>
+    /// <remarks>
+    /// The dialog is non-blocking. <paramref name="callback"/> is invoked once the user finishes,
+    /// on the window's event thread (the OS main thread). Prefer <see cref="AppHost.ShowSaveFileDialog"/>,
+    /// which marshals the result onto the update thread where drawables are safe to touch.
+    /// </remarks>
+    /// <param name="options">The dialog configuration. <see cref="FileDialogOptions.AllowMultiple"/> is ignored.</param>
+    /// <param name="callback">Invoked with the chosen path, an empty result on cancel, or an error.</param>
+    void ShowSaveFileDialog(FileDialogOptions options, Action<FileDialogResult> callback);
+
+    /// <summary>
+    /// Shows a native dialog for selecting one or more existing folders.
+    /// </summary>
+    /// <remarks>
+    /// The dialog is non-blocking. <paramref name="callback"/> is invoked once the user finishes,
+    /// on the window's event thread (the OS main thread). Prefer <see cref="AppHost.ShowOpenFolderDialog"/>,
+    /// which marshals the result onto the update thread where drawables are safe to touch.
+    /// </remarks>
+    /// <param name="options">The dialog configuration. <see cref="FileDialogOptions.Filters"/> is ignored.</param>
+    /// <param name="callback">Invoked with the selection, an empty result on cancel, or an error.</param>
+    void ShowOpenFolderDialog(FileDialogOptions options, Action<FileDialogResult> callback);
 }
