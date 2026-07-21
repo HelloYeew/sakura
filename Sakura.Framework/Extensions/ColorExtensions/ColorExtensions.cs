@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Generic;
 using Sakura.Framework.Graphics.Colors;
 
 namespace Sakura.Framework.Extensions.ColorExtensions;
@@ -313,6 +314,83 @@ public static class ColorExtensions
     }
 
     /// <summary>
+    /// Decomposes a <see cref="Color"/> into HSV (Hue, Saturation, Value/Brightness) components,
+    /// each in the range 0 to 1. This is the model used by the classic saturation/value square +
+    /// hue slider colour picker, and is distinct from the HSL model used by <see cref="ToHSL"/>.
+    /// </summary>
+    /// <param name="color">The color to decompose.</param>
+    /// <param name="h">Hue component (0 to 1).</param>
+    /// <param name="s">Saturation component (0 to 1).</param>
+    /// <param name="v">Value/brightness component (0 to 1).</param>
+    public static void ToHSV(Color color, out float h, out float s, out float v)
+    {
+        float r = color.R / 255f;
+        float g = color.G / 255f;
+        float b = color.B / 255f;
+
+        float max = Math.Max(r, Math.Max(g, b));
+        float min = Math.Min(r, Math.Min(g, b));
+        float delta = max - min;
+
+        v = max;
+        s = max <= 0f ? 0f : delta / max;
+
+        if (delta <= 0f)
+        {
+            h = 0f; // achromatic (grey) — hue is undefined, report 0
+            return;
+        }
+
+        if (max == r)
+            h = (g - b) / delta + (g < b ? 6f : 0f);
+        else if (max == g)
+            h = (b - r) / delta + 2f;
+        else
+            h = (r - g) / delta + 4f;
+
+        h /= 6f;
+    }
+
+    /// <summary>
+    /// Creates a <see cref="Color"/> from HSV (Hue, Saturation, Value/Brightness) values, each in
+    /// the range 0 to 1. Companion to <see cref="ToHSV"/>.
+    /// </summary>
+    /// <param name="h">Hue component (0 to 1).</param>
+    /// <param name="s">Saturation component (0 to 1).</param>
+    /// <param name="v">Value/brightness component (0 to 1).</param>
+    /// <param name="alpha">Alpha component (0 to 255), default is 255 (opaque).</param>
+    /// <returns>The corresponding <see cref="Color"/>.</returns>
+    public static Color FromHSV(float h, float s, float v, byte alpha = 255)
+    {
+        h = ((h % 1f) + 1f) % 1f; // wrap hue into [0, 1)
+        s = Math.Clamp(s, 0f, 1f);
+        v = Math.Clamp(v, 0f, 1f);
+
+        float chroma = v * s;
+        float hPrime = h * 6f;
+        float x = chroma * (1f - Math.Abs(hPrime % 2f - 1f));
+        float m = v - chroma;
+
+        float r1, g1, b1;
+
+        switch ((int)hPrime % 6)
+        {
+            case 0: (r1, g1, b1) = (chroma, x, 0f); break;
+            case 1: (r1, g1, b1) = (x, chroma, 0f); break;
+            case 2: (r1, g1, b1) = (0f, chroma, x); break;
+            case 3: (r1, g1, b1) = (0f, x, chroma); break;
+            case 4: (r1, g1, b1) = (x, 0f, chroma); break;
+            default: (r1, g1, b1) = (chroma, 0f, x); break;
+        }
+
+        return Color.FromArgb(
+            alpha,
+            (byte)Math.Round((r1 + m) * 255f),
+            (byte)Math.Round((g1 + m) * 255f),
+            (byte)Math.Round((b1 + m) * 255f));
+    }
+
+    /// <summary>
     /// Returns a new <see cref="Color"/> with the specified hue (0 to 1) while preserving saturation and lightness.
     /// </summary>
     /// <param name="color">The original color.</param>
@@ -394,5 +472,31 @@ public static class ColorExtensions
             (byte)Random.Shared.Next(256),
             (byte)Random.Shared.Next(256)
         );
+    }
+
+    /// <summary>
+    /// Samples from a given linear gradient at a certain specified point.
+    /// </summary>
+    /// <param name="gradient">The gradient, defining the color stops and their positions (in [0-1] range) in the gradient.</param>
+    /// <param name="point">The point to sample the color at.</param>
+    /// <returns>A <see cref="Color"/> sampled from the linear gradient.</returns>
+    public static Color SampleFromLinearGradient(IReadOnlyList<(float position, Color color)> gradient, float point)
+    {
+        if (point < gradient[0].position)
+            return gradient[0].color;
+
+        for (int i = 0; i < gradient.Count - 1; i++)
+        {
+            var startStop = gradient[i];
+            var endStop = gradient[i + 1];
+
+            if (point >= endStop.position)
+                continue;
+
+            float t = (point - startStop.position) / (endStop.position - startStop.position);
+            return Lerp(startStop.color, endStop.color, t);
+        }
+
+        return gradient[^1].color;
     }
 }
