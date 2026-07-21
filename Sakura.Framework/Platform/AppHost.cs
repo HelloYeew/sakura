@@ -23,6 +23,7 @@ using Sakura.Framework.Input;
 using Sakura.Framework.IO;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
+using Sakura.Framework.Platform.Dialogs;
 using Sakura.Framework.Reactive;
 using Sakura.Framework.Statistic;
 using Sakura.Framework.Threading;
@@ -56,6 +57,13 @@ public abstract class AppHost : IDisposable
     private readonly Stopwatch appLoopStopwatch = new Stopwatch();
     private readonly ConcurrentQueue<PendingInput> inputQueue = new ConcurrentQueue<PendingInput>();
     private readonly ConcurrentQueue<Action> mainThreadActions = new ConcurrentQueue<Action>();
+
+    /// <summary>
+    /// Runs actions on the update thread. Thread-safe to add to from any thread; pumped once per
+    /// update frame. Used to marshal asynchronous results (e.g. file dialog callbacks) back onto
+    /// the update thread where drawables are safe to touch.
+    /// </summary>
+    private readonly Scheduler updateScheduler = new Scheduler();
 
     private enum PendingInputType : byte
     {
@@ -490,6 +498,7 @@ public abstract class AppHost : IDisposable
             drawThread.OnInitialize = () => Window.MakeCurrent();
 
             UpdateClock = updateThread.Clock;
+            updateScheduler.SetClock(UpdateClock);
             DrawClock = drawThread.Clock;
             AudioClock = audioThread.Clock;
             InputClock = new Clock(true);
@@ -838,6 +847,60 @@ public abstract class AppHost : IDisposable
     }
 
     /// <summary>
+    /// Shows a native "open file" dialog and invokes <paramref name="callback"/> with the result.
+    /// </summary>
+    /// <remarks>
+    /// Safe to call from any thread. The dialog is shown on the OS main thread and the
+    /// <paramref name="callback"/> is marshalled back onto the update thread, so it is safe to
+    /// touch drawables and application state directly from it.
+    /// </remarks>
+    /// <param name="options">The dialog configuration (title, starting location, filters, multi-select).</param>
+    /// <param name="callback">Invoked with the selection, an empty result on cancel, or an error.</param>
+    public void ShowOpenFileDialog(FileDialogOptions options, Action<FileDialogResult> callback)
+        => showFileDialog((window, cb) => window.ShowOpenFileDialog(options, cb), callback);
+
+    /// <summary>
+    /// Shows a native "save file" dialog and invokes <paramref name="callback"/> with the result.
+    /// </summary>
+    /// <remarks>
+    /// Safe to call from any thread. The dialog is shown on the OS main thread and the
+    /// <paramref name="callback"/> is marshalled back onto the update thread, so it is safe to
+    /// touch drawables and application state directly from it.
+    /// </remarks>
+    /// <param name="options">The dialog configuration. <see cref="FileDialogOptions.AllowMultiple"/> is ignored.</param>
+    /// <param name="callback">Invoked with the chosen path, an empty result on cancel, or an error.</param>
+    public void ShowSaveFileDialog(FileDialogOptions options, Action<FileDialogResult> callback)
+        => showFileDialog((window, cb) => window.ShowSaveFileDialog(options, cb), callback);
+
+    /// <summary>
+    /// Shows a native "open folder" dialog and invokes <paramref name="callback"/> with the result.
+    /// </summary>
+    /// <remarks>
+    /// Safe to call from any thread. The dialog is shown on the OS main thread and the
+    /// <paramref name="callback"/> is marshalled back onto the update thread, so it is safe to
+    /// touch drawables and application state directly from it.
+    /// </remarks>
+    /// <param name="options">The dialog configuration. <see cref="FileDialogOptions.Filters"/> is ignored.</param>
+    /// <param name="callback">Invoked with the selection, an empty result on cancel, or an error.</param>
+    public void ShowOpenFolderDialog(FileDialogOptions options, Action<FileDialogResult> callback)
+        => showFileDialog((window, cb) => window.ShowOpenFolderDialog(options, cb), callback);
+
+    private void showFileDialog(Action<IWindow, Action<FileDialogResult>> show, Action<FileDialogResult> callback)
+    {
+        var window = Window;
+
+        if (window == null)
+        {
+            // No window to parent the dialog to, report cancellation on the update thread so
+            // callers see a consistent asynchronous contract.
+            updateScheduler.Add(() => callback?.Invoke(FileDialogResult.Cancelled));
+            return;
+        }
+
+        ScheduleToMainThread(() => show(window, result => updateScheduler.Add(() => callback?.Invoke(result))));
+    }
+
+    /// <summary>
     /// This method is called at a fixed 1000Hz for precise audio processing.
     /// </summary>
     protected virtual void PerformSoundUpdate() { }
@@ -873,6 +936,9 @@ public abstract class AppHost : IDisposable
 
         stat_uptime.Value = UpdateClock.CurrentTime;
         stat_target_update_hz.Value = targetUpdateHz;
+
+        // Run any actions marshalled onto the update thread (e.g. file dialog result callbacks).
+        updateScheduler.Update();
 
         // One update per update-thread frame. Drawables advance by their clock's elapsed
         // time, so a fixed-timestep catch-up loop only multiplied full-tree traversals

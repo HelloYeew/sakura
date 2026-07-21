@@ -22,6 +22,7 @@ using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Graphics.Video;
 using Sakura.Framework.Input;
 using Sakura.Framework.Platform;
+using Sakura.Framework.Platform.Dialogs;
 using Sakura.Framework.Reactive;
 using Sakura.Framework.Threading;
 using Sakura.Framework.Timing;
@@ -67,6 +68,27 @@ public partial class App : Container, IFocusManager, IInputManagerProvider, IDis
         => Array.Empty<(Assembly, string)>();
 
     public void SetHost(AppHost host) => Host = host;
+
+    /// <summary>
+    /// Shows a native "open file" dialog. The <paramref name="callback"/> runs on the update thread,
+    /// so it is safe to touch drawables directly. See <see cref="AppHost.ShowOpenFileDialog"/>.
+    /// </summary>
+    protected void ShowOpenFileDialog(FileDialogOptions options, Action<FileDialogResult> callback)
+        => Host?.ShowOpenFileDialog(options, callback);
+
+    /// <summary>
+    /// Shows a native "save file" dialog. The <paramref name="callback"/> runs on the update thread,
+    /// so it is safe to touch drawables directly. See <see cref="AppHost.ShowSaveFileDialog"/>.
+    /// </summary>
+    protected void ShowSaveFileDialog(FileDialogOptions options, Action<FileDialogResult> callback)
+        => Host?.ShowSaveFileDialog(options, callback);
+
+    /// <summary>
+    /// Shows a native "open folder" dialog. The <paramref name="callback"/> runs on the update thread,
+    /// so it is safe to touch drawables directly. See <see cref="AppHost.ShowOpenFolderDialog"/>.
+    /// </summary>
+    protected void ShowOpenFolderDialog(FileDialogOptions options, Action<FileDialogResult> callback)
+        => Host?.ShowOpenFolderDialog(options, callback);
 
     /// <summary>
     /// Invoked after the application is fully initialized (loaded, renderer ready)

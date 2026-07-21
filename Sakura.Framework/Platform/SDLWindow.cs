@@ -14,6 +14,7 @@ using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
+using Sakura.Framework.Platform.Dialogs;
 using Sakura.Framework.Reactive;
 using Sakura.Framework.Timing;
 using SDL;
@@ -1141,6 +1142,15 @@ public class SDLWindow : IWindow
     {
         SDL_SetClipboardText(text);
     }
+
+    public unsafe void ShowOpenFileDialog(FileDialogOptions options, Action<FileDialogResult> callback)
+        => SDLFileDialog.ShowOpenFile(window, options, callback);
+
+    public unsafe void ShowSaveFileDialog(FileDialogOptions options, Action<FileDialogResult> callback)
+        => SDLFileDialog.ShowSaveFile(window, options, callback);
+
+    public unsafe void ShowOpenFolderDialog(FileDialogOptions options, Action<FileDialogResult> callback)
+        => SDLFileDialog.ShowOpenFolder(window, options, callback);
 
     /// <summary>
     /// Returns true if the given screen position falls within the bounds of any connected display.
