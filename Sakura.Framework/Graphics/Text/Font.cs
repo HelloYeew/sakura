@@ -98,6 +98,13 @@ public class Font : IDisposable
         public Texture Texture;
         public int BitmapLeft;
         public int BitmapTop;
+
+        /// <summary>
+        /// Whether this glyph carries its own native colors (e.g. a color emoji bitmap), as opposed
+        /// to a grayscale anti-aliased outline glyph. Color glyphs must not be tinted by the
+        /// drawable's color, since doing so would recolor the emoji artwork.
+        /// </summary>
+        public bool IsColorGlyph;
     }
 
     public Font(string name, byte[] fontData, TextureAtlas atlas)
@@ -534,7 +541,8 @@ public class Font : IDisposable
                             Texture = null,
                             Position = new Vector2(cursorX / dpiScale, baselineY / dpiScale),
                             Size = new Vector2(xAdvance / dpiScale, 0),
-                            StartIndex = startIndex
+                            StartIndex = startIndex,
+                            IsColorGlyph = false
                         });
                         cursorX += xAdvance;
                         continue;
@@ -557,7 +565,8 @@ public class Font : IDisposable
                     Texture = data.Texture,
                     Position = new Vector2(finalX / dpiScale, finalY / dpiScale),
                     Size = new Vector2(scaledWidth / dpiScale, scaledHeight / dpiScale),
-                    StartIndex = startIndex
+                    StartIndex = startIndex,
+                    IsColorGlyph = data.IsColorGlyph
                 });
 
                 cursorX += xAdvance;
@@ -655,7 +664,8 @@ public class Font : IDisposable
         {
             Texture = texture,
             BitmapLeft = glyphSlotPtr->bitmap_left,
-            BitmapTop = glyphSlotPtr->bitmap_top
+            BitmapTop = glyphSlotPtr->bitmap_top,
+            IsColorGlyph = bitmap.pixel_mode == FT_Pixel_Mode_.FT_PIXEL_MODE_BGRA
         };
     }
 
@@ -740,6 +750,12 @@ public struct TextGlyph
     /// emoji surrogate pair) or vice versa (ligatures).
     /// </summary>
     public int StartIndex;
+
+    /// <summary>
+    /// Whether this glyph is a natively-coloured bitmap (e.g. color emoji) rather than a grayscale
+    /// outline glyph. Colour glyphs should be drawn without applying the drawable's tint color.
+    /// </summary>
+    public bool IsColorGlyph;
 }
 
 public class ShapedText
