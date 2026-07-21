@@ -125,19 +125,24 @@ public abstract class AppHost : IDisposable
                 break;
 
             case PendingInputType.MouseDown:
-                OnMouseDown(input.MouseButton);
+                // Dropped while a native file dialog is open: see isFileDialogOpen.
+                if (!isFileDialogOpen)
+                    OnMouseDown(input.MouseButton);
                 break;
 
             case PendingInputType.MouseUp:
-                OnMouseUp(input.MouseButton);
+                if (!isFileDialogOpen)
+                    OnMouseUp(input.MouseButton);
                 break;
 
             case PendingInputType.MouseMove:
-                OnMouseMove(input.Mouse);
+                if (!isFileDialogOpen)
+                    OnMouseMove(input.Mouse);
                 break;
 
             case PendingInputType.Scroll:
-                OnScroll(input.Scroll);
+                if (!isFileDialogOpen)
+                    OnScroll(input.Scroll);
                 break;
 
             case PendingInputType.DragDropFile:
@@ -885,6 +890,18 @@ public abstract class AppHost : IDisposable
     public void ShowOpenFolderDialog(FileDialogOptions options, Action<FileDialogResult> callback)
         => showFileDialog((window, cb) => window.ShowOpenFolderDialog(options, cb), callback);
 
+    /// <summary>
+    /// Whether a native file dialog is currently open. While true, positional pointer input
+    /// (mouse move/down/up, scroll) queued from the window is dropped on the update thread.
+    /// </summary>
+    /// <remarks>
+    /// Some platforms (observed on macOS, and reportedly on Linux/X11 as well) still deliver a
+    /// click to the underlying window while a native modal file dialog has focus. However, without a
+    /// matching mouse-move to the click position first, the app would otherwise "see" a click at
+    /// a stale cursor position that the user never intended to click on.
+    /// </remarks>
+    private volatile bool isFileDialogOpen;
+
     private void showFileDialog(Action<IWindow, Action<FileDialogResult>> show, Action<FileDialogResult> callback)
     {
         var window = Window;
@@ -897,7 +914,13 @@ public abstract class AppHost : IDisposable
             return;
         }
 
-        ScheduleToMainThread(() => show(window, result => updateScheduler.Add(() => callback?.Invoke(result))));
+        isFileDialogOpen = true;
+
+        ScheduleToMainThread(() => show(window, result => updateScheduler.Add(() =>
+        {
+            isFileDialogOpen = false;
+            callback?.Invoke(result);
+        })));
     }
 
     /// <summary>
