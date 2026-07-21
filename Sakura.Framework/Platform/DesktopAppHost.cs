@@ -47,16 +47,7 @@ public class DesktopAppHost : AppHost
     /// Returns the preferred renderer types in priority order for this platform.
     /// Override to change backend preference.
     /// </summary>
-    protected virtual IEnumerable<RendererType> GetPreferredRenderers()
-    {
-        if (RuntimeInfo.IsApple)
-            return [RendererType.Metal, RendererType.OpenGL];
-
-        if (RuntimeInfo.IsWindows)
-            return [RendererType.Direct3D11, RendererType.OpenGL];
-
-        return [RendererType.OpenGL];
-    }
+    protected virtual IEnumerable<RendererType> GetPreferredRenderers() => RendererTypes.GetPlatformRenderers();
 
     /// <summary>
     /// Creates a renderer instance for the given type. Return null to skip that type.

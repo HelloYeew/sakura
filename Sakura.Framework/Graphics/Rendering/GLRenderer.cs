@@ -106,8 +106,22 @@ public class GLRenderer : IGLRenderer, IDisposable
     private int viewportHeight;
     private readonly Stack<Vector4> scissorStack = new Stack<Vector4>();
 
-    private readonly uint[] boundTextureHandles = new uint[8];
+    /// <summary>
+    /// Maximum number of textures the shader can sample in one draw. Matches the size of
+    /// <c>u_Textures[]</c> in shader.frag. The effective count used at runtime is clamped to
+    /// <c>GL_MAX_TEXTURE_IMAGE_UNITS</c> in <see cref="textureSlotCount"/>.
+    /// </summary>
+    private const int max_texture_slots = 16;
+
+    private readonly uint[] boundTextureHandles = new uint[max_texture_slots];
     private int boundTextureCount;
+
+    /// <summary>
+    /// Effective number of batch texture slots: <c>min(<see cref="max_texture_slots"/>,
+    /// GL_MAX_TEXTURE_IMAGE_UNITS)</c>. Set at initialization so the renderer never assigns a slot
+    /// index the driver cannot sample. Drives the slot-exhaustion check and the prefill loop.
+    /// </summary>
+    private int textureSlotCount = max_texture_slots;
 
     private float renderScaleX = 1.0f;
     private float renderScaleY = 1.0f;
@@ -137,7 +151,11 @@ public class GLRenderer : IGLRenderer, IDisposable
         public ClipState Clip;
     }
 
-    private static readonly int[] texture_samplers = { 0, 1, 2, 3, 4, 5, 6, 7 };
+    /// <summary>
+    /// Sampler-to-texture-unit mapping for <c>u_Textures[]</c>, sized to <see cref="textureSlotCount"/>
+    /// and populated with <c>0..textureSlotCount-1</c> at initialization.
+    /// </summary>
+    private int[] textureSamplers = { 0, 1, 2, 3, 4, 5, 6, 7 };
 
     private struct ClipState
     {
@@ -170,6 +188,18 @@ public class GLRenderer : IGLRenderer, IDisposable
 
         Logger.Verbose("🚅 Hardware Acceleration Information");
         Logger.Verbose($"JIT intrinsic support: {RuntimeInfo.IsIntrinsicSupported}");
+
+        // Clamp the batch texture-slot count to what the driver can actually sample. The shader's
+        // u_Textures[] array is fixed at max_texture_slots (16, the GL spec minimum for
+        // GL_MAX_TEXTURE_IMAGE_UNITS), but a driver may expose exactly 16 or — defensively — fewer;
+        // never hand the shader a slot index the hardware can't sample.
+        gl.GetInteger(GetPName.MaxTextureImageUnits, out int maxTextureImageUnits);
+        textureSlotCount = Math.Clamp(maxTextureImageUnits, 1, max_texture_slots);
+        Logger.Verbose($"GL Max Texture Image Units: {maxTextureImageUnits} (using {textureSlotCount} batch slots)");
+
+        textureSamplers = new int[textureSlotCount];
+        for (int i = 0; i < textureSlotCount; i++)
+            textureSamplers[i] = i;
 
         tryEnableDebugOutput(extensions);
 
@@ -206,7 +236,7 @@ public class GLRenderer : IGLRenderer, IDisposable
             Logger.Error("GLRenderer: main shader is missing expected uniform block 'MaskBlock'.");
 
         shader.Use();
-        shader.SetUniformIntArray("u_Textures", texture_samplers);
+        shader.SetUniformIntArray("u_Textures", textureSamplers);
 
         maskState = default;
 
@@ -499,7 +529,7 @@ public class GLRenderer : IGLRenderer, IDisposable
                 return i;
         }
 
-        if (boundTextureCount < 8)
+        if (boundTextureCount < textureSlotCount)
         {
             int slot = boundTextureCount;
             glTexture.Bind(slot);
@@ -742,7 +772,7 @@ public class GLRenderer : IGLRenderer, IDisposable
         // to fix some strict drivers that complain about "unloadable texture".
         if (WhitePixel?.BackendTexture != null)
         {
-            for (int i = 0; i < 8; i++)
+            for (int i = 0; i < textureSlotCount; i++)
             {
                 whiteGLTexture.Bind(i);
             }
