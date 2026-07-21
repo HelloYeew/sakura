@@ -218,6 +218,10 @@ public partial class SpriteText : Drawable
             DrawAlpha
         );
 
+        // Color glyphs (e.g. color emoji bitmaps) carry their own native colors and must not be
+        // recolored by the drawable's tint, only alpha (for fades) should still apply to them.
+        var colorGlyphDrawColor = new Vector4(1f, 1f, 1f, DrawAlpha);
+
         Vector2 originRelative = GetAnchorOriginVector(Origin);
         Vector2 availableSpace = DrawSize - contentSize;
 
@@ -237,8 +241,11 @@ public partial class SpriteText : Drawable
         float maxX = float.MinValue;
         float maxY = float.MinValue;
 
-        foreach (var glyph in shapedText.Glyphs)
+        var glyphs = shapedText.Glyphs;
+
+        for (int glyphIndex = 0; glyphIndex < glyphs.Count; glyphIndex++)
         {
+            var glyph = glyphs[glyphIndex];
             var texture = glyph.Texture;
             var pos = glyph.Position;
             var size = glyph.Size;
@@ -249,8 +256,8 @@ public partial class SpriteText : Drawable
             // contribute to the bounding box.
             if (texture == null)
             {
-                var gx = (pos.X + textOffset.X) * normalizationScale.X;
-                var gy = (pos.Y + textOffset.Y) * normalizationScale.Y;
+                float gx = (pos.X + textOffset.X) * normalizationScale.X;
+                float gy = (pos.Y + textOffset.Y) * normalizationScale.Y;
                 var p = Vector2.Transform(new Vector2(gx, gy), ModelMatrix);
 
                 minX = Math.Min(minX, p.X);
@@ -288,11 +295,13 @@ public partial class SpriteText : Drawable
             var uvTopLeft = new Vector2(uv.X, uv.Y);
             var uvBottomRight = new Vector2(uv.X + uv.Width, uv.Y + uv.Height);
 
+            var glyphColor = glyph.IsColorGlyph ? colorGlyphDrawColor : drawColor;
+
             // One indexed quad per glyph (TL, TR, BR, BL).
-            vertices[vIndex++] = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = drawColor };
-            vertices[vIndex++] = new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(uvBottomRight.X, uvTopLeft.Y), Color = drawColor };
-            vertices[vIndex++] = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight, Color = drawColor };
-            vertices[vIndex++] = new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(uvTopLeft.X, uvBottomRight.Y), Color = drawColor };
+            vertices[vIndex++] = new Vertex { Position = new Vector2(vTopLeft.X, vTopLeft.Y), TexCoords = uvTopLeft, Color = glyphColor };
+            vertices[vIndex++] = new Vertex { Position = new Vector2(vTopRight.X, vTopRight.Y), TexCoords = new Vector2(uvBottomRight.X, uvTopLeft.Y), Color = glyphColor };
+            vertices[vIndex++] = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight, Color = glyphColor };
+            vertices[vIndex++] = new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(uvTopLeft.X, uvBottomRight.Y), Color = glyphColor };
         }
 
         DrawRectangle = new RectangleF(minX, minY, maxX - minX, maxY - minY);
@@ -319,8 +328,26 @@ public partial class SpriteText : Drawable
             DrawAlpha
         );
 
-        for (int i = 0; i < currentVertexCount; i++)
-            textVertices[i].Color = drawColor;
+        // Color glyphs keep their native colors, only alpha follows the drawable's fade/tint.
+        var colorGlyphDrawColor = new Vector4(1f, 1f, 1f, DrawAlpha);
+
+        if (shapedText == null || shapedText.Glyphs.Count == 0)
+        {
+            for (int i = 0; i < currentVertexCount; i++)
+                textVertices[i].Color = drawColor;
+            return;
+        }
+
+        var glyphs = shapedText.Glyphs;
+        int vIndex = 0;
+
+        for (int glyphIndex = 0; glyphIndex < glyphs.Count; glyphIndex++)
+        {
+            var glyphColor = glyphs[glyphIndex].IsColorGlyph ? colorGlyphDrawColor : drawColor;
+
+            for (int i = 0; i < 4 && vIndex < currentVertexCount; i++, vIndex++)
+                textVertices[vIndex].Color = glyphColor;
+        }
     }
 
     protected override DrawNode CreateDrawNode() => new SpriteTextDrawNode();

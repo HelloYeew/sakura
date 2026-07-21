@@ -1,11 +1,15 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System.Collections.Generic;
+using System.Reflection;
 using NUnit.Framework;
 using Sakura.Framework.Allocation;
+using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
+using Sakura.Framework.Graphics.Rendering.Vertex;
 using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Testing;
@@ -139,5 +143,75 @@ public partial class TestSpriteText : TestScene
             // The headless font store returns null and has no fonts
             return noto == null || noto.Name == "NotoColorEmoji";
         });
+    }
+
+    [Test]
+    public void TestColorEmojiIgnoresTint()
+    {
+        SpriteText tintedEmojiText = null!;
+
+        AddStep("Add red-tinted colour emoji text", () => Add(tintedEmojiText = new SpriteText
+        {
+            Anchor = Anchor.Centre,
+            Origin = Anchor.Centre,
+            Color = Color.Red,
+            Text = "Red 👍",
+            Font = new FontUsage(size: 48, weight: "Regular", italics: false)
+        }));
+
+        AddAssert("colour glyph vertices are untinted while text glyph vertices are tinted red", () =>
+        {
+            var glyphs = getShapedGlyphs(tintedEmojiText);
+            var vertices = getTextVertices(tintedEmojiText);
+
+            // The headless font store produces no glyphs at all - nothing to assert against.
+            if (glyphs == null || glyphs.Count == 0)
+                return true;
+
+            bool sawColorGlyph = false;
+            bool sawTextGlyph = false;
+
+            for (int i = 0; i < glyphs.Count; i++)
+            {
+                var glyph = glyphs[i];
+                if (glyph.Texture == null)
+                    continue;
+
+                var vertexColor = vertices[i * 4].Color;
+
+                if (glyph.IsColorGlyph)
+                {
+                    sawColorGlyph = true;
+
+                    // Color emoji glyphs must keep their native RGB (identity), only alpha follows the tint.
+                    if (vertexColor.X < 0.99f || vertexColor.Y < 0.99f || vertexColor.Z < 0.99f)
+                        return false;
+                }
+                else
+                {
+                    sawTextGlyph = true;
+
+                    // Ordinary glyphs must be tinted red: full red, no green/blue.
+                    if (vertexColor.X < 0.99f || vertexColor.Y > 0.01f || vertexColor.Z > 0.01f)
+                        return false;
+                }
+            }
+
+            // Both kinds of glyphs must actually have been exercised for this assertion to be meaningful.
+            return sawColorGlyph && sawTextGlyph;
+        });
+    }
+
+    private static IReadOnlyList<TextGlyph>? getShapedGlyphs(SpriteText spriteText)
+    {
+        var field = typeof(SpriteText).GetField("shapedText", BindingFlags.NonPublic | BindingFlags.Instance);
+        var shapedText = field?.GetValue(spriteText) as ShapedText;
+        return shapedText?.Glyphs;
+    }
+
+    private static Vertex[] getTextVertices(SpriteText spriteText)
+    {
+        var field = typeof(SpriteText).GetField("textVertices", BindingFlags.NonPublic | BindingFlags.Instance);
+        return (Vertex[])field!.GetValue(spriteText)!;
     }
 }
