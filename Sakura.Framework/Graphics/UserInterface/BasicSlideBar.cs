@@ -40,10 +40,10 @@ public partial class BasicSliderBar<T> : SliderBar<T> where T : struct, INumber<
     private readonly Box background;
     private readonly Box selection;
 
-    /// <summary>
-    /// Clock time (ms) at which the selection fill was last updated
-    /// </summary>
-    private double lastFillUpdateTime = double.NaN;
+    private float fillTarget;
+    private float fillFrom;
+    private double fillStartTime;
+    private bool animatingFill;
 
     /// <summary>
     /// The selection fill's current width as a fraction of the full track, in [0, 1].
@@ -78,28 +78,47 @@ public partial class BasicSliderBar<T> : SliderBar<T> where T : struct, INumber<
 
     protected override void OnValueChanged(T value)
     {
-        var target = new Vector2(GetFillFraction(), 1);
+        fillTarget = GetFillFraction();
 
-        selection.ClearTransforms();
+        if (FillAnimationDuration <= 0 || !IsLoaded)
+        {
+            animatingFill = false;
+            setFill(fillTarget);
+            return;
+        }
 
-        double now = selection.Clock.CurrentTime;
-        double sinceLast = now - lastFillUpdateTime;
-        lastFillUpdateTime = now;
-
-        // there are sometime that the easing time is more than the new value change event
-        // lead to the size not even update properly since it's clear transformation too quick
-        // just calculate whether it fast enough to considered it as just skip it
-        double frameTime = selection.Clock.ElapsedFrameTime;
-        double continuousWindow = frameTime > 0 ? frameTime * 2.5 : 0;
-
-        bool isContinuousDrive = !double.IsNaN(sinceLast)
-                                 && (sinceLast <= 0 || sinceLast <= continuousWindow);
-
-        if (isContinuousDrive || FillAnimationDuration <= 0)
-            selection.Size = target;
-        else
-            selection.ResizeTo(target, FillAnimationDuration, FillAnimationEasing);
+        fillFrom = selection.Size.X;
+        fillStartTime = Clock.CurrentTime;
+        animatingFill = true;
     }
+
+    public override void Update()
+    {
+        if (animatingFill)
+        {
+            double elapsed = Clock.CurrentTime - fillStartTime;
+
+            if (elapsed <= 0)
+            {
+                setFill(fillFrom);
+            }
+            else if (elapsed >= FillAnimationDuration)
+            {
+                setFill(fillTarget);
+                animatingFill = false;
+            }
+            else
+            {
+                EasingFunction easing = FillAnimationEasing;
+                float progress = (float)easing.Apply(elapsed / FillAnimationDuration);
+                setFill(fillFrom + (fillTarget - fillFrom) * progress);
+            }
+        }
+
+        base.Update();
+    }
+
+    private void setFill(float fraction) => selection.Size = new Vector2(fraction, 1);
 
     protected override void OnFocusGained() => BorderColor = FocusColor;
 
