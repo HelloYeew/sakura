@@ -86,6 +86,14 @@ public partial class Path : Drawable
 
     protected internal override VertexTopology Topology => VertexTopology.Triangles;
 
+    /// <summary>
+    /// <see cref="GenerateVertices"/> bakes <see cref="Drawable.Color"/> into every segment vertex, so the
+    /// default colour-only fast path (which only rewrites the four quad corners) leaves a path's colour stale.
+    /// Regenerate the full geometry instead, so a <see cref="Drawable.Color"/> change (e.g. a fade, or a
+    /// recolor) takes effect immediately rather than waiting for the next geometry invalidation.
+    /// </summary>
+    protected override void UpdateDrawColour() => UpdateTransforms();
+
     protected override void GenerateVertices()
     {
         if (vertices.Count < 2)
