@@ -183,6 +183,11 @@ public abstract partial class ColorPicker : Container
     public override void LoadComplete()
     {
         base.LoadComplete();
+        
+        svArea.Size = SaturationValueAreaSize;
+        hueBar.Size = new Vector2(SaturationValueAreaSize.X, HueBarHeight);
+        if (hexInput != null)
+            hexInput.Size = new Vector2(SaturationValueAreaSize.X - (preview?.Size.X ?? 0) - Spacing, HueBarHeight + 8);
 
         // Derive the initial HSV from Current and paint everything once.
         deriveHsvFromCurrent(Current.Value);
