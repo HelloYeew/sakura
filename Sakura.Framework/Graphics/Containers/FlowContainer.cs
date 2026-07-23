@@ -179,16 +179,13 @@ public partial class FlowContainer : Container
                     ? new Vector2(currentFlow, lineStartCross)
                     : new Vector2(lineStartCross, currentFlow);
 
-                // include the child's own margin and the container's padding.
-                var childPosPixels = new Vector2(basePos.X + child.Margin.Left, basePos.Y + child.Margin.Top);
-                var finalPos = new Vector2(childPosPixels.X + Padding.Left, childPosPixels.Y + Padding.Top);
+                if (!Precision.AlmostEquals(child.Position, basePos))
+                    child.Position = basePos;
 
-                if (!Precision.AlmostEquals(child.Position, finalPos))
-                    child.Position = finalPos;
-
-                // track content size (for auto-sizing).
-                float childRight = finalPos.X + drawSize.X + child.Margin.Right;
-                float childBottom = finalPos.Y + drawSize.Y + child.Margin.Bottom;
+                // Track content size (for auto-sizing). The measure spans the child's full margin box
+                // starting at basePos, decoupled from the (margin-free) stored Position above.
+                float childRight = basePos.X + totalSize.X;
+                float childBottom = basePos.Y + totalSize.Y;
 
                 if (childRight > maxRight) maxRight = childRight;
                 if (childBottom > maxBottom) maxBottom = childBottom;
@@ -217,11 +214,13 @@ public partial class FlowContainer : Container
     {
         Vector2 newSize = Size;
 
+        // maxRight/maxBottom are now padding-free (see PerformLayout), so add the full padding on each
+        // axis to size the container around its content plus both padding edges.
         if ((AutoSizeAxes & Axes.X) != 0)
-            newSize.X = maxRight + Padding.Right;
+            newSize.X = maxRight + Padding.Total.X;
 
         if ((AutoSizeAxes & Axes.Y) != 0)
-            newSize.Y = maxBottom + Padding.Bottom;
+            newSize.Y = maxBottom + Padding.Total.Y;
 
         if (!Precision.AlmostEquals(Size, newSize))
             Size = newSize;

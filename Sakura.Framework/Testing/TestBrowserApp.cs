@@ -162,10 +162,89 @@ public partial class TestBrowserApp : App
                 loadTest(currentTest.GetType());
         }, Color.Transparent));
 
-        headerFlow.Add(autoRunCheckbox = new BasicCheckbox()
+        headerFlow.Add(new Container()
         {
             Anchor = Anchor.CentreLeft,
-            Origin = Anchor.CentreLeft
+            Origin = Anchor.CentreLeft,
+            RelativeSizeAxes = Axes.Y,
+            Size = new Vector2(1000, 1),
+            Child = new FlowContainer()
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                RelativeSizeAxes = Axes.Both,
+                Spacing = new Vector2(5, 0),
+                Children = new Drawable[]
+                {
+                    autoRunCheckbox = new BasicCheckbox()
+                    {
+                        Anchor = Anchor.CentreLeft,
+                        Origin = Anchor.CentreLeft,
+                        Size = new Vector2(20)
+                    },
+                    new SpriteText()
+                    {
+                        Anchor = Anchor.CentreLeft,
+                        Origin = Anchor.CentreLeft,
+                        Text = "Auto Run",
+                        Margin = new MarginPadding { Right = 20 },
+                        Font = FontUsage.Default.With(size: 15)
+                    },
+                    new SpriteText()
+                    {
+                        Anchor = Anchor.CentreLeft,
+                        Origin = Anchor.CentreLeft,
+                        Text = "Volume",
+                        Font = FontUsage.Default.With(size: 15)
+                    },
+                    volumeSlider = new BasicSliderBar<double>()
+                    {
+                        Anchor = Anchor.CentreLeft,
+                        Origin = Anchor.CentreLeft,
+                        Size = new Vector2(150, 20),
+                        MinValue = 0,
+                        MaxValue = 1
+                    },
+                    new SpriteText
+                    {
+                        Anchor = Anchor.CentreLeft,
+                        Origin = Anchor.CentreLeft,
+                        Text = "Rate",
+                        Font = FontUsage.Default.With(size: 15),
+                        Margin = new MarginPadding { Left = 10, Right = 10 }
+                    },
+                    clockRateSlider = new BasicSliderBar<double>
+                    {
+                        Anchor = Anchor.CentreLeft,
+                        Origin = Anchor.CentreLeft,
+                        Size = new Vector2(120, 20),
+                        MinValue = 0.0,
+                        MaxValue = 4.0
+                    },
+                    new ClickableContainer
+                    {
+                        Anchor = Anchor.CentreLeft,
+                        Origin = Anchor.CentreLeft,
+                        AutoSizeAxes = Axes.X,
+                        RelativeSizeAxes = Axes.Y,
+                        Margin = new MarginPadding { Left = 4 },
+                        Action = () => clockRateSlider.Current.Value = 1.0,
+                        Child = clockRateLabel = new SpriteText
+                        {
+                            Anchor = Anchor.CentreLeft,
+                            Origin = Anchor.CentreLeft,
+                            Text = "1.00×",
+                            Font = FontUsage.Default.With(size: 14),
+                            Color = Color.LightGreen,
+                            Width = 60
+                        }
+                    },
+                    new HeaderButton("Background", () =>
+                    {
+                        testContentBackgroundBox.FadeToColor(ColorExtensions.GetRandomColor(), 250, Easing.OutQuint);
+                    }, Color.Transparent)
+                }
+            }
         });
 
         autoRunCheckbox.Current.BindTo(autoRunEnabled);
@@ -181,80 +260,12 @@ public partial class TestBrowserApp : App
             }
         };
 
-        headerFlow.Add(new SpriteText()
-        {
-            Anchor = Anchor.CentreLeft,
-            Origin = Anchor.CentreLeft,
-            Text = "Auto Run",
-            Margin = new MarginPadding { Right = 20 },
-            Font = FontUsage.Default.With(size: 15)
-        });
-
-        headerFlow.Add(new SpriteText()
-        {
-            Anchor = Anchor.CentreLeft,
-            Origin = Anchor.CentreLeft,
-            Text = "Volume",
-            Font = FontUsage.Default.With(size: 15)
-        });
-
-        headerFlow.Add(volumeSlider = new BasicSliderBar<double>()
-        {
-            Anchor = Anchor.CentreLeft,
-            Origin = Anchor.CentreLeft,
-            Size = new Vector2(150, 20),
-            MinValue = 0,
-            MaxValue = 1
-        });
-
         var volumeReactive = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.MasterVolume);
         volumeSlider.Current.Value = volumeReactive.Value;
 
         volumeReactive.BindValueChanged(e => volumeSlider.Current.Value = e.NewValue, true);
 
-        headerFlow.Add(new SpriteText
-        {
-            Anchor = Anchor.CentreLeft,
-            Origin = Anchor.CentreLeft,
-            Text = "Rate",
-            Font = FontUsage.Default.With(size: 15),
-            Margin = new MarginPadding { Left = 10, Right = 10 }
-        });
-
-        headerFlow.Add(clockRateSlider = new BasicSliderBar<double>
-        {
-            Anchor = Anchor.CentreLeft,
-            Origin = Anchor.CentreLeft,
-            Size = new Vector2(120, 20),
-            MinValue = 0.0,
-            MaxValue = 4.0
-        });
-
         clockRateSlider.Current.Value = InitialClockRate;
-
-        headerFlow.Add(new ClickableContainer
-        {
-            Anchor = Anchor.CentreLeft,
-            Origin = Anchor.CentreLeft,
-            AutoSizeAxes = Axes.X,
-            RelativeSizeAxes = Axes.Y,
-            Margin = new MarginPadding { Left = 4 },
-            Action = () => clockRateSlider.Current.Value = 1.0,
-            Child = clockRateLabel = new SpriteText
-            {
-                Anchor = Anchor.CentreLeft,
-                Origin = Anchor.CentreLeft,
-                Text = "1.00×",
-                Font = FontUsage.Default.With(size: 14),
-                Color = Color.LightGreen,
-                Width = 60
-            }
-        });
-
-        headerFlow.Add(new HeaderButton("Background", () =>
-        {
-            testContentBackgroundBox.FadeToColor(ColorExtensions.GetRandomColor(), 250, Easing.OutQuint);
-        }, Color.Transparent));
 
         clockRateSlider.Current.ValueChanged += e =>
         {

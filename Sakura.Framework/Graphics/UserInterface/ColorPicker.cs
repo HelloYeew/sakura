@@ -99,13 +99,13 @@ public abstract partial class ColorPicker : Container
                 new Box
                 {
                     RelativeSizeAxes = Axes.Both,
-                    ColorInfo = ColorInfo.GradientHorizontal(Color.White, Color.White.WithAlpha((byte)0))
+                    ColorInfo = ColorInfo.GradientHorizontal(Color.White, Color.White.WithAlpha(0))
                 },
                 // Transparent at the top fading to black at the bottom (value falls off downward).
                 new Box
                 {
                     RelativeSizeAxes = Axes.Both,
-                    ColorInfo = ColorInfo.GradientVertical(Color.Black.WithAlpha((byte)0), Color.Black)
+                    ColorInfo = ColorInfo.GradientVertical(Color.Black.WithAlpha(0), Color.Black)
                 },
                 new NonPositionalContainer
                 {

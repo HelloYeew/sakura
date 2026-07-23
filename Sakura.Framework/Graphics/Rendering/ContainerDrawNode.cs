@@ -70,14 +70,23 @@ public class ContainerDrawNode : DrawNode
         float scaleY = DrawSize.Y > 0 ? screenHalfSize.Y / (DrawSize.Y * 0.5f) : 1f;
         float uniformScale = (scaleX + scaleY) * 0.5f;
 
+        // CornerRadius and BorderThickness are authored in local (logical) pixels, but the mask/border
+        // shader compares them against the screen-space half-size, which already includes every ancestor
+        // Scale. Convert both into screen space so a CircularContainer (CornerRadius == DrawSize/2) stays
+        // a circle under scale instead of turning into a squircle. Matches the edge-effect convention.
+        // Non-uniform scale (scaleX != scaleY) can't be expressed by a single-float radius; the average
+        // is the pragmatic choice and matches the edge-effect path.
+        float cornerRadiusScreen = CornerRadius * uniformScale;
+        float borderThicknessScreen = BorderThickness * uniformScale;
+
         bool hasEdgeEffect = EdgeEffect.Type != EdgeEffectType.None && EdgeEffect.Color.A > 0;
 
         // Shadows render behind the container's contents.
         if (hasEdgeEffect && EdgeEffect.Type == EdgeEffectType.Shadow)
-            drawEdgeEffect(renderer, screenCenter, screenHalfSize, scaleX, scaleY, uniformScale);
+            drawEdgeEffect(renderer, screenCenter, screenHalfSize, scaleX, scaleY, uniformScale, cornerRadiusScreen);
 
         if (Masking)
-            renderer.PushMask(screenCenter, screenHalfSize, ShearX, CornerRadius);
+            renderer.PushMask(screenCenter, screenHalfSize, ShearX, cornerRadiusScreen);
 
         foreach (var child in Children)
         {
@@ -102,11 +111,11 @@ public class ContainerDrawNode : DrawNode
         }
 
         if (Masking)
-            renderer.PopMask(screenCenter, screenHalfSize, ShearX, CornerRadius, BorderThickness, BorderColor, Vertices);
+            renderer.PopMask(screenCenter, screenHalfSize, ShearX, cornerRadiusScreen, borderThicknessScreen, BorderColor, Vertices);
 
         // Glows render on top of the container's contents.
         if (hasEdgeEffect && EdgeEffect.Type == EdgeEffectType.Glow)
-            drawEdgeEffect(renderer, screenCenter, screenHalfSize, scaleX, scaleY, uniformScale);
+            drawEdgeEffect(renderer, screenCenter, screenHalfSize, scaleX, scaleY, uniformScale, cornerRadiusScreen);
     }
 
     /// <summary>
@@ -114,15 +123,14 @@ public class ContainerDrawNode : DrawNode
     /// The quad covers the container shape inflated by the (screen-space) edge radius so that the
     /// shader's signed-distance falloff has room to render; the shape itself is shaded in the fragment shader.
     /// </summary>
-    private void drawEdgeEffect(IRenderer renderer, Vector2 screenCenter, Vector2 screenHalfSize, float scaleX, float scaleY, float uniformScale)
+    private void drawEdgeEffect(IRenderer renderer, Vector2 screenCenter, Vector2 screenHalfSize, float scaleX, float scaleY, float uniformScale, float cornerRadiusScreen)
     {
         float edgeRadiusScreen = Math.Max(0f, EdgeEffect.Radius) * uniformScale;
 
-        // The effect must follow the container's exact corner curvature, so it uses the SAME
-        // corner-radius convention as the masking/border path (unscaled CornerRadius against the
-        // screen-space half size). Roundness is an optional adjustment expressed in the same units.
-        // Using the scaled value here would make the glow corners visibly rounder than the box.
-        float cornerRadius = CornerRadius + Math.Max(0f, EdgeEffect.Roundness);
+        // The effect follows the container's exact corner curvature, so it shares the same screen-space
+        // corner radius the masking/border path uses. Roundness is an optional adjustment expressed in
+        // local pixels, scaled to match.
+        float cornerRadius = cornerRadiusScreen + Math.Max(0f, EdgeEffect.Roundness) * uniformScale;
 
         Vector2 offsetScreen = new Vector2(EdgeEffect.Offset.X * scaleX, EdgeEffect.Offset.Y * scaleY);
 
