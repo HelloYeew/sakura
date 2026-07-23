@@ -21,15 +21,27 @@ public static class TransformExtensions
     /// </summary>
     private static T addTransform<T>(this Drawable drawable, T transform, double duration) where T : Transform
     {
+        // An "immediate" transform starts now (no pending Wait()/Then()/sequence offset). Only these
+        // may retarget an in-flight transform; delayed/chained ones are always appended so sequences
+        // keep their ordering. Capture before TimeUntilTransformsCanStart is reset below.
+        bool immediate = drawable.TimeUntilTransformsCanStart == 0;
+
         double startTime = drawable.Clock.CurrentTime + drawable.TimeUntilTransformsCanStart;
         transform.StartTime = startTime;
         transform.EndTime = startTime + duration;
 
-        drawable.AddTransform(transform);
-
         // Reset the delay after a transform has been added.
         // This makes subsequent chains concurrent by default unless another Wait() or Then() is called.
         drawable.TimeUntilTransformsCanStart = 0;
+
+        // Redirect an already-running transform on the same property in place rather than adding a new
+        // one, so per-frame retargets (e.g. a slider fill following a drag) keep advancing instead of
+        // restarting their timeline every frame and freezing. Only for real (non-instant) animations,
+        // instant sets fall through and snap as before.
+        if (immediate && duration > 0 && !drawable.SuppressRetargetOnAdd && drawable.TryRetargetInFlight(transform))
+            return transform;
+
+        drawable.AddTransform(transform);
         return transform;
     }
 
@@ -328,7 +340,10 @@ public static class TransformExtensions
         int countBefore = drawable.TransformCount;
         double savedDelay = drawable.TimeUntilTransformsCanStart;
 
+        bool savedSuppress = drawable.SuppressRetargetOnAdd;
+        drawable.SuppressRetargetOnAdd = true;
         builder(drawable);
+        drawable.SuppressRetargetOnAdd = savedSuppress;
 
         var added = new List<Transform>();
         drawable.CollectTransformsSince(countBefore, added);
@@ -353,7 +368,10 @@ public static class TransformExtensions
         int countBefore = drawable.TransformCount;
         double savedDelay = drawable.TimeUntilTransformsCanStart;
 
+        bool savedSuppress = drawable.SuppressRetargetOnAdd;
+        drawable.SuppressRetargetOnAdd = true;
         builder(drawable);
+        drawable.SuppressRetargetOnAdd = savedSuppress;
 
         var added = new List<Transform>();
         drawable.CollectTransformsSince(countBefore, added);

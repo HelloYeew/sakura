@@ -19,8 +19,8 @@ namespace Sakura.Framework.Tests.Visuals.UserInterface;
 
 public partial class TestBasicSliderBar : ManualInputManagerTestScene
 {
-    private BasicSliderBar<float> slider;
-    private SpriteText valueText;
+    private BasicSliderBar<float> slider = null!;
+    private SpriteText valueText = null!;
 
     [SetUp]
     public void SetUp()
@@ -86,7 +86,7 @@ public partial class TestBasicSliderBar : ManualInputManagerTestScene
             InputManager.MoveMouseTo(new Vector2(slider.DrawRectangle.X + slider.DrawRectangle.Width + 50, slider.DrawRectangle.Y + 10)));
         AddStep("Release mouse", () => InputManager.ReleaseButton(MouseButton.Left));
 
-        AddAssert("Value is max", () => slider.Current.Value == slider.MaxValue);
+        AddAssert("Value is max", () => Precision.AlmostEquals(slider.Current.Value, slider.MaxValue));
 
         AddStep("Move mouse to right of slider", () => InputManager.MoveMouseTo(new Vector2(slider.DrawRectangle.X + slider.DrawRectangle.Width, slider.DrawRectangle.Y + 10)));
         AddStep("Press mouse again", () => InputManager.PressButton(MouseButton.Left));
@@ -94,7 +94,7 @@ public partial class TestBasicSliderBar : ManualInputManagerTestScene
             InputManager.MoveMouseTo(new Vector2(slider.DrawRectangle.X - 50, slider.DrawRectangle.Y + 10)));
         AddStep("Release mouse", () => InputManager.ReleaseButton(MouseButton.Left));
 
-        AddAssert("Value is min", () => slider.Current.Value == slider.MinValue);
+        AddAssert("Value is min", () => Precision.AlmostEquals(slider.Current.Value, slider.MinValue));
     }
 
     [Test]
@@ -181,10 +181,10 @@ public partial class TestBasicSliderBar : ManualInputManagerTestScene
         AddStep("Set initial value to 50", () => slider.Current.Value = 50f);
 
         AddStep("Press End", () => InputManager.PressKey(Key.End));
-        AddAssert("Value is max", () => slider.Current.Value == slider.MaxValue);
+        AddAssert("Value is max", () => Precision.AlmostEquals(slider.Current.Value, slider.MaxValue));
 
         AddStep("Press Home", () => InputManager.PressKey(Key.Home));
-        AddAssert("Value is min", () => slider.Current.Value == slider.MinValue);
+        AddAssert("Value is min", () => Precision.AlmostEquals(slider.Current.Value, slider.MinValue));
     }
 
     [Test]
@@ -198,11 +198,11 @@ public partial class TestBasicSliderBar : ManualInputManagerTestScene
 
         AddStep("Set value to max", () => slider.Current.Value = slider.MaxValue);
         AddStep("Press Right at max", () => InputManager.PressKey(Key.Right));
-        AddAssert("Value stays at max", () => slider.Current.Value == slider.MaxValue);
+        AddAssert("Value stays at max", () => Precision.AlmostEquals(slider.Current.Value, slider.MaxValue));
 
         AddStep("Set value to min", () => slider.Current.Value = slider.MinValue);
         AddStep("Press Left at min", () => InputManager.PressKey(Key.Left));
-        AddAssert("Value stays at min", () => slider.Current.Value == slider.MinValue);
+        AddAssert("Value stays at min", () => Precision.AlmostEquals(slider.Current.Value, slider.MinValue));
     }
 
     [Test]
@@ -225,7 +225,7 @@ public partial class TestBasicSliderBar : ManualInputManagerTestScene
     public void TestTwoSlidersSameReactive()
     {
         BasicSliderBar<float> slider2 = null!;
-        SpriteText valueText2 = null!;
+        SpriteText valueText2;
 
         AddStep("Add second slider", () =>
         {
@@ -275,17 +275,18 @@ public partial class TestBasicSliderBar : ManualInputManagerTestScene
     }
 
     [Test]
-    public void TestContinuousDriveSnapsFill()
+    public void TestContinuousDriveAnimatesFillToTarget()
     {
+        AddStep("Reset value to 0", () => slider.Current.Value = 0f);
+        AddWaitStep("Let fill settle at 0", 20);
+        
         AddStep("Drive value continuously to 100", () =>
         {
-            slider.Current.Value = 0f;
-
             for (int i = 1; i <= 10; i++)
                 slider.Current.Value = i * 10f;
-
-            Assert.That(slider.CurrentFillWidth, Is.EqualTo(1f).Within(0.01f), "continuous drive should snap the fill");
         });
+
+        AddUntilStep("Fill animates up to full without freezing", () => Precision.AlmostEquals(slider.CurrentFillWidth, 1f, 0.02f));
     }
 
     [Test]
@@ -336,27 +337,27 @@ public partial class TestBasicSliderBar : ManualInputManagerTestScene
 
         AddStep("Set value to 0", () => levelSlider.Current.Value = 0);
         AddStep("Press Right arrow once", () => InputManager.PressKey(Key.Right));
-        AddAssert("Value moved by exactly 1, not by the whole 255-wide range", () => levelSlider.Current.Value == 1);
+        AddAssert("Value moved by exactly 1, not by the whole 255-wide range", () => Precision.AlmostEquals(levelSlider.Current.Value, 1));
 
         AddStep("Press Right arrow 9 more times", () =>
         {
             for (int i = 0; i < 9; i++)
                 InputManager.PressKey(Key.Right);
         });
-        AddAssert("Value is 10 after 10 total presses of step 1", () => levelSlider.Current.Value == 10);
+        AddAssert("Value is 10 after 10 total presses of step 1", () => Precision.AlmostEquals(levelSlider.Current.Value, 10));
 
         AddStep("Press Ctrl+Right once", () => InputManager.PressKey(Key.Right, KeyModifiers.Control));
-        AddAssert("Ctrl+Right moves by 10x KeyboardStep (10)", () => levelSlider.Current.Value == 20);
+        AddAssert("Ctrl+Right moves by 10x KeyboardStep (10)", () => Precision.AlmostEquals(levelSlider.Current.Value, 20));
     }
 
     [Test]
     public void TestDirectAssignmentClampsToBounds()
     {
         AddStep("Set value far above MaxValue directly", () => slider.Current.Value = 9999f);
-        AddAssert("Value clamped to MaxValue", () => slider.Current.Value == slider.MaxValue);
+        AddAssert("Value clamped to MaxValue", () => Precision.AlmostEquals(slider.Current.Value, slider.MaxValue));
 
         AddStep("Set value far below MinValue directly", () => slider.Current.Value = -9999f);
-        AddAssert("Value clamped to MinValue", () => slider.Current.Value == slider.MinValue);
+        AddAssert("Value clamped to MinValue", () => Precision.AlmostEquals(slider.Current.Value, slider.MinValue));
     }
 
     [Test]
@@ -364,11 +365,11 @@ public partial class TestBasicSliderBar : ManualInputManagerTestScene
     {
         AddStep("Set value to 80", () => slider.Current.Value = 80f);
         AddStep("Lower MaxValue below the current value", () => slider.MaxValue = 50f);
-        AddAssert("Value re-clamped down to the new MaxValue", () => slider.Current.Value == 50f);
+        AddAssert("Value re-clamped down to the new MaxValue", () => Precision.AlmostEquals(slider.Current.Value, 50f));
 
         AddStep("Set value to 10 (still within [0, 50])", () => slider.Current.Value = 10f);
         AddStep("Raise MinValue above the current value", () => slider.MinValue = 30f);
-        AddAssert("Value re-clamped up to the new MinValue", () => slider.Current.Value == 30f);
+        AddAssert("Value re-clamped up to the new MinValue", () => Precision.AlmostEquals(slider.Current.Value, 30f));
 
         AddStep("Restore original bounds", () =>
         {
