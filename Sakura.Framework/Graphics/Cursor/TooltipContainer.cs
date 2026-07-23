@@ -3,6 +3,7 @@
 
 using System.Collections.Generic;
 using Sakura.Framework.Graphics.Drawables;
+using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
@@ -14,7 +15,7 @@ namespace Sakura.Framework.Graphics.Cursor;
 /// The tooltip only appears after the cursor has stayed within <see cref="AppearRadius"/> pixels
 /// for at least <see cref="AppearDelay"/> milliseconds.
 /// </summary>
-public partial class TooltipContainer : Container
+public partial class TooltipContainer : Container, IRemoveFromDrawVisualiser
 {
     /// <summary>
     /// Milliseconds the cursor must remain still before the tooltip appears.
@@ -153,8 +154,6 @@ public partial class TooltipContainer : Container
         }
     }
 
-    // ── Helpers ────────────────────────────────────────────────────────────────
-
     private bool isCursorStable()
     {
         if (recentPositions.Count == 0)
@@ -162,7 +161,7 @@ public partial class TooltipContainer : Container
 
         // We need enough history spanning the full AppearDelay.
         double earliest = recentPositions[0].Time;
-        double latest = recentPositions[recentPositions.Count - 1].Time;
+        double latest = recentPositions[^1].Time;
         if (latest - earliest < AppearDelay - (AppearDelay / 10.0))
             return false;
 
