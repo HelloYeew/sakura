@@ -160,11 +160,11 @@ public interface IRenderer
     /// Redirects subsequent draw commands into <paramref name="frameBuffer"/>.
     /// <paramref name="sourceRect"/> is the logical screen-space rectangle the buffer
     /// captures: geometry keeps its normal screen-space coordinates and is mapped onto the
-    /// buffer by an adjusted projection. The buffer is cleared to <paramref name="clearColour"/>
+    /// buffer by an adjusted projection. The buffer is cleared to <paramref name="clearColor"/>
     /// (default: transparent black).
     /// Nesting is supported; every call must be matched by <see cref="UnbindFrameBuffer"/>.
     /// </summary>
-    void BindFrameBuffer(IFrameBuffer frameBuffer, RectangleF sourceRect, Color clearColour = default);
+    void BindFrameBuffer(IFrameBuffer frameBuffer, RectangleF sourceRect, Color clearColor = default);
 
     /// <summary>
     /// Ends rendering into the most recently bound framebuffer, restoring the previous

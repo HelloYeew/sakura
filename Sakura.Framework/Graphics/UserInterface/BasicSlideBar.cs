@@ -89,9 +89,9 @@ public partial class BasicSliderBar<T> : SliderBar<T> where T : struct, INumber<
 
     protected override void OnFocusLost() => BorderColor = Color.Transparent;
 
-    protected override void OnHovered() => background.FadeToColour(HoverColor, 100, Easing.OutQuint);
+    protected override void OnHovered() => background.FadeToColor(HoverColor, 100, Easing.OutQuint);
 
-    protected override void OnHoverLost() => background.FadeToColour(BackgroundColor, 100, Easing.OutQuint);
+    protected override void OnHoverLost() => background.FadeToColor(BackgroundColor, 100, Easing.OutQuint);
 
     protected override void OnEnabledChanged(bool enabled) => this.FadeTo(enabled ? 1f : 0.5f, 100, Easing.OutQuint);
 }

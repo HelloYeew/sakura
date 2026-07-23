@@ -253,7 +253,7 @@ public partial class TestBrowserApp : App
 
         headerFlow.Add(new HeaderButton("Background", () =>
         {
-            testContentBackgroundBox.FadeToColour(ColorExtensions.GetRandomColor(), 250, Easing.OutQuint);
+            testContentBackgroundBox.FadeToColor(ColorExtensions.GetRandomColor(), 250, Easing.OutQuint);
         }, Color.Transparent));
 
         clockRateSlider.Current.ValueChanged += e =>
@@ -913,20 +913,20 @@ public partial class TestBrowserApp : App
         public override bool OnHover(MouseEvent e)
         {
             backgroundBox.Color = originalBackgroundColor;
-            backgroundBox.FadeToColour(originalBackgroundColor.Lighten(0.5f), 50, Easing.OutQuint);
+            backgroundBox.FadeToColor(originalBackgroundColor.Lighten(0.5f), 50, Easing.OutQuint);
             return base.OnHover(e);
         }
 
         public override bool OnHoverLost(MouseEvent e)
         {
-            backgroundBox.FadeToColour(originalBackgroundColor, 50, Easing.OutQuint);
+            backgroundBox.FadeToColor(originalBackgroundColor, 50, Easing.OutQuint);
             return base.OnHoverLost(e);
         }
 
         public void Flash()
         {
             backgroundBox.Color = originalBackgroundColor;
-            backgroundBox.FlashColour(Color.White, 500, Easing.OutQuint);
+            backgroundBox.FlashColor(Color.White, 500, Easing.OutQuint);
         }
     }
 
@@ -981,26 +981,26 @@ public partial class TestBrowserApp : App
         public void SetState(bool isSuccess)
         {
             statusBox.Color = isSuccess ? Color.LimeGreen : Color.Red;
-            statusBox.FlashColour(isSuccess ? Color.LimeGreen.Lighten(0.5f) : Color.Red.Lighten(0.5f), 500, Easing.OutQuint);
+            statusBox.FlashColor(isSuccess ? Color.LimeGreen.Lighten(0.5f) : Color.Red.Lighten(0.5f), 500, Easing.OutQuint);
         }
 
         public override bool OnHover(MouseEvent e)
         {
             backgroundBox.Color = originalBackgroundColor;
-            backgroundBox.FadeToColour(originalBackgroundColor.Lighten(0.5f), 50, Easing.OutQuint);
+            backgroundBox.FadeToColor(originalBackgroundColor.Lighten(0.5f), 50, Easing.OutQuint);
             return base.OnHover(e);
         }
 
         public override bool OnHoverLost(MouseEvent e)
         {
-            backgroundBox.FadeToColour(originalBackgroundColor, 50, Easing.OutQuint);
+            backgroundBox.FadeToColor(originalBackgroundColor, 50, Easing.OutQuint);
             return base.OnHoverLost(e);
         }
 
         public void Flash()
         {
             backgroundBox.Color = originalBackgroundColor;
-            backgroundBox.FlashColour(Color.White, 500, Easing.OutQuint);
+            backgroundBox.FlashColor(Color.White, 500, Easing.OutQuint);
         }
 
         public void UpdateText(string newText)

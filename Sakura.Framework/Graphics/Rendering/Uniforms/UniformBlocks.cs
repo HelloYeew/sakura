@@ -39,8 +39,8 @@ public struct ProjectionBlock
 public struct MaskBlock
 {
     /// <summary>
-    /// Border colour (premultiplied as elsewhere). Maps to <c>vec4 u_BorderColor</c>.
-    /// Also reused as the edge-effect colour during the edge-effect pass.
+    /// Border color (premultiplied as elsewhere). Maps to <c>vec4 u_BorderColor</c>.
+    /// Also reused as the edge-effect color during the edge-effect pass.
     /// </summary>
     [FieldOffset(0)]
     public Vector4 BorderColor;
@@ -126,7 +126,7 @@ public struct MaskBlock
 public struct GrayscaleBlock
 {
     /// <summary>
-    /// 0 = original colours, 1 = fully grayscale. Maps to <c>float u_Strength</c>.
+    /// 0 = original colors, 1 = fully grayscale. Maps to <c>float u_Strength</c>.
     /// </summary>
     [FieldOffset(0)]
     public float Strength;

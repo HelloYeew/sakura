@@ -28,7 +28,7 @@ public interface IShader : IDisposable
 
     /// <summary>
     /// Sets a 3×3 matrix uniform from a row-major float[9] array.
-    /// Used by the video shader for YUV→RGB colour conversion coefficients.
+    /// Used by the video shader for YUV→RGB color conversion coefficients.
     /// </summary>
     void SetUniform(string name, float[] mat3X3);
 

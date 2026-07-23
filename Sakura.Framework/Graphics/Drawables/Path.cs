@@ -92,7 +92,7 @@ public partial class Path : Drawable
     /// Regenerate the full geometry instead, so a <see cref="Drawable.Color"/> change (e.g. a fade, or a
     /// recolor) takes effect immediately rather than waiting for the next geometry invalidation.
     /// </summary>
-    protected override void UpdateDrawColour() => UpdateTransforms();
+    protected override void UpdateDrawColor() => UpdateTransforms();
 
     protected override void GenerateVertices()
     {

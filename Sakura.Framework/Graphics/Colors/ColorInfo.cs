@@ -34,7 +34,7 @@ public readonly struct ColorInfo : IEquatable<ColorInfo>
 
     /// <summary>
     /// Implicitly treats a single <see cref="Color"/> as a solid <see cref="ColorInfo"/> so existing
-    /// <c>drawable.Color = someColour</c> call sites keep working.
+    /// <c>drawable.Color = someColor</c> call sites keep working.
     /// </summary>
     public static implicit operator ColorInfo(Color color) => Solid(color);
 
@@ -56,7 +56,7 @@ public readonly struct ColorInfo : IEquatable<ColorInfo>
     /// <summary>
     /// Whether all four corners are the same color (i.e. this is effectively a solid color).
     /// </summary>
-    public bool HasSingleColour => TopLeft == TopRight && TopLeft == BottomLeft && TopLeft == BottomRight;
+    public bool HasSingleColor => TopLeft == TopRight && TopLeft == BottomLeft && TopLeft == BottomRight;
 
     /// <summary>
     /// Scales every corner's alpha by <paramref name="factor"/>, returning a new <see cref="ColorInfo"/>.
@@ -100,5 +100,5 @@ public readonly struct ColorInfo : IEquatable<ColorInfo>
     public static bool operator !=(ColorInfo left, ColorInfo right) => !left.Equals(right);
 
     public override string ToString() =>
-        HasSingleColour ? $"Solid({TopLeft})" : $"Gradient(TL={TopLeft}, TR={TopRight}, BL={BottomLeft}, BR={BottomRight})";
+        HasSingleColor ? $"Solid({TopLeft})" : $"Gradient(TL={TopLeft}, TR={TopRight}, BL={BottomLeft}, BR={BottomRight})";
 }

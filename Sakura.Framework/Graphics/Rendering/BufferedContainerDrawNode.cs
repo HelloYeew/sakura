@@ -35,10 +35,10 @@ public class BufferedContainerDrawNode : ContainerDrawNode
     private float blurRotation;
     private float grayscaleStrength;
     private bool drawOriginal;
-    private Vector4 effectColourLinear = new Vector4(1, 1, 1, 1);
+    private Vector4 effectColorLinear = new Vector4(1, 1, 1, 1);
     private BlendingMode? effectBlending;
     private EffectPlacement effectPlacement;
-    private Color backgroundColour;
+    private Color backgroundColor;
 
     public override void ApplyState(Drawable source)
     {
@@ -55,10 +55,10 @@ public class BufferedContainerDrawNode : ContainerDrawNode
         drawOriginal = buffered.DrawOriginal;
         effectBlending = buffered.EffectBlending;
         effectPlacement = buffered.EffectPlacement;
-        backgroundColour = buffered.BackgroundColour;
+        backgroundColor = buffered.BackgroundColor;
 
-        var ec = buffered.EffectColour;
-        effectColourLinear = new Vector4(
+        var ec = buffered.EffectColor;
+        effectColorLinear = new Vector4(
             ColorExtensions.SrgbToLinear(ec.R),
             ColorExtensions.SrgbToLinear(ec.G),
             ColorExtensions.SrgbToLinear(ec.B),
@@ -107,7 +107,7 @@ public class BufferedContainerDrawNode : ContainerDrawNode
 
         if (needsRedraw)
         {
-            renderer.BindFrameBuffer(shared.FrameBuffer, rect, backgroundColour);
+            renderer.BindFrameBuffer(shared.FrameBuffer, rect, backgroundColor);
 
             // Children render with their normal screen-space coordinates (the bound
             // projection maps the captured rect onto the buffer), including any masking
@@ -279,46 +279,46 @@ public class BufferedContainerDrawNode : ContainerDrawNode
         // to children in this framework; color does not), so the composite quads must apply
         // only the color tint and the color's own alpha — strip DrawAlpha to avoid
         // double-applying the fade.
-        Vector4 baseColour = Vertices.Length > 0 ? Vertices[0].Color : new Vector4(1, 1, 1, DrawAlpha);
-        baseColour.W = DrawAlpha > 0 ? baseColour.W / DrawAlpha : 0;
+        Vector4 baseColor = Vertices.Length > 0 ? Vertices[0].Color : new Vector4(1, 1, 1, DrawAlpha);
+        baseColor.W = DrawAlpha > 0 ? baseColor.W / DrawAlpha : 0;
 
         var effectBuffer = shared!.FinalEffectBuffer;
 
         if (effectBuffer == null)
         {
             // No effects: just the original content.
-            drawQuad(renderer, shared.FrameBuffer!, rect, baseColour, Blending);
+            drawQuad(renderer, shared.FrameBuffer!, rect, baseColor, Blending);
             return;
         }
 
-        var effectQuadColour = new Vector4(
-            baseColour.X * effectColourLinear.X,
-            baseColour.Y * effectColourLinear.Y,
-            baseColour.Z * effectColourLinear.Z,
-            baseColour.W * effectColourLinear.W);
+        var effectQuadColor = new Vector4(
+            baseColor.X * effectColorLinear.X,
+            baseColor.Y * effectColorLinear.Y,
+            baseColor.Z * effectColorLinear.Z,
+            baseColor.W * effectColorLinear.W);
 
         var effectQuadBlending = effectBlending ?? Blending;
 
         if (effectPlacement == EffectPlacement.Behind)
         {
-            drawQuad(renderer, effectBuffer, rect, effectQuadColour, effectQuadBlending);
+            drawQuad(renderer, effectBuffer, rect, effectQuadColor, effectQuadBlending);
 
             if (drawOriginal)
-                drawQuad(renderer, shared.FrameBuffer!, rect, baseColour, Blending);
+                drawQuad(renderer, shared.FrameBuffer!, rect, baseColor, Blending);
         }
         else
         {
             if (drawOriginal)
-                drawQuad(renderer, shared.FrameBuffer!, rect, baseColour, Blending);
+                drawQuad(renderer, shared.FrameBuffer!, rect, baseColor, Blending);
 
-            drawQuad(renderer, effectBuffer, rect, effectQuadColour, effectQuadBlending);
+            drawQuad(renderer, effectBuffer, rect, effectQuadColor, effectQuadBlending);
         }
     }
 
-    private static void drawQuad(IRenderer renderer, IFrameBuffer buffer, RectangleF rect, Vector4 colour, BlendingMode blending)
+    private static void drawQuad(IRenderer renderer, IFrameBuffer buffer, RectangleF rect, Vector4 color, BlendingMode blending)
     {
         Span<Vertex.Vertex> quad = stackalloc Vertex.Vertex[4];
-        fillQuad(quad, rect, colour);
+        fillQuad(quad, rect, color);
 
         renderer.SetBlendMode(blending);
         renderer.DrawQuads(quad, buffer.Texture);

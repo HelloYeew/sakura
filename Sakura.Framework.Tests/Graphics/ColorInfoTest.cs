@@ -13,7 +13,7 @@ public class ColorInfoTest
     {
         ColorInfo info = Color.Red;
 
-        Assert.That(info.HasSingleColour, Is.True);
+        Assert.That(info.HasSingleColor, Is.True);
         Assert.That(info.TopLeft, Is.EqualTo(Color.Red));
         Assert.That(info.TopRight, Is.EqualTo(Color.Red));
         Assert.That(info.BottomLeft, Is.EqualTo(Color.Red));
@@ -25,7 +25,7 @@ public class ColorInfoTest
     {
         var info = ColorInfo.Solid(Color.Lime);
 
-        Assert.That(info.HasSingleColour, Is.True);
+        Assert.That(info.HasSingleColor, Is.True);
         Assert.That(info.TopLeft, Is.EqualTo(Color.Lime));
     }
 
@@ -34,8 +34,8 @@ public class ColorInfoTest
     {
         var info = ColorInfo.GradientHorizontal(Color.Red, Color.Blue);
 
-        Assert.That(info.HasSingleColour, Is.False);
-        // Left edge (TL, BL) = left colour; right edge (TR, BR) = right colour.
+        Assert.That(info.HasSingleColor, Is.False);
+        // Left edge (TL, BL) = left color; right edge (TR, BR) = right color
         Assert.That(info.TopLeft, Is.EqualTo(Color.Red));
         Assert.That(info.BottomLeft, Is.EqualTo(Color.Red));
         Assert.That(info.TopRight, Is.EqualTo(Color.Blue));
@@ -47,8 +47,8 @@ public class ColorInfoTest
     {
         var info = ColorInfo.GradientVertical(Color.Red, Color.Blue);
 
-        Assert.That(info.HasSingleColour, Is.False);
-        // Top edge (TL, TR) = top colour; bottom edge (BL, BR) = bottom colour.
+        Assert.That(info.HasSingleColor, Is.False);
+        // Top edge (TL, TR) = top color; bottom edge (BL, BR) = bottom color.
         Assert.That(info.TopLeft, Is.EqualTo(Color.Red));
         Assert.That(info.TopRight, Is.EqualTo(Color.Red));
         Assert.That(info.BottomLeft, Is.EqualTo(Color.Blue));
@@ -118,7 +118,7 @@ public class ColorInfoTest
     public void TestLerpEndpoints()
     {
         // Build endpoints via FromArgb so they compare equal to Lerp's FromArgb-reconstructed
-        // corners (Color equality is identity-sensitive: a named colour != its ARGB twin).
+        // corners (Color equality is identity-sensitive: a named color != its ARGB twin).
         var red = Color.FromArgb(255, 255, 0, 0);
         var blue = Color.FromArgb(255, 0, 0, 255);
         var a = ColorInfo.GradientHorizontal(red, blue);

@@ -49,7 +49,7 @@ public sealed class MetalRenderer : IMetalRenderer
     /// </summary>
     private const int mask_buffer_index = 1;
 
-    private static readonly (float r, float g, float b, float a) clear_colour = (0f, 0f, 0f, 1f);
+    private static readonly (float r, float g, float b, float a) clear_color = (0f, 0f, 0f, 1f);
 
     private float renderScaleX = 1.0f;
     private float renderScaleY = 1.0f;
@@ -112,7 +112,7 @@ public sealed class MetalRenderer : IMetalRenderer
         mainShader = new MetalShader(device, vertMsl, fragMsl, attributes, SakuraVertex.Size, mainShaderUniformBindings());
         currentShader = mainShader;
 
-        // 1x1 white pixel. The main shader always samples u_Textures[index]; solid-colour drawables
+        // 1x1 white pixel. The main shader always samples u_Textures[index]; solid-color drawables
         // sample this white texel so the result is white × v_Color. Bound to slot 0 each frame.
         var whiteTex = new MetalTexture(device, 1, 1);
         whiteTex.Upload(new byte[] { 255, 255, 255, 255 });
@@ -239,7 +239,7 @@ public sealed class MetalRenderer : IMetalRenderer
         while (drawThreadQueue.TryDequeue(out var action))
             action();
 
-        SakuraMetalNative.sakura_metal_begin_frame(device, clear_colour.r, clear_colour.g, clear_colour.b, clear_colour.a);
+        SakuraMetalNative.sakura_metal_begin_frame(device, clear_color.r, clear_color.g, clear_color.b, clear_color.a);
 
         frameBufferStack.Clear();
 
@@ -445,7 +445,7 @@ public sealed class MetalRenderer : IMetalRenderer
 
     /// <summary>
     /// Draws the rounded/sheared border quad via the main shader's border path (u_IsBorder). The
-    /// border colour and geometry travel through the MaskBlock UBO at fragment [[buffer(1)]]; the
+    /// border color and geometry travel through the MaskBlock UBO at fragment [[buffer(1)]]; the
     /// fragment shader computes the border ring from the signed-distance field. Mirrors
     /// <c>GLRenderer.drawBorder</c>, minus the GL-only batch/texture-slot bookkeeping.
     /// </summary>
@@ -541,7 +541,7 @@ public sealed class MetalRenderer : IMetalRenderer
     /// buffer (same convention as <c>GLRenderer.BindFrameBuffer</c>), opens the native offscreen pass,
     /// and re-binds all encoder state into the new pass.
     /// </summary>
-    public void BindFrameBuffer(IFrameBuffer frameBuffer, RectangleF sourceRect, Color clearColour = default)
+    public void BindFrameBuffer(IFrameBuffer frameBuffer, RectangleF sourceRect, Color clearColor = default)
     {
         if (device == nint.Zero || frameBuffer is not MetalFrameBuffer metalFrameBuffer)
             return;
@@ -582,7 +582,7 @@ public sealed class MetalRenderer : IMetalRenderer
 
         SakuraMetalNative.sakura_metal_begin_offscreen(
             device, metalFrameBuffer.TextureHandle,
-            clearColour.R / 255f, clearColour.G / 255f, clearColour.B / 255f, clearColour.A / 255f);
+            clearColor.R / 255f, clearColor.G / 255f, clearColor.B / 255f, clearColor.A / 255f);
 
         // The offscreen pass opened a fresh encoder, re-establish pipeline/projection/mask/texture.
         rebindFrameState();

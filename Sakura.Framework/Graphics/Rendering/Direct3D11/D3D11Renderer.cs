@@ -61,7 +61,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     private float renderScaleX = 1.0f;
     private float renderScaleY = 1.0f;
 
-    private static readonly Color4 clear_colour = new Color4(0f, 0f, 0f, 1f);
+    private static readonly Color4 clear_color = new Color4(0f, 0f, 0f, 1f);
 
     // Register mapping from the sakura-spirv HLSL cross-compile (resources ordered by (set,binding),
     // per-kind counters): ProjectionBlock -> VS b0, MaskBlock -> PS b1, u_Textures[16] -> PS t0..t15 / s0.
@@ -424,7 +424,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
         frameBufferStack.Clear();
         setRenderTarget(backBufferRtv, backBufferWidth, backBufferHeight);
-        context.ClearRenderTargetView(backBufferRtv, clear_colour);
+        context.ClearRenderTargetView(backBufferRtv, clear_color);
 
         currentShader = mainShader;
         currentBlendMode = BlendingMode.Alpha;
@@ -703,7 +703,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
     /// <summary>
     /// Draws the rounded/sheared border ring via the main shader's border path (u_IsBorder). Border
-    /// geometry + colour travel through the MaskBlock CB (PS b1)
+    /// geometry + color travel through the MaskBlock CB (PS b1)
     /// </summary>
     private void drawBorder(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<SakuraVertex> vertices)
     {
@@ -798,7 +798,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     /// cancels the HLSL vertex shader's per-pass Y-flip so the GL-tuned BufferedContainer chain stays
     /// correct
     /// </summary>
-    public void BindFrameBuffer(IFrameBuffer frameBuffer, RectangleF sourceRect, Color clearColour = default)
+    public void BindFrameBuffer(IFrameBuffer frameBuffer, RectangleF sourceRect, Color clearColor = default)
     {
         if (device == null || frameBuffer is not D3D11FrameBuffer fb)
             return;
@@ -812,7 +812,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         currentClip = ClipState.None;
 
         setRenderTarget(fb.RenderTargetView, fb.Width, fb.Height);
-        context.ClearRenderTargetView(fb.RenderTargetView, toColor4(clearColour));
+        context.ClearRenderTargetView(fb.RenderTargetView, toColor4(clearColor));
         uploadProjection();
     }
 

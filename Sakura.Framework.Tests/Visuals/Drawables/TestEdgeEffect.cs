@@ -47,7 +47,7 @@ public partial class TestEdgeEffect : TestScene
         AddStep("Apply drop shadow", () => target.EdgeEffect = new EdgeEffectParameters
         {
             Type = EdgeEffectType.Shadow,
-            Colour = Color.FromArgb(160, Color.Black),
+            Color = Color.FromArgb(160, Color.Black),
             Radius = 25,
             Offset = new Vector2(0, 8),
         });
@@ -61,7 +61,7 @@ public partial class TestEdgeEffect : TestScene
         AddStep("Apply glow", () => target.EdgeEffect = new EdgeEffectParameters
         {
             Type = EdgeEffectType.Glow,
-            Colour = Color.FromArgb(200, Color.Cyan),
+            Color = Color.FromArgb(200, Color.Cyan),
             Radius = 30,
         });
 
@@ -74,7 +74,7 @@ public partial class TestEdgeEffect : TestScene
         AddStep("Set up glow", () => target.EdgeEffect = new EdgeEffectParameters
         {
             Type = EdgeEffectType.Glow,
-            Colour = Color.FromArgb(220, Color.Magenta),
+            Color = Color.FromArgb(220, Color.Magenta),
             Radius = 0,
         });
 
@@ -91,7 +91,7 @@ public partial class TestEdgeEffect : TestScene
         AddStep("Apply hollow glow (outline)", () => target.EdgeEffect = new EdgeEffectParameters
         {
             Type = EdgeEffectType.Glow,
-            Colour = Color.FromArgb(220, Color.Lime),
+            Color = Color.FromArgb(220, Color.Lime),
             Radius = 18,
             Hollow = true,
         });
@@ -105,13 +105,13 @@ public partial class TestEdgeEffect : TestScene
         AddStep("Apply opaque shadow", () => target.EdgeEffect = new EdgeEffectParameters
         {
             Type = EdgeEffectType.Shadow,
-            Colour = Color.FromArgb(255, Color.Black),
+            Color = Color.FromArgb(255, Color.Black),
             Radius = 25,
         });
 
         AddStep("Fade edge effect out", () => target.FadeEdgeEffectTo(0f, 800));
         AddWaitStep("Wait for fade", 800);
-        AddAssert("Edge effect alpha near zero", () => target.EdgeEffect.Colour.A <= 1);
+        AddAssert("Edge effect alpha near zero", () => target.EdgeEffect.Color.A <= 1);
     }
 
     private bool glow = true;
@@ -125,7 +125,7 @@ public partial class TestEdgeEffect : TestScene
     private void applyEdgeEffect() => target.EdgeEffect = new EdgeEffectParameters
     {
         Type = glow ? EdgeEffectType.Glow : EdgeEffectType.Shadow,
-        Colour = Color.FromArgb((int)Math.Clamp(alpha * 255f, 0f, 255f), glow ? Color.Lime : Color.Black),
+        Color = Color.FromArgb((int)Math.Clamp(alpha * 255f, 0f, 255f), glow ? Color.Lime : Color.Black),
         Radius = radius,
         Roundness = roundness,
         Offset = new Vector2(offsetX, offsetY),

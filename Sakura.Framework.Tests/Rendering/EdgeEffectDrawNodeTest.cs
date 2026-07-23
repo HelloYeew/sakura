@@ -58,7 +58,7 @@ public class EdgeEffectDrawNodeTest
         target.EdgeEffect = new EdgeEffectParameters
         {
             Type = EdgeEffectType.Shadow,
-            Colour = Color.FromArgb(128, Color.Black),
+            Color = Color.FromArgb(128, Color.Black),
             Radius = 12,
             Roundness = 4,
             Offset = new Vector2(0, 5),
@@ -73,7 +73,7 @@ public class EdgeEffectDrawNodeTest
             Assert.That(node.EdgeEffect.Radius, Is.EqualTo(12).Within(tolerance));
             Assert.That(node.EdgeEffect.Roundness, Is.EqualTo(4).Within(tolerance));
             Assert.That(node.EdgeEffect.Offset.Y, Is.EqualTo(5).Within(tolerance));
-            Assert.That(node.EdgeEffect.Colour.A, Is.EqualTo(128));
+            Assert.That(node.EdgeEffect.Color.A, Is.EqualTo(128));
         });
     }
 
@@ -92,7 +92,7 @@ public class EdgeEffectDrawNodeTest
         target.EdgeEffect = new EdgeEffectParameters
         {
             Type = EdgeEffectType.Glow,
-            Colour = Color.Cyan,
+            Color = Color.Cyan,
             Radius = 20,
         };
 
@@ -110,7 +110,7 @@ public class EdgeEffectDrawNodeTest
         target.EdgeEffect = new EdgeEffectParameters
         {
             Type = EdgeEffectType.Glow,
-            Colour = Color.White,
+            Color = Color.White,
             Radius = 0,
         };
 
@@ -128,16 +128,16 @@ public class EdgeEffectDrawNodeTest
     }
 
     [Test]
-    public void TestEdgeEffectColourTransform()
+    public void TestEdgeEffectColorTransform()
     {
         target.EdgeEffect = new EdgeEffectParameters
         {
             Type = EdgeEffectType.Shadow,
-            Colour = Color.Black,
+            Color = Color.Black,
             Radius = 10,
         };
 
-        var transform = new EdgeEffectColourTransform
+        var transform = new EdgeEffectColorTransform
         {
             StartTime = 0,
             EndTime = 100,
@@ -148,9 +148,9 @@ public class EdgeEffectDrawNodeTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(target.EdgeEffect.Colour.R, Is.EqualTo(255));
-            Assert.That(target.EdgeEffect.Colour.G, Is.EqualTo(255));
-            Assert.That(target.EdgeEffect.Colour.B, Is.EqualTo(255));
+            Assert.That(target.EdgeEffect.Color.R, Is.EqualTo(255));
+            Assert.That(target.EdgeEffect.Color.G, Is.EqualTo(255));
+            Assert.That(target.EdgeEffect.Color.B, Is.EqualTo(255));
             Assert.That(target.EdgeEffect.Type, Is.EqualTo(EdgeEffectType.Shadow));
             Assert.That(target.EdgeEffect.Radius, Is.EqualTo(10).Within(tolerance));
         });

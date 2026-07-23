@@ -123,22 +123,22 @@ public partial class TestTransforms : TestScene
     }
 
     [Test]
-    public void TestFadeToColour()
+    public void TestFadeToColor()
     {
-        AddStep("Fade to red 500ms", () => subject.FadeToColour(Color.Red, 500));
+        AddStep("Fade to red 500ms", () => subject.FadeToColor(Color.Red, 500));
         AddWaitStep("Wait", 500);
-        AddStep("Fade to green 500ms", () => subject.FadeToColour(Color.Green, 500));
+        AddStep("Fade to green 500ms", () => subject.FadeToColor(Color.Green, 500));
         AddWaitStep("Wait", 500);
-        AddStep("Fade to original 500ms", () => subject.FadeToColour(Color.CornflowerBlue, 500));
+        AddStep("Fade to original 500ms", () => subject.FadeToColor(Color.CornflowerBlue, 500));
         AddWaitStep("Wait", 500);
     }
 
     [Test]
-    public void TestFlashColour()
+    public void TestFlashColor()
     {
-        AddStep("Flash white 400ms", () => subject.FlashColour(Color.White, 400));
+        AddStep("Flash white 400ms", () => subject.FlashColor(Color.White, 400));
         AddWaitStep("Wait", 500);
-        AddStep("Flash red 400ms", () => subject.FlashColour(Color.Red, 400));
+        AddStep("Flash red 400ms", () => subject.FlashColor(Color.Red, 400));
         AddWaitStep("Wait", 500);
     }
 
@@ -343,7 +343,7 @@ public partial class TestTransforms : TestScene
     {
         // Several boxes stacked vertically, each with a different damping ratio, all launched
         // together so the effect of damping (bouncy → critical → over-damped) is visible side by side.
-        (double damping, Color colour)[] rows =
+        (double damping, Color color)[] rows =
         {
             (0.2, Color.Tomato),
             (0.4, Color.Orange),
@@ -365,7 +365,7 @@ public partial class TestTransforms : TestScene
                     Anchor = Anchor.Centre,
                     Origin = Anchor.Centre,
                     Size = new Vector2(50),
-                    Color = rows[i].colour,
+                    Color = rows[i].color,
                     Position = new Vector2(-220, y)
                 });
             }

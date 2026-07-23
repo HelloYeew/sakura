@@ -442,7 +442,7 @@ public partial class Container : Drawable
     {
         // Check whether our layout was dirty before base.Update() is called, as it will clear our invalidation flags.
         bool layoutWasInvalidated = (Invalidation & InvalidationFlags.DrawInfo) != 0;
-        bool colourWasInvalidated = (Invalidation & InvalidationFlags.Colour) != 0;
+        bool colorWasInvalidated = (Invalidation & InvalidationFlags.Color) != 0;
 
         if (AutoSizeAxes != Axes.None && layoutWasInvalidated)
         {
@@ -456,11 +456,11 @@ public partial class Container : Drawable
 
         base.Update();
 
-        if (colourWasInvalidated)
+        if (colorWasInvalidated)
         {
             foreach (var child in children)
             {
-                child.Invalidate(InvalidationFlags.Colour, false);
+                child.Invalidate(InvalidationFlags.Color, false);
             }
         }
 

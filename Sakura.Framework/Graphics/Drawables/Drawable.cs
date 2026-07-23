@@ -310,10 +310,10 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
     }
 
     /// <summary>
-    /// The per-corner colour of this drawable. Set a <see cref="Colors.ColorInfo"/> gradient (e.g.
-    /// <see cref="Colors.ColorInfo.GradientHorizontal"/>) to have the renderer interpolate colour
+    /// The per-corner color of this drawable. Set a <see cref="Colors.ColorInfo"/> gradient (e.g.
+    /// <see cref="Colors.ColorInfo.GradientHorizontal"/>) to have the renderer interpolate color
     /// across the quad, or a single <see cref="Colors.Color"/> (implicitly converted to a solid
-    /// <see cref="Colors.ColorInfo"/>) for a flat colour.
+    /// <see cref="Colors.ColorInfo"/>) for a flat color.
     /// </summary>
     public ColorInfo ColorInfo
     {
@@ -322,14 +322,14 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
         {
             if (colorInfo.Equals(value)) return;
             colorInfo = value;
-            Invalidate(InvalidationFlags.Colour);
+            Invalidate(InvalidationFlags.Color);
         }
     }
 
     /// <summary>
-    /// The flat colour of this drawable. This is a back-compat shim over <see cref="ColorInfo"/>:
+    /// The flat color of this drawable. This is a back-compat shim over <see cref="ColorInfo"/>:
     /// the getter returns the top-left corner, and the setter collapses the whole drawable to a
-    /// solid colour. Use <see cref="ColorInfo"/> directly for gradients.
+    /// solid color. Use <see cref="ColorInfo"/> directly for gradients.
     /// </summary>
     public Color Color
     {
@@ -348,7 +348,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
             alpha = Math.Clamp(value, 0f, 1f);
             bool isVisible = alpha > 0;
 
-            Invalidate(InvalidationFlags.Colour);
+            Invalidate(InvalidationFlags.Color);
 
             // Visibility is a layout input: auto-size containers skip hidden children
             // (e.g. a dropdown grows only while its menu is shown), so crossing the
@@ -605,9 +605,9 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
     }
 
     /// <summary>
-    /// Converts an sRGB corner <see cref="Color"/> to a linear-space vertex colour, folding
-    /// <see cref="DrawAlpha"/> and the colour's own alpha into the <c>W</c> component (RGB is not
-    /// premultiplied). Shared by <see cref="GenerateVertices"/> and <see cref="UpdateDrawColour"/>
+    /// Converts an sRGB corner <see cref="Color"/> to a linear-space vertex color, folding
+    /// <see cref="DrawAlpha"/> and the color's own alpha into the <c>W</c> component (RGB is not
+    /// premultiplied). Shared by <see cref="GenerateVertices"/> and <see cref="UpdateDrawColor"/>
     /// so both stay in sync.
     /// </summary>
     private Vector4 toLinear(Color c) => new Vector4(
@@ -617,11 +617,11 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
         DrawAlpha * (c.A / 255f));
 
     /// <summary>
-    /// Writes the four corner colours of <see cref="colorInfo"/> into the existing quad vertices.
+    /// Writes the four corner colors of <see cref="colorInfo"/> into the existing quad vertices.
     /// The corner→index mapping must match <see cref="GenerateVertices"/>
     /// (0 = TopLeft, 1 = TopRight, 2 = BottomRight, 3 = BottomLeft).
     /// </summary>
-    private void writeCornerColours()
+    private void writeCornerColors()
     {
         Vertices[0].Color = toLinear(colorInfo.TopLeft);
         Vertices[1].Color = toLinear(colorInfo.TopRight);
@@ -712,9 +712,9 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
         Vertices[2] = new Vertex { Position = new Vector2(vBottomRight.X, vBottomRight.Y), TexCoords = uvBottomRight };
         Vertices[3] = new Vertex { Position = new Vector2(vBottomLeft.X, vBottomLeft.Y), TexCoords = new Vector2(uvTopLeft.X, uvBottomRight.Y) };
 
-        // Per-corner colour (solid or gradient), converted to linear space. Must run after the
+        // Per-corner color (solid or gradient), converted to linear space. Must run after the
         // vertices exist and match the corner→index mapping above.
-        writeCornerColours();
+        writeCornerColors();
 
         // Calculate DrawRectangle in screen space
         float minX = Math.Min(vTopLeft.X, Math.Min(vTopRight.X, Math.Min(vBottomLeft.X, vBottomRight.X)));
@@ -981,7 +981,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
 
         Invalidation |= flags;
 
-        if ((flags & (InvalidationFlags.DrawInfo | InvalidationFlags.Colour)) != 0)
+        if ((flags & (InvalidationFlags.DrawInfo | InvalidationFlags.Color)) != 0)
         {
             DrawNodeInvalidationId++;
 
@@ -1112,7 +1112,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
             DrawAlpha = 0;
             // Keep pending geometry invalidation (and the own-geometry marker) so a drawable
             // that moved while hidden recomputes — and cascades to children — once shown again.
-            Invalidation &= ~InvalidationFlags.Colour;
+            Invalidation &= ~InvalidationFlags.Color;
             return;
         }
 
@@ -1120,11 +1120,11 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
         {
             UpdateTransforms();
         }
-        else if ((Invalidation & InvalidationFlags.Colour) != 0)
+        else if ((Invalidation & InvalidationFlags.Color) != 0)
         {
-            // Colour-only change (fades are the common case in gameplay): rewrite the
-            // vertex colours without redoing matrix and vertex-position work.
-            UpdateDrawColour();
+            // Color-only change (fades are the common case in gameplay): rewrite the
+            // vertex colors without redoing matrix and vertex-position work.
+            UpdateDrawColor();
         }
 
         Invalidation = InvalidationFlags.None;
@@ -1134,17 +1134,17 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
     /// <summary>
     /// Recomputes <see cref="DrawAlpha"/> and rewrites the color of the existing vertices
     /// without regenerating geometry. Called for color-only invalidations. Handles both solid
-    /// colours and per-corner gradients (via <see cref="ColorInfo"/>) for the default quad.
+    /// colors and per-corner gradients (via <see cref="ColorInfo"/>) for the default quad.
     /// Drawables whose vertices don't follow the default quad layout must override this
     /// (falling back to <see cref="UpdateTransforms"/> is always correct).
     /// </summary>
-    protected virtual void UpdateDrawColour()
+    protected virtual void UpdateDrawColor()
     {
         DrawAlpha = (Parent?.DrawAlpha ?? 1f) * Alpha;
 
-        // Rewrite per-corner colours so gradients survive the colour-only fast path (used by fades);
+        // Rewrite per-corner colors so gradients survive the color-only fast path (used by fades);
         // toLinear folds the freshly-computed DrawAlpha into every corner.
-        writeCornerColours();
+        writeCornerColors();
     }
 
     /// <summary>
@@ -1575,7 +1575,7 @@ public enum InvalidationFlags
     /// <summary>
     /// The color of the drawable has changed.
     /// </summary>
-    Colour = 1 << 1,
+    Color = 1 << 1,
 
     /// <summary>
     /// A catch-all for all invalidation types.

@@ -559,9 +559,9 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
 
             protected internal override VertexTopology Topology => VertexTopology.Triangles;
 
-            // Bars carry non-uniform per-vertex colours; the base colour-only fast path
+            // Bars carry non-uniform per-vertex colors; the base color-only fast path
             // would flatten them, so fall back to a full regeneration.
-            protected override void UpdateDrawColour() => UpdateTransforms();
+            protected override void UpdateDrawColor() => UpdateTransforms();
 
             protected override void GenerateVertices()
             {

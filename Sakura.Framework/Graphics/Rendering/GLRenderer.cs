@@ -444,7 +444,7 @@ public class GLRenderer : IGLRenderer, IDisposable
     /// </summary>
     public IFrameBuffer CreateFrameBuffer(int width, int height, bool pixelSnapping = false) => new GLFrameBuffer(gl, width, height, pixelSnapping);
 
-    public void BindFrameBuffer(IFrameBuffer frameBuffer, RectangleF sourceRect, Color clearColour = default)
+    public void BindFrameBuffer(IFrameBuffer frameBuffer, RectangleF sourceRect, Color clearColor = default)
     {
         var glFrameBuffer = (GLFrameBuffer)frameBuffer;
 
@@ -485,7 +485,7 @@ public class GLRenderer : IGLRenderer, IDisposable
             Radius = 0
         };
 
-        gl.ClearColor(clearColour.R / 255f, clearColour.G / 255f, clearColour.B / 255f, clearColour.A / 255f);
+        gl.ClearColor(clearColor.R / 255f, clearColor.G / 255f, clearColor.B / 255f, clearColor.A / 255f);
         gl.Clear(ClearBufferMask.ColorBufferBit);
         gl.ClearColor(Color.Black);
     }

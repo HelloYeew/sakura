@@ -35,9 +35,9 @@ public enum EdgeEffectType
 public struct EdgeEffectParameters : IEquatable<EdgeEffectParameters>
 {
     /// <summary>
-    /// The colour of the edge effect (including its alpha). Premultiplied at draw time.
+    /// The color of the edge effect (including its alpha). Premultiplied at draw time.
     /// </summary>
-    public Color Colour;
+    public Color Color;
 
     /// <summary>
     /// The offset of the edge effect from the container's shape, in local pixels.
@@ -68,7 +68,7 @@ public struct EdgeEffectParameters : IEquatable<EdgeEffectParameters>
     public bool Hollow;
 
     public readonly bool Equals(EdgeEffectParameters other) =>
-        Colour.Equals(other.Colour)
+        Color.Equals(other.Color)
         && Offset.Equals(other.Offset)
         && Type == other.Type
         && Radius == other.Radius
@@ -77,7 +77,7 @@ public struct EdgeEffectParameters : IEquatable<EdgeEffectParameters>
 
     public override readonly bool Equals(object? obj) => obj is EdgeEffectParameters other && Equals(other);
 
-    public override readonly int GetHashCode() => HashCode.Combine(Colour, Offset, (int)Type, Radius, Roundness, Hollow);
+    public override readonly int GetHashCode() => HashCode.Combine(Color, Offset, (int)Type, Radius, Roundness, Hollow);
 
     public static bool operator ==(EdgeEffectParameters left, EdgeEffectParameters right) => left.Equals(right);
 

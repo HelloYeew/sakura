@@ -18,7 +18,7 @@ namespace Sakura.Framework.Graphics.Containers;
 /// static content via <see cref="CacheDrawnFrameBuffer"/>, and texture-space effects:
 /// Gaussian blur (<see cref="BlurSigma"/>, <see cref="BlurRotation"/>), grayscale
 /// (<see cref="GrayscaleStrength"/>), effect tint/blending/placement
-/// (<see cref="EffectColour"/>, <see cref="EffectBlending"/>, <see cref="EffectPlacement"/>)
+/// (<see cref="EffectColor"/>, <see cref="EffectBlending"/>, <see cref="EffectPlacement"/>)
 /// and glow/bloom-style compositing via <see cref="DrawOriginal"/>.
 /// </para>
 /// <para>
@@ -147,21 +147,21 @@ public partial class BufferedContainer : Container
         }
     }
 
-    private Color effectColour = Color.White;
+    private Color effectColor = Color.White;
 
     /// <summary>
     /// Multiplicative color of the effect result (e.g. the blurred image). Default white.
     /// Does not affect the original drawn when <see cref="DrawOriginal"/> is true.
     /// </summary>
-    public Color EffectColour
+    public Color EffectColor
     {
-        get => effectColour;
+        get => effectColor;
         set
         {
-            if (effectColour.Equals(value))
+            if (effectColor.Equals(value))
                 return;
 
-            effectColour = value;
+            effectColor = value;
             Invalidate(InvalidationFlags.DrawInfo);
         }
     }
@@ -207,20 +207,20 @@ public partial class BufferedContainer : Container
 
     // Note: not Color.Transparent (which is white with zero alpha and would fringe to
     // white when children blend over it) — true transparent black.
-    private Color backgroundColour = default;
+    private Color backgroundColor = default;
 
     /// <summary>
     /// The color the buffer is cleared to before children render. Transparent black by default.
     /// </summary>
-    public Color BackgroundColour
+    public Color BackgroundColor
     {
-        get => backgroundColour;
+        get => backgroundColor;
         set
         {
-            if (backgroundColour.Equals(value))
+            if (backgroundColor.Equals(value))
                 return;
 
-            backgroundColour = value;
+            backgroundColor = value;
             ForceRedraw();
         }
     }

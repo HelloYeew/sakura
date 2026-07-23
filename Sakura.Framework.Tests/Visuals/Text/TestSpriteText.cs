@@ -150,7 +150,7 @@ public partial class TestSpriteText : TestScene
     {
         SpriteText tintedEmojiText = null!;
 
-        AddStep("Add red-tinted colour emoji text", () => Add(tintedEmojiText = new SpriteText
+        AddStep("Add red-tinted color emoji text", () => Add(tintedEmojiText = new SpriteText
         {
             Anchor = Anchor.Centre,
             Origin = Anchor.Centre,
@@ -159,7 +159,7 @@ public partial class TestSpriteText : TestScene
             Font = new FontUsage(size: 48, weight: "Regular", italics: false)
         }));
 
-        AddAssert("colour glyph vertices are untinted while text glyph vertices are tinted red", () =>
+        AddAssert("color glyph vertices are untinted while text glyph vertices are tinted red", () =>
         {
             var glyphs = getShapedGlyphs(tintedEmojiText);
             var vertices = getTextVertices(tintedEmojiText);

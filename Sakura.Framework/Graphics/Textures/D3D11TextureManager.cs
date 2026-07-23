@@ -37,7 +37,7 @@ public class D3D11TextureManager : ITextureManager
         this.storage = storage;
         this.imageLoader = imageLoader;
 
-        // The D3D11 renderer owns a 1x1 white texture, reuse it so solid-colour drawables sample white.
+        // The D3D11 renderer owns a 1x1 white texture, reuse it so solid-color drawables sample white.
         WhitePixel = renderer.WhitePixel;
         missingTexture = new Texture(renderer.CreateNativeTexture(1, 1));
         atlas = new TextureAtlas(renderer, usage: AtlasUsage.Textures);
