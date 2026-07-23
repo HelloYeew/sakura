@@ -95,6 +95,12 @@ void main()
         if (finalColor.a <= 0.0) discard;
 
         FragColor = finalColor;
+
+        // Borders must honour any enclosing parent mask, exactly like the edge-effect path above.
+        // Without this the border quad is drawn everywhere its own geometry reaches, so a bordered
+        // masking child leaks its border past a rectangular ancestor mask.
+        if (!applyClipping(v_FragPos, v_ClipData, v_ClipShearX, v_ClipRadius, FragColor))
+            discard;
         return;
     }
 
