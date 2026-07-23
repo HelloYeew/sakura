@@ -12,6 +12,9 @@ using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests.Visuals.Containers;
 
+/// <summary>
+/// Regression test of https://github.com/HelloYeew/sakura/pull/152
+/// </summary>
 public partial class TestNestedMaskingClip : TestScene
 {
     private const float panel_width = 260;

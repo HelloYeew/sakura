@@ -18,6 +18,9 @@ using VertexData = Sakura.Framework.Graphics.Rendering.Vertex.Vertex;
 
 namespace Sakura.Framework.Tests.Graphics;
 
+/// <summary>
+/// Regression test of https://github.com/HelloYeew/sakura/pull/152
+/// </summary>
 [TestFixture]
 public class ContainerMaskScaleTest
 {

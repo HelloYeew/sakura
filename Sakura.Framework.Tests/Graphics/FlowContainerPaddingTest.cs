@@ -11,6 +11,9 @@ using Sakura.Framework.Timing;
 
 namespace Sakura.Framework.Tests.Graphics;
 
+/// <summary>
+/// Regression test of https://github.com/HelloYeew/sakura/pull/152
+/// </summary>
 [TestFixture]
 public class FlowContainerPaddingTest
 {
