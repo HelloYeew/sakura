@@ -12,10 +12,44 @@ using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Graphics.Transforms;
 
+/// <summary>
+/// The drawable property a <see cref="Transform"/> animates. Used to retarget an in-flight transform
+/// on the same property in place (see <see cref="Transform.TryRetargetFrom"/>) rather than clearing and
+/// recreating it, which would restart its timeline and can freeze rapidly-retargeted animations.
+/// <see cref="None"/> transforms (callbacks, auto-size) never participate in retargeting.
+/// </summary>
+public enum TransformMember
+{
+    None,
+    Position,
+    Size,
+    Scale,
+    Rotation,
+    Alpha,
+    Color,
+    EdgeEffectColour,
+    EdgeEffectRadius,
+}
+
 public abstract class Transform : ITransform
 {
     public double StartTime { get; set; }
     public double EndTime { get; set; }
+
+    /// <summary>
+    /// The drawable property this transform animates. Transforms with the same non <see cref="TransformMember.None"/>
+    /// member can retarget one another in place while in flight.
+    /// </summary>
+    public virtual TransformMember Member => TransformMember.None;
+
+    /// <summary>
+    /// Redirects this in-flight transform toward <paramref name="incoming"/>'s destination while keeping
+    /// this transform's <see cref="StartTime"/>, start value and <see cref="EndTime"/> — i.e. its
+    /// animation timeline — so progress continues smoothly instead of restarting.
+    /// Returns false (the default) when the two transforms are not the same concrete kind, in which case
+    /// the caller adds <paramref name="incoming"/> as a new transform instead.
+    /// </summary>
+    public virtual bool TryRetargetFrom(Transform incoming) => false;
 
     /// <summary>
     /// The easing applied to this transform's progress. Accepts any built-in easing curve
@@ -111,6 +145,17 @@ public class MoveTransform : Transform
     private bool valueCaptured;
     public Vector2 StartValue;
     public Vector2 EndValue;
+
+    public override TransformMember Member => TransformMember.Position;
+
+    public override bool TryRetargetFrom(Transform incoming)
+    {
+        if (incoming is not MoveTransform m) return false;
+        EndValue = m.EndValue;
+        Easing = m.Easing;
+        return true;
+    }
+
     public override void Apply(Drawable drawable, double time)
     {
         if (!valueCaptured)
@@ -127,6 +172,17 @@ public class ResizeTransform : Transform
     private bool valueCaptured;
     public Vector2 StartValue;
     public Vector2 EndValue;
+
+    public override TransformMember Member => TransformMember.Size;
+
+    public override bool TryRetargetFrom(Transform incoming)
+    {
+        if (incoming is not ResizeTransform r) return false;
+        EndValue = r.EndValue;
+        Easing = r.Easing;
+        return true;
+    }
+
     public override void Apply(Drawable drawable, double time)
     {
         if (!valueCaptured)
@@ -143,6 +199,17 @@ public class ScaleTransform : Transform
     private bool valueCaptured;
     public Vector2 StartValue;
     public Vector2 EndValue;
+
+    public override TransformMember Member => TransformMember.Scale;
+
+    public override bool TryRetargetFrom(Transform incoming)
+    {
+        if (incoming is not ScaleTransform s) return false;
+        EndValue = s.EndValue;
+        Easing = s.Easing;
+        return true;
+    }
+
     public override void Apply(Drawable drawable, double time)
     {
         if (!valueCaptured)
@@ -159,6 +226,17 @@ public class AlphaTransform : Transform
     private bool valueCaptured;
     public float StartValue;
     public float EndValue;
+
+    public override TransformMember Member => TransformMember.Alpha;
+
+    public override bool TryRetargetFrom(Transform incoming)
+    {
+        if (incoming is not AlphaTransform a) return false;
+        EndValue = a.EndValue;
+        Easing = a.Easing;
+        return true;
+    }
+
     public override void Apply(Drawable drawable, double time)
     {
         if (!valueCaptured)
@@ -201,6 +279,17 @@ public class RotateTransform : Transform
     private bool valueCaptured;
     public float StartValue;
     public float EndValue;
+
+    public override TransformMember Member => TransformMember.Rotation;
+
+    public override bool TryRetargetFrom(Transform incoming)
+    {
+        if (incoming is not RotateTransform r) return false;
+        EndValue = r.EndValue;
+        Easing = r.Easing;
+        return true;
+    }
+
     public override void Apply(Drawable drawable, double time)
     {
         if (!valueCaptured)
@@ -217,6 +306,16 @@ public class ColorTransform : Transform
     private bool valueCaptured;
     public Color StartValue;
     public Color EndValue;
+
+    public override TransformMember Member => TransformMember.Color;
+
+    public override bool TryRetargetFrom(Transform incoming)
+    {
+        if (incoming is not ColorTransform c) return false;
+        EndValue = c.EndValue;
+        Easing = c.Easing;
+        return true;
+    }
 
     public override void Apply(Drawable drawable, double time)
     {
@@ -240,6 +339,16 @@ public class EdgeEffectColourTransform : Transform
     private bool valueCaptured;
     public Color StartValue;
     public Color EndValue;
+
+    public override TransformMember Member => TransformMember.EdgeEffectColour;
+
+    public override bool TryRetargetFrom(Transform incoming)
+    {
+        if (incoming is not EdgeEffectColourTransform e) return false;
+        EndValue = e.EndValue;
+        Easing = e.Easing;
+        return true;
+    }
 
     public override void Apply(Drawable drawable, double time)
     {
@@ -265,6 +374,16 @@ public class EdgeEffectRadiusTransform : Transform
     private bool valueCaptured;
     public float StartValue;
     public float EndValue;
+
+    public override TransformMember Member => TransformMember.EdgeEffectRadius;
+
+    public override bool TryRetargetFrom(Transform incoming)
+    {
+        if (incoming is not EdgeEffectRadiusTransform e) return false;
+        EndValue = e.EndValue;
+        Easing = e.Easing;
+        return true;
+    }
 
     public override void Apply(Drawable drawable, double time)
     {

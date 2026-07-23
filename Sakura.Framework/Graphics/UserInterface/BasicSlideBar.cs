@@ -40,11 +40,6 @@ public partial class BasicSliderBar<T> : SliderBar<T> where T : struct, INumber<
     private readonly Box background;
     private readonly Box selection;
 
-    private float fillTarget;
-    private float fillFrom;
-    private double fillStartTime;
-    private bool animatingFill;
-
     /// <summary>
     /// The selection fill's current width as a fraction of the full track, in [0, 1].
     /// While an animation is in flight this reflects the in-progress (eased) value rather than the
@@ -78,47 +73,17 @@ public partial class BasicSliderBar<T> : SliderBar<T> where T : struct, INumber<
 
     protected override void OnValueChanged(T value)
     {
-        fillTarget = GetFillFraction();
+        float target = GetFillFraction();
 
+        // Snap instantly when there is no animation window or before the tree is live (no clock yet).
         if (FillAnimationDuration <= 0 || !IsLoaded)
         {
-            animatingFill = false;
-            setFill(fillTarget);
+            selection.Size = new Vector2(target, 1);
             return;
         }
 
-        fillFrom = selection.Size.X;
-        fillStartTime = Clock.CurrentTime;
-        animatingFill = true;
+        selection.ResizeTo(new Vector2(target, 1), FillAnimationDuration, FillAnimationEasing);
     }
-
-    public override void Update()
-    {
-        if (animatingFill)
-        {
-            double elapsed = Clock.CurrentTime - fillStartTime;
-
-            if (elapsed <= 0)
-            {
-                setFill(fillFrom);
-            }
-            else if (elapsed >= FillAnimationDuration)
-            {
-                setFill(fillTarget);
-                animatingFill = false;
-            }
-            else
-            {
-                EasingFunction easing = FillAnimationEasing;
-                float progress = (float)easing.Apply(elapsed / FillAnimationDuration);
-                setFill(fillFrom + (fillTarget - fillFrom) * progress);
-            }
-        }
-
-        base.Update();
-    }
-
-    private void setFill(float fraction) => selection.Size = new Vector2(fraction, 1);
 
     protected override void OnFocusGained() => BorderColor = FocusColor;
 

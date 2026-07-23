@@ -63,7 +63,12 @@ public class TransformSequence<T> where T : Drawable
         target.TimeUntilTransformsCanStart = currentOffset;
         int countBefore = target.TransformCount;
 
+        // Sequence transforms are always appended, never retargeted onto an unrelated in-flight
+        // transform — even the first one, whose offset can be 0 and would otherwise look "immediate".
+        bool savedSuppress = target.SuppressRetargetOnAdd;
+        target.SuppressRetargetOnAdd = true;
         action(target);
+        target.SuppressRetargetOnAdd = savedSuppress;
 
         // Capture newly added transforms.
         target.CollectTransformsSince(countBefore, sequenceTransforms);

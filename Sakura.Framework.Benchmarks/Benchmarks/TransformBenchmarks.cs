@@ -57,8 +57,11 @@ public class TransformBenchmarks
     }
 
     /// <summary>
-    /// Scheduling cost: queue 10 transforms on one drawable, then clear them.
-    /// Tracks allocation per scheduled transform.
+    /// Scheduling cost check by queue 10 transforms on one drawable, then clear them.
+    /// Tracks allocation per scheduled transform. Note: with retarget-in-place the consecutive
+    /// same-member immediate calls here (three <c>MoveTo*</c> → Position, three fades → Alpha) redirect
+    /// the in-flight transform instead of accumulating, so the drawable holds ~5 transforms rather than
+    /// 10 - the transient objects are still built by the fluent helpers, so allocation is unchanged.
     /// </summary>
     [Benchmark]
     public void Schedule10Transforms_ThenClear()
@@ -73,6 +76,24 @@ public class TransformBenchmarks
         scheduleTarget.ResizeTo(new Vector2(32, 32), 300);
         scheduleTarget.MoveTo(new Vector2(0, 0), 100);
         scheduleTarget.FadeOut(100);
+
+        scheduleTarget.ClearTransforms();
+    }
+
+    /// <summary>
+    /// Replicate SliderBar: one property retargeted every frame. With retarget-in-place each subsequent
+    /// <c>ResizeTo</c> redirects the single in-flight transform rather than clearing and re-adding,
+    /// so the transform list stays bounded at one. Tracks the per-retarget cost (the same-member scan
+    /// plus the transient transform the fluent helper builds), which is the real cost of animating a
+    /// slider fill / scrubber that follows continuous input.
+    /// </summary>
+    [Benchmark]
+    public void RetargetChurn_SliderDrag()
+    {
+        // First call has nothing in flight and adds; the rest redirect it in place. A long duration
+        // keeps it in flight for the whole churn so every call after the first hits the retarget path.
+        for (int i = 0; i < 60; i++)
+            scheduleTarget.ResizeTo(new Vector2(16 + i % 40, 16), 1_000);
 
         scheduleTarget.ClearTransforms();
     }

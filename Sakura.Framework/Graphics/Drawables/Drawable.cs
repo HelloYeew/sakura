@@ -1198,6 +1198,41 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
     }
 
     /// <summary>
+    /// When true, transforms added to this drawable are appended as-is and never retarget an in-flight
+    /// transform (see <see cref="TryRetargetInFlight"/>). Set by <see cref="Transforms.TransformSequence{T}"/>
+    /// and looping builders while they lay down their transforms, so a sequence's first transform can't
+    /// hijack an unrelated in-flight one.
+    /// </summary>
+    internal bool SuppressRetargetOnAdd { get; set; }
+
+    /// <summary>
+    /// Attempts to redirect an in-flight, non-looping transform on the same <see cref="Transform.Member"/>
+    /// toward <paramref name="incoming"/>'s destination, preserving that transform's timeline so its
+    /// eased progress continues instead of restarting from zero. Returns true when an existing transform
+    /// adopted the target, in which case the caller must *not* add <paramref name="incoming"/> as well.
+    /// Only in-flight transforms (started and not yet finished) are eligible, so delayed/queued and
+    /// completed transforms are left untouched.
+    /// </summary>
+    internal bool TryRetargetInFlight(Transform incoming)
+    {
+        if (transforms == null || incoming.Member == TransformMember.None)
+            return false;
+
+        double now = Clock.CurrentTime;
+
+        for (int i = 0; i < transforms.Count; i++)
+        {
+            var e = transforms[i];
+            if (e.IsLooping || e.Member != incoming.Member)
+                continue;
+            if (e.StartTime <= now && now < e.EndTime && e.TryRetargetFrom(incoming))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Removes a specific transform from this drawable, if present.
     /// </summary>
     internal void RemoveTransform(Transform transform)
@@ -1284,7 +1319,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
             foreach (var t in transforms)
                 t.Apply(this, t.EndTime);
         }
-        
+
         transforms?.Clear();
         TimeUntilTransformsCanStart = 0;
 
