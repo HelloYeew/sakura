@@ -390,7 +390,7 @@ public class InvalidationCascadeTest
     }
 
     [Test]
-    public void TestFadeUsesColourFastPathWithoutGeometryRegeneration()
+    public void TestFadeUsesColorFastPathWithoutGeometryRegeneration()
     {
         var box = new CountingBox
         {
@@ -407,10 +407,10 @@ public class InvalidationCascadeTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(box.TransformUpdates, Is.Zero, "A colour-only change must not regenerate geometry.");
-            Assert.That(box.DrawAlpha, Is.EqualTo(0.5f).Within(0.001f), "DrawAlpha must still update on the colour fast path.");
-            Assert.That(box.VerticesForAssert[0].Color.W, Is.EqualTo(0.5f).Within(0.001f), "Vertex alpha must be rewritten on the colour fast path.");
-            Assert.That(box.DrawRectangle.X, Is.EqualTo(40).Within(0.01f), "Geometry must be untouched by a colour-only change.");
+            Assert.That(box.TransformUpdates, Is.Zero, "A color-only change must not regenerate geometry.");
+            Assert.That(box.DrawAlpha, Is.EqualTo(0.5f).Within(0.001f), "DrawAlpha must still update on the color fast path.");
+            Assert.That(box.VerticesForAssert[0].Color.W, Is.EqualTo(0.5f).Within(0.001f), "Vertex alpha must be rewritten on the color fast path.");
+            Assert.That(box.DrawRectangle.X, Is.EqualTo(40).Within(0.01f), "Geometry must be untouched by a color-only change.");
         });
     }
 
@@ -449,7 +449,7 @@ public class InvalidationCascadeTest
         // a container (without AlwaysPresent) fading itself out to exactly zero alpha
         // must still tell its children their effective alpha dropped to zero. Container.Update()
         // previously returned early as soon as its own Alpha reached zero, before ever reaching the
-        // Colour-invalidation cascade so a child's cached DrawAlpha stayed stuck at its last
+        // Color-invalidation cascade so a child's cached DrawAlpha stayed stuck at its last
         // nonzero value forever (until the parent faded back in, which isn't affected by the same
         // early return).
         var screen = new Container { Size = new Vector2(400, 300) };

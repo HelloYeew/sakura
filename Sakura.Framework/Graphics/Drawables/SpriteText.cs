@@ -317,7 +317,7 @@ public partial class SpriteText : Drawable
         renderer.DrawQuads(slice, texture);
     }
 
-    protected override void UpdateDrawColour()
+    protected override void UpdateDrawColor()
     {
         DrawAlpha = (Parent?.DrawAlpha ?? 1f) * Alpha;
 

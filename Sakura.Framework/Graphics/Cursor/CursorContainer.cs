@@ -104,7 +104,7 @@ public partial class CursorContainer : Container, IRemoveFromDrawVisualiser
 
         public override bool OnClick(MouseButtonEvent e)
         {
-            iconSprite.FlashColour(Color.White, 300, Easing.OutQuint);
+            iconSprite.FlashColor(Color.White, 300, Easing.OutQuint);
             return base.OnClick(e);
         }
 

@@ -70,7 +70,7 @@ public class ContainerDrawNode : DrawNode
         float scaleY = DrawSize.Y > 0 ? screenHalfSize.Y / (DrawSize.Y * 0.5f) : 1f;
         float uniformScale = (scaleX + scaleY) * 0.5f;
 
-        bool hasEdgeEffect = EdgeEffect.Type != EdgeEffectType.None && EdgeEffect.Colour.A > 0;
+        bool hasEdgeEffect = EdgeEffect.Type != EdgeEffectType.None && EdgeEffect.Color.A > 0;
 
         // Shadows render behind the container's contents.
         if (hasEdgeEffect && EdgeEffect.Type == EdgeEffectType.Shadow)
@@ -149,7 +149,7 @@ public class ContainerDrawNode : DrawNode
         quad[3] = new Vertex.Vertex { Position = bl, TexCoords = new Vector2(0, 1), Color = new Vector4(1, 1, 1, 1) };
 
         // Premultiply the effect alpha by the container's overall draw alpha so it fades with the container.
-        var color = EdgeEffect.Colour;
+        var color = EdgeEffect.Color;
         if (DrawAlpha < 1f)
             color = Color.FromArgb((int)Math.Clamp(color.A * DrawAlpha, 0f, 255f), color);
 

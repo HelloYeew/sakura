@@ -752,8 +752,8 @@ public struct TextGlyph
     public int StartIndex;
 
     /// <summary>
-    /// Whether this glyph is a natively-coloured bitmap (e.g. color emoji) rather than a grayscale
-    /// outline glyph. Colour glyphs should be drawn without applying the drawable's tint color.
+    /// Whether this glyph is a natively-colored bitmap (e.g. color emoji) rather than a grayscale
+    /// outline glyph. Color glyphs should be drawn without applying the drawable's tint color.
     /// </summary>
     public bool IsColorGlyph;
 }

@@ -78,10 +78,10 @@ public partial class BasicCheckbox : Checkbox
     }
 
     protected override void OnHovered() =>
-        background.FadeToColour(HoverColor, 100, Easing.OutQuint);
+        background.FadeToColor(HoverColor, 100, Easing.OutQuint);
 
     protected override void OnHoverLost() =>
-        background.FadeToColour(UncheckedColor, 100, Easing.OutQuint);
+        background.FadeToColor(UncheckedColor, 100, Easing.OutQuint);
 
     protected override void OnEnabledChanged(bool enabled) => this.FadeTo(enabled ? 1 : 0.5f, 100, Easing.OutQuint);
 }

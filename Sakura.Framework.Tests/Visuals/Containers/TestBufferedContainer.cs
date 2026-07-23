@@ -159,7 +159,7 @@ public partial class TestBufferedContainer : TestScene
 
             bufferedContainer.BlurSigma = new Vector2(8);
             bufferedContainer.EffectBlending = BlendingMode.Additive;
-            bufferedContainer.EffectColour = Color.Gold;
+            bufferedContainer.EffectColor = Color.Gold;
             bufferedContainer.EffectPlacement = EffectPlacement.Behind;
             bufferedContainer.DrawOriginal = true;
         });
@@ -179,21 +179,21 @@ public partial class TestBufferedContainer : TestScene
             bufferedContainer.BlurRotation = 0;
             bufferedContainer.GrayscaleStrength = 0;
             bufferedContainer.EffectBlending = null;
-            bufferedContainer.EffectColour = Color.White;
+            bufferedContainer.EffectColor = Color.White;
             bufferedContainer.EffectPlacement = EffectPlacement.Behind;
             bufferedContainer.DrawOriginal = false;
         });
 
-        AddStep("Background colour dark red", () =>
+        AddStep("Background color dark red", () =>
         {
             if (bufferedContainer != null)
-                bufferedContainer.BackgroundColour = Color.DarkRed;
+                bufferedContainer.BackgroundColor = Color.DarkRed;
         });
 
         AddStep("Background transparent", () =>
         {
             if (bufferedContainer != null)
-                bufferedContainer.BackgroundColour = default;
+                bufferedContainer.BackgroundColor = default;
         });
 
         AddStep("Toggle animation", () => animate = !animate);

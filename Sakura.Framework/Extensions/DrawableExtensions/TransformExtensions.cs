@@ -212,26 +212,26 @@ public static class TransformExtensions
         => drawable.FadeTo(0, duration, easing);
 
     /// <summary>
-    /// Instantly flashes the drawable to a specific colour, then fades back to its original colour over a duration.
+    /// Instantly flashes the drawable to a specific color, then fades back to its original color over a duration.
     /// </summary>
-    public static Drawable FlashColour(this Drawable drawable, Color flashColour, double duration, EasingFunction easing = default)
+    public static Drawable FlashColor(this Drawable drawable, Color flashColor, double duration, EasingFunction easing = default)
     {
         drawable.addTransform(new FlashColorTransform
         {
-            FlashColour = flashColour,
+            FlashColor = flashColor,
             Easing = easing
         }, duration);
         return drawable;
     }
 
     /// <summary>
-    /// Fades the drawable's colour to a specific colour over a duration.
+    /// Fades the drawable's color to a specific color over a duration.
     /// </summary>
-    public static Drawable FadeToColour(this Drawable drawable, Color newColour, double duration = 0, EasingFunction easing = default)
+    public static Drawable FadeToColor(this Drawable drawable, Color newColor, double duration = 0, EasingFunction easing = default)
     {
         drawable.addTransform(new ColorTransform
         {
-            EndValue = newColour,
+            EndValue = newColor,
             Easing = easing
         }, duration);
         return drawable;
@@ -240,11 +240,11 @@ public static class TransformExtensions
     /// <summary>
     /// Animates the container's edge-effect color to a specific color over a duration.
     /// </summary>
-    public static T FadeEdgeEffectTo<T>(this T container, Color newColour, double duration = 0, EasingFunction easing = default) where T : Container
+    public static T FadeEdgeEffectTo<T>(this T container, Color newColor, double duration = 0, EasingFunction easing = default) where T : Container
     {
-        container.addTransform(new EdgeEffectColourTransform
+        container.addTransform(new EdgeEffectColorTransform
         {
-            EndValue = newColour,
+            EndValue = newColor,
             Easing = easing
         }, duration);
         return container;
@@ -256,7 +256,7 @@ public static class TransformExtensions
     /// </summary>
     public static T FadeEdgeEffectTo<T>(this T container, float newAlpha, double duration = 0, EasingFunction easing = default) where T : Container
     {
-        var current = container.EdgeEffect.Colour;
+        var current = container.EdgeEffect.Color;
         var target = Color.FromArgb((int)Math.Clamp(newAlpha * 255f, 0f, 255f), current);
         return container.FadeEdgeEffectTo(target, duration, easing);
     }

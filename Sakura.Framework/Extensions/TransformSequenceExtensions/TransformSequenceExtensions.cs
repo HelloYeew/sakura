@@ -73,9 +73,9 @@ public static class TransformSequenceExtensions
     public static TransformSequence<T> FadeInFromZero<T>(this TransformSequence<T> seq, double duration = 0, EasingFunction easing = default) where T : Drawable
         => seq.Append(d => d.FadeInFromZero(duration, easing));
 
-    public static TransformSequence<T> FadeToColour<T>(this TransformSequence<T> seq, Color colour, double duration = 0, EasingFunction easing = default) where T : Drawable
-        => seq.Append(d => d.FadeToColour(colour, duration, easing));
+    public static TransformSequence<T> FadeToColor<T>(this TransformSequence<T> seq, Color color, double duration = 0, EasingFunction easing = default) where T : Drawable
+        => seq.Append(d => d.FadeToColor(color, duration, easing));
 
-    public static TransformSequence<T> FlashColour<T>(this TransformSequence<T> seq, Color flashColour, double duration, EasingFunction easing = default) where T : Drawable
-        => seq.Append(d => d.FlashColour(flashColour, duration, easing));
+    public static TransformSequence<T> FlashColor<T>(this TransformSequence<T> seq, Color flashColor, double duration, EasingFunction easing = default) where T : Drawable
+        => seq.Append(d => d.FlashColor(flashColor, duration, easing));
 }

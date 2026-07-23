@@ -103,7 +103,7 @@ public class HeadlessRenderer : IRenderer
 
     public IFrameBuffer CreateFrameBuffer(int width, int height, bool pixelSnapping = false) => new HeadlessFrameBuffer(WhitePixel, width, height);
 
-    public void BindFrameBuffer(IFrameBuffer frameBuffer, RectangleF sourceRect, Color clearColour = default)
+    public void BindFrameBuffer(IFrameBuffer frameBuffer, RectangleF sourceRect, Color clearColor = default)
     {
 
     }

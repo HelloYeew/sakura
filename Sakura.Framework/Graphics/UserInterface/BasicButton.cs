@@ -83,5 +83,5 @@ public partial class BasicButton : Button
 
     protected override void OnHoverLost() => background.Color = DefaultColor;
 
-    protected override void OnEnabledChanged(bool enabled) => background.FadeToColour(enabled ? DefaultColor : DefaultColor.Darken(0.5f), 100, Easing.OutQuint);
+    protected override void OnEnabledChanged(bool enabled) => background.FadeToColor(enabled ? DefaultColor : DefaultColor.Darken(0.5f), 100, Easing.OutQuint);
 }

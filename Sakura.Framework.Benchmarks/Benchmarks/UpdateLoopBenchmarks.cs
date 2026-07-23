@@ -121,7 +121,7 @@ public class UpdateLoopBenchmarks
 
     /// <summary>
     /// Every box fades (alpha-only change) every frame. Quantifies how expensive a
-    /// colour-only invalidation is — ideally far cheaper than a positional one.
+    /// color-only invalidation is — ideally far cheaper than a positional one.
     /// </summary>
     [Benchmark]
     public void UpdateSubTree_AllChildrenFade()

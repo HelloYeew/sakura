@@ -316,7 +316,7 @@ public static class ColorExtensions
     /// <summary>
     /// Decomposes a <see cref="Color"/> into HSV (Hue, Saturation, Value/Brightness) components,
     /// each in the range 0 to 1. This is the model used by the classic saturation/value square +
-    /// hue slider colour picker, and is distinct from the HSL model used by <see cref="ToHSL"/>.
+    /// hue slider color picker, and is distinct from the HSL model used by <see cref="ToHSL"/>.
     /// </summary>
     /// <param name="color">The color to decompose.</param>
     /// <param name="h">Hue component (0 to 1).</param>

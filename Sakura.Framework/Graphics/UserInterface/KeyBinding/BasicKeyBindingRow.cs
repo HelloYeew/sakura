@@ -42,12 +42,12 @@ public partial class BasicKeyBindingRow<T> : KeyBindingRow<T> where T : struct, 
     private const float gap = 6;
 
     /// <summary>
-    /// Slot background colour when idle.
+    /// Slot background color when idle.
     /// </summary>
     public Color IdleColor { get; init; } = Color.DarkSlateGray;
 
     /// <summary>
-    /// Slot background colour while capturing.
+    /// Slot background color while capturing.
     /// </summary>
     public Color CapturingColor { get; init; } = Color.DarkSlateBlue;
 

@@ -27,7 +27,7 @@ public enum TransformMember
     Rotation,
     Alpha,
     Color,
-    EdgeEffectColour,
+    EdgeEffectColor,
     EdgeEffectRadius,
 }
 
@@ -255,22 +255,22 @@ public class AlphaTransform : Transform
 
 public class FlashColorTransform : Transform
 {
-    public Color FlashColour;
-    private Color originalColour;
-    private bool colourCaptured;
+    public Color FlashColor;
+    private Color originalColor;
+    private bool colorCaptured;
 
     public override void Apply(Drawable drawable, double time)
     {
-        if (!colourCaptured)
+        if (!colorCaptured)
         {
-            originalColour = drawable.Color;
-            colourCaptured = true;
+            originalColor = drawable.Color;
+            colorCaptured = true;
         }
 
         double easedProgress = GetEasedProgress(time);
 
-        // lerp from the flash colour (at progress 0) to the original colour (at progress 1).
-        drawable.Color = ColorExtensions.Lerp(FlashColour, originalColour, (float)easedProgress);
+        // lerp from the flash color (at progress 0) to the original color (at progress 1).
+        drawable.Color = ColorExtensions.Lerp(FlashColor, originalColor, (float)easedProgress);
     }
 }
 
@@ -332,19 +332,19 @@ public class ColorTransform : Transform
 }
 
 /// <summary>
-/// Animates the <see cref="EdgeEffectParameters.Colour"/> of a <see cref="Container"/>'s edge effect.
+/// Animates the <see cref="EdgeEffectParameters.Color"/> of a <see cref="Container"/>'s edge effect.
 /// </summary>
-public class EdgeEffectColourTransform : Transform
+public class EdgeEffectColorTransform : Transform
 {
     private bool valueCaptured;
     public Color StartValue;
     public Color EndValue;
 
-    public override TransformMember Member => TransformMember.EdgeEffectColour;
+    public override TransformMember Member => TransformMember.EdgeEffectColor;
 
     public override bool TryRetargetFrom(Transform incoming)
     {
-        if (incoming is not EdgeEffectColourTransform e) return false;
+        if (incoming is not EdgeEffectColorTransform e) return false;
         EndValue = e.EndValue;
         Easing = e.Easing;
         return true;
@@ -356,12 +356,12 @@ public class EdgeEffectColourTransform : Transform
 
         if (!valueCaptured)
         {
-            StartValue = container.EdgeEffect.Colour;
+            StartValue = container.EdgeEffect.Color;
             valueCaptured = true;
         }
 
         var ee = container.EdgeEffect;
-        ee.Colour = ColorExtensions.Lerp(StartValue, EndValue, (float)GetEasedProgress(time));
+        ee.Color = ColorExtensions.Lerp(StartValue, EndValue, (float)GetEasedProgress(time));
         container.EdgeEffect = ee;
     }
 }

@@ -12,35 +12,35 @@ using Sakura.Framework.Maths;
 namespace Sakura.Framework.Graphics.UserInterface;
 
 /// <summary>
-/// A ready-to-use text box with a green colour scheme.
+/// A ready-to-use text box with a green color scheme.
 /// For a custom-styled text box, extend <see cref="TextBox"/> directly.
 /// </summary>
 public partial class BasicTextBox : TextBox
 {
     private Box BackgroundBox => (Box)Background!;
 
-    private Color backgroundColour = Color.Green;
+    private Color backgroundColor = Color.Green;
 
     /// <summary>
-    /// Background colour while unfocused.
+    /// Background color while unfocused.
     /// </summary>
-    public Color BackgroundColour
+    public Color BackgroundColor
     {
-        get => backgroundColour;
+        get => backgroundColor;
         set
         {
-            backgroundColour = value;
+            backgroundColor = value;
             if (!HasFocus)
                 BackgroundBox.Color = value;
         }
     }
 
     /// <summary>
-    /// Background color while focused. Defaults to a lightened <see cref="BackgroundColour"/>.
+    /// Background color while focused. Defaults to a lightened <see cref="BackgroundColor"/>.
     /// </summary>
-    public Color? BackgroundFocusedColour { get; set; }
+    public Color? BackgroundFocusedColor { get; set; }
 
-    private Color effectiveFocusedColour => BackgroundFocusedColour ?? backgroundColour.Lighten(0.3f);
+    private Color effectiveFocusedColor => BackgroundFocusedColor ?? backgroundColor.Lighten(0.3f);
 
     public BasicTextBox()
     {
@@ -54,7 +54,7 @@ public partial class BasicTextBox : TextBox
     {
         RelativeSizeAxes = Axes.Both,
         Size = new Vector2(1),
-        Color = backgroundColour
+        Color = backgroundColor
     };
 
     protected override Drawable CreateCaret() => new Box
@@ -78,7 +78,7 @@ public partial class BasicTextBox : TextBox
         Alpha = 0f
     };
 
-    protected override void OnFocusGained() => BackgroundBox.FadeToColour(effectiveFocusedColour, 150, Easing.OutQuint);
+    protected override void OnFocusGained() => BackgroundBox.FadeToColor(effectiveFocusedColor, 150, Easing.OutQuint);
 
-    protected override void OnFocusLost() => BackgroundBox.FadeToColour(backgroundColour, 150, Easing.OutQuint);
+    protected override void OnFocusLost() => BackgroundBox.FadeToColor(backgroundColor, 150, Easing.OutQuint);
 }

@@ -50,7 +50,7 @@ public partial class TestIconSprite : TestScene
         AddWaitStep("Wait for fading", 200);
         AddAssert("Icon is faded", () => icon.Alpha < 1);
         AddStep("Reset transforms", () => icon.Alpha = 1);
-        AddStep("Flash icon", () => icon.FlashColour(Color.Red, 200));
+        AddStep("Flash icon", () => icon.FlashColor(Color.Red, 200));
     }
 
     [Test]

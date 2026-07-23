@@ -41,9 +41,9 @@ float sdRoundParallelogram(in vec2 p, in vec2 b, in float sk, in float r) {
 //
 // fragPos    : screen-space position of the fragment (v_FragPos)
 // clipData   : (CenterX, CenterY, HalfWidth, HalfHeight)
-// clipShearX : horizontal shear multiplier 
+// clipShearX : horizontal shear multiplier
 // clipRadius : corner radius of the clip region
-// color      : current fragment colour -- alpha may be reduced by the fade
+// color      : current fragment color -- alpha may be reduced by the fade
 //
 // Returns true if the fragment should be kept, false if it should be discarded.
 bool applyClipping(in vec2 fragPos, in vec4 clipData, in float clipShearX, in float clipRadius, inout vec4 color) {

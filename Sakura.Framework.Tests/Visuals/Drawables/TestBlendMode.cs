@@ -17,7 +17,7 @@ namespace Sakura.Framework.Tests.Visuals.Drawables;
 /// <summary>
 /// Visual test for <see cref="Drawable.Blending"/> across all <see cref="BlendingMode"/>s, for both
 /// the white-pixel path (a solid <see cref="Box"/>) and the textured path (a <see cref="Sprite"/>).
-/// Each foreground overlaps a colourful background so the blend math is visible (Additive brightens,
+/// Each foreground overlaps a colorful background so the blend math is visible (Additive brightens,
 /// Multiply/Screen tint, Opaque overwrites, etc.).
 /// </summary>
 public partial class TestBlendMode : TestScene
@@ -39,7 +39,7 @@ public partial class TestBlendMode : TestScene
     public void SetUp() => AddStep("Clear", Clear);
 
     /// <summary>
-    /// A colourful background (red/green/blue bands + a white stripe) so any blend mode shows a
+    /// A colorful background (red/green/blue bands + a white stripe) so any blend mode shows a
     /// distinct, readable result where the foreground overlaps it.
     /// </summary>
     private void addBackground()
@@ -63,7 +63,9 @@ public partial class TestBlendMode : TestScene
         });
     }
 
-    /// <summary>White-pixel (solid colour) foreground for every blend mode, as a labelled column.</summary>
+    /// <summary>
+    /// White-pixel (solid color) foreground for every blend mode, as a labelled column.
+    /// </summary>
     [Test]
     public void TestWhitePixelAllModes()
     {
@@ -71,7 +73,9 @@ public partial class TestBlendMode : TestScene
         AddStep("Add boxes (one per mode)", () => Add(buildModeRow(textured: false)));
     }
 
-    /// <summary>Textured foreground (small.png) for every blend mode.</summary>
+    /// <summary>
+    /// Textured foreground (small.png) for every blend mode.
+    /// </summary>
     [Test]
     public void TestTexturedAllModes()
     {
@@ -79,7 +83,9 @@ public partial class TestBlendMode : TestScene
         AddStep("Add sprites (one per mode)", () => Add(buildModeRow(textured: true)));
     }
 
-    /// <summary>Switch a single overlapping box's blend mode live, one mode per <see cref="BlendingMode"/>.</summary>
+    /// <summary>
+    /// Switch a single overlapping box's blend mode live, one mode per <see cref="BlendingMode"/>.
+    /// </summary>
     [TestCaseSource(nameof(all_modes))]
     public void TestWhitePixelSingle(BlendingMode mode)
     {
@@ -98,7 +104,9 @@ public partial class TestBlendMode : TestScene
         AddStep($"Blending = {mode}", () => box.Blending = mode);
     }
 
-    /// <summary>Switch a single overlapping sprite's blend mode live, one mode per <see cref="BlendingMode"/>.</summary>
+    /// <summary>
+    /// Switch a single overlapping sprite's blend mode live, one mode per <see cref="BlendingMode"/>.
+    /// </summary>
     [TestCaseSource(nameof(all_modes))]
     public void TestTexturedSingle(BlendingMode mode)
     {
@@ -117,7 +125,9 @@ public partial class TestBlendMode : TestScene
         AddStep($"Blending = {mode}", () => sprite.Blending = mode);
     }
 
-    /// <summary>Interactive: a slider-free pair of buttons to cycle blend modes on both drawable types.</summary>
+    /// <summary>
+    /// Interactive: a slider-free pair of buttons to cycle blend modes on both drawable types.
+    /// </summary>
     [Test]
     public void TestInteractive()
     {

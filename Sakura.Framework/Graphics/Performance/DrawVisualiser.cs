@@ -386,7 +386,7 @@ public partial class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVi
             if (hoveredDrawable != lastHoveredDrawable)
             {
                 inspectHighlightBox.Color = Color.LimeGreen;
-                inspectHighlightBox.FlashColour(Color.White, 300, Easing.OutQuint);
+                inspectHighlightBox.FlashColor(Color.White, 300, Easing.OutQuint);
             }
             lastHoveredDrawable = hoveredDrawable;
         }
