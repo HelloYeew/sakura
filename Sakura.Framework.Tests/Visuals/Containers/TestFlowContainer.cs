@@ -129,8 +129,15 @@ public partial class TestFlowContainer : TestScene
             Precision.AlmostEquals(flow.Width, content_width + padding * 2));
         AddAssert("Height includes top and bottom padding", () =>
             Precision.AlmostEquals(flow.Height, child_size + padding * 2));
+        // Position is now padding-free: PerformLayout stores the bare flow position and
+        // Drawable.UpdateTransforms applies the parent padding once. The resolved on-screen
+        // position must therefore sit exactly one padding inside the flow (not two).
         AddAssert("First child offset by left/top padding", () =>
-            Precision.AlmostEquals(flow.Children.First().Position, new Vector2(padding, padding)));
+        {
+            var child = flow.Children.First();
+            return Precision.AlmostEquals(child.DrawRectangle.X - flow.DrawRectangle.X, padding)
+                   && Precision.AlmostEquals(child.DrawRectangle.Y - flow.DrawRectangle.Y, padding);
+        });
     }
 
     [Test]
