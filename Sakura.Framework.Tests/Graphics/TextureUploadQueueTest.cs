@@ -19,7 +19,10 @@ public class TextureUploadQueueTest
     [Test]
     public void StopsAtBudgetAndCarriesRemainderOver()
     {
-        var queue = new TextureUploadQueue { BytesPerFrameBudget = 100 };
+        var queue = new TextureUploadQueue
+        {
+            BytesPerFrameBudget = 100
+        };
         var order = new List<int>();
 
         for (int i = 0; i < 4; i++)
