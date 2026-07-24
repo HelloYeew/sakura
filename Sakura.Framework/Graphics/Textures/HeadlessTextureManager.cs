@@ -12,6 +12,8 @@ public class HeadlessTextureManager : ITextureManager
 
     public TextureAtlas? Atlas => null;
 
+    private readonly SharedTextureStore sharedTextures = new SharedTextureStore();
+
     public HeadlessTextureManager()
     {
         WhitePixel = createDummyTexture(1, 1);
@@ -20,6 +22,13 @@ public class HeadlessTextureManager : ITextureManager
     public Texture Get(string path) => WhitePixel;
 
     public Texture FromPixelData(int width, int height, ReadOnlySpan<byte> pixelData, string cacheKey = null) => createDummyTexture(width, height);
+
+    public bool TryAcquireSharedTexture(string cacheKey, out Texture texture) => sharedTextures.TryAcquire(cacheKey, out texture);
+
+    public Texture AcquireSharedTexture(string cacheKey, int width, int height, ReadOnlySpan<byte> pixelData)
+        => sharedTextures.AddOrAcquire(cacheKey, () => createDummyTexture(width, height));
+
+    public void ReleaseSharedTexture(string cacheKey) => sharedTextures.Release(cacheKey, texture => texture.Dispose());
 
     public bool Evict(string path) => true;
 

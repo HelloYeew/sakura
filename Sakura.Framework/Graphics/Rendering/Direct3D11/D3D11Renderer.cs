@@ -53,7 +53,8 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
     private nint windowHandle;
 
-    private readonly ConcurrentQueue<Action> drawThreadQueue = new();
+    private readonly ConcurrentQueue<Action> drawThreadQueue = new ConcurrentQueue<Action>();
+    private readonly TextureUploadQueue textureUploadQueue = new TextureUploadQueue();
 
     private DrawNode rootNode;
     private Matrix4x4 projectionMatrix = Matrix4x4.Identity;
@@ -422,6 +423,9 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         while (drawThreadQueue.TryDequeue(out var action))
             action();
 
+        // Budgeted texture uploads spread a burst across frames (see TextureUploadQueue).
+        textureUploadQueue.Process();
+
         frameBufferStack.Clear();
         setRenderTarget(backBufferRtv, backBufferWidth, backBufferHeight);
         context.ClearRenderTargetView(backBufferRtv, clear_color);
@@ -761,6 +765,8 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     #endregion
 
     public void ScheduleToDrawThread(Action action) => drawThreadQueue.Enqueue(action);
+
+    public void ScheduleTextureUpload(Action upload, long approximateBytes) => textureUploadQueue.Enqueue(upload, approximateBytes);
 
     public INativeTexture CreateNativeTexture(int width, int height) => new D3D11Texture(device, context, width, height);
 

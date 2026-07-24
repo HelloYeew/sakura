@@ -26,6 +26,7 @@ public class GLTextureManager : ITextureManager
     private readonly ConcurrentDictionary<IVideoTexture, byte> videoTextures = new ConcurrentDictionary<IVideoTexture, byte>();
 
     private readonly Texture missingTexture;
+    private readonly SharedTextureStore sharedTextures = new SharedTextureStore();
 
     /// <summary>
     /// A 1x1 white pixel texture.
@@ -82,10 +83,10 @@ public class GLTextureManager : ITextureManager
                 var glTexture = new GLTexture(gl, imageWidth, imageHeight);
                 texture = new Texture(glTexture);
 
-                renderer.ScheduleToDrawThread(() =>
+                renderer.ScheduleTextureUpload(() =>
                 {
                     glTexture.Upload(pixelDataCopy);
-                });
+                }, (long)imageWidth * imageHeight * 4);
             }
 
             textureCache[path] = texture;
@@ -106,11 +107,11 @@ public class GLTextureManager : ITextureManager
 
         byte[] dataCopy = pixelData.ToArray();
 
-        renderer.ScheduleToDrawThread(() =>
+        renderer.ScheduleTextureUpload(() =>
         {
             ReadOnlySpan<byte> span = dataCopy;
             glTexture.Upload(span);
-        });
+        }, (long)width * height * 4);
 
         if (!string.IsNullOrEmpty(cacheKey))
         {
@@ -127,6 +128,28 @@ public class GLTextureManager : ITextureManager
 
         return texture;
     }
+
+    public bool TryAcquireSharedTexture(string cacheKey, out Texture texture) => sharedTextures.TryAcquire(cacheKey, out texture);
+
+    public Texture AcquireSharedTexture(string cacheKey, int width, int height, ReadOnlySpan<byte> pixelData)
+    {
+        byte[] dataCopy = pixelData.ToArray();
+
+        return sharedTextures.AddOrAcquire(cacheKey, () =>
+        {
+            var glTexture = new GLTexture(gl, width, height);
+            var texture = new Texture(glTexture);
+            renderer.ScheduleTextureUpload(() => glTexture.Upload(dataCopy), (long)width * height * 4);
+            return texture;
+        });
+    }
+
+    public void ReleaseSharedTexture(string cacheKey) => sharedTextures.Release(cacheKey, texture =>
+    {
+        var native = texture.BackendTexture;
+        if (native != null && native != WhitePixel.BackendTexture && native != missingTexture.BackendTexture && !Atlas.OwnsNativeTexture(native))
+            renderer.ScheduleToDrawThread(native.Dispose);
+    });
 
     private Texture createNullTexture()
     {

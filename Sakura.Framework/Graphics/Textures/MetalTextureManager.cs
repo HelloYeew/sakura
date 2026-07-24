@@ -28,6 +28,7 @@ public class MetalTextureManager : ITextureManager
 
     private readonly Texture missingTexture;
     private readonly TextureAtlas atlas;
+    private readonly SharedTextureStore sharedTextures = new SharedTextureStore();
 
     public Texture WhitePixel { get; }
 
@@ -74,7 +75,7 @@ public class MetalTextureManager : ITextureManager
             {
                 var nativeTexture = renderer.CreateNativeTexture(imageWidth, imageHeight);
                 texture = new Texture(nativeTexture);
-                renderer.ScheduleToDrawThread(() => nativeTexture.Upload(pixelDataCopy));
+                renderer.ScheduleTextureUpload(() => nativeTexture.Upload(pixelDataCopy), (long)imageWidth * imageHeight * 4);
             }
 
             textureCache[path] = texture;
@@ -95,11 +96,11 @@ public class MetalTextureManager : ITextureManager
 
         byte[] dataCopy = pixelData.ToArray();
 
-        renderer.ScheduleToDrawThread(() =>
+        renderer.ScheduleTextureUpload(() =>
         {
             ReadOnlySpan<byte> span = dataCopy;
             nativeTexture.Upload(span);
-        });
+        }, (long)width * height * 4);
 
         if (!string.IsNullOrEmpty(cacheKey))
         {
@@ -116,6 +117,28 @@ public class MetalTextureManager : ITextureManager
 
         return texture;
     }
+
+    public bool TryAcquireSharedTexture(string cacheKey, out Texture texture) => sharedTextures.TryAcquire(cacheKey, out texture);
+
+    public Texture AcquireSharedTexture(string cacheKey, int width, int height, ReadOnlySpan<byte> pixelData)
+    {
+        byte[] dataCopy = pixelData.ToArray();
+
+        return sharedTextures.AddOrAcquire(cacheKey, () =>
+        {
+            var nativeTexture = renderer.CreateNativeTexture(width, height);
+            var texture = new Texture(nativeTexture);
+            renderer.ScheduleTextureUpload(() => nativeTexture.Upload(dataCopy), (long)width * height * 4);
+            return texture;
+        });
+    }
+
+    public void ReleaseSharedTexture(string cacheKey) => sharedTextures.Release(cacheKey, texture =>
+    {
+        var native = texture.BackendTexture;
+        if (native != null && native != WhitePixel.BackendTexture && native != missingTexture.BackendTexture && !atlas.OwnsNativeTexture(native))
+            renderer.ScheduleToDrawThread(native.Dispose);
+    });
 
     public bool Evict(string path)
     {
