@@ -153,10 +153,12 @@ public partial class App : Container, IFocusManager, IInputManagerProvider, IDis
         TrackStore = new TrackStore(embeddedResourceStorage.GetStorageForDirectory("Tracks"), AudioManager);
         SampleStore = new SampleStore(embeddedResourceStorage.GetStorageForDirectory("Samples"), AudioManager);
 
+        IImageLoader imageLoader = CreateImageLoader();
+
         switch (Host.Renderer)
         {
             case GLRenderer:
-                TextureManager = new GLTextureManager(Host.Renderer, GLRenderer.GL, embeddedResourceStorage.GetStorageForDirectory("Textures"), CreateImageLoader());
+                TextureManager = new GLTextureManager(Host.Renderer, GLRenderer.GL, embeddedResourceStorage.GetStorageForDirectory("Textures"), imageLoader);
                 VideoStore = new VideoStore(embeddedResourceStorage.GetStorageForDirectory("Videos"), Host.Renderer, TextureManager);
                 FontStore = new RendererFontStore(Host.Renderer);
                 // TODO: This will exposed all framework file resource out, maybe find better way?
@@ -173,7 +175,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider, IDis
                 break;
 
             case MetalRenderer:
-                TextureManager = new MetalTextureManager(Host.Renderer, embeddedResourceStorage.GetStorageForDirectory("Textures"), CreateImageLoader());
+                TextureManager = new MetalTextureManager(Host.Renderer, embeddedResourceStorage.GetStorageForDirectory("Textures"), imageLoader);
                 FontStore = new RendererFontStore(Host.Renderer);
                 var metalFrameworkFontStorage = Host.FrameworkStorage.GetStorageForDirectory("Fonts");
                 var metalFontStorage = new CompositeStorage(metalFrameworkFontStorage, embeddedResourceStorage.GetStorageForDirectory("Fonts"));
@@ -182,11 +184,11 @@ public partial class App : Container, IFocusManager, IInputManagerProvider, IDis
                 break;
 
             case D3D11Renderer:
-                TextureManager = new D3D11TextureManager(Host.Renderer, embeddedResourceStorage.GetStorageForDirectory("Textures"), CreateImageLoader());
+                TextureManager = new D3D11TextureManager(Host.Renderer, embeddedResourceStorage.GetStorageForDirectory("Textures"), imageLoader);
                 FontStore = new RendererFontStore(Host.Renderer);
-                var d3d11FrameworkFontStorage = Host.FrameworkStorage.GetStorageForDirectory("Fonts");
-                var d3d11FontStorage = new CompositeStorage(d3d11FrameworkFontStorage, embeddedResourceStorage.GetStorageForDirectory("Fonts"));
-                FontStore.LoadDefaultFont(d3d11FontStorage);
+                var d3D11FrameworkFontStorage = Host.FrameworkStorage.GetStorageForDirectory("Fonts");
+                var d3D11FontStorage = new CompositeStorage(d3D11FrameworkFontStorage, embeddedResourceStorage.GetStorageForDirectory("Fonts"));
+                FontStore.LoadDefaultFont(d3D11FontStorage);
                 VideoStore = new VideoStore(embeddedResourceStorage.GetStorageForDirectory("Videos"), Host.Renderer, TextureManager);
                 break;
 
@@ -194,6 +196,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider, IDis
                 throw new NotSupportedException($"Renderer type {Host.Renderer.GetType().FullName} is not supported.");
         }
         Cache(TextureManager);
+        Cache(imageLoader);
         Cache(FontStore);
 
         Cache<IAudioStore<ITrack>>(TrackStore);

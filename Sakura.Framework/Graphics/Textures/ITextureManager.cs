@@ -41,6 +41,29 @@ public interface ITextureManager : IDisposable
     bool Evict(string path);
 
     /// <summary>
+    /// If a reference-counted texture is already held for <paramref name="cacheKey"/>, increments its
+    /// reference count and returns it (no decode/upload). Returns false otherwise, in which case the
+    /// caller should decode and call <see cref="AcquireSharedTexture"/>. Balance with
+    /// <see cref="ReleaseSharedTexture"/>. See <see cref="SharedTextureStore"/>.
+    /// </summary>
+    bool TryAcquireSharedTexture(string cacheKey, out Texture texture);
+
+    /// <summary>
+    /// Returns a reference-counted texture shared under <paramref name="cacheKey"/>, uploading
+    /// <paramref name="pixelData"/> on first use or reusing (and ref-counting) the existing one. Use for
+    /// images shown in multiple places or reloaded repeatedly (e.g. cover art). Every acquire must be
+    /// balanced by a <see cref="ReleaseSharedTexture"/>; do not <see cref="Texture.Dispose"/> the result
+    /// directly, as it may be shared.
+    /// </summary>
+    Texture AcquireSharedTexture(string cacheKey, int width, int height, ReadOnlySpan<byte> pixelData);
+
+    /// <summary>
+    /// Releases one reference previously taken via <see cref="TryAcquireSharedTexture"/> or
+    /// <see cref="AcquireSharedTexture"/>. The GPU texture is disposed once the last reference is released.
+    /// </summary>
+    void ReleaseSharedTexture(string cacheKey);
+
+    /// <summary>
     /// Retrieves all currently loaded and cached regular textures.
     /// </summary>
     IEnumerable<Texture> GetAllTextures();

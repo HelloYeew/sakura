@@ -30,6 +30,7 @@ public sealed class MetalRenderer : IMetalRenderer
     private BlendingMode currentBlendMode = BlendingMode.Alpha;
 
     private readonly ConcurrentQueue<Action> drawThreadQueue = new();
+    private readonly Sakura.Framework.Graphics.Textures.TextureUploadQueue textureUploadQueue = new();
 
     private DrawNode rootNode;
     private Matrix4x4 projectionMatrix = Matrix4x4.Identity;
@@ -238,6 +239,9 @@ public sealed class MetalRenderer : IMetalRenderer
         // Drain queued uploads (textures, glyphs) on the draw thread, before the render pass opens.
         while (drawThreadQueue.TryDequeue(out var action))
             action();
+
+        // Budgeted texture uploads spread a burst across frames (see TextureUploadQueue).
+        textureUploadQueue.Process();
 
         SakuraMetalNative.sakura_metal_begin_frame(device, clear_color.r, clear_color.g, clear_color.b, clear_color.a);
 
@@ -681,6 +685,8 @@ public sealed class MetalRenderer : IMetalRenderer
     #region Utilities
 
     public void ScheduleToDrawThread(Action action) => drawThreadQueue.Enqueue(action);
+
+    public void ScheduleTextureUpload(Action upload, long approximateBytes) => textureUploadQueue.Enqueue(upload, approximateBytes);
 
     public void FlushBatch()
     {

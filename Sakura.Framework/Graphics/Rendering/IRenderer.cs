@@ -83,10 +83,20 @@ public interface IRenderer
     void ScheduleToDrawThread(Action action);
 
     /// <summary>
+    /// Schedules a texture upload to run on the draw thread within a per-frame byte budget, spreading a
+    /// burst of uploads across frames so no single frame stalls uploading them all (see
+    /// <see cref="Textures.TextureUploadQueue"/>). <paramref name="approximateBytes"/> is the rough
+    /// upload size used to spend the budget.
+    /// The default implementation is unbudgeted and simply forwards to <see cref="ScheduleToDrawThread"/>;
+    /// backends that own a <see cref="Textures.TextureUploadQueue"/> override this to honor the budget.
+    /// </summary>
+    void ScheduleTextureUpload(Action upload, long approximateBytes) => ScheduleToDrawThread(upload);
+
+    /// <summary>
     /// The current orthographic projection matrix used for rendering.
     /// Custom shaders must set this on their own program before drawing.
     /// </summary>
-    Maths.Matrix4x4 ProjectionMatrix { get; }
+    Matrix4x4 ProjectionMatrix { get; }
 
     /// <summary>
     /// Flushes any pending batched geometry to the GPU immediately.

@@ -72,6 +72,15 @@ public partial class DelayedLoadWrapperContainer : Container
     /// </summary>
     protected virtual bool IsOnScreen => !IsMaskedAway;
 
+    /// <summary>
+    /// How long in milliseconds this wrapper must be continuously on screen before its content loads. Evaluated
+    /// every frame, so subclasses can vary it dynamically e.g. a carousel can return a larger delay for
+    /// items further from the selection so the ones nearest the center load first, or lengthen it while
+    /// the list is scrolling fast so items merely flicked past never load. Defaults to
+    /// <see cref="TimeBeforeLoad"/>.
+    /// </summary>
+    protected virtual double LoadDelay => TimeBeforeLoad;
+
     public override void Update()
     {
         base.Update();
@@ -84,7 +93,7 @@ public partial class DelayedLoadWrapperContainer : Container
             else
                 TimeVisible = 0;
 
-            if (TimeVisible >= TimeBeforeLoad)
+            if (TimeVisible >= LoadDelay)
                 beginLoad();
         }
     }

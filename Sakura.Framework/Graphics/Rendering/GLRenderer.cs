@@ -134,6 +134,7 @@ public class GLRenderer : IGLRenderer, IDisposable
     private DrawNode rootNode;
 
     private readonly ConcurrentQueue<Action> drawThreadQueue = new ConcurrentQueue<Action>();
+    private readonly Textures.TextureUploadQueue textureUploadQueue = new Textures.TextureUploadQueue();
 
     private uint currentFrameBufferHandle;
     private int currentViewportWidth = 1;
@@ -278,11 +279,18 @@ public class GLRenderer : IGLRenderer, IDisposable
         {
             action.Invoke();
         }
+
+        textureUploadQueue.Process();
     }
 
     public void ScheduleToDrawThread(Action action)
     {
         drawThreadQueue.Enqueue(action);
+    }
+
+    public void ScheduleTextureUpload(Action upload, long approximateBytes)
+    {
+        textureUploadQueue.Enqueue(upload, approximateBytes);
     }
 
     public void FlushBatch()
