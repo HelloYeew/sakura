@@ -236,6 +236,10 @@ public sealed class MetalRenderer : IMetalRenderer
         if (device == nint.Zero)
             return;
 
+        // Release native resources orphaned by the GC (a missed Dispose) before anything else this
+        // frame, so their memory is freed before new allocations are made against it.
+        Sakura.Framework.Graphics.Textures.NativeDisposalQueue.Process();
+
         // Drain queued uploads (textures, glyphs) on the draw thread, before the render pass opens.
         while (drawThreadQueue.TryDequeue(out var action))
             action();

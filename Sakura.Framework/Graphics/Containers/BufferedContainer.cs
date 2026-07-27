@@ -1,10 +1,13 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
+using Sakura.Framework.Allocation;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Maths;
+using Sakura.Framework.Platform;
 
 namespace Sakura.Framework.Graphics.Containers;
 
@@ -26,12 +29,13 @@ namespace Sakura.Framework.Graphics.Containers;
 /// captures that region). The container's <see cref="Drawable.Color"/> tints the composite.
 /// </para>
 /// <remarks>
-/// The framebuffers live in GPU memory for the lifetime of the process once created —
-/// prefer pooling/reusing buffered containers over creating and discarding many of them.
-/// Effects (blur/grayscale) currently run on the OpenGL renderer only.
+/// The framebuffers are GPU allocations sized to this container's on-screen bounds, released when the
+/// container is disposed (which happens automatically on removal — see <see cref="Dispose"/>). Reusing
+/// a buffered container is still cheaper than creating and discarding many of them, since each new one
+/// pays a fresh framebuffer allocation.
 /// </remarks>
 /// </summary>
-public partial class BufferedContainer : Container
+public partial class BufferedContainer : Container, IDisposable
 {
     /// <summary>
     /// When true, the offscreen buffer is only re-rendered when something in the subtree
@@ -244,9 +248,64 @@ public partial class BufferedContainer : Container
     public BufferedContainer(bool pixelSnapping = false)
     {
         PixelSnapping = pixelSnapping;
+
+        // The framebuffers are GPU allocations proportional to this container's on-screen size, so a
+        // buffered container that leaves the tree must not keep them. Opt in to disposal on removal.
+        DisposeOnRemoval = true;
     }
 
     protected override DrawNode CreateDrawNode() => new BufferedContainerDrawNode();
+
+    private IRenderer? renderer;
+
+    [BackgroundDependencyLoader]
+    private void load(AppHost host)
+    {
+        renderer = host.Renderer;
+    }
+
+    /// <summary>
+    /// Releases this container's framebuffers. Called automatically when the container is removed from
+    /// its parent (see <see cref="Drawable.DisposeOnRemoval"/>).
+    /// </summary>
+    /// <remarks>
+    /// Not a one-way latch: the draw node recreates any missing buffer on the next frame it draws, so a
+    /// container that is removed and later re-added simply pays a fresh allocation. Idempotency comes
+    /// from clearing the references below, which is what prevents a double free.
+    /// </remarks>
+    public void Dispose()
+    {
+        // Detach the buffers before scheduling: the release runs a frame later, and if this container is
+        // re-added and drawn in the meantime the draw node will have allocated replacements into
+        // SharedData. Handing the closure a snapshot (and clearing the fields now) means the release can
+        // only ever free the buffers that existed at this moment.
+        var frameBuffer = SharedData.FrameBuffer;
+        var effectBuffers = new IFrameBuffer?[SharedData.EffectBuffers.Length];
+
+        for (int i = 0; i < effectBuffers.Length; i++)
+        {
+            effectBuffers[i] = SharedData.EffectBuffers[i];
+            SharedData.EffectBuffers[i] = null;
+        }
+
+        SharedData.FrameBuffer = null;
+        // FinalEffectBuffer aliases whichever EffectBuffer the ping-pong landed on, so it is only
+        // cleared here — disposing it as well would be a double free.
+        SharedData.FinalEffectBuffer = null;
+        SharedData.RenderedVersion = -1;
+
+        if (renderer == null)
+            return;
+
+        // Framebuffers are draw-thread-owned, releasing them anywhere else is invalid on every backend.
+        renderer.ScheduleToDrawThread(() =>
+        {
+            frameBuffer?.Dispose();
+
+            foreach (var buffer in effectBuffers)
+                buffer?.Dispose();
+        });
+    }
 
     /// <summary>
     /// Draw-thread-owned shared state for <see cref="BufferedContainer"/>.

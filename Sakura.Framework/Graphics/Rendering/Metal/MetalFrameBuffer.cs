@@ -49,6 +49,16 @@ public sealed class MetalFrameBuffer : IFrameBuffer
         createAttachment(width, height);
     }
 
+    /// <summary>
+    /// Releases the colour attachment. Must be called on the draw thread.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately has no finalizer: this type owns no native handle of its own (a Metal render pass
+    /// is configured per frame rather than baked into a framebuffer object), so the only native
+    /// resource here is <c>colorTexture</c> — a <see cref="MetalTexture"/>, which carries its own
+    /// finalizer safety net. Reaching into it from a finalizer here would be unsafe anyway, since
+    /// finalization order is undefined.
+    /// </remarks>
     public void Dispose()
     {
         colorTexture?.Dispose();

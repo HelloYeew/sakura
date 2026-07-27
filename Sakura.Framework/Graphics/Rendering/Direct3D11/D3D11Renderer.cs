@@ -420,6 +420,11 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         if (frameLatencyWaitableObject != nint.Zero)
             WaitForSingleObjectEx(frameLatencyWaitableObject, 1000, true);
 
+        // Release native resources orphaned by the GC (a missed Dispose) before anything else this
+        // frame. D3D11's own resources are COM objects that SharpGen already finalizes, so in practice
+        // this only drains cross-backend enqueues, but it keeps frame start uniform across renderers.
+        Textures.NativeDisposalQueue.Process();
+
         while (drawThreadQueue.TryDequeue(out var action))
             action();
 

@@ -37,7 +37,9 @@ public class HeadlessRenderer : IRenderer
 
     public void StartFrame()
     {
-
+        // Headless creates no real native resources, but draining keeps the queue from growing if a
+        // test (or a backend-agnostic component) enqueues one, and keeps behaviour uniform.
+        Textures.NativeDisposalQueue.Process();
     }
 
     public void SetRoot(DrawNode rootDrawNode)

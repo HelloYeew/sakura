@@ -29,6 +29,7 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
     private readonly SpriteText currentTimeText;
     private readonly SpriteText runningTimeText;
     private readonly SpriteText bindsText;
+    private readonly SpriteText vramText;
 
     private int lastTextureUpdates = -1;
     private int lastAtlasPageCount = -1;
@@ -135,6 +136,18 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
             Height = 30
         });
 
+        Add(vramText = new SpriteText
+        {
+            Text = "",
+            Font = FontUsage.Default.With(size: 16),
+            Anchor = Anchor.TopLeft,
+            Origin = Anchor.TopLeft,
+            Position = new Vector2(10, 110),
+            Color = Color.LightGreen,
+            RelativeSizeAxes = Axes.X,
+            Height = 30
+        });
+
         Add(contentContainer = new Container
         {
             Anchor = Anchor.Centre,
@@ -192,6 +205,13 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
         int textureBinds = GlobalStatistics.Get<int>("Renderer", "Texture Binds (Last Frame)").Value;
         bindsText.Text = $"Texture Binds (Last Frame): {textureBinds}";
 
+        long liveBytes = TextureRegistry.LiveBytes;
+        long peakBytes = GlobalStatistics.Get<long>("Textures", "Peak Bytes").Value;
+        long reclaimed = GlobalStatistics.Get<long>("Textures", "Reclaimed by GC").Value;
+
+        vramText.Text = $"Live: {TextureRegistry.LiveCount} textures, {toMegabytes(liveBytes)} (peak {toMegabytes(peakBytes)})"
+                        + (reclaimed > 0 ? $"   —   {reclaimed} reclaimed by GC (a Dispose is being missed)" : "");
+
         if (host.UpdateClock.CurrentTime - lastUpdateTime < 100)
             return;
 
@@ -214,15 +234,21 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
         }
     }
 
+    private static string toMegabytes(long bytes) => $"{bytes / 1024.0 / 1024.0:0.0} MB";
+
     private void refreshTextures()
     {
         flowContainer.Clear();
 
-        foreach (var tex in textureManager.GetAllTextures())
-        {
-            if (tex == null) continue;
-            flowContainer.Add(createTextureCard($"Texture ({tex.Width}x{tex.Height})", tex));
-        }
+        var fontAtlas = fontStore.Atlas;
+
+        var standalone = textureManager.GetAllTextures()
+                                       .Where(t => t != null && !(fontAtlas?.OwnsNativeTexture(t.BackendTexture) ?? false))
+                                       .OrderByDescending(t => (long)t.Width * t.Height)
+                                       .ToList();
+
+        foreach (var tex in standalone)
+            flowContainer.Add(createTextureCard(describe(tex), tex));
 
         var videoTextures = textureManager.GetAllVideoTextures()
             .Where(vt => vt != null)
@@ -250,15 +276,26 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
             }
         }
 
-        if (fontStore.Atlas != null)
+        if (fontAtlas != null)
         {
             int pageIndex = 0;
-            foreach (var atlasPage in fontStore.Atlas.GetAllPages())
+            foreach (var atlasPage in fontAtlas.GetAllPages())
             {
                 flowContainer.Add(createTextureCard($"Font Atlas Page {pageIndex} ({atlasPage.Width}x{atlasPage.Height})", atlasPage));
                 pageIndex++;
             }
         }
+    }
+
+    /// <summary>
+    /// A card label for a standalone texture
+    /// </summary>
+    private static string describe(Texture texture)
+    {
+        long bytes = (long)texture.Width * texture.Height * 4;
+        string size = $"{texture.Width}x{texture.Height}, {toMegabytes(bytes)}";
+
+        return string.IsNullOrEmpty(texture.Name) ? $"Texture ({size})" : $"{texture.Name} ({size})";
     }
 
     /// <summary>
@@ -344,7 +381,7 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
                             Anchor = Anchor.TopLeft,
                             Origin = Anchor.TopLeft,
                             Text = title,
-                            Font = FontUsage.Default.With(size: 14),
+                            Font = FontUsage.Default.With(size: 10),
                             Color = Color.White
                         },
                         new Container

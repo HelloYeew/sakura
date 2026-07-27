@@ -74,15 +74,40 @@ public class GLFrameBuffer : IFrameBuffer
         createAttachment(width, height);
     }
 
+    /// <summary>
+    /// Deletes the framebuffer object and its colour attachment. Must be called on the draw thread.
+    /// </summary>
     public void Dispose()
     {
+        GC.SuppressFinalize(this);
+
         colorTexture?.Dispose();
         colorTexture = null;
 
-        if (Handle != 0)
-        {
-            gl.DeleteFramebuffer(Handle);
-            Handle = 0;
-        }
+        uint claimed = Handle;
+        Handle = 0;
+
+        if (claimed != 0)
+            gl.DeleteFramebuffer(claimed);
+    }
+
+    /// <summary>
+    /// Safety net for a framebuffer dropped without being disposed. Only the framebuffer object name is
+    /// released here — the colour attachment is a <see cref="GLTexture"/> with its own
+    /// finalizer, and reaching into it from this one would be unsafe (finalization order is undefined).
+    /// </summary>
+    ~GLFrameBuffer()
+    {
+        uint claimed = Handle;
+        if (claimed == 0)
+            return;
+
+        Handle = 0;
+
+        var glApi = gl;
+        if (glApi == null)
+            return;
+
+        NativeDisposalQueue.Enqueue(() => glApi.DeleteFramebuffer(claimed));
     }
 }
