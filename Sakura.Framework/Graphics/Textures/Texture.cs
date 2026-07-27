@@ -28,6 +28,17 @@ public class Texture : IDisposable
     public int Height { get; }
 
     /// <summary>
+    /// A human-readable label for debugging and tooling (shown by the texture viewer). Set it to
+    /// whatever identifies the texture in the game or app's own terms like a source path, a cache key, or a
+    /// description that you want
+    /// </summary>
+    /// <remarks>
+    /// Worth setting on anything created from raw pixel data: without it the viewer can only show
+    /// dimensions, and a screen full of identically-sized anonymous cards is not diagnosable.
+    /// </remarks>
+    public string? Name { get; set; }
+
+    /// <summary>
     /// True once the GPU upload has completed and the texture is safe to render.
     /// </summary>
     public bool IsAvailable => BackendTexture?.Available ?? false;
@@ -41,6 +52,8 @@ public class Texture : IDisposable
         UvRect = new RectangleF(0, 0, 1, 1);
         Width = backendTexture.Width;
         Height = backendTexture.Height;
+
+        TextureRegistry.Register(this);
     }
 
     /// <summary>
@@ -53,6 +66,8 @@ public class Texture : IDisposable
         UvRect = uvRect;
         Width = (int)(backendTexture.Width * uvRect.Width);
         Height = (int)(backendTexture.Height * uvRect.Height);
+
+        TextureRegistry.Register(this);
     }
 
     /// <summary>
@@ -66,10 +81,28 @@ public class Texture : IDisposable
         UvRect = new RectangleF(0, 0, 1, 1);
         Width = width;
         Height = height;
+
+        TextureRegistry.Register(this);
     }
+
+    /// <summary>
+    /// Whether this texture has been disposed. A disposed texture is excluded from
+    /// <see cref="TextureRegistry"/> enumeration even while a reference to it is still held.
+    /// </summary>
+    public bool IsDisposed { get; private set; }
 
     public void Dispose()
     {
+        if (IsDisposed)
+            return;
+
+        IsDisposed = true;
+
+        TextureRegistry.Unregister(this);
         BackendTexture?.Dispose();
     }
+
+    public override string ToString() => Name == null
+        ? $"{Width}x{Height}"
+        : $"{Name} ({Width}x{Height})";
 }

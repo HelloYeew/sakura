@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Sakura.Framework.Graphics.Textures;
 
@@ -39,7 +40,9 @@ public class HeadlessTextureManager : ITextureManager
 
     private static Texture createDummyTexture(int width, int height) => new Texture(new HeadlessNativeTexture(width, height));
 
-    public IEnumerable<Texture> GetAllTextures() => new[] { WhitePixel };
+    public IEnumerable<Texture> GetAllTextures() => TextureRegistry.GetAll().Where(t => t.BackendTexture != null);
+
+    public IEnumerable<Texture> GetCachedTextures() => new[] { WhitePixel };
     public void RegisterVideoTexture(IVideoTexture texture) { }
     public void UnregisterVideoTexture(IVideoTexture texture) { }
     public IEnumerable<IVideoTexture> GetAllVideoTextures() => Array.Empty<IVideoTexture>();

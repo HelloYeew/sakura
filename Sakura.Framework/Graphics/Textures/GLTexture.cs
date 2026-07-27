@@ -108,7 +108,7 @@ public class GLTexture : INativeTexture
         }
 
         gl.BindTexture(TextureTarget.Texture2D, GLHandle);
-        
+
         if (mipmapsDirty)
         {
             gl.GenerateMipmap(TextureTarget.Texture2D);
@@ -150,15 +150,37 @@ public class GLTexture : INativeTexture
     {
         if (disposed) return;
 
-        if (GLHandle != 0)
-        {
-            // Scrub the renderer's slot tracking first: GL recycles handle IDs, so a
-            // future texture could alias this handle and be mistaken for already-bound.
-            Rendering.GLRenderer.NotifyTextureDeleted(GLHandle);
-            gl.DeleteTexture(GLHandle);
-        }
-
+        uint claimed = GLHandle;
+        GLHandle = 0;
         disposed = true;
+
         GC.SuppressFinalize(this);
+
+        if (claimed != 0)
+        {
+            // GL recycles handle IDs, so a future texture could
+            // alias this handle and be mistaken for already-bound
+            Rendering.GLRenderer.NotifyTextureDeleted(claimed);
+            gl.DeleteTexture(claimed);
+        }
+    }
+
+    ~GLTexture()
+    {
+        uint claimed = GLHandle;
+        if (claimed == 0)
+            return;
+
+        GLHandle = 0;
+
+        var glApi = gl;
+        if (glApi == null)
+            return;
+
+        NativeDisposalQueue.Enqueue(() =>
+        {
+            Rendering.GLRenderer.NotifyTextureDeleted(claimed);
+            glApi.DeleteTexture(claimed);
+        });
     }
 }

@@ -89,6 +89,7 @@ public class GLTextureManager : ITextureManager
                 }, (long)imageWidth * imageHeight * 4);
             }
 
+            texture.Name = path;
             textureCache[path] = texture;
             GlobalStatistics.Get<int>("Textures", "Loaded Textures").Value = textureCache.Count;
             return texture;
@@ -121,6 +122,7 @@ public class GLTextureManager : ITextureManager
                 renderer.ScheduleToDrawThread(() => oldNative?.Dispose());
             }
 
+            texture.Name = cacheKey;
             textureCache[cacheKey] = texture;
             GlobalStatistics.Get<int>("Textures", "Loaded Textures").Value = textureCache.Count;
             GlobalStatistics.Get<int>("Textures", "Texture Updates").Value++;
@@ -140,6 +142,7 @@ public class GLTextureManager : ITextureManager
             var glTexture = new GLTexture(gl, width, height);
             var texture = new Texture(glTexture);
             renderer.ScheduleTextureUpload(() => glTexture.Upload(dataCopy), (long)width * height * 4);
+            texture.Name = cacheKey;
             return texture;
         });
     }
@@ -200,7 +203,10 @@ public class GLTextureManager : ITextureManager
     /// <summary>
     /// Returns only standalone (non-atlas) cached textures, so the viewer can show atlas pages separately.
     /// </summary>
-    public IEnumerable<Texture> GetAllTextures() => textureCache.Values.Where(t => !Atlas.OwnsNativeTexture(t.BackendTexture));
+    public IEnumerable<Texture> GetAllTextures() => TextureRegistry.GetAll()
+        .Where(t => t.BackendTexture != null && !Atlas.OwnsNativeTexture(t.BackendTexture));
+
+    public IEnumerable<Texture> GetCachedTextures() => textureCache.Values.Where(t => !Atlas.OwnsNativeTexture(t.BackendTexture));
 
     public void RegisterVideoTexture(IVideoTexture texture) => videoTextures.TryAdd(texture, 0);
     public void UnregisterVideoTexture(IVideoTexture texture) => videoTextures.TryRemove(texture, out _);

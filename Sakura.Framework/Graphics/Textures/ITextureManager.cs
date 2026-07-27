@@ -64,9 +64,17 @@ public interface ITextureManager : IDisposable
     void ReleaseSharedTexture(string cacheKey);
 
     /// <summary>
-    /// Retrieves all currently loaded and cached regular textures.
+    /// Every live standalone texture in the process, whether it was cached under a key.
+    /// Exclude atlas that report seperately via <see cref="Atlas"/>. For the narrower "what is cached under a key"
+    /// question, use <see cref="GetCachedTextures"/>.
     /// </summary>
     IEnumerable<Texture> GetAllTextures();
+
+    /// <summary>
+    /// Only the textures held in this manager's key-based cache (i.e. loaded via <see cref="Get"/> or
+    /// given a cache key). A subset of <see cref="GetAllTextures"/>.
+    /// </summary>
+    IEnumerable<Texture> GetCachedTextures();
 
     /// <summary>
     /// Registers a video texture so it appears in the texture viewer and can be tracked.

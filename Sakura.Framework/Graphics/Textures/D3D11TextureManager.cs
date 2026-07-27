@@ -77,6 +77,7 @@ public class D3D11TextureManager : ITextureManager
                 renderer.ScheduleTextureUpload(() => nativeTexture.Upload(pixelDataCopy), (long)imageWidth * imageHeight * 4);
             }
 
+            texture.Name = path;
             textureCache[path] = texture;
             GlobalStatistics.Get<int>("Textures", "Loaded Textures").Value = textureCache.Count;
             return texture;
@@ -109,6 +110,7 @@ public class D3D11TextureManager : ITextureManager
                 renderer.ScheduleToDrawThread(() => oldNative?.Dispose());
             }
 
+            texture.Name = cacheKey;
             textureCache[cacheKey] = texture;
             GlobalStatistics.Get<int>("Textures", "Loaded Textures").Value = textureCache.Count;
             GlobalStatistics.Get<int>("Textures", "Texture Updates").Value++;
@@ -128,6 +130,7 @@ public class D3D11TextureManager : ITextureManager
             var nativeTexture = renderer.CreateNativeTexture(width, height);
             var texture = new Texture(nativeTexture);
             renderer.ScheduleTextureUpload(() => nativeTexture.Upload(dataCopy), (long)width * height * 4);
+            texture.Name = cacheKey;
             return texture;
         });
     }
@@ -168,7 +171,10 @@ public class D3D11TextureManager : ITextureManager
         atlas.Dispose();
     }
 
-    public IEnumerable<Texture> GetAllTextures() => textureCache.Values.Where(t => !atlas.OwnsNativeTexture(t.BackendTexture));
+    public IEnumerable<Texture> GetAllTextures() => TextureRegistry.GetAll()
+        .Where(t => t.BackendTexture != null && !atlas.OwnsNativeTexture(t.BackendTexture));
+
+    public IEnumerable<Texture> GetCachedTextures() => textureCache.Values.Where(t => !atlas.OwnsNativeTexture(t.BackendTexture));
 
     public void RegisterVideoTexture(IVideoTexture texture) => videoTextures.TryAdd(texture, 0);
     public void UnregisterVideoTexture(IVideoTexture texture) => videoTextures.TryRemove(texture, out _);

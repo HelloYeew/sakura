@@ -65,7 +65,7 @@ public class TextureAtlas : IDisposable
         this.height = height;
         this.usage = usage;
 
-        pages.Add(new AtlasPage(renderer, width, height));
+        pages.Add(new AtlasPage(renderer, width, height, $"{statisticsGroup} Atlas Page 0"));
     }
 
     /// <summary>
@@ -89,7 +89,7 @@ public class TextureAtlas : IDisposable
 
         if (!canFitInPage(page, regionWidth, regionHeight))
         {
-            page = new AtlasPage(renderer, width, height);
+            page = new AtlasPage(renderer, width, height, $"{statisticsGroup} Atlas Page {pages.Count}");
             pages.Add(page);
             GlobalStatistics.Get<int>(statisticsGroup, "Atlas Pages").Value = pages.Count;
         }
@@ -174,9 +174,13 @@ public class TextureAtlas : IDisposable
         GC.SuppressFinalize(this);
     }
 
+    /// <summary>
+    /// A <see cref="Texture"/> view of each atlas page, for tooling that wants to display the pages
+    /// themselves.
+    /// </summary>
     public IEnumerable<Texture> GetAllPages()
     {
-        return pages.Select(page => new Texture(page.NativeTexture));
+        return pages.Select(page => page.PageTexture);
     }
 
     /// <summary>
@@ -200,14 +204,21 @@ public class TextureAtlas : IDisposable
     private class AtlasPage : IDisposable
     {
         public INativeTexture NativeTexture { get; }
+
+        public Texture PageTexture { get; }
+
         public int CurrentX { get; set; } = 0;
         public int CurrentY { get; set; } = 0;
         public int RowHeight { get; set; } = 0;
 
-        public AtlasPage(IRenderer renderer, int width, int height)
+        public AtlasPage(IRenderer renderer, int width, int height, string name)
         {
             var nativeTexture = renderer.CreateNativeTexture(width, height);
             NativeTexture = nativeTexture;
+            PageTexture = new Texture(nativeTexture)
+            {
+                Name = name
+            };
 
             byte[] emptyData = new byte[width * height * 4];
             renderer.ScheduleToDrawThread(() => nativeTexture.Upload(emptyData));
@@ -215,7 +226,7 @@ public class TextureAtlas : IDisposable
 
         public void Dispose()
         {
-            NativeTexture.Dispose();
+            PageTexture.Dispose();
         }
     }
 }
