@@ -4,6 +4,7 @@
 #nullable disable
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
@@ -278,6 +279,8 @@ public class RendererFontStore : IFontStore
     /// </summary>
     public void AddFont(Storage storage, string filename, string alias = null!)
     {
+        invalidateFallbackCache();
+
         string name = alias ?? Path.GetFileNameWithoutExtension(filename);
 
         fontCache[name] = new Lazy<Font>(() =>
@@ -315,6 +318,8 @@ public class RendererFontStore : IFontStore
     /// <param name="alias">Cache key for the font. If null, uses the filename without extension.</param>
     public void AddFontFromFile(string filePath, string alias = null!)
     {
+        invalidateFallbackCache();
+
         string name = alias ?? Path.GetFileNameWithoutExtension(filePath);
 
         fontCache[name] = new Lazy<Font>(() =>
@@ -353,7 +358,10 @@ public class RendererFontStore : IFontStore
         if (existingKey == alias) return;
 
         if (fontCache.TryGetValue(existingKey, out var existing))
+        {
             fontCache[alias] = existing;
+            invalidateFallbackCache();
+        }
         else
             Logger.Warning($"Cannot alias font '{alias}' to missing key '{existingKey}'.");
     }
@@ -403,47 +411,129 @@ public class RendererFontStore : IFontStore
 
     public void AddFallbackFamily(string familyName)
     {
-        if (!fallbackFamilies.Contains(familyName))
-            fallbackFamilies.Add(familyName);
+        if (fallbackFamilies.Contains(familyName))
+            return;
+
+        fallbackFamilies.Add(familyName);
+        invalidateFallbackCache();
     }
 
     public void InsertFallbackFamily(int index, string familyName)
     {
-        if (!fallbackFamilies.Contains(familyName))
-            fallbackFamilies.Insert(index, familyName);
+        if (fallbackFamilies.Contains(familyName))
+            return;
+
+        fallbackFamilies.Insert(index, familyName);
+        invalidateFallbackCache();
     }
 
     public void ClearFallbackFamilies()
     {
         fallbackFamilies.Clear();
+        invalidateFallbackCache();
     }
 
+    /// <summary>
+    /// Fallback chains, keyed by the only parts of a <see cref="FontUsage"/> that affect the result (the
+    /// family is substituted per fallback, and size plays no part in resolution).
+    /// </summary>
+    private readonly Dictionary<(string weight, bool italics), FallbackChain> fallbackCache = new Dictionary<(string, bool), FallbackChain>();
+
+    /// <summary>
+    /// The fallback fonts to try, in order, for glyphs the primary font does not cover.
+    /// </summary>
     public IEnumerable<Font> GetFallbacks(FontUsage usage)
     {
-        var returnedFonts = new HashSet<Font>();
+        var key = (usage.Weight, usage.Italics);
 
-        foreach (string family in fallbackFamilies)
+        if (!fallbackCache.TryGetValue(key, out var chain))
+            fallbackCache[key] = chain = new FallbackChain(this, usage);
+
+        return chain;
+    }
+
+    /// <summary>
+    /// A fallback chain for one (weight, italics) combination, resolved one family at a time as a
+    /// consumer walks it, and remembering what it resolved so later layouts pay nothing.
+    /// </summary>
+    private sealed class FallbackChain : IEnumerable<Font>
+    {
+        private readonly RendererFontStore store;
+        private readonly FontUsage usage;
+
+        /// <summary>
+        /// Fonts resolved so far, in chain order. Append-only.
+        /// </summary>
+        private readonly List<Font> resolved = new List<Font>();
+
+        private readonly HashSet<Font> seen = new HashSet<Font>();
+
+        /// <summary>
+        /// How far into <see cref="fallbackFamilies"/> resolution has reached.
+        /// </summary>
+        private int nextFamily;
+
+        public FallbackChain(RendererFontStore store, FontUsage usage)
         {
-            var fallbackFont = Get(usage.With(family: family));
+            this.store = store;
+            this.usage = usage;
+        }
 
-            if (fallbackFont == defaultFont || fallbackFont == null)
-                fallbackFont = Get(family);
-
-            // A registered fallback family that resolves to the default font was never loaded (its
-            // file is missing, or AddFallbackFamily was called without a matching AddFont/loadFamily).
-            // Such a family contributes nothing to glyph coverage; warn once so the misconfiguration
-            // is visible instead of silently rendering missing glyphs as .notdef ("tofu").
-            if (fallbackFont == null || fallbackFont == defaultFont)
+        public IEnumerator<Font> GetEnumerator()
+        {
+            for (int i = 0; ; i++)
             {
-                if (warnedMissingFallbacks.Add(family))
-                    Logger.Warning($"Fallback family '{family}' is registered but not loaded; it will not contribute glyphs. Did you forget to load it?");
-                continue;
+                if (i >= resolved.Count && !resolveNext())
+                    yield break;
+
+                yield return resolved[i];
+            }
+        }
+
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+        /// <summary>
+        /// Loads and appends the next family that resolves to a usable font, skipping ones that are
+        /// registered but not loaded. Returns false once the chain is exhausted.
+        /// </summary>
+        private bool resolveNext()
+        {
+            while (nextFamily < store.fallbackFamilies.Count)
+            {
+                string family = store.fallbackFamilies[nextFamily++];
+
+                var fallbackFont = store.Get(usage.With(family: family));
+
+                if (fallbackFont == store.defaultFont || fallbackFont == null)
+                    fallbackFont = store.Get(family);
+
+                // A registered fallback family that resolves to the default font was never loaded (its
+                // file is missing, or AddFallbackFamily was called without a matching AddFont/loadFamily).
+                // Such a family contributes nothing to glyph coverage, warn once so the misconfiguration
+                // is visible instead of silently rendering missing glyphs as .notdef ("tofu").
+                if (fallbackFont == null || fallbackFont == store.defaultFont)
+                {
+                    if (store.warnedMissingFallbacks.Add(family))
+                        Logger.Debug($"Fallback family '{family}' is registered but not loaded, it will not contribute glyphs. Did you forget to load it?");
+
+                    continue;
+                }
+
+                if (!seen.Add(fallbackFont))
+                    continue;
+
+                resolved.Add(fallbackFont);
+                return true;
             }
 
-            if (returnedFonts.Add(fallbackFont))
-                yield return fallbackFont;
+            return false;
         }
     }
+
+    /// <summary>
+    /// Drops resolved fallback chains, so a newly registered family or font is picked up.
+    /// </summary>
+    private void invalidateFallbackCache() => fallbackCache.Clear();
 
     public void ClearCaches()
     {
@@ -456,6 +546,8 @@ public class RendererFontStore : IFontStore
                 font.Value.ClearCache();
             }
         }
+
+        invalidateFallbackCache();
 
         CacheVersion++;
 
