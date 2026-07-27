@@ -411,7 +411,16 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
 
         public void SetState(PerformanceOverlayState state)
         {
+            bool wasHidden = currentState == PerformanceOverlayState.Hidden;
             currentState = state;
+
+            if (wasHidden && state != PerformanceOverlayState.Hidden)
+            {
+                for (int i = 0; i < 3; i++)
+                    lastGcCounts[i] = GC.CollectionCount(i);
+
+                lastRecordedTime = Clock?.CurrentTime ?? 0;
+            }
 
             if (state == PerformanceOverlayState.Compact)
             {
@@ -430,6 +439,9 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
         public override void Update()
         {
             base.Update();
+
+            if (currentState == PerformanceOverlayState.Hidden)
+                return;
 
             if (clock != null && clock.IsRunning)
             {
