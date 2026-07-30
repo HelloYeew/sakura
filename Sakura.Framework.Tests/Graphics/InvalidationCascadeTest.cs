@@ -31,9 +31,9 @@ public class InvalidationCascadeTest
 
         public Vertex[] VerticesForAssert => Vertices;
 
-        // From outside the framework assembly, `protected internal` members are
-        // overridden as `protected`.
-        protected override void UpdateTransforms()
+        // protected internal, not protected: InternalsVisibleTo makes the base member's internal half
+        // visible here, so the override has to match its full accessibility.
+        protected internal override void UpdateTransforms()
         {
             TransformUpdates++;
             base.UpdateTransforms();
@@ -44,7 +44,9 @@ public class InvalidationCascadeTest
     {
         public int TransformUpdates;
 
-        protected override void UpdateTransforms()
+        // protected internal, not protected: InternalsVisibleTo makes the base member's internal half
+        // visible here, so the override has to match its full accessibility.
+        protected internal override void UpdateTransforms()
         {
             TransformUpdates++;
             base.UpdateTransforms();
@@ -72,7 +74,9 @@ public class InvalidationCascadeTest
             }
         }
 
-        protected override void UpdateTransforms()
+        // protected internal, not protected: InternalsVisibleTo makes the base member's internal half
+        // visible here, so the override has to match its full accessibility.
+        protected internal override void UpdateTransforms()
         {
             if (!measured)
             {

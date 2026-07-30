@@ -41,7 +41,9 @@ public class GLTextureManager : ITextureManager
         this.gl = gl;
         this.storage = storage;
         this.imageLoader = imageLoader;
-        WhitePixel = new Texture(GLTexture.WhitePixel);
+        // Both are handed to many callers and live for the process, so neither may be released by one of
+        // them (see TextureOwnership.Shared)
+        WhitePixel = new Texture(GLTexture.WhitePixel, TextureOwnership.Shared);
         missingTexture = createNullTexture();
         Atlas = new TextureAtlas(renderer, usage: AtlasUsage.Textures);
     }
@@ -64,29 +66,28 @@ public class GLTextureManager : ITextureManager
             if (stream == null) throw new FileNotFoundException($"Texture not found: {path}");
 
             var rawImage = imageLoader.Load(stream);
-
-            // force a copy of the pooled memory immediately on the update thread
-            byte[] pixelDataCopy = rawImage.Data.ToArray();
             int imageWidth = rawImage.Width;
             int imageHeight = rawImage.Height;
-
-            // dispose the native image on the thread that created it
-            rawImage.Dispose();
 
             Texture? texture = null;
 
             if (imageWidth <= TextureAtlas.MAX_ATLAS_TEXTURE_SIZE && imageHeight <= TextureAtlas.MAX_ATLAS_TEXTURE_SIZE)
-                texture = Atlas.AddRegion(imageWidth, imageHeight, pixelDataCopy);
+            {
+                texture = Atlas.AddRegion(imageWidth, imageHeight, rawImage.Data);
+
+                // The atlas takes its own pooled copy, since the region is blotted into a page rather than
+                // uploaded as a whole texture.
+                rawImage.Dispose();
+            }
 
             if (texture == null)
             {
                 var glTexture = new GLTexture(gl, imageWidth, imageHeight);
                 texture = new Texture(glTexture);
 
-                renderer.ScheduleTextureUpload(() =>
-                {
-                    glTexture.Upload(pixelDataCopy);
-                }, (long)imageWidth * imageHeight * 4);
+                // Ownership of the decoded pixels passes to the upload, which releases them afterward, so
+                // nothing is copied between decode and GPU.
+                TextureUploads.ScheduleOwned(renderer, glTexture, rawImage);
             }
 
             texture.Name = path;
@@ -106,21 +107,12 @@ public class GLTextureManager : ITextureManager
         var glTexture = new GLTexture(gl, width, height);
         var texture = new Texture(glTexture);
 
-        byte[] dataCopy = pixelData.ToArray();
-
-        renderer.ScheduleTextureUpload(() =>
-        {
-            ReadOnlySpan<byte> span = dataCopy;
-            glTexture.Upload(span);
-        }, (long)width * height * 4);
+        TextureUploads.Schedule(renderer, glTexture, width, height, pixelData);
 
         if (!string.IsNullOrEmpty(cacheKey))
         {
             if (textureCache.TryGetValue(cacheKey, out var oldTexture))
-            {
-                var oldNative = oldTexture.BackendTexture;
-                renderer.ScheduleToDrawThread(() => oldNative?.Dispose());
-            }
+                release(oldTexture);
 
             texture.Name = cacheKey;
             textureCache[cacheKey] = texture;
@@ -131,33 +123,69 @@ public class GLTextureManager : ITextureManager
         return texture;
     }
 
-    public bool TryAcquireSharedTexture(string cacheKey, out Texture texture) => sharedTextures.TryAcquire(cacheKey, out texture);
+    public Texture? CreateFromStream(Stream stream, TextureCreationOptions options)
+        => TextureUploads.FromStream(stream, options, renderer, imageLoader, sharedTextures, release);
+
+    public bool TryAcquireSharedTexture(string cacheKey, out Texture texture)
+    {
+        bool hit = sharedTextures.TryAcquire(cacheKey, out texture);
+
+        if (hit)
+            SharedTextureStatistics.RecordHit();
+
+        return hit;
+    }
 
     public Texture AcquireSharedTexture(string cacheKey, int width, int height, ReadOnlySpan<byte> pixelData)
     {
-        byte[] dataCopy = pixelData.ToArray();
+        // Copied up front because a span cannot be captured by the creation callback, and released again
+        // below if an existing entry turned out to satisfy the request.
+        var pixels = ImageRawData.CopyFrom(width, height, pixelData);
+        bool used = false;
 
-        return sharedTextures.AddOrAcquire(cacheKey, () =>
+        var texture = sharedTextures.AddOrAcquire(cacheKey, () =>
         {
+            used = true;
+
             var glTexture = new GLTexture(gl, width, height);
-            var texture = new Texture(glTexture);
-            renderer.ScheduleTextureUpload(() => glTexture.Upload(dataCopy), (long)width * height * 4);
-            texture.Name = cacheKey;
-            return texture;
+            var created = new Texture(glTexture) { Name = cacheKey };
+            TextureUploads.ScheduleOwned(renderer, glTexture, pixels);
+            return created;
         });
+
+        if (!used)
+        {
+            pixels.Dispose();
+            SharedTextureStatistics.RecordHit();
+        }
+
+        SharedTextureStatistics.SetKeyCount(sharedTextures.Count);
+        return texture;
     }
 
-    public void ReleaseSharedTexture(string cacheKey) => sharedTextures.Release(cacheKey, texture =>
+    public void ReleaseSharedTexture(string cacheKey)
     {
-        var native = texture.BackendTexture;
-        if (native != null && native != WhitePixel.BackendTexture && native != missingTexture.BackendTexture && !Atlas.OwnsNativeTexture(native))
-            renderer.ScheduleToDrawThread(native.Dispose);
-    });
+        sharedTextures.Release(cacheKey, release);
+        SharedTextureStatistics.SetKeyCount(sharedTextures.Count);
+    }
 
     private Texture createNullTexture()
     {
         var glTexture = new GLTexture(gl, 1, 1);
-        return new Texture(glTexture);
+        return new Texture(glTexture, TextureOwnership.Shared);
+    }
+
+    /// <summary>
+    /// Releases a texture this manager handed out, on the draw thread. See
+    /// <see cref="MetalTextureManager"/>'s equivalent for why this needs no per-call-site ownership
+    /// checks.
+    /// </summary>
+    private void release(Texture texture)
+    {
+        if (texture == null)
+            return;
+
+        renderer.ScheduleToDrawThread(texture.Dispose);
     }
 
     public bool Evict(string path)
@@ -166,13 +194,7 @@ public class GLTextureManager : ITextureManager
 
         if (textureCache.TryGetValue(path, out var texture))
         {
-            if (texture.BackendTexture != null && texture.BackendTexture != WhitePixel.BackendTexture && texture.BackendTexture != missingTexture.BackendTexture && !Atlas.OwnsNativeTexture(texture.BackendTexture))
-            {
-                renderer.ScheduleToDrawThread(() =>
-                {
-                    texture.BackendTexture!.Dispose();
-                });
-            }
+            release(texture);
 
             textureCache.Remove(path);
 
@@ -186,15 +208,7 @@ public class GLTextureManager : ITextureManager
     public void Dispose()
     {
         foreach (var texture in textureCache.Values)
-        {
-            if (texture.BackendTexture != null && texture.BackendTexture != WhitePixel.BackendTexture && texture.BackendTexture != missingTexture.BackendTexture && !Atlas.OwnsNativeTexture(texture.BackendTexture))
-            {
-                renderer.ScheduleToDrawThread(() =>
-                {
-                    texture.BackendTexture!.Dispose();
-                });
-            }
-        }
+            release(texture);
 
         textureCache.Clear();
         Atlas.Dispose();

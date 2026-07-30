@@ -86,9 +86,14 @@ public class HeadlessRenderer : IRenderer
     {
 
     }
+    /// <summary>
+    /// Runs the action immediately. There is no draw thread and no frame boundary to defer to, and
+    /// dropping it would silently skip texture uploads and resource releases — including returning pooled
+    /// upload buffers, which are freed by the scheduled work itself.
+    /// </summary>
     public void ScheduleToDrawThread(Action action)
     {
-
+        action?.Invoke();
     }
 
     public void FlushBatch() { }

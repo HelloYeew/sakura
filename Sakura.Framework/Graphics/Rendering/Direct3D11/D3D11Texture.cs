@@ -144,6 +144,9 @@ public sealed class D3D11Texture : INativeTexture
 
     public void Dispose()
     {
+        // Nothing can be sampled from a released texture; see MetalTexture.Dispose.
+        Available = false;
+
         rtv?.Dispose();
         rtv = null;
         srv?.Dispose();

@@ -395,7 +395,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         var white = new D3D11Texture(device, context, 1, 1);
         white.Upload(new byte[] { 255, 255, 255, 255 });
         D3D11Texture.WhitePixel = white;
-        WhitePixel = new Texture(white);
+        WhitePixel = new Texture(white, TextureOwnership.Shared);
 
         whiteSrvs = new ID3D11ShaderResourceView[texture_slot_count];
         for (int i = 0; i < texture_slot_count; i++)

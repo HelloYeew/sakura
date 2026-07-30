@@ -105,7 +105,10 @@ public class TextureAtlas : IDisposable
             page.RowHeight = 0;
         }
 
-        byte[] pixelDataCopy = rgbaData.ToArray();
+        // Pooled rather than allocated: the blit is deferred to the draw thread, so the caller's span has
+        // to be copied to survive until then, and glyph/sprite additions are frequent enough that
+        // allocating each copy is pure GC churn.
+        var pixels = ImageRawData.CopyFrom(regionWidth, regionHeight, rgbaData);
 
         int destX = page.CurrentX;
         int destY = page.CurrentY;
@@ -113,8 +116,14 @@ public class TextureAtlas : IDisposable
 
         renderer.ScheduleToDrawThread(() =>
         {
-            ReadOnlySpan<byte> span = pixelDataCopy;
-            targetNativeTexture.UploadRegion(destX, destY, regionWidth, regionHeight, span);
+            try
+            {
+                targetNativeTexture.UploadRegion(destX, destY, regionWidth, regionHeight, pixels.Data);
+            }
+            finally
+            {
+                pixels.Dispose();
+            }
         });
 
         // Calculate UVs

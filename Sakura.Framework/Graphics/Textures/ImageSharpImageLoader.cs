@@ -58,10 +58,22 @@ public class ImageSharpImageLoader : IImageLoader
         if (target is { } size)
             reduce(image, size, cropToFill);
 
-        byte[] pixels = new byte[image.Width * image.Height * 4];
-        image.CopyPixelDataTo(pixels);
+        // Rented rather than allocated: a full-screen image is tens of megabytes, i.e. a large-object-heap
+        // block per decode, and a behavior like a game changing backgrounds does this repeatedly. CopyPixelDataTo fills
+        // every byte, so the pool handing back a dirty array is fine.
+        var raw = ImageRawData.Rent(image.Width, image.Height);
 
-        return new ImageRawData(image.Width, image.Height, pixels);
+        try
+        {
+            image.CopyPixelDataTo(raw.GetWritableSpan());
+        }
+        catch
+        {
+            raw.Dispose();
+            throw;
+        }
+
+        return raw;
     }
 
     /// <summary>

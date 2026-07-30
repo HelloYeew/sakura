@@ -154,6 +154,9 @@ public class GLTexture : INativeTexture
         GLHandle = 0;
         disposed = true;
 
+        // Nothing can be sampled from a deleted texture (see MetalTexture.Dispose).
+        Available = false;
+
         GC.SuppressFinalize(this);
 
         if (claimed != 0)

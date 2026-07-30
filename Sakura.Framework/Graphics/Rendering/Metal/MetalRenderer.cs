@@ -118,7 +118,7 @@ public sealed class MetalRenderer : IMetalRenderer
         var whiteTex = new MetalTexture(device, 1, 1);
         whiteTex.Upload(new byte[] { 255, 255, 255, 255 });
         MetalTexture.WhitePixel = whiteTex; // shared fallback for un-uploaded textures (see MetalTexture.Bind)
-        WhitePixel = new Texture(whiteTex);
+        WhitePixel = new Texture(whiteTex, TextureOwnership.Shared);
 
         logDeviceInfo();
     }

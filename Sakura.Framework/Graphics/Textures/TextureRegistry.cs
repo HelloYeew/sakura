@@ -26,15 +26,14 @@ namespace Sakura.Framework.Graphics.Textures;
 /// </para>
 /// <para>
 /// <see cref="LiveCount"/> and <see cref="LiveBytes"/> track textures that were constructed and not yet
-/// disposed. A texture collected <i>without</i> being disposed still counts until the next enumeration
-/// reconciles it — so a persistent gap between these counters and <see cref="GetAll"/>'s result is
-/// itself a signal that something is failing to dispose.
+/// disposed. A texture collected <i>without</i> being disposed is reconciled out of the counters by the
+/// next <see cref="Prune"/> or enumeration, since each entry remembers the byte size it added.
 /// </para>
 /// </remarks>
 public static class TextureRegistry
 {
     private static readonly Lock mutex = new Lock();
-    private static readonly List<WeakReference<Texture>> entries = new List<WeakReference<Texture>>();
+    private static readonly List<Entry> entries = new List<Entry>();
 
     private static readonly GlobalStatistic<int> stat_live_count = GlobalStatistics.Get<int>("Textures", "Live Count");
     private static readonly GlobalStatistic<long> stat_live_bytes = GlobalStatistics.Get<long>("Textures", "Live Bytes");
@@ -68,32 +67,54 @@ public static class TextureRegistry
         }
     }
 
-    internal static void Register(Texture texture)
+    /// <summary>
+    /// One registered texture. Held by the <see cref="Texture"/> itself so unregistering is O(1) rather
+    /// than a search, and it remembers <see cref="Bytes"/> so the counters can be reconciled for a
+    /// texture that was collected without ever being disposed.
+    /// </summary>
+    internal sealed class Entry
     {
-        if (texture == null)
-            return;
+        public readonly WeakReference<Texture> Reference;
+        public readonly long Bytes;
 
-        lock (mutex)
+        /// <summary>
+        /// Whether this entry's contribution has already been subtracted from the counters, either by
+        /// <see cref="Unregister"/> or by reconciliation during a prune.
+        /// </summary>
+        public bool Released;
+
+        public Entry(Texture texture, long bytes)
         {
-            entries.Add(new WeakReference<Texture>(texture));
-
-            liveCount++;
-            liveBytes += bytesOf(texture);
-
-            publish();
+            Reference = new WeakReference<Texture>(texture);
+            Bytes = bytes;
         }
     }
 
-    internal static void Unregister(Texture texture)
+    internal static Entry Register(Texture texture)
     {
-        if (texture == null)
+        var entry = new Entry(texture, bytesOf(texture));
+
+        lock (mutex)
+        {
+            entries.Add(entry);
+
+            liveCount++;
+            liveBytes += entry.Bytes;
+
+            publish();
+        }
+
+        return entry;
+    }
+
+    internal static void Unregister(Entry entry)
+    {
+        if (entry == null)
             return;
 
         lock (mutex)
         {
-            liveCount = Math.Max(0, liveCount - 1);
-            liveBytes = Math.Max(0, liveBytes - bytesOf(texture));
-
+            releaseLocked(entry);
             publish();
         }
     }
@@ -112,33 +133,60 @@ public static class TextureRegistry
         lock (mutex)
         {
             var alive = new List<Texture>(entries.Count);
-
-            for (int i = entries.Count - 1; i >= 0; i--)
-            {
-                if (entries[i].TryGetTarget(out var texture) && !texture.IsDisposed)
-                    alive.Add(texture);
-                else
-                    entries.RemoveAt(i);
-            }
-
+            pruneLocked(alive);
             return alive;
         }
     }
 
     /// <summary>
-    /// Drops entries whose texture has been disposed or collected. Cheap to call periodically;
-    /// enumeration via <see cref="GetAll"/> prunes as a side effect anyway.
+    /// Drops entries whose texture has been disposed or collected, reconciling the counters for any that
+    /// were collected without being disposed. Cheap to call periodically; enumeration via
+    /// <see cref="GetAll"/> prunes as a side effect anyway.
     /// </summary>
     public static void Prune()
     {
         lock (mutex)
         {
-            for (int i = entries.Count - 1; i >= 0; i--)
-            {
-                if (!entries[i].TryGetTarget(out var texture) || texture.IsDisposed)
-                    entries.RemoveAt(i);
-            }
+            pruneLocked(null);
+            publish();
         }
+    }
+
+    /// <summary>
+    /// Walks the entry list, removing dead slots and optionally collecting the live textures.
+    /// </summary>
+    /// <param name="collect">
+    /// When non-null, receives every still-live texture. Order is unspecified.
+    /// </param>
+    private static void pruneLocked(List<Texture>? collect)
+    {
+        bool changed = false;
+
+        for (int i = entries.Count - 1; i >= 0; i--)
+        {
+            var entry = entries[i];
+
+            if (entry.Reference.TryGetTarget(out var texture))
+            {
+                if (!texture.IsDisposed)
+                {
+                    collect?.Add(texture);
+                    continue;
+                }
+            }
+            else
+            {
+                // Collected without ever being disposed, so Unregister never ran and the counters are
+                // still carrying it. This is the only place that can notice, since there is no callback
+                // for "the GC took it".
+                changed |= releaseLocked(entry);
+            }
+
+            entries.RemoveAt(i);
+        }
+
+        if (changed)
+            publish();
     }
 
     /// <summary>
@@ -146,19 +194,39 @@ public static class TextureRegistry
     /// </summary>
     /// <remarks>
     /// Intended for test isolation: the registry is process-wide, so a fixture that asserts on counts
-    /// needs a clean slate. Calling this in a running app makes the statistics lie until textures are
-    /// re-registered, which never happens for already-live ones.
+    /// needs a clean slate. Existing entries are marked released first, so a texture disposed after a
+    /// reset cannot decrement counters it no longer contributes to.
     /// </remarks>
     public static void Reset()
     {
         lock (mutex)
         {
+            foreach (var entry in entries)
+                entry.Released = true;
+
             entries.Clear();
             liveCount = 0;
             liveBytes = 0;
             stat_peak_bytes.Value = 0;
             publish();
         }
+    }
+
+    /// <summary>
+    /// Subtracts an entry's contribution from the counters, once.
+    /// </summary>
+    /// <returns>Whether this call was the one that released it.</returns>
+    private static bool releaseLocked(Entry entry)
+    {
+        if (entry.Released)
+            return false;
+
+        entry.Released = true;
+
+        liveCount = Math.Max(0, liveCount - 1);
+        liveBytes = Math.Max(0, liveBytes - entry.Bytes);
+
+        return true;
     }
 
     /// <summary>

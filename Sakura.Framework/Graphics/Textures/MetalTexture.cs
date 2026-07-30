@@ -110,6 +110,11 @@ public sealed class MetalTexture : INativeTexture
     /// </summary>
     public void Dispose()
     {
+        // Nothing can be sampled from a destroyed texture, so stop claiming otherwise: Available is what
+        // Texture.IsAvailable reports, and leaving it true made a destroyed texture indistinguishable
+        // from a healthy one to anything that asked.
+        Available = false;
+
         // Claim the handle atomically so a concurrent finalizer can never destroy it twice.
         nint claimed = Interlocked.Exchange(ref handle, nint.Zero);
 

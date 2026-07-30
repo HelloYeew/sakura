@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Sakura.Framework.Allocation;
 using Sakura.Framework.Development;
@@ -294,8 +295,25 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
     {
         long bytes = (long)texture.Width * texture.Height * 4;
         string size = $"{texture.Width}x{texture.Height}, {toMegabytes(bytes)}";
+        string name = string.IsNullOrEmpty(texture.Name) ? "Texture" : texture.Name;
 
-        return string.IsNullOrEmpty(texture.Name) ? $"Texture ({size})" : $"{texture.Name} ({size})";
+        return $"{name} ({size})";
+    }
+
+    private static (string Text, Color Color)? describeState(Texture texture)
+    {
+        var backend = texture.BackendTexture;
+
+        if (backend == null)
+            return ("proxy (no GPU texture)", Color.LightGray);
+
+        if (backend.Handle == IntPtr.Zero)
+            return ("GPU texture destroyed", Color.Red);
+
+        if (!backend.Available)
+            return ("uploading", Color.Yellow);
+
+        return null;
     }
 
     /// <summary>
@@ -351,6 +369,51 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
 
     private Drawable createTextureCard(string title, Texture texture)
     {
+        var state = describeState(texture);
+
+        const float title_height = 20;
+        float stateHeight = state == null ? 0 : 14;
+
+        var labels = new List<Drawable>
+        {
+            new SpriteText
+            {
+                Anchor = Anchor.TopLeft,
+                Origin = Anchor.TopLeft,
+                Text = title,
+                Font = FontUsage.Default.With(size: 10),
+                Color = Color.White
+            }
+        };
+
+        if (state != null)
+        {
+            labels.Add(new SpriteText
+            {
+                Anchor = Anchor.TopLeft,
+                Origin = Anchor.TopLeft,
+                Text = state.Value.Text,
+                Font = FontUsage.Default.With(size: 10),
+                Color = state.Value.Color
+            });
+        }
+
+        labels.Add(new Container
+        {
+            Anchor = Anchor.TopLeft,
+            Origin = Anchor.TopLeft,
+            Size = new Vector2(256, 256 - title_height - stateHeight),
+            Child = new Sprite
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Texture = texture,
+                Size = new Vector2(1),
+                RelativeSizeAxes = Axes.Both,
+                FillMode = TextureFillMode.Fit
+            }
+        });
+
         return new Container
         {
             Anchor = Anchor.TopLeft,
@@ -374,32 +437,7 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
                     Size = new Vector2(1),
                     Spacing = new Vector2(0, 5),
                     Padding = new MarginPadding(5),
-                    Children = new Drawable[]
-                    {
-                        new SpriteText
-                        {
-                            Anchor = Anchor.TopLeft,
-                            Origin = Anchor.TopLeft,
-                            Text = title,
-                            Font = FontUsage.Default.With(size: 10),
-                            Color = Color.White
-                        },
-                        new Container
-                        {
-                            Anchor = Anchor.TopLeft,
-                            Origin = Anchor.TopLeft,
-                            Size = new Vector2(256, 256 - 20),
-                            Child = new Sprite()
-                            {
-                                Anchor = Anchor.Centre,
-                                Origin = Anchor.Centre,
-                                Texture = texture,
-                                Size = new Vector2(1),
-                                RelativeSizeAxes = Axes.Both,
-                                FillMode = TextureFillMode.Fit
-                            }
-                        }
-                    }
+                    Children = labels.ToArray()
                 }
             }
         };

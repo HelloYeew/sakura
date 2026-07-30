@@ -220,7 +220,7 @@ public class GLRenderer : IGLRenderer, IDisposable
         gl.Disable(EnableCap.ScissorTest);
 
         GLTexture.CreateWhitePixel(gl);
-        WhitePixel = new Texture(GLTexture.WhitePixel);
+        WhitePixel = new Texture(GLTexture.WhitePixel, TextureOwnership.Shared);
         prefillTextureSlots();
         resetTextureSlots();
 

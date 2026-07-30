@@ -164,4 +164,52 @@ public class TextureRegistryTest
 
         Assert.That(TextureRegistry.GetAll().Single(), Is.SameAs(kept));
     }
+
+    /// <summary>
+    /// A texture collected without ever being disposed has no chance to unregister itself, so its
+    /// contribution has to be reconciled out of the counters when the dead entry is noticed. Without
+    /// this the counters only ever climb, and "live count returns to its baseline" — the criterion the
+    /// whole texture-lifetime investigation is measured against — can never hold.
+    /// </summary>
+    [Test]
+    public void PruneReconcilesCountersForTexturesCollectedWithoutDisposal()
+    {
+        var kept = texture(32, 32);
+        long keptBytes = TextureRegistry.LiveBytes;
+
+        allocateAndAbandon();
+
+        Assert.That(TextureRegistry.LiveCount, Is.EqualTo(2), "both are counted while alive");
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+
+        TextureRegistry.Prune();
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(TextureRegistry.LiveCount, Is.EqualTo(1));
+            Assert.That(TextureRegistry.LiveBytes, Is.EqualTo(keptBytes));
+            Assert.That(TextureRegistry.GetAll().Single(), Is.SameAs(kept));
+        }
+    }
+
+    [Test]
+    public void DisposingAfterAResetDoesNotDriveCountersNegative()
+    {
+        var tex = texture(64, 64);
+
+        TextureRegistry.Reset();
+
+        var fresh = texture(16, 16);
+        tex.Dispose();
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(TextureRegistry.LiveCount, Is.EqualTo(1), "only the texture registered after the reset");
+            Assert.That(TextureRegistry.LiveBytes, Is.EqualTo(16 * 16 * 4));
+            Assert.That(TextureRegistry.GetAll().Single(), Is.SameAs(fresh));
+        }
+    }
 }
