@@ -88,7 +88,7 @@ public class GLFrameBuffer : IFrameBuffer
     }
 
     /// <summary>
-    /// Deletes the framebuffer object and its colour attachment. Must be called on the draw thread.
+    /// Deletes the framebuffer object and its color attachment. Must be called on the draw thread.
     /// </summary>
     public void Dispose()
     {
@@ -105,7 +105,7 @@ public class GLFrameBuffer : IFrameBuffer
 
     /// <summary>
     /// Safety net for a framebuffer dropped without being disposed. Only the framebuffer object name is
-    /// released here — the colour attachment is a <see cref="GLTexture"/> with its own
+    /// released here — the color attachment is a <see cref="GLTexture"/> with its own
     /// finalizer, and reaching into it from this one would be unsafe (finalization order is undefined).
     /// </summary>
     ~GLFrameBuffer()
