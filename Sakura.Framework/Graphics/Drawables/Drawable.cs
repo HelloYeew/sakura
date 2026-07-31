@@ -912,7 +912,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
                 {
                     // Construction may have got far enough to allocate before throwing, and the
                     // half-built component is unreachable to the caller either way.
-                    discard(component, onDiscarded, parentScheduler);
+                    discard(component, onDiscarded);
                     throw t.Exception!.InnerException!;
                 }
 
@@ -922,7 +922,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
 
                 if (cancellationToken.IsCancellationRequested)
                 {
-                    discard(component, onDiscarded, parentScheduler);
+                    discard(component, onDiscarded);
                     return;
                 }
 
@@ -935,20 +935,14 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
 
     /// <summary>
     /// Hands a loaded-but-unwanted component to its discard handler, or disposes it when there is none.
-    /// Routed through the loading parent's scheduler for the same reason <c>onLoaded</c> is: the
-    /// component was built off-thread, and releasing GPU or driver-owned state belongs on the update
-    /// thread that owns it.
+    /// Runs on the update thread, within a later frame's disposal budget.
     /// </summary>
-    private static void discard<T>(T component, Action<T>? onDiscarded, Scheduler? parentScheduler) where T : Drawable
+    private static void discard<T>(T component, Action<T>? onDiscarded) where T : Drawable
     {
-        Action release = onDiscarded != null
-            ? () => onDiscarded(component)
-            : component.Dispose;
-
-        if (parentScheduler != null)
-            parentScheduler.Add(release);
+        if (onDiscarded == null)
+            DrawableDisposalQueue.Enqueue(component);
         else
-            release();
+            DrawableDisposalQueue.EnqueueCleanup(() => onDiscarded(component));
     }
 
     /// <summary>

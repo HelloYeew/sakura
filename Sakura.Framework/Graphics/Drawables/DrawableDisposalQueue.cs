@@ -1,7 +1,9 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using System.Collections.Concurrent;
+using Sakura.Framework.Extensions.ObjectExtensions;
 using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Graphics.Drawables;
@@ -48,13 +50,13 @@ public static class DrawableDisposalQueue
     /// </summary>
     public static bool Enabled { get; set; }
 
-    private static readonly ConcurrentQueue<Drawable> queue = new ConcurrentQueue<Drawable>();
+    private static readonly ConcurrentQueue<PendingRelease> queue = new ConcurrentQueue<PendingRelease>();
 
     private static readonly GlobalStatistic<int> stat_pending = GlobalStatistics.Get<int>("Drawables", "Disposal Queue (pending)");
     private static readonly GlobalStatistic<long> stat_disposed = GlobalStatistics.Get<long>("Drawables", "Disposed");
 
     /// <summary>
-    /// Number of drawables currently waiting to be disposed (approximate, for stats/debugging).
+    /// Number of releases currently waiting (approximate, for stats/debugging).
     /// </summary>
     public static int PendingCount => queue.Count;
 
@@ -77,36 +79,71 @@ public static class DrawableDisposalQueue
         // meantime; a ConcurrentQueue cannot have an entry removed.
         drawable.DisposalPending = true;
 
-        queue.Enqueue(drawable);
+        queue.Enqueue(new PendingRelease(drawable, null));
         stat_pending.Value = queue.Count;
     }
 
     /// <summary>
-    /// Disposes queued drawables until the per-frame budget is spent (always at least one).
+    /// Enqueues a cleanup action to run on the update thread within a later frame's budget, or runs it
+    /// inline when <see cref="Enabled"/> is false.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately internal and deliberately not a general-purpose scheduler. It exists because some
+    /// framework cleanup must not be routed through a <see cref="Drawable.Scheduler"/>: a discarded async
+    /// load is usually discarded because the drawable that started it was torn down, and a disposed
+    /// drawable's scheduler is cleared and never runs again. This queue is drained by the host every frame
+    /// regardless of any drawable's state, so work handed to it cannot be silently dropped.
+    /// </remarks>
+    internal static void EnqueueCleanup(Action release)
+    {
+        if (release.IsNull())
+            return;
+
+        if (!Enabled)
+        {
+            release();
+            return;
+        }
+
+        queue.Enqueue(new PendingRelease(null, release));
+        stat_pending.Value = queue.Count;
+    }
+
+    /// <summary>
+    /// Runs queued releases until the per-frame budget is spent (always at least one).
     /// Call once per frame from the update thread.
     /// </summary>
-    /// <returns>The number of drawables disposed.</returns>
+    /// <returns>The number of releases run.</returns>
     public static int Process() => process(ItemsPerFrameBudget);
 
     /// <summary>
-    /// Disposes everything currently queued, ignoring the per-frame budget. Used at shutdown, and by
-    /// tests that need the queue settled before asserting.
+    /// Runs everything currently queued, ignoring the per-frame budget. Used at shutdown, and by tests
+    /// that need the queue settled before asserting.
     /// </summary>
-    /// <returns>The number of drawables disposed.</returns>
+    /// <returns>The number of releases run.</returns>
     public static int Flush() => process(int.MaxValue);
 
     private static int process(int budget)
     {
         int processed = 0;
+        long disposed = 0;
 
-        while (queue.TryDequeue(out var drawable))
+        while (queue.TryDequeue(out var pending))
         {
-            // Re-added between being queued and now: it is live again and must not be disposed.
-            if (!drawable.DisposalPending)
-                continue;
+            if (pending.Drawable is { } drawable)
+            {
+                // Re-added between being queued and now: it is live again and must not be disposed.
+                if (!drawable.DisposalPending)
+                    continue;
 
-            drawable.DisposalPending = false;
-            drawable.Dispose();
+                drawable.DisposalPending = false;
+                drawable.Dispose();
+                disposed++;
+            }
+            else
+            {
+                pending.Release!();
+            }
 
             // Counted after the fact so a re-added drawable does not consume budget it did no work for.
             if (++processed >= budget)
@@ -115,10 +152,15 @@ public static class DrawableDisposalQueue
 
         if (processed > 0)
         {
-            stat_disposed.Value += processed;
+            stat_disposed.Value += disposed;
             stat_pending.Value = queue.Count;
         }
 
         return processed;
     }
+
+    /// <summary>
+    /// One queued release: either a drawable to dispose, or a bare cleanup action.
+    /// </summary>
+    private readonly record struct PendingRelease(Drawable? Drawable, Action? Release);
 }

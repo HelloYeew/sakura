@@ -149,6 +149,33 @@ public partial class TestAsynchronousLoading : TestScene
         AddStep("Dispose token source", () => cts.Dispose());
     }
 
+    [Test]
+    public void TestLoadCancelledByItsOwnersDisposalStillDiscards()
+    {
+        OwningContainer? owner = null;
+        GatedBox? box = null;
+
+        AddStep("Add an owner and start a load from it", () =>
+        {
+            Add(owner = new OwningContainer());
+            box = new GatedBox { Size = new Vector2(100), Color = Color.Orange };
+            owner.StartLoad(box);
+        });
+
+        AddUntilStep("Wait for load to start", () => box!.LoadStarted.IsSet);
+
+        // Removal disposes the owner, which cancels the load and clears the scheduler a discard would
+        // otherwise have been routed through.
+        AddStep("Tear the owner down", () => Remove(owner!));
+        AddUntilStep("Owner is disposed", () => owner!.IsDisposed);
+
+        // the load must finish after the cancellation, which is the whole scenario. letting it
+        // finish first would race, and an uncanceled load with no onLoaded callback discards nothing.
+        AddStep("Let the load finish", () => box!.AllowFinish.Set());
+
+        AddUntilStep("The orphaned component was still released", () => box!.IsDisposed);
+    }
+
     /// <summary>
     /// Supplying a discard handler takes the decision over: the framework hands the component to it and
     /// disposes nothing itself.
@@ -184,6 +211,20 @@ public partial class TestAsynchronousLoading : TestScene
         {
             base.Load();
             Thread.Sleep(50);
+        }
+    }
+
+    private partial class OwningContainer : Container
+    {
+        private readonly CancellationTokenSource cancellation = new CancellationTokenSource();
+
+        public void StartLoad(Drawable component) => LoadComponentAsync(component, null, cancellation.Token);
+
+        protected override void Dispose(bool isDisposing)
+        {
+            cancellation.Cancel();
+
+            base.Dispose(isDisposing);
         }
     }
 
