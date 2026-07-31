@@ -210,8 +210,11 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
         long peakBytes = GlobalStatistics.Get<long>("Textures", "Peak Bytes").Value;
         long reclaimed = GlobalStatistics.Get<long>("Textures", "Reclaimed by GC").Value;
 
+        int slices = TextureRegistry.LiveSliceCount;
+
         vramText.Text = $"Live: {TextureRegistry.LiveCount} textures, {toMegabytes(liveBytes)} (peak {toMegabytes(peakBytes)})"
-                        + (reclaimed > 0 ? $"   —   {reclaimed} reclaimed by GC (a Dispose is being missed)" : "");
+                        + (slices > 0 ? $"+ {slices} atlas slices" : "")
+                        + (reclaimed > 0 ? $"— {reclaimed} reclaimed by GC (a Dispose is being missed!)" : "");
 
         if (host.UpdateClock.CurrentTime - lastUpdateTime < 100)
             return;
