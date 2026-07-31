@@ -159,7 +159,7 @@ public abstract partial class TestScene : Container
         }
         else
         {
-            AddStep("Clear test scene", Clear);
+            AddStep("Clear test scene", () => Clear());
         }
     }
 
@@ -178,7 +178,10 @@ public abstract partial class TestScene : Container
         }
         finally
         {
-            runnerApp.Remove(this);
+            // NUnit constructs one fixture instance for the whole class and
+            // reuses it for every test method in it, so this scene is about to be re-added to the next
+            // test's runner app.
+            runnerApp.Remove(this, false);
         }
 
         if (runnerApp.TestException != null)

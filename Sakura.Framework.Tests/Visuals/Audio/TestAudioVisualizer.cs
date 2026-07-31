@@ -183,6 +183,6 @@ public partial class TestAudioVisualizer : TestScene
             channel?.Dispose();
             channel = null!;
         });
-        AddStep("Clear scene", Clear);
+        AddStep("Clear scene", () => Clear());
     }
 }

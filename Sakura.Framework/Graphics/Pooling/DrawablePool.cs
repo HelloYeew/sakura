@@ -9,7 +9,7 @@ using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Graphics.Pooling;
 
-public partial class DrawablePool<T> : Container, IDrawablePool, IDisposable where T : PoolableDrawable, new()
+public partial class DrawablePool<T> : Container, IDrawablePool where T : PoolableDrawable, new()
 {
     private GlobalStatistic<DrawablePoolUsageStatistic>? statistic;
 
@@ -25,8 +25,6 @@ public partial class DrawablePool<T> : Container, IDrawablePool, IDisposable whe
 
     public DrawablePool(int initialSize, int? maximumSize = null)
     {
-        DisposeOnRemoval = true;
-
         if (initialSize > maximumSize)
             throw new ArgumentOutOfRangeException(nameof(initialSize), "Initial size must be less than or equal to maximum size.");
 
@@ -73,11 +71,15 @@ public partial class DrawablePool<T> : Container, IDrawablePool, IDisposable whe
         // Do NOT check Parent here — OnParentChanged may fire before the framework nulls Parent,
         // so Parent can legitimately be non-null at this point.
 
-        if (typedDrawable.IsExcess || CountAvailable >= maximumSize)
+        // The pool can legitimately be disposed before a card that is still checked out gets back to it:
+        // disposing a screen walks its children in an order the caller does not control, so the pool may
+        // go first. Pushing onto a disposed pool's stack would simply lose the drawable.
+        if (typedDrawable.IsExcess || IsDisposed || CountAvailable >= maximumSize)
         {
+            // Not going back into the pool, so nothing else will ever release it. Disposed explicitly
+            // rather than via removal, which pooled drawables opt out of by design.
             pooledDrawable.SetPool(null);
-            if (pooledDrawable.DisposeOnRemoval && pooledDrawable is IDisposable disposable)
-                disposable.Dispose();
+            pooledDrawable.Dispose();
         }
         else
         {
@@ -137,13 +139,20 @@ public partial class DrawablePool<T> : Container, IDrawablePool, IDisposable whe
         return drawable;
     }
 
-    public void Dispose()
+    /// <summary>
+    /// Disposes the pool and every drawable currently in it.
+    /// </summary>
+    /// <remarks>
+    /// Drawables that are still checked out are not reachable from here and are not disposed; they are
+    /// released when their own holder goes away, having first been returned to this (now empty) pool.
+    /// </remarks>
+    protected override void Dispose(bool isDisposing)
     {
+        if (IsDisposed)
+            return;
+
         foreach (var p in pool)
-        {
-            if (p is IDisposable disposable)
-                disposable.Dispose();
-        }
+            p.Dispose();
 
         pool.Clear();
         CountInUse = 0;
@@ -155,6 +164,8 @@ public partial class DrawablePool<T> : Container, IDrawablePool, IDisposable whe
             GlobalStatistics.Remove(statistic);
             statistic = null;
         }
+
+        base.Dispose(isDisposing);
     }
 
     public int CurrentPoolSize

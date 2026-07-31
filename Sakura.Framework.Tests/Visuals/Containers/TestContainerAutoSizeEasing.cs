@@ -141,6 +141,6 @@ public partial class TestContainerAutoSizeEasing : TestScene
     [TearDown]
     public void TearDown()
     {
-        AddStep("Clear all children", Clear);
+        AddStep("Clear all children", () => Clear());
     }
 }

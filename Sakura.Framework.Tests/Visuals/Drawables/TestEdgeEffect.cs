@@ -182,6 +182,6 @@ public partial class TestEdgeEffect : TestScene
     [TearDown]
     public void TearDown()
     {
-        AddStep("Clear all children", Clear);
+        AddStep("Clear all children", () => Clear());
     }
 }

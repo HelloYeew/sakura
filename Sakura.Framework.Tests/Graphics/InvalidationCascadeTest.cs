@@ -569,7 +569,7 @@ public class InvalidationCascadeTest
 
         Assert.That(box.DrawRectangle.X, Is.EqualTo(10).Within(0.01f));
 
-        oldParent.Remove(subtree);
+        oldParent.Remove(subtree, false);
         newParent.Add(subtree);
         settle();
 

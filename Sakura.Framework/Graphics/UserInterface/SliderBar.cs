@@ -102,6 +102,10 @@ public abstract partial class SliderBar<T> : Container, IHasTooltip where T : st
     public override void LoadComplete()
     {
         base.LoadComplete();
+
+        OwnReactive(Current);
+        OwnReactive(Enabled);
+
         Enabled.BindValueChanged(e => OnEnabledChanged(e.NewValue), true);
 
         // invoke value change one time to make it properly update using true value

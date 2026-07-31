@@ -7,6 +7,15 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <GenerateProgramFile>false</GenerateProgramFile>
+    <!--
+      NUnit1032 (dispose IDisposable fields in [TearDown]) fires on every test that holds a drawable in a
+      field, because Drawable became IDisposable with the disposal cascade. Disposing a test's root
+      container releases nothing these tests own — a drawable's disposal exists to release textures,
+      framebuffers and decoders, and unit-test roots hold none — while a real tree is torn down by its
+      parent as soon as it is removed. Tests that do build resource-owning drawables dispose them
+      explicitly where the disposal is the thing under test.
+    -->
+    <NoWarn>$(NoWarn);NUnit1032</NoWarn>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="10.0.1">

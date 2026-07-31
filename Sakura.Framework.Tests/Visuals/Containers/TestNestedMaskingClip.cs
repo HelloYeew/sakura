@@ -23,7 +23,7 @@ public partial class TestNestedMaskingClip : TestScene
     [SetUp]
     public void SetUp()
     {
-        AddStep("Clear screen", Clear);
+        AddStep("Clear screen", () => Clear());
 
         AddStep("Add leak-detector backdrop", () => Add(new Box
         {

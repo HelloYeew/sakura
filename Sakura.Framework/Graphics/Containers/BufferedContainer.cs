@@ -1,8 +1,8 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
-using System;
 using Sakura.Framework.Allocation;
+using Sakura.Framework.Extensions.ObjectExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Rendering;
@@ -30,12 +30,12 @@ namespace Sakura.Framework.Graphics.Containers;
 /// </para>
 /// <remarks>
 /// The framebuffers are GPU allocations sized to this container's on-screen bounds, released when the
-/// container is disposed (which happens automatically on removal — see <see cref="Dispose"/>). Reusing
-/// a buffered container is still cheaper than creating and discarding many of them, since each new one
-/// pays a fresh framebuffer allocation.
+/// container is disposed (which happens automatically on removal, see
+/// <see cref="Container.Remove(Drawable, bool)"/>). Reusing a buffered container is still cheaper than
+/// creating and discarding many of them, since each new one pays a fresh framebuffer allocation.
 /// </remarks>
 /// </summary>
-public partial class BufferedContainer : Container, IDisposable
+public partial class BufferedContainer : Container
 {
     /// <summary>
     /// When true, the offscreen buffer is only re-rendered when something in the subtree
@@ -248,10 +248,6 @@ public partial class BufferedContainer : Container, IDisposable
     public BufferedContainer(bool pixelSnapping = false)
     {
         PixelSnapping = pixelSnapping;
-
-        // The framebuffers are GPU allocations proportional to this container's on-screen size, so a
-        // buffered container that leaves the tree must not keep them. Opt in to disposal on removal.
-        DisposeOnRemoval = true;
     }
 
     protected override DrawNode CreateDrawNode() => new BufferedContainerDrawNode();
@@ -266,45 +262,20 @@ public partial class BufferedContainer : Container, IDisposable
 
     /// <summary>
     /// Releases this container's framebuffers. Called automatically when the container is removed from
-    /// its parent (see <see cref="Drawable.DisposeOnRemoval"/>).
+    /// its parent (see <see cref="Container.Remove(Drawable, bool)"/>).
     /// </summary>
     /// <remarks>
     /// Not a one-way latch: the draw node recreates any missing buffer on the next frame it draws, so a
-    /// container that is removed and later re-added simply pays a fresh allocation. Idempotency comes
-    /// from clearing the references below, which is what prevents a double free.
+    /// container that is removed and later re-added simply pays a fresh allocation.
     /// </remarks>
-    public void Dispose()
+    protected override void Dispose(bool isDisposing)
     {
-        // Detach the buffers before scheduling: the release runs a frame later, and if this container is
-        // re-added and drawn in the meantime the draw node will have allocated replacements into
-        // SharedData. Handing the closure a snapshot (and clearing the fields now) means the release can
-        // only ever free the buffers that existed at this moment.
-        var frameBuffer = SharedData.FrameBuffer;
-        var effectBuffers = new IFrameBuffer?[SharedData.EffectBuffers.Length];
-
-        for (int i = 0; i < effectBuffers.Length; i++)
-        {
-            effectBuffers[i] = SharedData.EffectBuffers[i];
-            SharedData.EffectBuffers[i] = null;
-        }
-
-        SharedData.FrameBuffer = null;
-        // FinalEffectBuffer aliases whichever EffectBuffer the ping-pong landed on, so it is only
-        // cleared here — disposing it as well would be a double free.
-        SharedData.FinalEffectBuffer = null;
-        SharedData.RenderedVersion = -1;
-
-        if (renderer == null)
+        if (IsDisposed)
             return;
 
-        // Framebuffers are draw-thread-owned, releasing them anywhere else is invalid on every backend.
-        renderer.ScheduleToDrawThread(() =>
-        {
-            frameBuffer?.Dispose();
+        SharedData.Release(renderer);
 
-            foreach (var buffer in effectBuffers)
-                buffer?.Dispose();
-        });
+        base.Dispose(isDisposing);
     }
 
     /// <summary>
@@ -334,6 +305,48 @@ public partial class BufferedContainer : Container, IDisposable
         /// (used by <see cref="CacheDrawnFrameBuffer"/>).
         /// </summary>
         public long RenderedVersion = -1;
+
+        /// <summary>
+        /// Frees every framebuffer held here and resets this state to "nothing allocated", so a
+        /// container that is re-added and drawn again simply allocates afresh.
+        /// </summary>
+        /// <param name="renderer">
+        /// The renderer owning the buffers, or null if this container never loaded (in which case
+        /// nothing was ever allocated).
+        /// </param>
+        public void Release(IRenderer? renderer)
+        {
+            // Detach the buffers before scheduling: the release runs a frame later, and if the owning
+            // container is re-added and drawn in the meantime the draw node will have allocated
+            // replacements here. Handing the closure a snapshot (and clearing the fields now) means the
+            // release can only ever free the buffers that existed at this moment — which is also what
+            // makes a repeated call a no-op rather than a double free.
+            var frameBuffer = FrameBuffer;
+            var effectBuffers = new IFrameBuffer?[EffectBuffers.Length];
+
+            for (int i = 0; i < effectBuffers.Length; i++)
+            {
+                effectBuffers[i] = EffectBuffers[i];
+                EffectBuffers[i] = null;
+            }
+
+            FrameBuffer = null;
+            // FinalEffectBuffer aliases whichever EffectBuffer the ping-pong landed on, so it is only
+            // cleared here — disposing it as well would be a double free.
+            FinalEffectBuffer = null;
+            RenderedVersion = -1;
+
+            if (renderer.IsNull())
+                return;
+
+            renderer.ScheduleToDrawThread(() =>
+            {
+                frameBuffer?.Dispose();
+
+                foreach (var buffer in effectBuffers)
+                    buffer?.Dispose();
+            });
+        }
     }
 }
 

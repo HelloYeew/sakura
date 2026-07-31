@@ -13,6 +13,14 @@ public abstract partial class PoolableDrawable : Container
 {
     private IDrawablePool? pool;
 
+    protected PoolableDrawable()
+    {
+        // A pooled drawable is removed from its parent precisely in order to be reused, so removal must
+        // never dispose it including when an ancestor is torn down, which removes it (returning it to
+        // its pool) on the way down. The pool owns its lifetime and disposes it when the pool itself goes.
+        DisposeOnRemoval = false;
+    }
+
     /// <summary>
     /// Whether this pooled drawable is currently being used (is out of the pool).
     /// </summary>

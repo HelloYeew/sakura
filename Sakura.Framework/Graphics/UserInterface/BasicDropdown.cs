@@ -89,6 +89,8 @@ public partial class BasicDropdown<T> : Container
             }
         };
 
+        OwnReactive(Current);
+
         Current.BindValueChanged(e => header.Text = e.NewValue?.ToString() ?? "Select...", true);
     }
 

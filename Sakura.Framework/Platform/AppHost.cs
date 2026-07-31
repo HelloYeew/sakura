@@ -18,6 +18,7 @@ using Sakura.Framework.Configurations;
 using Sakura.Framework.Development;
 using Sakura.Framework.Extensions.ExceptionExtensions;
 using Sakura.Framework.Extensions.IEnumerableExtensions;
+using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Input;
 using Sakura.Framework.IO;
@@ -420,6 +421,10 @@ public abstract class AppHost : IDisposable
                 updateTargetUpdateHz();
                 Logger.Verbose($"Frame limiter changed from {e.OldValue} to {e.NewValue}");
             };
+
+            // From here on there is an update loop to drain it, so removal-triggered disposal can be
+            // deferred and budgeted rather than walking a whole subtree inline (see SF-4).
+            DrawableDisposalQueue.Enabled = true;
 
             executionState = ExecutionState.Running;
 
@@ -984,6 +989,11 @@ public abstract class AppHost : IDisposable
         // The thread's pacing (AppThread) already drives this method at the target rate.
         app?.UpdateSubTree();
 
+        // Drain removed drawables within this frame's budget. After UpdateSubTree so anything removed
+        // during this frame's updates (or by input dispatched above) is picked up in the same frame
+        // rather than lingering until the next one.
+        DrawableDisposalQueue.Process();
+
         int updateIndex = frameBufferManager.GetUpdateIndex();
         rootDrawNodes[updateIndex] = app?.GenerateDrawNodeSubtree(updateIndex);
         frameBufferManager.FinishUpdate();
@@ -1108,6 +1118,11 @@ public abstract class AppHost : IDisposable
 
         AppDomain.CurrentDomain.UnhandledException -= unhandledExceptionHandler;
         TaskScheduler.UnobservedTaskException -= unobservedTaskExceptionHandler;
+
+        // No more frames will be pumped, so anything still queued has to be released now — and from here
+        // on removal disposes inline, since deferring it would mean never.
+        DrawableDisposalQueue.Enabled = false;
+        DrawableDisposalQueue.Flush();
 
         if (cancelKeyPressHandler != null)
         {

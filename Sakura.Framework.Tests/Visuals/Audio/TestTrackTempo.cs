@@ -118,6 +118,6 @@ public partial class TestTrackTempo : TestScene
             channel?.Dispose();
             channel = null!;
         });
-        AddStep("Clear scene", Clear);
+        AddStep("Clear scene", () => Clear());
     }
 }

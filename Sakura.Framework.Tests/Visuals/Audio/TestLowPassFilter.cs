@@ -119,6 +119,6 @@ public partial class TestLowPassFilter : TestScene
             channel?.Stop();
             channel?.Dispose();
         });
-        AddStep("Clear scene", Clear);
+        AddStep("Clear scene", () => Clear());
     }
 }

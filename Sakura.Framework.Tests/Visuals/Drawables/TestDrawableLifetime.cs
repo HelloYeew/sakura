@@ -1,7 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
-using System;
+using System.Collections.Generic;
 using NUnit.Framework;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
@@ -65,19 +65,50 @@ public partial class TestDrawableLifetime : TestScene
     {
         LifetimeTestDrawable drawable = null!;
 
-        AddStep("Add disposable expiring drawable", () =>
+        AddStep("Add expiring drawable", () =>
         {
             Clear();
             drawable = new LifetimeTestDrawable
             {
-                Text = "I will dispose on death",
-                DisposeOnRemoval = true
+                Text = "I will dispose on death"
             };
             Add(drawable);
             drawable.Expire();
         });
 
-        AddAssert("Drawable is disposed", () => drawable.IsDisposed);
+        // AddUntilStep, not AddAssert: removal-triggered disposal is budgeted and may land a frame later
+        // than the removal itself (see DrawableDisposalQueue).
+        AddUntilStep("Drawable is disposed", () => drawable.IsDisposed);
+        AddUntilStep("Cascade reached its children", () => drawable.TrackedChildren.TrueForAll(c => c.IsDisposed));
+    }
+
+    [Test]
+    public void TestRemovalWithoutDisposal()
+    {
+        LifetimeTestDrawable drawable = null!;
+
+        AddStep("Add drawable that opts out of removal disposal", () =>
+        {
+            Clear();
+            drawable = new LifetimeTestDrawable
+            {
+                Text = "I outlive my removal",
+                DisposeOnRemoval = false
+            };
+            Add(drawable);
+            drawable.Expire();
+        });
+
+        AddUntilStep("Drawable was removed", () => drawable.Parent == null);
+        AddAssert("Drawable is not disposed", () => !drawable.IsDisposed);
+        AddAssert("Nor are its children", () => drawable.TrackedChildren.TrueForAll(c => !c.IsDisposed));
+        AddStep("Re-add the same drawable", () =>
+        {
+            // It was removed for being dead, so revive it first or it is removed again immediately.
+            drawable.LifetimeEnd = double.MaxValue;
+            Add(drawable);
+        });
+        AddAssert("Drawable is in the tree again", () => Contains(drawable));
     }
 
     [Test]
@@ -107,10 +138,15 @@ public partial class TestDrawableLifetime : TestScene
     /// <summary>
     /// A dummy drawable that tracks its own updates and disposal state for testing.
     /// </summary>
-    private partial class LifetimeTestDrawable : Container, IDisposable
+    private partial class LifetimeTestDrawable : Container
     {
-        public bool IsDisposed { get; private set; }
         public int UpdateCount { get; private set; }
+
+        /// <summary>
+        /// This drawable's own children, held separately so a test can still see them after disposal has
+        /// detached them — which is how the cascade reaching below the removed node is observable.
+        /// </summary>
+        public readonly List<Drawable> TrackedChildren = new List<Drawable>();
 
         private readonly SpriteText spriteText;
 
@@ -126,11 +162,14 @@ public partial class TestDrawableLifetime : TestScene
             Anchor = Anchor.Centre;
             Origin = Anchor.Centre;
 
-            Add(new Box
+            var box = new Box
             {
                 RelativeSizeAxes = Axes.Both,
                 Color = Color.DarkSlateBlue
-            });
+            };
+
+            Add(box);
+            TrackedChildren.Add(box);
 
             Add(spriteText = new SpriteText
             {
@@ -139,6 +178,8 @@ public partial class TestDrawableLifetime : TestScene
                 Origin = Anchor.Centre,
                 Color = Color.White
             });
+
+            TrackedChildren.Add(spriteText);
         }
 
         public override void Update()
@@ -147,9 +188,6 @@ public partial class TestDrawableLifetime : TestScene
             UpdateCount++;
         }
 
-        public void Dispose()
-        {
-            IsDisposed = true;
-        }
+
     }
 }

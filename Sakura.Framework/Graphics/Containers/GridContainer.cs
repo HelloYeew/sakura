@@ -178,7 +178,7 @@ public partial class GridContainer : Container
         int requiredColumns = requiredRows == 0 ? 0 : Content?.Max(c => c?.Count ?? 0) ?? 0;
 
         foreach (var cell in cells)
-            cell?.Clear();
+            cell?.Clear(false);
 
         ClearInternal();
 

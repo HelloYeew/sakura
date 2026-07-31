@@ -156,17 +156,17 @@ public abstract partial class ManualInputManagerTestScene : TestScene
         InputManager.ReleaseKey(key);
     }
 
-    public override void Clear()
+    public override void Clear(bool dispose = true)
     {
         // Only clear the test-specific content added by the test classes.
         // Fallback to base.Clear() just in case this is called before TestContent is initialized.
         if (TestContent != null)
         {
-            TestContent.Clear();
+            TestContent.Clear(dispose);
         }
         else
         {
-            base.Clear();
+            base.Clear(dispose);
         }
     }
 }

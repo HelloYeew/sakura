@@ -178,6 +178,8 @@ public abstract partial class ColorPicker : Container
         AddInternal(layout);
 
         Current.ValueChanged += onCurrentChanged;
+
+        OwnReactive(Current);
     }
 
     public override void LoadComplete()

@@ -36,7 +36,7 @@ public partial class TestBlendMode : TestScene
     };
 
     [SetUp]
-    public void SetUp() => AddStep("Clear", Clear);
+    public void SetUp() => AddStep("Clear", () => Clear());
 
     /// <summary>
     /// A colorful background (red/green/blue bands + a white stripe) so any blend mode shows a

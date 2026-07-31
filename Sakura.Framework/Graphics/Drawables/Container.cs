@@ -268,26 +268,49 @@ public partial class Container : Drawable
             Add(drawable);
     }
 
-    public virtual void Remove(Drawable drawable)
+    /// <summary>
+    /// Removes a child from this container and disposes it.
+    /// </summary>
+    /// <param name="drawable">The child to remove.</param>
+    /// <param name="dispose">
+    /// Whether the removed drawable should be disposed, recursively through its own children. Defaults to
+    /// true: a drawable that leaves the tree is assumed to be finished with, and this is the only thing
+    /// that releases the textures, framebuffers and decoders below it. Pass false to remove a drawable in
+    /// order to add it to another container. A drawable that sets
+    /// <see cref="Drawable.DisposeOnRemoval"/> to false is never disposed here regardless.
+    /// </param>
+    /// <remarks>
+    /// Disposal may be deferred by up to a frame (see <see cref="DrawableDisposalQueue"/>), so it is not
+    /// guaranteed to have completed by the time this returns. The drawable is detached immediately either
+    /// way, so it stops updating and drawing at once.
+    /// </remarks>
+    public virtual void Remove(Drawable drawable, bool dispose = true)
     {
         if (Content != this)
         {
-            Content.Remove(drawable);
+            Content.Remove(drawable, dispose);
             return;
         }
 
-        RemoveInternal(drawable);
+        RemoveInternal(drawable, dispose);
     }
 
-    public virtual void Clear()
+    /// <summary>
+    /// Removes every child of this container and disposes them.
+    /// </summary>
+    /// <param name="dispose">
+    /// Whether the removed children should be disposed, recursively. See
+    /// <see cref="Remove(Drawable, bool)"/> for when to pass false.
+    /// </param>
+    public virtual void Clear(bool dispose = true)
     {
         if (Content != this)
         {
-            Content.Clear();
+            Content.Clear(dispose);
             return;
         }
 
-        ClearInternal();
+        ClearInternal(dispose);
     }
 
     protected void AddInternal(Drawable drawable)
@@ -296,6 +319,13 @@ public partial class Container : Drawable
 
         if (drawable == this)
             throw new InvalidOperationException("A container cannot be added to itself.");
+
+        if (drawable.IsDisposed)
+            throw new InvalidOperationException($"Cannot add {drawable.GetDisplayName()} because it has been disposed. Remove it with dispose: false if it is to be re-added elsewhere.");
+
+        // Removed with disposal pending and re-added before the queue got to it: it is live again, so
+        // cancel the disposal rather than handing the caller a drawable that dies a frame later.
+        drawable.DisposalPending = false;
 
         if (drawable.Parent != null)
         {
@@ -348,7 +378,7 @@ public partial class Container : Drawable
         }
     }
 
-    protected void RemoveInternal(Drawable drawable)
+    protected void RemoveInternal(Drawable drawable, bool dispose = true)
     {
         if (drawable == null)
             return;
@@ -362,23 +392,40 @@ public partial class Container : Drawable
             OnChildGeometryInvalidated();
             InvalidateTopology();
 
-            if (drawable.DisposeOnRemoval && drawable is IDisposable disposable)
-                disposable.Dispose();
+            disposeRemoved(drawable, dispose);
         }
     }
 
-    protected void ClearInternal()
+    protected void ClearInternal(bool dispose = true)
     {
-        foreach (var child in children)
+        // Each child is taken off the list before it is detached, rather than iterating and clearing
+        // afterwards. Detaching runs OnParentChanged — that is where a pooled child returns itself to its
+        // pool — and an override there is free to touch this container, which iterate-then-clear could not
+        // survive. Draining from the end also keeps this allocation-free, and tearing down a screen runs
+        // it once per container in the subtree.
+        while (children.Count > 0)
         {
-            child.Parent = null;
+            var child = children[^1];
+            children.RemoveAt(children.Count - 1);
 
-            if (child.DisposeOnRemoval && child is IDisposable disposable)
-                disposable.Dispose();
+            child.Parent = null;
+            disposeRemoved(child, dispose);
         }
-        children.Clear();
+
         OnChildGeometryInvalidated();
         InvalidateTopology();
+    }
+
+    /// <summary>
+    /// Applies removal-triggered disposal to a drawable that has just left this container, honouring
+    /// both the remover's request and the drawable's own <see cref="Drawable.DisposeOnRemoval"/>.
+    /// </summary>
+    private static void disposeRemoved(Drawable drawable, bool dispose)
+    {
+        if (!dispose || !drawable.DisposeOnRemoval)
+            return;
+
+        DrawableDisposalQueue.Enqueue(drawable);
     }
 
     /// <summary>
@@ -787,40 +834,68 @@ public partial class Container : Drawable
     }
 
     /// <summary>
-    /// Removes all children that match the conditions defined by the specified predicate.
+    /// Removes all children that match the conditions defined by the specified predicate, disposing them.
     /// </summary>
+    /// <param name="match">The predicate selecting children to remove.</param>
+    /// <param name="dispose">
+    /// Whether the removed children should be disposed. See <see cref="Remove(Drawable, bool)"/>.
+    /// </param>
     /// <returns>The number of children removed from the container.</returns>
-    public virtual int RemoveAll(Predicate<Drawable> match)
+    public virtual int RemoveAll(Predicate<Drawable> match, bool dispose = true)
     {
         if (Content != this)
-            return Content.RemoveAll(match);
+            return Content.RemoveAll(match, dispose);
 
         var toRemove = children.Where(match.Invoke).ToList();
 
         foreach (var child in toRemove)
         {
-            RemoveInternal(child);
+            RemoveInternal(child, dispose);
         }
 
         return toRemove.Count;
     }
 
     /// <summary>
-    /// Removes a collection of drawables from this container.
+    /// Removes a collection of drawables from this container, disposing them.
     /// </summary>
-    public virtual void RemoveRange(IEnumerable<Drawable> drawables)
+    /// <param name="drawables">The children to remove.</param>
+    /// <param name="dispose">
+    /// Whether the removed children should be disposed. See <see cref="Remove(Drawable, bool)"/>.
+    /// </param>
+    public virtual void RemoveRange(IEnumerable<Drawable> drawables, bool dispose = true)
     {
         if (Content != this)
         {
-            Content.RemoveRange(drawables);
+            Content.RemoveRange(drawables, dispose);
             return;
         }
 
         foreach (var drawable in drawables.ToList())
         {
-            RemoveInternal(drawable);
+            RemoveInternal(drawable, dispose);
         }
     }
 
     #endregion
+
+    /// <summary>
+    /// Disposes this container and, recursively, everything below it.
+    /// </summary>
+    /// <remarks>
+    /// Children are detached and routed through the same removal-triggered disposal as
+    /// <see cref="Remove(Drawable, bool)"/>, so a child that opted out of it
+    /// (<see cref="Drawable.DisposeOnRemoval"/>) survives its parent — which is what lets an in-use
+    /// pooled drawable go back to its pool when the screen holding it is torn down, instead of being
+    /// destroyed while the pool still expects it back.
+    /// </remarks>
+    protected override void Dispose(bool isDisposing)
+    {
+        if (IsDisposed)
+            return;
+
+        ClearInternal();
+
+        base.Dispose(isDisposing);
+    }
 }
