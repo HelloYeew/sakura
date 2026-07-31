@@ -8,26 +8,12 @@ using Sakura.Framework.Timing;
 namespace Sakura.Framework.Benchmarks.Benchmarks;
 
 /// <summary>
-/// Measures screen-teardown cost. Removing a subtree used to be free beyond detaching it; it now walks
+/// Measures screen-teardown cost. Removing a subtree used to be free beyond detaching it, it now walks
 /// the subtree and disposes every drawable in it, which is the one path the disposal cascade made
 /// materially more expensive.
 /// </summary>
-/// <remarks>
-/// <para>
-/// <see cref="RemoveSubtreeWithoutDisposal"/> is the baseline — it is what removal cost before the
-/// cascade existed. Read the other two against it: <see cref="RemoveSubtreeInline"/> is the disposal work
-/// itself, and <see cref="RemoveSubtreeQueued"/> adds what the queue costs to move the same work through
-/// it (enqueue, dequeue and the per-enqueue statistic).
-/// </para>
-/// <para>
-/// Every benchmark here consumes its tree — a disposed drawable cannot be re-added — so the tree is
-/// rebuilt per iteration. That forces <c>invocationCount: 1, unrollFactor: 1</c>, which is why this is a
-/// separate fixture from <see cref="PooledRemovalBenchmarks"/>: those measure ns-scale steady-state
-/// calls and need the normal job to be trustworthy.
-/// </para>
-/// </remarks>
 [MemoryDiagnoser]
-[SimpleJob(invocationCount: 1, unrollFactor: 1)]
+[SimpleJob(invocationCount: 1)]
 public class DisposalBenchmarks
 {
     public enum TreeShape
