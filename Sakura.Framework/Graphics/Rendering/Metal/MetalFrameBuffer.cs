@@ -36,9 +36,28 @@ public sealed class MetalFrameBuffer : IFrameBuffer
         Width = Math.Max(1, width);
         Height = Math.Max(1, height);
 
-        colorTexture?.Dispose();
+        releaseAttachment();
+
         colorTexture = MetalTexture.CreateRenderTarget(device, Width, Height);
         Texture = new Texture(colorTexture);
+    }
+
+    /// <summary>
+    /// Releases the current colour attachment, if any.
+    /// </summary>
+    /// <remarks>
+    /// Disposes the <see cref="Texture"/> wrapper rather than the backend it wraps. Only
+    /// <c>Texture.Dispose</c> unregisters from <see cref="TextureRegistry"/>, and it destroys the GPU
+    /// resource on the way (the wrapper owns it). Reaching past it to the backend frees the memory but
+    /// leaves the wrapper registered for the process lifetime — which is what made resizing a window
+    /// report a thousand live framebuffers, each still counted in <c>Live Bytes</c>, every one of them
+    /// drawn by the viewer as a white card labelled "GPU texture destroyed".
+    /// </remarks>
+    private void releaseAttachment()
+    {
+        Texture?.Dispose();
+        Texture = null;
+        colorTexture = null;
     }
 
     public void Resize(int width, int height)
@@ -59,10 +78,5 @@ public sealed class MetalFrameBuffer : IFrameBuffer
     /// finalizer safety net. Reaching into it from a finalizer here would be unsafe anyway, since
     /// finalization order is undefined.
     /// </remarks>
-    public void Dispose()
-    {
-        colorTexture?.Dispose();
-        colorTexture = null;
-        Texture = null;
-    }
+    public void Dispose() => releaseAttachment();
 }

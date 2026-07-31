@@ -4,6 +4,7 @@
 #nullable disable
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Logging;
 using Silk.NET.OpenGL;
@@ -16,6 +17,7 @@ namespace Sakura.Framework.Graphics.Rendering;
 /// single color attachment. Masking in this framework is shader-based, so no depth/stencil
 /// attachment is needed.
 /// </summary>
+[SuppressMessage("ReSharper", "InconsistentNaming", Justification = "GL naming conventions")]
 public class GLFrameBuffer : IFrameBuffer
 {
     private readonly GL gl;
@@ -52,7 +54,8 @@ public class GLFrameBuffer : IFrameBuffer
         // mid-frame, so the previous binding must be preserved.
         gl.GetInteger(GLEnum.FramebufferBinding, out int previousBinding);
 
-        colorTexture?.Dispose();
+        releaseAttachment();
+
         colorTexture = GLTexture.CreateRenderTarget(gl, Width, Height, pixelSnapping);
         Texture = new Texture(colorTexture);
 
@@ -75,14 +78,23 @@ public class GLFrameBuffer : IFrameBuffer
     }
 
     /// <summary>
+    /// Releases the current color attachment, if any.
+    /// </summary>
+    private void releaseAttachment()
+    {
+        Texture?.Dispose();
+        Texture = null;
+        colorTexture = null;
+    }
+
+    /// <summary>
     /// Deletes the framebuffer object and its colour attachment. Must be called on the draw thread.
     /// </summary>
     public void Dispose()
     {
         GC.SuppressFinalize(this);
 
-        colorTexture?.Dispose();
-        colorTexture = null;
+        releaseAttachment();
 
         uint claimed = Handle;
         Handle = 0;

@@ -108,7 +108,7 @@ public class HeadlessRenderer : IRenderer
 
     public Vector2 RenderScale => Vector2.One;
 
-    public IFrameBuffer CreateFrameBuffer(int width, int height, bool pixelSnapping = false) => new HeadlessFrameBuffer(WhitePixel, width, height);
+    public IFrameBuffer CreateFrameBuffer(int width, int height, bool pixelSnapping = false) => new HeadlessFrameBuffer(width, height);
 
     public void BindFrameBuffer(IFrameBuffer frameBuffer, RectangleF sourceRect, Color clearColor = default)
     {
@@ -120,27 +120,38 @@ public class HeadlessRenderer : IRenderer
 
     }
 
+    /// <summary>
+    /// A framebuffer that allocates and releases a color attachment (exactly as the real backends do to
+    /// minus the GPU call)
+    /// </summary>
     private sealed class HeadlessFrameBuffer : IFrameBuffer
     {
-        public Texture Texture { get; }
+        public Texture Texture { get; private set; }
         public int Width { get; private set; }
         public int Height { get; private set; }
 
-        public HeadlessFrameBuffer(Texture texture, int width, int height)
+        public HeadlessFrameBuffer(int width, int height) => createAttachment(width, height);
+
+        private void createAttachment(int width, int height)
         {
-            Texture = texture;
-            Width = width;
-            Height = height;
+            Width = Math.Max(1, width);
+            Height = Math.Max(1, height);
+
+            releaseAttachment();
+
+            Texture = new Texture(new HeadlessNativeTexture(Width, Height));
         }
+
+        private void releaseAttachment() => Texture?.Dispose();
 
         public void Resize(int width, int height)
         {
-            Width = width;
-            Height = height;
+            if (Math.Max(1, width) == Width && Math.Max(1, height) == Height)
+                return;
+
+            createAttachment(width, height);
         }
 
-        public void Dispose()
-        {
-        }
+        public void Dispose() => releaseAttachment();
     }
 }
