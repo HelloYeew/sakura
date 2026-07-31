@@ -530,10 +530,115 @@ public class RendererFontStore : IFontStore
         }
     }
 
+    #region Shaped text cache
+
     /// <summary>
-    /// Drops resolved fallback chains, so a newly registered family or font is picked up.
+    /// The default number of shaped strings kept. A screen's worth of labels is tens of entries, this
+    /// leaves room for a scrolling list to churn through several screens without evicting text that is
+    /// still on display.
     /// </summary>
-    private void invalidateFallbackCache() => fallbackCache.Clear();
+    public const int DEFAULT_SHAPE_CACHE_SIZE = 1024;
+
+    /// <summary>
+    /// Maximum number of shaped strings to keep
+    /// </summary>
+    public int ShapeCacheSize { get; set; } = DEFAULT_SHAPE_CACHE_SIZE;
+
+    private static readonly GlobalStatistic<long> stat_shape_hits = GlobalStatistics.Get<long>("Fonts", "Shape Cache Hits");
+    private static readonly GlobalStatistic<long> stat_shape_misses = GlobalStatistics.Get<long>("Fonts", "Shape Cache Misses");
+    private static readonly GlobalStatistic<int> stat_shape_entries = GlobalStatistics.Get<int>("Fonts", "Shaped Text Entries");
+    private static readonly GlobalStatistic<long> stat_shape_bytes = GlobalStatistics.Get<long>("Fonts", "Shaped Text Bytes");
+
+    /// <summary>
+    /// Everything about a request that changes the shaped output. <see cref="FontUsage"/> carries family,
+    /// size, weight, italics and the variation axes; <c>dpiScale</c> is separate because it comes from the
+    /// window rather than the usage.
+    /// </summary>
+    private readonly record struct ShapeKey(FontUsage Usage, string Text, float DpiScale);
+
+    private readonly Dictionary<ShapeKey, LinkedListNode<(ShapeKey Key, ShapedText Shaped)>> shapeCache
+        = new Dictionary<ShapeKey, LinkedListNode<(ShapeKey, ShapedText)>>();
+
+    /// <summary>
+    /// Most-recently-used at the front
+    /// </summary>
+    private readonly LinkedList<(ShapeKey Key, ShapedText Shaped)> shapeLru
+        = new LinkedList<(ShapeKey, ShapedText)>();
+
+    private long shapeBytes;
+
+    public ShapedText Shape(FontUsage usage, string text, float dpiScale)
+    {
+        if (string.IsNullOrEmpty(text))
+            return ShapedText.Empty;
+
+        var key = new ShapeKey(usage, text, dpiScale);
+
+        if (shapeCache.TryGetValue(key, out var existing))
+        {
+            // Move to the front by relinking the existing node: no allocation, which is what makes a hit
+            // free.
+            shapeLru.Remove(existing);
+            shapeLru.AddFirst(existing);
+
+            stat_shape_hits.Value++;
+            return existing.Value.Shaped;
+        }
+
+        stat_shape_misses.Value++;
+
+        var font = Get(usage);
+        if (font == null)
+            return ShapedText.Empty;
+
+        var shaped = font.ProcessText(text, usage.Size, dpiScale, GetFallbacks(usage), GetVariation(usage));
+
+        var node = shapeLru.AddFirst((key, shaped));
+        shapeCache[key] = node;
+        shapeBytes += shaped.EstimatedBytes;
+
+        while (shapeCache.Count > Math.Max(1, ShapeCacheSize))
+        {
+            var evicted = shapeLru.Last!;
+            shapeLru.RemoveLast();
+            shapeCache.Remove(evicted.Value.Key);
+            shapeBytes -= evicted.Value.Shaped.EstimatedBytes;
+        }
+
+        updateShapeStatistics();
+
+        return shaped;
+    }
+
+    private void updateShapeStatistics()
+    {
+        stat_shape_entries.Value = shapeCache.Count;
+        stat_shape_bytes.Value = shapeBytes;
+    }
+
+    /// <summary>
+    /// Drops every shaped result.
+    /// </summary>
+    private void invalidateShapeCache()
+    {
+        shapeCache.Clear();
+        shapeLru.Clear();
+        shapeBytes = 0;
+
+        updateShapeStatistics();
+    }
+
+    #endregion
+
+    /// <summary>
+    /// Drops resolved fallback chains and shaped results, so a newly registered family or font is picked
+    /// up. Both are derived from which fonts resolve and in what order, so they go stale together.
+    /// </summary>
+    private void invalidateFallbackCache()
+    {
+        fallbackCache.Clear();
+        invalidateShapeCache();
+    }
 
     public void ClearCaches()
     {

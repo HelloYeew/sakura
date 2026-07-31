@@ -82,6 +82,12 @@ public interface IFontStore : IDisposable
     FontVariation GetVariation(FontUsage usage);
 
     /// <summary>
+    /// Shapes <paramref name="text"/> for the given usage and pixel scale, reusing an existing result
+    /// when one matches.
+    /// </summary>
+    ShapedText Shape(FontUsage usage, string text, float dpiScale);
+
+    /// <summary>
     /// A version number that increments whenever the font store's cache is updated.
     /// Will increment mostly when <see cref="ClearCaches"/> is called.
     /// </summary>
