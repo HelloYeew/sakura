@@ -195,6 +195,19 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
     public float DrawAlpha { get; private protected set; }
 
     /// <summary>
+    /// The <see cref="DrawAlpha"/> this drawable's children inherit. Normally <see cref="DrawAlpha"/>
+    /// itself, so alpha compounds down the tree.
+    /// </summary>
+    /// <remarks>
+    /// A <see cref="Containers.BufferedContainer"/> returns 1 instead, making itself an alpha barrier: its
+    /// subtree renders at full opacity into the offscreen buffer and the fade is applied once, to the
+    /// flattened result. That is what "fading a buffered container fades the composite" means — without the
+    /// barrier the children would arrive at the buffer already faded and the container could only reproduce
+    /// what a plain container does, overlap seams included.
+    /// </remarks>
+    protected internal virtual float ChildDrawAlpha => DrawAlpha;
+
+    /// <summary>
     /// An invalidation flag representing which aspects of the drawable need to be recomputed.
     /// </summary>
     protected internal InvalidationFlags Invalidation = InvalidationFlags.All;
@@ -504,7 +517,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
 
     protected internal virtual void UpdateTransforms()
     {
-        DrawAlpha = (Parent?.DrawAlpha ?? 1f) * Alpha;
+        DrawAlpha = (Parent?.ChildDrawAlpha ?? 1f) * Alpha;
 
         Matrix3x2 localMatrix;
         Vector2 finalDrawSize;
@@ -1114,6 +1127,31 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
     public bool IsMaskedAway { get; internal set; }
 
     /// <summary>
+    /// Whether an ancestor was hidden when this drawable was last reached by the update traversal.
+    /// Pushed down by the parent, in the same way as <see cref="CurrentMaskingBounds"/>.
+    /// </summary>
+    private bool ancestorHidden;
+
+    /// <summary>
+    /// Whether this drawable is invisible (its own alpha is zero, or an ancestor's is) and has not
+    /// opted out via <see cref="AlwaysPresent"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Only meaningful during or after this frame's update traversal, since the ancestor half is pushed
+    /// down by <see cref="Container.UpdateSubTree"/> as it descends. Reading it from
+    /// <see cref="Update"/> is the intended use.
+    /// </para>
+    /// </remarks>
+    protected internal bool IsEffectivelyHidden => !AlwaysPresent && (ancestorHidden || Precision.AlmostEqualZero(Alpha));
+
+    /// <summary>
+    /// Records whether this drawable's ancestors are hidden. Called by the parent as the update
+    /// traversal descends.
+    /// </summary>
+    internal void SetAncestorHidden(bool hidden) => ancestorHidden = hidden;
+
+    /// <summary>
     /// The inherited masking bounds from parent containers.
     /// </summary>
     protected internal RectangleF? CurrentMaskingBounds { get; set; }
@@ -1153,7 +1191,10 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
         if (Invalidation == InvalidationFlags.None)
             return;
 
-        if (!AlwaysPresent && Precision.AlmostEqualZero(Alpha))
+        // a hidden container's children are still traversed,
+        // so a drawable inside a hidden panel would otherwise recompute its geometry for nobody and for
+        // a SpriteText, recomputing geometry means shaping its text.
+        if (IsEffectivelyHidden)
         {
             DrawAlpha = 0;
             // Keep pending geometry invalidation (and the own-geometry marker) so a drawable
@@ -1186,7 +1227,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
     /// </summary>
     protected virtual void UpdateDrawColor()
     {
-        DrawAlpha = (Parent?.DrawAlpha ?? 1f) * Alpha;
+        DrawAlpha = (Parent?.ChildDrawAlpha ?? 1f) * Alpha;
 
         // Rewrite per-corner colors so gradients survive the color-only fast path (used by fades);
         // toLinear folds the freshly-computed DrawAlpha into every corner.

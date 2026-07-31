@@ -236,6 +236,25 @@ public partial class BufferedContainer : Container
     public void ForceRedraw() => Invalidate(InvalidationFlags.DrawInfo);
 
     /// <summary>
+    /// Always 1: this container is an alpha barrier, so its subtree renders at full opacity into the
+    /// offscreen buffer and <see cref="Drawable.DrawAlpha"/> is applied once to the flattened composite.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is what makes whole-subtree transparency real rather than nominal. Cascading alpha into the
+    /// buffer instead — as this container did until the fade was fixed — leaves each child individually
+    /// translucent before it is ever flattened, so the composite can at best reproduce what a plain
+    /// container already does, overlap seams and all.
+    /// </para>
+    /// <para>
+    /// A side benefit worth knowing when using <see cref="CacheDrawnFrameBuffer"/>: because a fade no
+    /// longer changes any child's color, the cached buffer contents stay valid across one, and only the
+    /// composite quad has to be redrawn.
+    /// </para>
+    /// </remarks>
+    protected internal override float ChildDrawAlpha => 1f;
+
+    /// <summary>
     /// State shared between this drawable and its (triple-buffered) draw nodes, so all
     /// of them reuse one set of framebuffers. Owned and touched by the draw thread only.
     /// </summary>

@@ -80,7 +80,7 @@ public partial class Container : Drawable
         get => borderThickness;
         set
         {
-            if (borderThickness == value) return;
+            if (Precision.AlmostEquals(borderThickness, value)) return;
             borderThickness = value;
             Invalidate(InvalidationFlags.DrawInfo);
         }
@@ -96,7 +96,7 @@ public partial class Container : Drawable
         get => borderColor;
         set
         {
-            if (borderColor == value) return;
+            if (borderColor.Equals(value)) return;
             borderColor = value;
             Invalidate(InvalidationFlags.DrawInfo);
         }
@@ -553,12 +553,15 @@ public partial class Container : Drawable
         // Compute which children are off-screen
         UpdateSubTreeMasking();
 
+        bool hiddenBelow = IsEffectivelyHidden;
+
         // Iterate backwards to safely allow children to remove themselves during their update cycles
         for (int i = children.Count - 1; i >= 0; i--)
         {
             // Optional sanity check if multiple children got removed during updates
             if (i < children.Count)
             {
+                children[i].SetAncestorHidden(hiddenBelow);
                 children[i].UpdateSubTree();
             }
         }
