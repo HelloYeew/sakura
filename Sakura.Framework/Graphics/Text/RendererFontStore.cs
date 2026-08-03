@@ -10,6 +10,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Textures;
+using Sakura.Framework.IO;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Statistic;
@@ -332,7 +333,15 @@ public class RendererFontStore : IFontStore
                     return null!;
                 }
 
-                var font = new Font(name, File.ReadAllBytes(filePath), atlas);
+                var fontData = NativeMemoryBuffer.CreateFromFile(filePath, NativeMemoryCategory.Fonts);
+
+                if (fontData == null)
+                {
+                    Logger.Error($"Font file is empty: {filePath}");
+                    return null!;
+                }
+
+                var font = new Font(name, fontData, atlas);
                 Logger.Debug($"Loaded font {name} from {filePath}");
 
                 GlobalStatistics.Get<int>("Fonts", "Loaded Fonts").Value++;
@@ -366,30 +375,16 @@ public class RendererFontStore : IFontStore
             Logger.Warning($"Cannot alias font '{alias}' to missing key '{existingKey}'.");
     }
 
+    /// <summary>
+    /// Reads a font from a stream into unmanaged memory and builds the face from it.
+    /// </summary>
+    /// <exception cref="InvalidDataException">If the stream held no bytes.</exception>
     private Font loadFontFromStream(string name, Stream stream)
     {
-        return new Font(name, readAll(stream), atlas);
+        var fontData = NativeMemoryBuffer.CreateFrom(stream, NativeMemoryCategory.Fonts)
+                       ?? throw new InvalidDataException($"Font stream for '{name}' held no bytes.");
 
-        static byte[] readAll(Stream stream)
-        {
-            if (stream.CanSeek)
-            {
-                long remaining = stream.Length - stream.Position;
-
-                if (remaining > 0 && remaining <= Array.MaxLength)
-                {
-                    byte[] exact = GC.AllocateUninitializedArray<byte>((int)remaining);
-
-                    stream.ReadExactly(exact);
-                    return exact;
-                }
-            }
-
-            // non-seekable, or a length the stream declines to report
-            using var ms = new MemoryStream();
-            stream.CopyTo(ms);
-            return ms.ToArray();
-        }
+        return new Font(name, fontData, atlas);
     }
 
     public Font Get(FontUsage usage)
