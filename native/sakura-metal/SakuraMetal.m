@@ -883,7 +883,7 @@ SakuraMetalTexture* sakura_metal_create_render_target(SakuraMetalDevice* device,
                                          width:(NSUInteger)width
                                         height:(NSUInteger)height
                                      mipmapped:NO];
-        td.usage       = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+        td.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
         td.storageMode = MTLStorageModePrivate; // GPU-only; never CPU-uploaded.
 
         texture = [device->device newTextureWithDescriptor:td];
