@@ -17,6 +17,13 @@ public sealed class HeadlessNativeTexture : INativeTexture
     // reporting itself as available. Just match the real backend.
     public bool Available { get; private set; } = true;
 
+    /// <summary>
+    /// CPU pixels backing this texture when <see cref="Rendering.HeadlessRenderer"/> pixel capture is on,
+    /// otherwise null. Only framebuffer color attachments carry one; a texture without a surface samples
+    /// as opaque white, which is enough for the compositing questions capture exists to answer.
+    /// </summary>
+    internal Rendering.PixelSurface? Surface { get; set; }
+
     public HeadlessNativeTexture(int width, int height)
     {
         Width = width;
