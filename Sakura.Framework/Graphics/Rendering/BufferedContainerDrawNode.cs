@@ -21,6 +21,12 @@ public class BufferedContainerDrawNode : ContainerDrawNode
 
     private const int max_blur_radius = 64;
 
+    /// <summary>
+    /// How many consecutive passthrough frames must pass before the (now unused) framebuffers are
+    /// released.
+    /// </summary>
+    private const int passthrough_frames_before_release = 60;
+
     private BufferedContainer.BufferedContainerSharedData? shared;
 
     private bool cacheDrawnFrameBuffer;
@@ -64,6 +70,49 @@ public class BufferedContainerDrawNode : ContainerDrawNode
     private bool blurActive => blurSigma.X > 0 || blurSigma.Y > 0;
     private bool grayscaleActive => grayscaleStrength > 0;
 
+    /// <summary>
+    /// Whether this frame can skip the offscreen pass entirely and draw the subtree straight to the
+    /// target, which is what an unconditionally-wrapping container costs nothing for.
+    /// </summary>
+    private bool canSkipBuffer =>
+        !blurActive
+        && !grayscaleActive
+        // The point of caching is to keep the drawn buffer across frames; a passthrough redraws the
+        // subtree every frame, which is the opposite of what was asked for.
+        && !cacheDrawnFrameBuffer
+        // The buffer clear has no passthrough equivalent.
+        && backgroundColor.A == 0
+        // A deliberate resolution change.
+        && frameBufferScale.Equals(Vector2.One)
+        // Applies to the flattened result, not to each child.
+        && Blending == BlendingMode.Alpha
+        && compositeColorIsNeutral;
+
+    /// <summary>
+    /// Whether the composite quad would be drawn at exactly neutral colour, i.e. whether it would change
+    /// nothing. All four corners are checked; see <see cref="canSkipBuffer"/>.
+    /// </summary>
+    private bool compositeColorIsNeutral
+    {
+        get
+        {
+            // No vertices means drawComposite falls back to a colour built from DrawAlpha, which this
+            // cannot verify. Buffer instead.
+            if (Vertices.Length == 0)
+                return false;
+
+            foreach (var vertex in Vertices)
+            {
+                var color = vertex.Color;
+
+                if (color.X != 1f || color.Y != 1f || color.Z != 1f || color.W != 1f)
+                    return false;
+            }
+
+            return true;
+        }
+    }
+
     public override void Draw(IRenderer renderer)
     {
         if (DrawAlpha <= 0 || shared == null)
@@ -73,6 +122,22 @@ public class BufferedContainerDrawNode : ContainerDrawNode
 
         if (rect.Width <= 0 || rect.Height <= 0)
             return;
+
+        if (canSkipBuffer)
+        {
+            // What this replaces is a single composite quad at neutral colour under the default blend, which
+            // BufferedContainerCompositeTest.AnUnfadedBufferedContainerMatchesAPlainContainer pins as
+            // pixel-identical to drawing the subtree straight to the target. So this is that, minus a
+            // full-screen render target and a full-screen resolve.
+            base.Draw(renderer);
+
+            if (shared.FrameBuffer != null && ++shared.ConsecutivePassthroughFrames >= passthrough_frames_before_release)
+                shared.Release(renderer);
+
+            return;
+        }
+
+        shared.ConsecutivePassthroughFrames = 0;
 
         // Buffer size in physical pixels (DPI-aware), scaled by FrameBufferScale.
         var renderScale = renderer.RenderScale;

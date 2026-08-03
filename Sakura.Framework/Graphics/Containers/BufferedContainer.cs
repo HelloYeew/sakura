@@ -326,6 +326,16 @@ public partial class BufferedContainer : Container
         public long RenderedVersion = -1;
 
         /// <summary>
+        /// How many consecutive frames the draw node has skipped the offscreen pass for, used to decide
+        /// when the buffers held here are worth releasing.
+        /// </summary>
+        /// <remarks>
+        /// It lives here rather than on the draw node because the node is triple-buffered: three of them
+        /// share this state, so a counter on the node would only ever see every third frame.
+        /// </remarks>
+        public int ConsecutivePassthroughFrames;
+
+        /// <summary>
         /// Frees every framebuffer held here and resets this state to "nothing allocated", so a
         /// container that is re-added and drawn again simply allocates afresh.
         /// </summary>
@@ -354,6 +364,7 @@ public partial class BufferedContainer : Container
             // cleared here — disposing it as well would be a double free.
             FinalEffectBuffer = null;
             RenderedVersion = -1;
+            ConsecutivePassthroughFrames = 0;
 
             if (renderer.IsNull())
                 return;
