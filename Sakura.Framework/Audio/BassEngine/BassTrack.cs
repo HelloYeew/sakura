@@ -107,9 +107,7 @@ internal class BassTrack : ITrack, IHasActiveChannels, IDisposable
 
         Length = Bass.ChannelBytes2Seconds(decoderStreamHandle, Bass.ChannelGetLength(decoderStreamHandle)) * 1000.0;
 
-        // Worth reporting which of the two routes a track took: the file route holds no copy of the
-        // encoded audio, the stream route holds one for the track's lifetime.
-        Logger.Verbose($"🔈 Track loaded from file, no in-memory copy: {path}");
+        Logger.Debug($"🔈 Track loaded from file, no in-memory copy: {path}");
     }
 
     public IAudioChannel GetChannel()
