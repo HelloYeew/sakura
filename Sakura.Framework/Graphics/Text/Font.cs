@@ -141,7 +141,7 @@ public class Font : IDisposable
             faceHandle = facePtr;
         }
 
-        hbBlob = new Blob(fontPtr, fontData.Length, MemoryMode.Duplicate);
+        hbBlob = new Blob(fontPtr, fontData.Length, MemoryMode.ReadOnly);
         hbFace = new Face(hbBlob, 0);
         hbFont = new HarfBuzzSharp.Font(hbFace);
 

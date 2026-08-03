@@ -368,9 +368,28 @@ public class RendererFontStore : IFontStore
 
     private Font loadFontFromStream(string name, Stream stream)
     {
-        using var ms = new MemoryStream();
-        stream.CopyTo(ms);
-        return new Font(name, ms.ToArray(), atlas);
+        return new Font(name, readAll(stream), atlas);
+
+        static byte[] readAll(Stream stream)
+        {
+            if (stream.CanSeek)
+            {
+                long remaining = stream.Length - stream.Position;
+
+                if (remaining > 0 && remaining <= Array.MaxLength)
+                {
+                    byte[] exact = GC.AllocateUninitializedArray<byte>((int)remaining);
+
+                    stream.ReadExactly(exact);
+                    return exact;
+                }
+            }
+
+            // non-seekable, or a length the stream declines to report
+            using var ms = new MemoryStream();
+            stream.CopyTo(ms);
+            return ms.ToArray();
+        }
     }
 
     public Font Get(FontUsage usage)
