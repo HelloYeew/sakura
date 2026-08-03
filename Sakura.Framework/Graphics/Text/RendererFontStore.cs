@@ -288,6 +288,22 @@ public class RendererFontStore : IFontStore
         {
             try
             {
+                // A filesystem-backed storage can be mapped rather than read, which is the cheap path.
+                // GetFileSystemPath returns null for anything else (an embedded resource, an archive), and
+                // those genuinely have to be copied. Same routing SF-13 uses for audio.
+                string? filePath = storage.GetFileSystemPath(filename);
+
+                if (filePath != null)
+                {
+                    var mapped = loadFontFromFile(name, filePath);
+
+                    if (mapped != null)
+                    {
+                        GlobalStatistics.Get<int>("Fonts", "Loaded Fonts").Value++;
+                        return mapped;
+                    }
+                }
+
                 using var stream = storage.GetStream(filename);
                 if (stream == null)
                 {
@@ -333,16 +349,13 @@ public class RendererFontStore : IFontStore
                     return null!;
                 }
 
-                var fontData = NativeMemoryBuffer.CreateFromFile(filePath, NativeMemoryCategory.Fonts);
+                var font = loadFontFromFile(name, filePath);
 
-                if (fontData == null)
+                if (font == null)
                 {
-                    Logger.Error($"Font file is empty: {filePath}");
+                    Logger.Error($"Font file could not be read: {filePath}");
                     return null!;
                 }
-
-                var font = new Font(name, fontData, atlas);
-                Logger.Debug($"Loaded font {name} from {filePath}");
 
                 GlobalStatistics.Get<int>("Fonts", "Loaded Fonts").Value++;
 
@@ -373,6 +386,36 @@ public class RendererFontStore : IFontStore
         }
         else
             Logger.Warning($"Cannot alias font '{alias}' to missing key '{existingKey}'.");
+    }
+
+    /// <summary>
+    /// Builds a face from a file on disk, mapping it rather than reading it where the platform allows.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Falls back to reading the file into unmanaged memory when mapping is unavailable — a filesystem that
+    /// does not support it, or a file held exclusively elsewhere. Mapping is an optimization, not a
+    /// contract.
+    /// </para>
+    /// </remarks>
+    /// <returns>The face, or null if the file could not be read at all.</returns>
+    private Font? loadFontFromFile(string name, string filePath)
+    {
+        INativeBytes? fontData = NativeFileMapping.CreateFrom(filePath);
+
+        if (fontData != null)
+            Logger.Debug($"Mapped font {name} from {filePath} ({fontData.Length / 1024} KB, no copy)");
+        else
+        {
+            fontData = NativeMemoryBuffer.CreateFromFile(filePath, NativeMemoryCategory.Fonts);
+
+            if (fontData == null)
+                return null;
+
+            Logger.Debug($"Read font {name} from {filePath} ({fontData.Length / 1024} KB into unmanaged memory)");
+        }
+
+        return new Font(name, fontData, atlas);
     }
 
     /// <summary>

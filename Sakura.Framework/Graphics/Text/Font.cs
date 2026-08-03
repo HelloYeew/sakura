@@ -130,7 +130,15 @@ public class Font : IDisposable
         public bool IsColorGlyph;
     }
 
-    public Font(string name, NativeMemoryBuffer fontData, TextureAtlas atlas)
+    /// <param name="name">The family name this face is registered under.</param>
+    /// <param name="fontData">
+    /// The face's raw bytes, outside the managed heap — either a <see cref="NativeMemoryBuffer"/> read into
+    /// unmanaged memory or a <see cref="NativeFileMapping"/> of the file itself. <b>Ownership transfers to
+    /// this font</b>, which releases it in <see cref="Dispose"/> once FreeType and HarfBuzz are done with
+    /// it, and releases it immediately if construction fails.
+    /// </param>
+    /// <param name="atlas">The atlas glyphs are rasterized into.</param>
+    public Font(string name, INativeBytes fontData, TextureAtlas atlas)
     {
         ArgumentNullException.ThrowIfNull(fontData);
 
@@ -256,7 +264,7 @@ public class Font : IDisposable
     /// <summary>
     /// The face's raw bytes, owned by this font and outliving every native object that reads them.
     /// </summary>
-    private readonly NativeMemoryBuffer fontData;
+    private readonly INativeBytes fontData;
 
     public ShapedText ProcessText(string text, float fontSize, float dpiScale = 1.0f, IEnumerable<Font>? fallbacks = null, FontVariation variation = default)
     {
