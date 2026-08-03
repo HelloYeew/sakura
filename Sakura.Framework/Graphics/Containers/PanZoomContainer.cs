@@ -68,8 +68,8 @@ public partial class PanZoomContainer : Container
     }
 
     public override void Add(Drawable drawable) => contentLayer.Add(drawable);
-    public override void Remove(Drawable drawable) => contentLayer.Remove(drawable);
-    public override void Clear() => contentLayer.Clear();
+    public override void Remove(Drawable drawable, bool dispose = true) => contentLayer.Remove(drawable, dispose);
+    public override void Clear(bool dispose = true) => contentLayer.Clear(dispose);
 
     public override bool OnScroll(ScrollEvent e)
     {

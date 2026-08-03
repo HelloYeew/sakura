@@ -67,6 +67,12 @@ public class NativeStorage : Storage
         return resolvedPath;
     }
 
+    public override string GetFileSystemPath(string path)
+    {
+        string fullPath = GetFullPath(path);
+        return File.Exists(fullPath) ? fullPath : null;
+    }
+
     public override bool OpenFileExternally(string filename) => host?.OpenFileExternally(GetFullPath(filename)) == true;
 
     public override bool PresentFileExternally(string filename) => host?.PresentFileExternally(GetFullPath(filename)) == true;

@@ -18,7 +18,7 @@ public partial class TestAsynchronousLoading : TestScene
     [SetUp]
     public void SetUp()
     {
-        AddStep("Clear scene", Clear);
+        AddStep("Clear scene", () => Clear());
     }
 
     [Test]
@@ -116,12 +116,131 @@ public partial class TestAsynchronousLoading : TestScene
         AddAssert("Box is in hierarchy", () => Children.Contains(box!));
     }
 
+    /// <summary>
+    /// A load that finished after its own cancellation has already allocated whatever it allocates, and
+    /// the caller never hears about it — so without a discard path nothing ever releases it. This is the
+    /// shape of the permanently-leaked cover texture: a cancelled cover load never reached the code that
+    /// would have released it.
+    /// </summary>
+    [Test]
+    public void TestCancelledLoadDisposesTheComponent()
+    {
+        GatedBox? box = null;
+        var cts = new CancellationTokenSource();
+        bool onLoadedFired = false;
+
+        AddStep("Begin async load", () =>
+        {
+            box = new GatedBox { Size = new Vector2(100), Color = Color.Orange };
+            LoadComponentAsync(box, _ => onLoadedFired = true, cts.Token);
+        });
+
+        // Cancelling only once the load body is running is what makes this deterministic: cancelling
+        // earlier would stop the load before it started, which allocates nothing and discards nothing.
+        AddUntilStep("Wait for load to start", () => box!.LoadStarted.IsSet);
+        AddStep("Cancel, then let the load finish", () =>
+        {
+            cts.Cancel();
+            box!.AllowFinish.Set();
+        });
+
+        AddUntilStep("Component was disposed", () => box!.IsDisposed);
+        AddAssert("onLoaded never fired", () => !onLoadedFired);
+        AddStep("Dispose token source", () => cts.Dispose());
+    }
+
+    [Test]
+    public void TestLoadCancelledByItsOwnersDisposalStillDiscards()
+    {
+        OwningContainer? owner = null;
+        GatedBox? box = null;
+
+        AddStep("Add an owner and start a load from it", () =>
+        {
+            Add(owner = new OwningContainer());
+            box = new GatedBox { Size = new Vector2(100), Color = Color.Orange };
+            owner.StartLoad(box);
+        });
+
+        AddUntilStep("Wait for load to start", () => box!.LoadStarted.IsSet);
+
+        // Removal disposes the owner, which cancels the load and clears the scheduler a discard would
+        // otherwise have been routed through.
+        AddStep("Tear the owner down", () => Remove(owner!));
+        AddUntilStep("Owner is disposed", () => owner!.IsDisposed);
+
+        // the load must finish after the cancellation, which is the whole scenario. letting it
+        // finish first would race, and an uncanceled load with no onLoaded callback discards nothing.
+        AddStep("Let the load finish", () => box!.AllowFinish.Set());
+
+        AddUntilStep("The orphaned component was still released", () => box!.IsDisposed);
+    }
+
+    /// <summary>
+    /// Supplying a discard handler takes the decision over: the framework hands the component to it and
+    /// disposes nothing itself.
+    /// </summary>
+    [Test]
+    public void TestCancelledLoadInvokesDiscardHandler()
+    {
+        GatedBox? box = null;
+        var cts = new CancellationTokenSource();
+        bool discarded = false;
+
+        AddStep("Begin async load with discard handler", () =>
+        {
+            box = new GatedBox { Size = new Vector2(100), Color = Color.Orange };
+            LoadComponentAsync(box, null, cts.Token, _ => discarded = true);
+        });
+
+        AddUntilStep("Wait for load to start", () => box!.LoadStarted.IsSet);
+        AddStep("Cancel, then let the load finish", () =>
+        {
+            cts.Cancel();
+            box!.AllowFinish.Set();
+        });
+
+        AddUntilStep("Discard handler fired", () => discarded);
+        AddAssert("Framework left disposal to the handler", () => !box!.IsDisposed);
+        AddStep("Dispose token source", () => cts.Dispose());
+    }
+
     private class AsyncBox : Box
     {
         public override void Load()
         {
             base.Load();
             Thread.Sleep(50);
+        }
+    }
+
+    private partial class OwningContainer : Container
+    {
+        private readonly CancellationTokenSource cancellation = new CancellationTokenSource();
+
+        public void StartLoad(Drawable component) => LoadComponentAsync(component, null, cancellation.Token);
+
+        protected override void Dispose(bool isDisposing)
+        {
+            cancellation.Cancel();
+
+            base.Dispose(isDisposing);
+        }
+    }
+
+    /// <summary>
+    /// A component whose load can be held open, so a test can cancel at a known point inside it.
+    /// </summary>
+    private class GatedBox : Box
+    {
+        public readonly ManualResetEventSlim LoadStarted = new ManualResetEventSlim(false);
+        public readonly ManualResetEventSlim AllowFinish = new ManualResetEventSlim(false);
+
+        public override void Load()
+        {
+            LoadStarted.Set();
+            AllowFinish.Wait(5000);
+            base.Load();
         }
     }
 

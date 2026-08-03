@@ -15,7 +15,7 @@ namespace Sakura.Framework.Tests.Visuals.Drawables;
 public partial class TestColorInfo : TestScene
 {
     [SetUp]
-    public void SetUp() => AddStep("Clear", Clear);
+    public void SetUp() => AddStep("Clear", () => Clear());
 
     private static Box centredBox() => new Box
     {

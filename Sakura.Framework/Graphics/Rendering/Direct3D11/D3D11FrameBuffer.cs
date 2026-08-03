@@ -38,9 +38,20 @@ internal sealed class D3D11FrameBuffer : IFrameBuffer
         Width = Math.Max(1, width);
         Height = Math.Max(1, height);
 
-        colorTexture?.Dispose();
+        releaseAttachment();
+
         colorTexture = D3D11Texture.CreateRenderTarget(device, context, Width, Height);
         Texture = new Texture(colorTexture);
+    }
+
+    /// <summary>
+    /// Releases the current color attachment, if any.
+    /// </summary>
+    private void releaseAttachment()
+    {
+        Texture?.Dispose();
+        Texture = null;
+        colorTexture = null;
     }
 
     public void Resize(int width, int height)
@@ -51,10 +62,5 @@ internal sealed class D3D11FrameBuffer : IFrameBuffer
         createAttachment(width, height);
     }
 
-    public void Dispose()
-    {
-        colorTexture?.Dispose();
-        colorTexture = null;
-        Texture = null;
-    }
+    public void Dispose() => releaseAttachment();
 }

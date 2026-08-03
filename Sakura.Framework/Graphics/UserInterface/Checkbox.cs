@@ -26,6 +26,9 @@ public abstract partial class Checkbox : ClickableContainer
     {
         base.LoadComplete();
 
+        OwnReactive(Current);
+        OwnReactive(Enabled);
+
         Current.BindValueChanged(e => OnCheckChanged(e.NewValue), true);
         Enabled.BindValueChanged(e => OnEnabledChanged(e.NewValue), true);
     }

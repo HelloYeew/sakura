@@ -395,7 +395,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         var white = new D3D11Texture(device, context, 1, 1);
         white.Upload(new byte[] { 255, 255, 255, 255 });
         D3D11Texture.WhitePixel = white;
-        WhitePixel = new Texture(white);
+        WhitePixel = new Texture(white, TextureOwnership.Shared);
 
         whiteSrvs = new ID3D11ShaderResourceView[texture_slot_count];
         for (int i = 0; i < texture_slot_count; i++)
@@ -419,6 +419,11 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         // never hang the draw thread. Initial state is signalled, so the first wait returns at once.
         if (frameLatencyWaitableObject != nint.Zero)
             WaitForSingleObjectEx(frameLatencyWaitableObject, 1000, true);
+
+        // Release native resources orphaned by the GC (a missed Dispose) before anything else this
+        // frame. D3D11's own resources are COM objects that SharpGen already finalizes, so in practice
+        // this only drains cross-backend enqueues, but it keeps frame start uniform across renderers.
+        Textures.NativeDisposalQueue.Process();
 
         while (drawThreadQueue.TryDequeue(out var action))
             action();

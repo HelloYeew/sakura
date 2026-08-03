@@ -16,7 +16,7 @@ public partial class TestShearedMasking : TestScene
     [SetUp]
     public void SetUp()
     {
-        AddStep("Clear screen", Clear);
+        AddStep("Clear screen", () => Clear());
     }
 
     [Test]

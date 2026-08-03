@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using Sakura.Framework.Allocation;
+using Sakura.Framework.Extensions.ObjectExtensions;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Textures;
@@ -34,7 +35,7 @@ namespace Sakura.Framework.Graphics.Video;
 ///         </list>
 ///     </para>
 /// </remarks>
-public partial class VideoSprite : Drawable, IDisposable
+public partial class VideoSprite : Drawable
 {
     private readonly string? filePath;
     private readonly Stream? stream;
@@ -147,10 +148,6 @@ public partial class VideoSprite : Drawable, IDisposable
         });
 
         decoder.Start();
-
-        // Auto-dispose when removed from the scene so the decoder, FFmpeg contexts,
-        // and video texture pool are always cleaned up without requiring explicit Dispose() calls.
-        DisposeOnRemoval = true;
 
         Alpha = 0f;
         IsPlaying = true;
@@ -351,14 +348,15 @@ public partial class VideoSprite : Drawable, IDisposable
         GlobalStatistics.Get<int>("Video", "Queue Depth").Value = availableFrames.Count;
     }
 
-    private bool isDisposed;
-
-    public void Dispose()
+    /// <summary>
+    /// Releases the decoder, its FFmpeg contexts and the video texture pool. Runs automatically when this
+    /// sprite is removed from the scene (see <see cref="Container.Remove(Drawable, bool)"/>).
+    /// </summary>
+    protected override void Dispose(bool isDisposing)
     {
-        if (isDisposed) return;
-        isDisposed = true;
+        if (IsDisposed) return;
 
-        if (decoder != null)
+        if (decoder.IsNull())
         {
             decoder.ReturnFrames(availableFrames);
             availableFrames.Clear();
@@ -379,5 +377,7 @@ public partial class VideoSprite : Drawable, IDisposable
             videoShader = null;
             renderer?.ScheduleToDrawThread(shader.Dispose);
         }
+
+        base.Dispose(isDisposing);
     }
 }

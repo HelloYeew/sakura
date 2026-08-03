@@ -18,6 +18,7 @@ using Sakura.Framework.Configurations;
 using Sakura.Framework.Development;
 using Sakura.Framework.Extensions.ExceptionExtensions;
 using Sakura.Framework.Extensions.IEnumerableExtensions;
+using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Input;
 using Sakura.Framework.IO;
@@ -35,10 +36,14 @@ public abstract class AppHost : IDisposable
 {
     private static readonly int frame_sync_value_count = Enum.GetValues<FrameSync>().Length;
 
-    private static readonly GlobalStatistic<int> stat_gc_gen0 = GlobalStatistics.Get<int>("GC", "Gen 0 Collections");
-    private static readonly GlobalStatistic<int> stat_gc_gen1 = GlobalStatistics.Get<int>("GC", "Gen 1 Collections");
-    private static readonly GlobalStatistic<int> stat_gc_gen2 = GlobalStatistics.Get<int>("GC", "Gen 2 Collections");
     private static readonly GlobalStatistic<double> stat_uptime = GlobalStatistics.Get<double>("Host", "Uptime (ms)");
+
+    /// <summary>
+    /// How often the GC/texture statistics are refreshed on the main loop.
+    /// </summary>
+    private const double gc_statistics_interval_ms = 250;
+
+    private long lastGCStatisticsTicks;
     private static readonly GlobalStatistic<double> stat_target_update_hz = GlobalStatistics.Get<double>("Host", "Target Update Hz");
     private static readonly GlobalStatistic<int> stat_drawn_last_frame = GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame");
 
@@ -334,6 +339,11 @@ public abstract class AppHost : IDisposable
 
     private static readonly SemaphoreSlim host_running_mutex = new SemaphoreSlim(1);
 
+    /// <summary>
+    /// The <see cref="Console.CancelKeyPress"/> handler, kept so it can be detached on disposal.
+    /// </summary>
+    private ConsoleCancelEventHandler? cancelKeyPressHandler;
+
     protected virtual void SetupForRun()
     {
         Logger.Storage = Storage.GetStorageForDirectory("logs");
@@ -378,7 +388,7 @@ public abstract class AppHost : IDisposable
             Logger.AppIdentifier = Name;
             Logger.VersionIdentifier = RuntimeInfo.EntryAssembly.GetName().Version?.ToString() ?? Logger.VersionIdentifier;
 
-            Logger.Initialize();
+            Logger.Initialize(DebugUtils.IsDebugBuild ? LogLevel.Debug : LogLevel.Verbose);
 
             if (!host_running_mutex.Wait(10000))
             {
@@ -394,13 +404,15 @@ public abstract class AppHost : IDisposable
 
             SetupForRun();
 
-            Console.CancelKeyPress += (_, _) =>
+            cancelKeyPressHandler = (_, _) =>
             {
                 // Try to gracefully stop the application without missing any events before exiting.
                 Window.Close();
                 Dispose(true);
                 exitEvent.Set();
             };
+
+            Console.CancelKeyPress += cancelKeyPressHandler;
 
             FrameLimiter = FrameworkConfigManager.Get<FrameSync>(FrameworkSetting.FrameLimiter);
             updateTargetUpdateHz();
@@ -409,6 +421,10 @@ public abstract class AppHost : IDisposable
                 updateTargetUpdateHz();
                 Logger.Verbose($"Frame limiter changed from {e.OldValue} to {e.NewValue}");
             };
+
+            // From here on there is an update loop to drain it, so removal-triggered disposal can be
+            // deferred and budgeted rather than walking a whole subtree inline
+            DrawableDisposalQueue.Enabled = true;
 
             executionState = ExecutionState.Running;
 
@@ -579,9 +595,13 @@ public abstract class AppHost : IDisposable
             {
                 while (executionState == ExecutionState.Running)
                 {
-                    stat_gc_gen0.Value = GC.CollectionCount(0);
-                    stat_gc_gen1.Value = GC.CollectionCount(1);
-                    stat_gc_gen2.Value = GC.CollectionCount(2);
+                    long nowTicks = Stopwatch.GetTimestamp();
+                    if ((nowTicks - lastGCStatisticsTicks) * msPerTick >= gc_statistics_interval_ms)
+                    {
+                        lastGCStatisticsTicks = nowTicks;
+                        GCStatistics.Update();
+                        Graphics.Textures.TextureRegistry.Prune();
+                    }
 
                     while (mainThreadActions.TryDequeue(out var action))
                     {
@@ -969,6 +989,11 @@ public abstract class AppHost : IDisposable
         // The thread's pacing (AppThread) already drives this method at the target rate.
         app?.UpdateSubTree();
 
+        // Drain removed drawables within this frame's budget. After UpdateSubTree so anything removed
+        // during this frame's updates (or by input dispatched above) is picked up in the same frame
+        // rather than lingering until the next one.
+        DrawableDisposalQueue.Process();
+
         int updateIndex = frameBufferManager.GetUpdateIndex();
         rootDrawNodes[updateIndex] = app?.GenerateDrawNodeSubtree(updateIndex);
         frameBufferManager.FinishUpdate();
@@ -1093,6 +1118,17 @@ public abstract class AppHost : IDisposable
 
         AppDomain.CurrentDomain.UnhandledException -= unhandledExceptionHandler;
         TaskScheduler.UnobservedTaskException -= unobservedTaskExceptionHandler;
+
+        // No more frames will be pumped, so anything still queued has to be released now — and from here
+        // on removal disposes inline, since deferring it would mean never.
+        DrawableDisposalQueue.Enabled = false;
+        DrawableDisposalQueue.Flush();
+
+        if (cancelKeyPressHandler != null)
+        {
+            Console.CancelKeyPress -= cancelKeyPressHandler;
+            cancelKeyPressHandler = null;
+        }
 
         Logger.Shutdown();
 

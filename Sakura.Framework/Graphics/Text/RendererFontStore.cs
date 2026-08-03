@@ -4,6 +4,7 @@
 #nullable disable
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
@@ -278,6 +279,8 @@ public class RendererFontStore : IFontStore
     /// </summary>
     public void AddFont(Storage storage, string filename, string alias = null!)
     {
+        invalidateFallbackCache();
+
         string name = alias ?? Path.GetFileNameWithoutExtension(filename);
 
         fontCache[name] = new Lazy<Font>(() =>
@@ -315,6 +318,8 @@ public class RendererFontStore : IFontStore
     /// <param name="alias">Cache key for the font. If null, uses the filename without extension.</param>
     public void AddFontFromFile(string filePath, string alias = null!)
     {
+        invalidateFallbackCache();
+
         string name = alias ?? Path.GetFileNameWithoutExtension(filePath);
 
         fontCache[name] = new Lazy<Font>(() =>
@@ -353,16 +358,38 @@ public class RendererFontStore : IFontStore
         if (existingKey == alias) return;
 
         if (fontCache.TryGetValue(existingKey, out var existing))
+        {
             fontCache[alias] = existing;
+            invalidateFallbackCache();
+        }
         else
             Logger.Warning($"Cannot alias font '{alias}' to missing key '{existingKey}'.");
     }
 
     private Font loadFontFromStream(string name, Stream stream)
     {
-        using var ms = new MemoryStream();
-        stream.CopyTo(ms);
-        return new Font(name, ms.ToArray(), atlas);
+        return new Font(name, readAll(stream), atlas);
+
+        static byte[] readAll(Stream stream)
+        {
+            if (stream.CanSeek)
+            {
+                long remaining = stream.Length - stream.Position;
+
+                if (remaining > 0 && remaining <= Array.MaxLength)
+                {
+                    byte[] exact = GC.AllocateUninitializedArray<byte>((int)remaining);
+
+                    stream.ReadExactly(exact);
+                    return exact;
+                }
+            }
+
+            // non-seekable, or a length the stream declines to report
+            using var ms = new MemoryStream();
+            stream.CopyTo(ms);
+            return ms.ToArray();
+        }
     }
 
     public Font Get(FontUsage usage)
@@ -403,46 +430,233 @@ public class RendererFontStore : IFontStore
 
     public void AddFallbackFamily(string familyName)
     {
-        if (!fallbackFamilies.Contains(familyName))
-            fallbackFamilies.Add(familyName);
+        if (fallbackFamilies.Contains(familyName))
+            return;
+
+        fallbackFamilies.Add(familyName);
+        invalidateFallbackCache();
     }
 
     public void InsertFallbackFamily(int index, string familyName)
     {
-        if (!fallbackFamilies.Contains(familyName))
-            fallbackFamilies.Insert(index, familyName);
+        if (fallbackFamilies.Contains(familyName))
+            return;
+
+        fallbackFamilies.Insert(index, familyName);
+        invalidateFallbackCache();
     }
 
     public void ClearFallbackFamilies()
     {
         fallbackFamilies.Clear();
+        invalidateFallbackCache();
     }
 
+    /// <summary>
+    /// Fallback chains, keyed by the only parts of a <see cref="FontUsage"/> that affect the result (the
+    /// family is substituted per fallback, and size plays no part in resolution).
+    /// </summary>
+    private readonly Dictionary<(string weight, bool italics), FallbackChain> fallbackCache = new Dictionary<(string, bool), FallbackChain>();
+
+    /// <summary>
+    /// The fallback fonts to try, in order, for glyphs the primary font does not cover.
+    /// </summary>
     public IEnumerable<Font> GetFallbacks(FontUsage usage)
     {
-        var returnedFonts = new HashSet<Font>();
+        var key = (usage.Weight, usage.Italics);
 
-        foreach (string family in fallbackFamilies)
+        if (!fallbackCache.TryGetValue(key, out var chain))
+            fallbackCache[key] = chain = new FallbackChain(this, usage);
+
+        return chain;
+    }
+
+    /// <summary>
+    /// A fallback chain for one (weight, italics) combination, resolved one family at a time as a
+    /// consumer walks it, and remembering what it resolved so later layouts pay nothing.
+    /// </summary>
+    private sealed class FallbackChain : IEnumerable<Font>
+    {
+        private readonly RendererFontStore store;
+        private readonly FontUsage usage;
+
+        /// <summary>
+        /// Fonts resolved so far, in chain order. Append-only.
+        /// </summary>
+        private readonly List<Font> resolved = new List<Font>();
+
+        private readonly HashSet<Font> seen = new HashSet<Font>();
+
+        /// <summary>
+        /// How far into <see cref="fallbackFamilies"/> resolution has reached.
+        /// </summary>
+        private int nextFamily;
+
+        public FallbackChain(RendererFontStore store, FontUsage usage)
         {
-            var fallbackFont = Get(usage.With(family: family));
+            this.store = store;
+            this.usage = usage;
+        }
 
-            if (fallbackFont == defaultFont || fallbackFont == null)
-                fallbackFont = Get(family);
-
-            // A registered fallback family that resolves to the default font was never loaded (its
-            // file is missing, or AddFallbackFamily was called without a matching AddFont/loadFamily).
-            // Such a family contributes nothing to glyph coverage; warn once so the misconfiguration
-            // is visible instead of silently rendering missing glyphs as .notdef ("tofu").
-            if (fallbackFont == null || fallbackFont == defaultFont)
+        public IEnumerator<Font> GetEnumerator()
+        {
+            for (int i = 0; ; i++)
             {
-                if (warnedMissingFallbacks.Add(family))
-                    Logger.Warning($"Fallback family '{family}' is registered but not loaded; it will not contribute glyphs. Did you forget to load it?");
-                continue;
+                if (i >= resolved.Count && !resolveNext())
+                    yield break;
+
+                yield return resolved[i];
+            }
+        }
+
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+        /// <summary>
+        /// Loads and appends the next family that resolves to a usable font, skipping ones that are
+        /// registered but not loaded. Returns false once the chain is exhausted.
+        /// </summary>
+        private bool resolveNext()
+        {
+            while (nextFamily < store.fallbackFamilies.Count)
+            {
+                string family = store.fallbackFamilies[nextFamily++];
+
+                var fallbackFont = store.Get(usage.With(family: family));
+
+                if (fallbackFont == store.defaultFont || fallbackFont == null)
+                    fallbackFont = store.Get(family);
+
+                // A registered fallback family that resolves to the default font was never loaded (its
+                // file is missing, or AddFallbackFamily was called without a matching AddFont/loadFamily).
+                // Such a family contributes nothing to glyph coverage, warn once so the misconfiguration
+                // is visible instead of silently rendering missing glyphs as .notdef ("tofu").
+                if (fallbackFont == null || fallbackFont == store.defaultFont)
+                {
+                    if (store.warnedMissingFallbacks.Add(family))
+                        Logger.Debug($"Fallback family '{family}' is registered but not loaded, it will not contribute glyphs. Did you forget to load it?");
+
+                    continue;
+                }
+
+                if (!seen.Add(fallbackFont))
+                    continue;
+
+                resolved.Add(fallbackFont);
+                return true;
             }
 
-            if (returnedFonts.Add(fallbackFont))
-                yield return fallbackFont;
+            return false;
         }
+    }
+
+    #region Shaped text cache
+
+    /// <summary>
+    /// The default number of shaped strings kept. A screen's worth of labels is tens of entries, this
+    /// leaves room for a scrolling list to churn through several screens without evicting text that is
+    /// still on display.
+    /// </summary>
+    public const int DEFAULT_SHAPE_CACHE_SIZE = 1024;
+
+    /// <summary>
+    /// Maximum number of shaped strings to keep
+    /// </summary>
+    public int ShapeCacheSize { get; set; } = DEFAULT_SHAPE_CACHE_SIZE;
+
+    private static readonly GlobalStatistic<long> stat_shape_hits = GlobalStatistics.Get<long>("Fonts", "Shape Cache Hits");
+    private static readonly GlobalStatistic<long> stat_shape_misses = GlobalStatistics.Get<long>("Fonts", "Shape Cache Misses");
+    private static readonly GlobalStatistic<int> stat_shape_entries = GlobalStatistics.Get<int>("Fonts", "Shaped Text Entries");
+    private static readonly GlobalStatistic<long> stat_shape_bytes = GlobalStatistics.Get<long>("Fonts", "Shaped Text Bytes");
+
+    /// <summary>
+    /// Everything about a request that changes the shaped output. <see cref="FontUsage"/> carries family,
+    /// size, weight, italics and the variation axes; <c>dpiScale</c> is separate because it comes from the
+    /// window rather than the usage.
+    /// </summary>
+    private readonly record struct ShapeKey(FontUsage Usage, string Text, float DpiScale);
+
+    private readonly Dictionary<ShapeKey, LinkedListNode<(ShapeKey Key, ShapedText Shaped)>> shapeCache
+        = new Dictionary<ShapeKey, LinkedListNode<(ShapeKey, ShapedText)>>();
+
+    /// <summary>
+    /// Most-recently-used at the front
+    /// </summary>
+    private readonly LinkedList<(ShapeKey Key, ShapedText Shaped)> shapeLru
+        = new LinkedList<(ShapeKey, ShapedText)>();
+
+    private long shapeBytes;
+
+    public ShapedText Shape(FontUsage usage, string text, float dpiScale)
+    {
+        if (string.IsNullOrEmpty(text))
+            return ShapedText.Empty;
+
+        var key = new ShapeKey(usage, text, dpiScale);
+
+        if (shapeCache.TryGetValue(key, out var existing))
+        {
+            // Move to the front by relinking the existing node: no allocation, which is what makes a hit
+            // free.
+            shapeLru.Remove(existing);
+            shapeLru.AddFirst(existing);
+
+            stat_shape_hits.Value++;
+            return existing.Value.Shaped;
+        }
+
+        stat_shape_misses.Value++;
+
+        var font = Get(usage);
+        if (font == null)
+            return ShapedText.Empty;
+
+        var shaped = font.ProcessText(text, usage.Size, dpiScale, GetFallbacks(usage), GetVariation(usage));
+
+        var node = shapeLru.AddFirst((key, shaped));
+        shapeCache[key] = node;
+        shapeBytes += shaped.EstimatedBytes;
+
+        while (shapeCache.Count > Math.Max(1, ShapeCacheSize))
+        {
+            var evicted = shapeLru.Last!;
+            shapeLru.RemoveLast();
+            shapeCache.Remove(evicted.Value.Key);
+            shapeBytes -= evicted.Value.Shaped.EstimatedBytes;
+        }
+
+        updateShapeStatistics();
+
+        return shaped;
+    }
+
+    private void updateShapeStatistics()
+    {
+        stat_shape_entries.Value = shapeCache.Count;
+        stat_shape_bytes.Value = shapeBytes;
+    }
+
+    /// <summary>
+    /// Drops every shaped result.
+    /// </summary>
+    private void invalidateShapeCache()
+    {
+        shapeCache.Clear();
+        shapeLru.Clear();
+        shapeBytes = 0;
+
+        updateShapeStatistics();
+    }
+
+    #endregion
+
+    /// <summary>
+    /// Drops resolved fallback chains and shaped results, so a newly registered family or font is picked
+    /// up. Both are derived from which fonts resolve and in what order, so they go stale together.
+    /// </summary>
+    private void invalidateFallbackCache()
+    {
+        fallbackCache.Clear();
+        invalidateShapeCache();
     }
 
     public void ClearCaches()
@@ -456,6 +670,8 @@ public class RendererFontStore : IFontStore
                 font.Value.ClearCache();
             }
         }
+
+        invalidateFallbackCache();
 
         CacheVersion++;
 

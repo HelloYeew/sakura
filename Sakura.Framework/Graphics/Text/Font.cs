@@ -8,10 +8,10 @@ using System.Threading;
 using FreeTypeSharp;
 using HarfBuzzSharp;
 using Sakura.Framework.Graphics.Textures;
+using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Statistic;
 using Sakura.Framework.Utilities;
-using Logger = Sakura.Framework.Logging.Logger;
 
 namespace Sakura.Framework.Graphics.Text;
 
@@ -20,6 +20,22 @@ namespace Sakura.Framework.Graphics.Text;
 /// </summary>
 public class Font : IDisposable
 {
+    /// <summary>
+    /// How many times text has actually been shaped (segmented into runs, handed to HarfBuzz and turned
+    /// into a glyph list)
+    /// </summary>
+    /// <remarks>
+    /// Reads near zero on an idle frame. A number that climbs while nothing on screen changes means
+    /// something is re-shaping text it already shaped.
+    /// </remarks>
+    private static readonly GlobalStatistic<long> stat_text_shapes = GlobalStatistics.Get<long>("Fonts", "Text Shapes");
+
+    /// <summary>
+    /// Runs shaped within those calls. Higher than <see cref="stat_text_shapes"/> for text that mixes
+    /// scripts, since each stretch covered by a different font is shaped separately.
+    /// </summary>
+    private static readonly GlobalStatistic<long> stat_shaped_runs = GlobalStatistics.Get<long>("Fonts", "Shaped Runs");
+
     private readonly TextureAtlas atlas;
 
     private readonly FreeTypeLibrary library;
@@ -125,7 +141,7 @@ public class Font : IDisposable
             faceHandle = facePtr;
         }
 
-        hbBlob = new Blob(fontPtr, fontData.Length, MemoryMode.Duplicate);
+        hbBlob = new Blob(fontPtr, fontData.Length, MemoryMode.ReadOnly);
         hbFace = new Face(hbBlob, 0);
         hbFont = new HarfBuzzSharp.Font(hbFace);
 
@@ -237,6 +253,8 @@ public class Font : IDisposable
                     lineHeightPx = renderFontSize;
             }
         }
+
+        stat_text_shapes.Value++;
 
         // Segment the text into runs based on font support
         var glyphs = new List<TextGlyph>();
@@ -487,6 +505,8 @@ public class Font : IDisposable
 
     private List<TextGlyph> shapeRun(string text, float renderFontSize, float dpiScale, float baselineY, FontVariation variation, int runOffset, ref float cursorX)
     {
+        stat_shaped_runs.Value++;
+
         var glyphs = new List<TextGlyph>();
 
         lock (stateLock)
@@ -758,15 +778,32 @@ public struct TextGlyph
     public bool IsColorGlyph;
 }
 
+/// <summary>
+/// The result of shaping one string: its glyphs and their measured bounds.
+/// </summary>
 public class ShapedText
 {
-    public List<TextGlyph> Glyphs { get; }
+    /// <summary>
+    /// The shaped glyphs, in visual order. Exposed read-only because instances are shared.
+    /// </summary>
+    public IReadOnlyList<TextGlyph> Glyphs { get; }
+
     public Vector2 BoundingBox { get; }
-    public static ShapedText Empty => new ShapedText(new List<TextGlyph>(), Vector2.Zero);
+
+    /// <summary>
+    /// The result of shaping nothing
+    /// </summary>
+    public static ShapedText Empty { get; } = new ShapedText(new List<TextGlyph>(), Vector2.Zero);
 
     public ShapedText(List<TextGlyph> glyphs, Vector2 bounds)
     {
         Glyphs = glyphs;
         BoundingBox = bounds;
     }
+
+    /// <summary>
+    /// Rough resident size of this result, used to bound the shape cache. Only the glyph list is
+    /// counted; the textures it points at are owned by the font atlas.
+    /// </summary>
+    internal long EstimatedBytes => Glyphs.Count * 40L;
 }

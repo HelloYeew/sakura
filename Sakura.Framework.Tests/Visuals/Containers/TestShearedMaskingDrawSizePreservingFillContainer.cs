@@ -19,7 +19,7 @@ public partial class TestShearedMaskingDrawSizePreservingFillContainer : TestSce
     [SetUp]
     public void SetUp()
     {
-        AddStep("Clear screen", Clear);
+        AddStep("Clear screen", () => Clear());
         AddStep("Add draw preserved container", () =>
         {
             mainContainer = new DrawSizePreservingFillContainer()

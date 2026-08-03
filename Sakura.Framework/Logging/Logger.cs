@@ -9,6 +9,7 @@ using System.IO;
 using System.Reflection;
 using System.Text;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using Sakura.Framework.Development;
 using Sakura.Framework.Platform;
@@ -18,10 +19,15 @@ namespace Sakura.Framework.Logging;
 
 public class Logger
 {
-    private static readonly ConcurrentQueue<LogMessage> message_queue = new ConcurrentQueue<LogMessage>();
+    private static readonly Channel<LogMessage> message_channel = Channel.CreateUnbounded<LogMessage>(
+        new UnboundedChannelOptions
+        {
+            SingleReader = true,
+            SingleWriter = false
+        });
     private static readonly ConcurrentDictionary<LoggingTarget, StreamWriter> file_writers = new ConcurrentDictionary<LoggingTarget, StreamWriter>();
     private static readonly Lock console_lock = new Lock();  // Lock for console output to not mutate concurrently
-    private static ManualResetEventSlim processing_gate = new ManualResetEventSlim(true);
+    private static ManualResetEventSlim processingGate = new ManualResetEventSlim(true);
 
     private static Task processingTask;
     private static CancellationTokenSource cancellationTokenSource;
@@ -170,8 +176,8 @@ public class Logger
 
         isShutDown = false;
 
-        processing_gate = new ManualResetEventSlim(true);
-        processing_gate.Reset();
+        processingGate = new ManualResetEventSlim(true);
+        processingGate.Reset();
 
         MinimumLogLevel = minimumLogLevel;
         LogToConsole = logToConsole;
@@ -225,7 +231,7 @@ public class Logger
         if (isShutDown) return;
 
         // Ensure that we don't try to shut down before the processing task has even started.
-        processing_gate.Wait();
+        processingGate.Wait();
 
         if (cancellationTokenSource == null || processingTask == null) return;
 
@@ -249,7 +255,7 @@ public class Logger
         }
 
         cancellationTokenSource.Dispose();
-        processing_gate.Dispose();
+        processingGate.Dispose();
 
         foreach (var writer in file_writers.Values)
         {
@@ -277,12 +283,12 @@ public class Logger
 
         // Block until the processing task is fully initialized and running.
         // since maybe the program is really short-lived and the processing task hasn't started yet.
-        processing_gate.Wait();
+        processingGate.Wait();
 
         if (level < MinimumLogLevel || cancellationTokenSource == null || cancellationTokenSource.IsCancellationRequested || level < MinimumLogLevel)
             return;
 
-        message_queue.Enqueue(new LogMessage(DateTime.UtcNow, level, target, message));
+        message_channel.Writer.TryWrite(new LogMessage(DateTime.UtcNow, level, target, message));
 
         log_count_stats.GetOrAdd(level, static l => GlobalStatistics.Get<int>("Logger", $"Log {l} Count")).Value++;
     }
@@ -292,52 +298,71 @@ public class Logger
     private static async Task processLogQueue(CancellationToken token)
     {
         // Signal that the processing task is ready to process messages.
-        processing_gate.Set();
+        processingGate.Set();
 
-        while (!token.IsCancellationRequested || !message_queue.IsEmpty)
+        var reader = message_channel.Reader;
+
+        while (true)
         {
-            if (message_queue.TryDequeue(out var logMessage))
+            // Drain everything already buffered without awaiting between items.
+            while (reader.TryRead(out var logMessage))
             {
                 try
                 {
-                    await writeLogMessage(logMessage);
+                    await writeLogMessage(logMessage).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
-                    await Console.Error.WriteLineAsync($"Failed to write log message: {ex}");
+                    await Console.Error.WriteLineAsync($"Failed to write log message: {ex}").ConfigureAwait(false);
                 }
             }
-            else
+
+            if (token.IsCancellationRequested)
             {
-                try
-                {
-                    await Task.Delay(10, token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    // In case on shutdown signal triggered
-                    // Just don't break the loop immediately
-                    // Continue looping and it will automatically exit when the queue is empty.
-                    continue;
-                }
+                // the drain above emptied the buffer, so anything written between that check
+                // and now is the last of it, one more non-awaiting drain and the loop is done.
+                if (!reader.TryPeek(out _))
+                    return;
+
+                continue;
+            }
+
+            try
+            {
+                //sleeps here until a message arrives (or shutdown cancels the wait)
+                // WaitToReadAsync returning false means the channel was completed
+                if (!await reader.WaitToReadAsync(token).ConfigureAwait(false))
+                    return;
+            }
+            catch (OperationCanceledException)
+            {
+                // Shutdown signaled while idle, loop once more so any final messages are flushed
+                // through the drain above rather than dropped.
             }
         }
     }
 
     private static async Task writeLogMessage(LogMessage logMessage)
     {
-        foreach (string message in logMessage.Message.Split(new[] { '\n' }, StringSplitOptions.None))
+        if (logMessage.Message.IndexOf('\n') < 0)
         {
-            string formattedMessage = getFormattedMessage(logMessage.Timestamp, logMessage.Level, message);
-
-            var writer = getFileWriter(logMessage.Target);
-            await writer.WriteLineAsync(formattedMessage);
-
-            if (LogToConsole)
-            {
-                logToConsole(formattedMessage, logMessage.Target);
-            }
+            await writeLine(logMessage, logMessage.Message).ConfigureAwait(false);
+            return;
         }
+
+        foreach (string message in logMessage.Message.Split('\n'))
+            await writeLine(logMessage, message).ConfigureAwait(false);
+    }
+
+    private static async Task writeLine(LogMessage logMessage, string message)
+    {
+        string formattedMessage = getFormattedMessage(logMessage.Timestamp, logMessage.Level, message);
+
+        var writer = getFileWriter(logMessage.Target);
+        await writer.WriteLineAsync(formattedMessage).ConfigureAwait(false);
+
+        if (LogToConsole)
+            logToConsole(formattedMessage, logMessage.Target);
     }
 
     private static void logToConsole(string message, LoggingTarget target = LoggingTarget.Runtime)

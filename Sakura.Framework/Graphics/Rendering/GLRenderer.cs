@@ -220,7 +220,7 @@ public class GLRenderer : IGLRenderer, IDisposable
         gl.Disable(EnableCap.ScissorTest);
 
         GLTexture.CreateWhitePixel(gl);
-        WhitePixel = new Texture(GLTexture.WhitePixel);
+        WhitePixel = new Texture(GLTexture.WhitePixel, TextureOwnership.Shared);
         prefillTextureSlots();
         resetTextureSlots();
 
@@ -275,6 +275,10 @@ public class GLRenderer : IGLRenderer, IDisposable
 
     public void StartFrame()
     {
+        // Release native resources orphaned by the GC (a missed Dispose) before anything else this
+        // frame, so their memory is freed before new allocations are made against it.
+        Textures.NativeDisposalQueue.Process();
+
         while (drawThreadQueue.TryDequeue(out var action))
         {
             action.Invoke();

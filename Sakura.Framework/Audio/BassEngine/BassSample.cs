@@ -5,47 +5,57 @@
 
 using System;
 using System.IO;
-using System.Runtime.InteropServices;
+using System.Threading;
 using ManagedBass;
+using Sakura.Framework.IO;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Audio.BassEngine;
 
-internal class BassSample : ISample
+internal class BassSample : ISample, IHasActiveChannels, IDisposable
 {
     private readonly BassAudioManager manager;
+
+    /// <summary>
+    /// The encoded sample held in unmanaged memory. Every playback channel decodes straight out of
+    /// this block, so it must stay at a fixed address for as long as any of them live — see
+    /// <see cref="BassTrack"/> for why that is not a pinned managed array.
+    /// </summary>
+    private readonly NativeMemoryBuffer data;
+
     private readonly IntPtr dataPtr;
     private readonly long dataLength;
-    private GCHandle dataHandle;
+
+    private int activeChannelCount;
 
     public double Length { get; }
 
+    public bool HasActiveChannels => Volatile.Read(ref activeChannelCount) > 0;
+
     public BassSample(BassAudioManager manager, Stream stream)
+        : this(manager, NativeMemoryBuffer.CreateFrom(stream, NativeMemoryCategory.Audio))
     {
-        this.manager = manager;
-
-        using (var ms = new MemoryStream())
-        {
-            stream.CopyTo(ms);
-            byte[] data = ms.ToArray();
-            dataLength = data.Length;
-            dataHandle = GCHandle.Alloc(data, GCHandleType.Pinned);
-            dataPtr = dataHandle.AddrOfPinnedObject();
-        }
-
-        GlobalStatistics.Get<int>("Audio", "Loaded Samples").Value++;
-
-        Length = calculateLength();
     }
 
     public BassSample(BassAudioManager manager, string path)
+        : this(manager, NativeMemoryBuffer.CreateFromFile(path, NativeMemoryCategory.Audio))
+    {
+    }
+
+    private BassSample(BassAudioManager manager, NativeMemoryBuffer data)
     {
         this.manager = manager;
-        byte[] data = File.ReadAllBytes(path);
+        this.data = data;
+
+        if (data == null)
+        {
+            Logger.Error("Refusing to create a sample with no data.", new InvalidDataException("Sample source contained no data."));
+            return;
+        }
+
+        dataPtr = data.Pointer;
         dataLength = data.Length;
-        dataHandle = GCHandle.Alloc(data, GCHandleType.Pinned);
-        dataPtr = dataHandle.AddrOfPinnedObject();
 
         GlobalStatistics.Get<int>("Audio", "Loaded Samples").Value++;
 
@@ -68,20 +78,50 @@ internal class BassSample : ISample
 
     public IAudioChannel GetChannel()
     {
+        if (data == null || !data.AddReference())
+            return null!;
+
         int channelHandle = Bass.CreateStream(dataPtr, 0, dataLength, BassFlags.Decode | BassFlags.Float);
 
         if (channelHandle == 0)
+        {
+            releaseDataReference();
             return null!;
+        }
 
-        return manager.CreateChannel(channelHandle, true, (BassAudioMixer)manager.SampleMixer);
+        var channel = manager.CreateChannel(channelHandle, true, (BassAudioMixer)manager.SampleMixer);
+
+        Interlocked.Increment(ref activeChannelCount);
+
+        // Raised once BASS has freed the channel's own handles, so the data block is no longer being
+        // read by it. Samples are fire-and-forget (see Play), so this is the normal path.
+        channel.Disposed += () =>
+        {
+            Interlocked.Decrement(ref activeChannelCount);
+            releaseDataReference();
+        };
+
+        return channel;
     }
 
     public IAudioChannel Play()
     {
         var channel = GetChannel();
+
+        if (channel == null)
+            return null!;
+
         channel.AutoDispose = true;
         channel.Play();
         return channel;
+    }
+
+    private void releaseDataReference()
+    {
+        if (data == null)
+            return;
+
+        data.Release();
     }
 
     private bool isDisposed;
@@ -94,17 +134,20 @@ internal class BassSample : ISample
 #pragma warning restore CA1816
     }
 
-
     protected virtual void Dispose(bool disposing)
     {
         if (isDisposed) return;
 
-        if (dataHandle.IsAllocated)
-            dataHandle.Free();
-
-        GlobalStatistics.Get<int>("Audio", "Loaded Samples").Value--;
-
         isDisposed = true;
+
+        if (data != null)
+            GlobalStatistics.Get<int>("Audio", "Loaded Samples").Value--;
+
+        // Only this sample's own reference. Channels still playing hold theirs, and the block
+        // survives until the last one is disposed. On the finalizer path the buffer is left to its
+        // own finalizer — it is a managed object and may already have been collected.
+        if (disposing)
+            releaseDataReference();
     }
 
     ~BassSample()

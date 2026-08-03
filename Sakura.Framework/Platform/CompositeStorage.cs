@@ -42,6 +42,13 @@ public class CompositeStorage : Storage
             ?? storages.FirstOrDefault()?.GetFullPath(path, createIfNotExists);
     }
 
+    public override string? GetFileSystemPath(string path)
+    {
+        // Must resolve through the same storage GetStream would pick, or a consumer could end up
+        // reading a different file than the one this storage would hand it.
+        return storages.FirstOrDefault(s => s.Exists(path))?.GetFileSystemPath(path);
+    }
+
     public override Stream? GetStream(string path, FileAccess access = FileAccess.Read, FileMode mode = FileMode.OpenOrCreate)
     {
         // For read access, find the first storage that has the file.

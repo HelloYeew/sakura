@@ -11,20 +11,21 @@ using Sakura.Framework.Maths;
 namespace Sakura.Framework.Graphics.Rendering;
 
 /// <summary>
-/// Draw node for <see cref="BufferedContainer"/>: renders the child draw nodes into the
-/// container's shared offscreen framebuffer, runs the active effect passes (separable
-/// Gaussian blur, grayscale), then composites the result — and optionally the original —
-/// to the current render target.
+/// Draw node for <see cref="BufferedContainer"/>
 /// </summary>
 public class BufferedContainerDrawNode : ContainerDrawNode
 {
-    // Effect shaders are process-global: one program each serves every buffered container.
-    // Created lazily on the draw thread.
-    private static IShader? blur_shader;
-    private static IShader? grayscale_shader;
-    private static IRenderer? shader_renderer;
+    private static IShader? blurShader;
+    private static IShader? grayscaleShader;
+    private static IRenderer? shaderRenderer;
 
     private const int max_blur_radius = 64;
+
+    /// <summary>
+    /// How many consecutive passthrough frames must pass before the (now unused) framebuffers are
+    /// released.
+    /// </summary>
+    private const int passthrough_frames_before_release = 60;
 
     private BufferedContainer.BufferedContainerSharedData? shared;
 
@@ -62,11 +63,55 @@ public class BufferedContainerDrawNode : ContainerDrawNode
             ColorExtensions.SrgbToLinear(ec.R),
             ColorExtensions.SrgbToLinear(ec.G),
             ColorExtensions.SrgbToLinear(ec.B),
-            ec.A / 255f);
+            ec.A / 255f
+        );
     }
 
     private bool blurActive => blurSigma.X > 0 || blurSigma.Y > 0;
     private bool grayscaleActive => grayscaleStrength > 0;
+
+    /// <summary>
+    /// Whether this frame can skip the offscreen pass entirely and draw the subtree straight to the
+    /// target, which is what an unconditionally-wrapping container costs nothing for.
+    /// </summary>
+    private bool canSkipBuffer =>
+        !blurActive
+        && !grayscaleActive
+        // The point of caching is to keep the drawn buffer across frames; a passthrough redraws the
+        // subtree every frame, which is the opposite of what was asked for.
+        && !cacheDrawnFrameBuffer
+        // The buffer clear has no passthrough equivalent.
+        && backgroundColor.A == 0
+        // A deliberate resolution change.
+        && frameBufferScale.Equals(Vector2.One)
+        // Applies to the flattened result, not to each child.
+        && Blending == BlendingMode.Alpha
+        && compositeColorIsNeutral;
+
+    /// <summary>
+    /// Whether the composite quad would be drawn at exactly neutral colour, i.e. whether it would change
+    /// nothing. All four corners are checked; see <see cref="canSkipBuffer"/>.
+    /// </summary>
+    private bool compositeColorIsNeutral
+    {
+        get
+        {
+            // No vertices means drawComposite falls back to a colour built from DrawAlpha, which this
+            // cannot verify. Buffer instead.
+            if (Vertices.Length == 0)
+                return false;
+
+            foreach (var vertex in Vertices)
+            {
+                var color = vertex.Color;
+
+                if (color.X != 1f || color.Y != 1f || color.Z != 1f || color.W != 1f)
+                    return false;
+            }
+
+            return true;
+        }
+    }
 
     public override void Draw(IRenderer renderer)
     {
@@ -77,6 +122,22 @@ public class BufferedContainerDrawNode : ContainerDrawNode
 
         if (rect.Width <= 0 || rect.Height <= 0)
             return;
+
+        if (canSkipBuffer)
+        {
+            // What this replaces is a single composite quad at neutral colour under the default blend, which
+            // BufferedContainerCompositeTest.AnUnfadedBufferedContainerMatchesAPlainContainer pins as
+            // pixel-identical to drawing the subtree straight to the target. So this is that, minus a
+            // full-screen render target and a full-screen resolve.
+            base.Draw(renderer);
+
+            if (shared.FrameBuffer != null && ++shared.ConsecutivePassthroughFrames >= passthrough_frames_before_release)
+                shared.Release(renderer);
+
+            return;
+        }
+
+        shared.ConsecutivePassthroughFrames = 0;
 
         // Buffer size in physical pixels (DPI-aware), scaled by FrameBufferScale.
         var renderScale = renderer.RenderScale;
@@ -134,11 +195,11 @@ public class BufferedContainerDrawNode : ContainerDrawNode
     /// <returns>The buffer holding the final effect result.</returns>
     private IFrameBuffer runEffectPasses(IRenderer renderer, RectangleF rect, int targetWidth, int targetHeight, Vector2 renderScale)
     {
-        if (blur_shader == null || !ReferenceEquals(shader_renderer, renderer))
+        if (blurShader == null || !ReferenceEquals(shaderRenderer, renderer))
         {
-            blur_shader = renderer.CreateShader(renderer.ShaderStorage, "shader.vert", "blur.frag");
-            grayscale_shader = renderer.CreateShader(renderer.ShaderStorage, "shader.vert", "grayscale.frag");
-            shader_renderer = renderer;
+            blurShader = renderer.CreateShader(renderer.ShaderStorage, "shader.vert", "blur.frag");
+            grayscaleShader = renderer.CreateShader(renderer.ShaderStorage, "shader.vert", "grayscale.frag");
+            shaderRenderer = renderer;
         }
 
         for (int i = 0; i < shared!.EffectBuffers.Length; i++)
@@ -152,19 +213,12 @@ public class BufferedContainerDrawNode : ContainerDrawNode
         IFrameBuffer current = shared.FrameBuffer!;
         int pingPong = 0;
 
-        IFrameBuffer nextTarget()
-        {
-            var target = shared.EffectBuffers[pingPong]!;
-            pingPong ^= 1;
-            return target;
-        }
-
         // The passes must write exact values (no alpha blending against the cleared buffer).
         renderer.SetBlendMode(BlendingMode.Opaque);
 
         if (blurActive)
         {
-            // Sigma is specified in logical pixels; the shader samples in buffer texels.
+            // Sigma is specified in logical pixels, the shader samples in buffer texels.
             float sigmaX = blurSigma.X * renderScale.X * frameBufferScale.X;
             float sigmaY = blurSigma.Y * renderScale.Y * frameBufferScale.Y;
 
@@ -192,13 +246,20 @@ public class BufferedContainerDrawNode : ContainerDrawNode
         renderer.SetBlendMode(BlendingMode.Alpha);
 
         return current;
+
+        IFrameBuffer nextTarget()
+        {
+            var target = shared.EffectBuffers[pingPong]!;
+            pingPong ^= 1;
+            return target;
+        }
     }
 
     private void blurPass(IRenderer renderer, IFrameBuffer source, IFrameBuffer target, RectangleF rect, Vector2 direction, float sigmaTexels)
     {
         int radius = sigmaTexels > 0 ? Math.Min(max_blur_radius, (int)MathF.Ceiling(sigmaTexels * 3)) : 0;
 
-        runShaderPass(renderer, source, target, rect, blur_shader!, shader =>
+        runShaderPass(renderer, source, target, rect, blurShader!, shader =>
         {
             shader.SetUniformBlock("BlurBlock", new Uniforms.BlurBlock
             {
@@ -212,7 +273,7 @@ public class BufferedContainerDrawNode : ContainerDrawNode
 
     private void grayscalePass(IRenderer renderer, IFrameBuffer source, IFrameBuffer target, RectangleF rect)
     {
-        runShaderPass(renderer, source, target, rect, grayscale_shader!, shader =>
+        runShaderPass(renderer, source, target, rect, grayscaleShader!, shader =>
             shader.SetUniformBlock("GrayscaleBlock", new Uniforms.GrayscaleBlock
             {
                 Strength = grayscaleStrength
@@ -221,8 +282,7 @@ public class BufferedContainerDrawNode : ContainerDrawNode
 
     /// <summary>
     /// Draws a full-buffer quad from <paramref name="source"/> into <paramref name="target"/>
-    /// using a custom shader. Follows the framework's custom-shader pattern:
-    /// flush → bind shader + uniforms → raw draw → restore main shader.
+    /// using a custom shader
     /// </summary>
     private static void runShaderPass(IRenderer renderer, IFrameBuffer source, IFrameBuffer target, RectangleF rect, IShader shader, Action<IShader> setUniforms)
     {
@@ -274,20 +334,19 @@ public class BufferedContainerDrawNode : ContainerDrawNode
 
     private void drawComposite(IRenderer renderer, RectangleF rect)
     {
-        // The container's own vertex color is Color(linear) with alpha = DrawAlpha * Color.A.
-        // Children inside the buffer already carry the cascaded DrawAlpha (alpha propagates
-        // to children in this framework; color does not), so the composite quads must apply
-        // only the color tint and the color's own alpha — strip DrawAlpha to avoid
-        // double-applying the fade.
+        // The container's own vertex color is Color(linear) with alpha = DrawAlpha * Color.A, and that is
+        // exactly what the composite wants. BufferedContainer is an alpha barrier
+        // (BufferedContainer.ChildDrawAlpha), so children rendered into the buffer at full opacity and the
+        // fade belongs here, applied once to the flattened result which is what makes fading a buffered
+        // container fade the composite rather than each child.
         Vector4 baseColor = Vertices.Length > 0 ? Vertices[0].Color : new Vector4(1, 1, 1, DrawAlpha);
-        baseColor.W = DrawAlpha > 0 ? baseColor.W / DrawAlpha : 0;
 
         var effectBuffer = shared!.FinalEffectBuffer;
 
         if (effectBuffer == null)
         {
             // No effects: just the original content.
-            drawQuad(renderer, shared.FrameBuffer!, rect, baseColor, Blending);
+            drawComposedQuad(renderer, shared.FrameBuffer!, rect, baseColor, Blending);
             return;
         }
 
@@ -301,18 +360,61 @@ public class BufferedContainerDrawNode : ContainerDrawNode
 
         if (effectPlacement == EffectPlacement.Behind)
         {
-            drawQuad(renderer, effectBuffer, rect, effectQuadColor, effectQuadBlending);
+            drawComposedQuad(renderer, effectBuffer, rect, effectQuadColor, effectQuadBlending);
 
             if (drawOriginal)
-                drawQuad(renderer, shared.FrameBuffer!, rect, baseColor, Blending);
+                drawComposedQuad(renderer, shared.FrameBuffer!, rect, baseColor, Blending);
         }
         else
         {
             if (drawOriginal)
-                drawQuad(renderer, shared.FrameBuffer!, rect, baseColor, Blending);
+                drawComposedQuad(renderer, shared.FrameBuffer!, rect, baseColor, Blending);
 
-            drawQuad(renderer, effectBuffer, rect, effectQuadColor, effectQuadBlending);
+            drawComposedQuad(renderer, effectBuffer, rect, effectQuadColor, effectQuadBlending);
         }
+    }
+
+    /// <summary>
+    /// Draws one framebuffer back to the current target, translating both the blend mode and the quad
+    /// color into the premultiplied convention a framebuffer's contents require.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Why the mode. - A framebuffer's contents are <em>premultiplied</em>: children blended
+    /// into it under <see cref="BlendingMode.Alpha"/> — <c>(SrcAlpha, OneMinusSrcAlpha)</c> on RGB, with
+    /// alpha accumulating separately — leave RGB already carrying a factor of the accumulated alpha.
+    /// Compositing that back with <see cref="BlendingMode.Alpha"/> applies the factor a second time, which
+    /// darkens every partially transparent region: fringes on anti-aliased content edges, and a uniformly
+    /// too-dark result for a faded container. <see cref="BlendingMode.Premultiplied"/> exists for exactly
+    /// this, and makes the composite pixel-identical to drawing the subtree straight to the target.
+    /// </para>
+    /// <para>
+    /// Why the color has to change too. - The fragment shader computes
+    /// <c>texColor *= v_Color</c> componentwise, so a quad alpha below 1 scales the sampled alpha but
+    /// <em>not</em> the sampled RGB. Under a straight-alpha blend that is right, because the blend applies
+    /// the source alpha to RGB itself. Under a premultiplied blend nothing else ever will, so the quad
+    /// color must arrive with its RGB already multiplied by its own alpha — otherwise a container faded to
+    /// 0.5 composites at full brightness over a half-transparent coverage, which is a fade that lightens.
+    /// </para>
+    /// <para>
+    /// Only the default is translated : The other modes have no premultiplied counterpart in
+    /// <see cref="BlendingMode"/> — <see cref="BlendingMode.Additive"/> would want <c>(One, One)</c>, and
+    /// <see cref="BlendingMode.Multiply"/> and <see cref="BlendingMode.Screen"/> use per-channel destination
+    /// factors that do not decompose so simply — so they keep the behaviour they have always had rather than
+    /// gaining a half-correct translation. Their color is left straight to match.
+    /// </para>
+    /// </remarks>
+    private static void drawComposedQuad(IRenderer renderer, IFrameBuffer buffer, RectangleF rect, Vector4 color, BlendingMode requested)
+    {
+        if (requested != BlendingMode.Alpha)
+        {
+            drawQuad(renderer, buffer, rect, color, requested);
+            return;
+        }
+
+        var premultiplied = new Vector4(color.X * color.W, color.Y * color.W, color.Z * color.W, color.W);
+
+        drawQuad(renderer, buffer, rect, premultiplied, BlendingMode.Premultiplied);
     }
 
     private static void drawQuad(IRenderer renderer, IFrameBuffer buffer, RectangleF rect, Vector4 color, BlendingMode blending)
@@ -332,9 +434,33 @@ public class BufferedContainerDrawNode : ContainerDrawNode
     /// </summary>
     private static void fillQuad(Span<Vertex.Vertex> quad, RectangleF rect, Vector4 color)
     {
-        quad[0] = new Vertex.Vertex { Position = new Vector2(rect.X, rect.Y), Color = color, TexCoords = new Vector2(0, 1), ClipData = new Vector4(0, 0, -1, -1) };
-        quad[1] = new Vertex.Vertex { Position = new Vector2(rect.X + rect.Width, rect.Y), Color = color, TexCoords = new Vector2(1, 1), ClipData = new Vector4(0, 0, -1, -1) };
-        quad[2] = new Vertex.Vertex { Position = new Vector2(rect.X + rect.Width, rect.Y + rect.Height), Color = color, TexCoords = new Vector2(1, 0), ClipData = new Vector4(0, 0, -1, -1) };
-        quad[3] = new Vertex.Vertex { Position = new Vector2(rect.X, rect.Y + rect.Height), Color = color, TexCoords = new Vector2(0, 0), ClipData = new Vector4(0, 0, -1, -1) };
+        quad[0] = new Vertex.Vertex
+        {
+            Position = new Vector2(rect.X, rect.Y),
+            Color = color,
+            TexCoords = new Vector2(0, 1),
+            ClipData = new Vector4(0, 0, -1, -1)
+        };
+        quad[1] = new Vertex.Vertex
+        {
+            Position = new Vector2(rect.X + rect.Width, rect.Y),
+            Color = color,
+            TexCoords = new Vector2(1, 1),
+            ClipData = new Vector4(0, 0, -1, -1)
+        };
+        quad[2] = new Vertex.Vertex
+        {
+            Position = new Vector2(rect.X + rect.Width, rect.Y + rect.Height),
+            Color = color,
+            TexCoords = new Vector2(1, 0),
+            ClipData = new Vector4(0, 0, -1, -1)
+        };
+        quad[3] = new Vertex.Vertex
+        {
+            Position = new Vector2(rect.X, rect.Y + rect.Height),
+            Color = color,
+            TexCoords = new Vector2(0, 0),
+            ClipData = new Vector4(0, 0, -1, -1)
+        };
     }
 }

@@ -17,6 +17,7 @@ using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
+using Sakura.Framework.Reactive;
 using Sakura.Framework.Statistic;
 using Sakura.Framework.Timing;
 using Sakura.Framework.Utilities;
@@ -27,7 +28,7 @@ namespace Sakura.Framework.Graphics.Drawables;
 /// <summary>
 /// A lowest level of the component hierarchy. All drawable components should be inherited from this class.
 /// </summary>
-public abstract partial class Drawable : IDependencyInjectionCandidate
+public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposable
 {
     private static readonly GlobalStatistic<int> stat_updated_last_frame = GlobalStatistics.Get<int>("Drawables", "Updated Last Frame");
     private static readonly GlobalStatistic<int> stat_invalidations = GlobalStatistics.Get<int>("Drawables", "Invalidations");
@@ -65,12 +66,19 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
     protected virtual void OnParentChanged() { }
 
     /// <summary>
-    /// When true, this drawable will be disposed automatically when removed from its parent
-    /// container via <see cref="Container.Remove"/> or <see cref="Container.Clear"/>.
-    /// Set this on drawables that own unmanaged resources (e.g. video decoders, audio tracks).
-    /// Defaults to false to preserve backward-compatible behavior.
+    /// Whether this drawable may be disposed as a side effect of leaving its parent container, either
+    /// through <see cref="Container.Remove(Drawable, bool)"/> / <see cref="Container.Clear(bool)"/> or
+    /// through an ancestor's disposal cascade. Defaults to <c>true</c>: a drawable that leaves the tree
+    /// is assumed to be finished with.
     /// </summary>
-    public bool DisposeOnRemoval { get; set; }
+    /// <remarks>
+    /// Set this to <c>false</c> on drawables whose lifetime is owned by something other than their
+    /// parent (see cref="Pooling.PoolableDrawable"/> does), because a pooled drawable is removed
+    /// precisely in order to be reused. Unlike the <c>dispose</c> parameter on the removal methods,
+    /// which is the remover's choice for one call, this is the drawable's own standing refusal and
+    /// overrides it. Neither affects an explicit <see cref="Dispose()"/>.
+    /// </remarks>
+    public bool DisposeOnRemoval { get; set; } = true;
 
     public bool IsHovered { get; internal set; }
     public bool IsDragged { get; internal set; }
@@ -185,6 +193,19 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
     internal double TimeUntilTransformsCanStart { get; set; }
 
     public float DrawAlpha { get; private protected set; }
+
+    /// <summary>
+    /// The <see cref="DrawAlpha"/> this drawable's children inherit. Normally <see cref="DrawAlpha"/>
+    /// itself, so alpha compounds down the tree.
+    /// </summary>
+    /// <remarks>
+    /// A <see cref="Containers.BufferedContainer"/> returns 1 instead, making itself an alpha barrier: its
+    /// subtree renders at full opacity into the offscreen buffer and the fade is applied once, to the
+    /// flattened result. That is what "fading a buffered container fades the composite" means — without the
+    /// barrier the children would arrive at the buffer already faded and the container could only reproduce
+    /// what a plain container does, overlap seams included.
+    /// </remarks>
+    protected internal virtual float ChildDrawAlpha => DrawAlpha;
 
     /// <summary>
     /// An invalidation flag representing which aspects of the drawable need to be recomputed.
@@ -496,7 +517,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
 
     protected internal virtual void UpdateTransforms()
     {
-        DrawAlpha = (Parent?.DrawAlpha ?? 1f) * Alpha;
+        DrawAlpha = (Parent?.ChildDrawAlpha ?? 1f) * Alpha;
 
         Matrix3x2 localMatrix;
         Vector2 finalDrawSize;
@@ -851,14 +872,23 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
     /// <param name="component">The component to load.</param>
     /// <param name="onLoaded">An action to perform once the component is ready (e.g., adding it to a container).</param>
     /// <param name="cancellationToken">A token to cancel the task before it executes.</param>
+    /// <param name="onDiscarded">
+    /// An action to perform when the component finished (or partly finished) loading but its result will
+    /// not be used, because <paramref name="cancellationToken"/> was signaled or the load faulted.
+    /// When not supplied, the discarded component is disposed instead, a load that completed after its
+    /// own cancellation has already allocated whatever it allocates, and nothing else will ever release
+    /// it. Supply this only to take that decision over.
+    /// </param>
     /// <returns>A task representing the load process.</returns>
-    public Task LoadComponentAsync<T>(T component, Action<T>? onLoaded = null, CancellationToken cancellationToken = default) where T : Drawable
+    public Task LoadComponentAsync<T>(T component, Action<T>? onLoaded = null, CancellationToken cancellationToken = default, Action<T>? onDiscarded = null) where T : Drawable
     {
         ArgumentNullException.ThrowIfNull(component);
 
         lock (component.loadLock)
         {
             // if the component is already loading or loaded, attach to the existing task.
+            // The discard path deliberately does not apply here: this call does not own the component's
+            // load, so something else is holding it and releasing it would pull it out from under them.
             if (component.LoadState >= LoadState.Loading || component.loadTask != null)
             {
                 if (onLoaded != null)
@@ -885,18 +915,47 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
                 component.Load(); // trigger the virtual method
             }, cancellationToken, creationOptions, TaskScheduler.Default);
 
-            // return a continuation that handles routing the callback back to the main update thread
+            // Return a continuation that handles routing the callback back to the main update thread.
+            // The continuation is deliberately not given the cancellation token: a canceled
+            // continuation never runs, and the whole point of the discard path is that cancellation is
+            // exactly when someone has to release what the load already built.
             return component.loadTask.ContinueWith(t =>
             {
-                if (t.IsFaulted) throw t.Exception!.InnerException!;
-
-                if (onLoaded != null && !cancellationToken.IsCancellationRequested)
+                if (t.IsFaulted)
                 {
-                    // the callback must be executed on the target's update thread.
-                    parentScheduler.Add(() => onLoaded(component));
+                    // Construction may have got far enough to allocate before throwing, and the
+                    // half-built component is unreachable to the caller either way.
+                    discard(component, onDiscarded);
+                    throw t.Exception!.InnerException!;
                 }
-            }, cancellationToken, TaskContinuationOptions.None, TaskScheduler.Default);
+
+                // Canceled before the load body ran at all: nothing was built, so nothing to release.
+                if (t.IsCanceled)
+                    return;
+
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    discard(component, onDiscarded);
+                    return;
+                }
+
+                // the callback must be executed on the target's update thread.
+                if (onLoaded != null)
+                    parentScheduler.Add(() => onLoaded(component));
+            }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
         }
+    }
+
+    /// <summary>
+    /// Hands a loaded-but-unwanted component to its discard handler, or disposes it when there is none.
+    /// Runs on the update thread, within a later frame's disposal budget.
+    /// </summary>
+    private static void discard<T>(T component, Action<T>? onDiscarded) where T : Drawable
+    {
+        if (onDiscarded == null)
+            DrawableDisposalQueue.Enqueue(component);
+        else
+            DrawableDisposalQueue.EnqueueCleanup(() => onDiscarded(component));
     }
 
     /// <summary>
@@ -1068,6 +1127,31 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
     public bool IsMaskedAway { get; internal set; }
 
     /// <summary>
+    /// Whether an ancestor was hidden when this drawable was last reached by the update traversal.
+    /// Pushed down by the parent, in the same way as <see cref="CurrentMaskingBounds"/>.
+    /// </summary>
+    private bool ancestorHidden;
+
+    /// <summary>
+    /// Whether this drawable is invisible (its own alpha is zero, or an ancestor's is) and has not
+    /// opted out via <see cref="AlwaysPresent"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Only meaningful during or after this frame's update traversal, since the ancestor half is pushed
+    /// down by <see cref="Container.UpdateSubTree"/> as it descends. Reading it from
+    /// <see cref="Update"/> is the intended use.
+    /// </para>
+    /// </remarks>
+    protected internal bool IsEffectivelyHidden => !AlwaysPresent && (ancestorHidden || Precision.AlmostEqualZero(Alpha));
+
+    /// <summary>
+    /// Records whether this drawable's ancestors are hidden. Called by the parent as the update
+    /// traversal descends.
+    /// </summary>
+    internal void SetAncestorHidden(bool hidden) => ancestorHidden = hidden;
+
+    /// <summary>
     /// The inherited masking bounds from parent containers.
     /// </summary>
     protected internal RectangleF? CurrentMaskingBounds { get; set; }
@@ -1107,7 +1191,10 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
         if (Invalidation == InvalidationFlags.None)
             return;
 
-        if (!AlwaysPresent && Precision.AlmostEqualZero(Alpha))
+        // a hidden container's children are still traversed,
+        // so a drawable inside a hidden panel would otherwise recompute its geometry for nobody and for
+        // a SpriteText, recomputing geometry means shaping its text.
+        if (IsEffectivelyHidden)
         {
             DrawAlpha = 0;
             // Keep pending geometry invalidation (and the own-geometry marker) so a drawable
@@ -1140,7 +1227,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
     /// </summary>
     protected virtual void UpdateDrawColor()
     {
-        DrawAlpha = (Parent?.DrawAlpha ?? 1f) * Alpha;
+        DrawAlpha = (Parent?.ChildDrawAlpha ?? 1f) * Alpha;
 
         // Rewrite per-corner colors so gradients survive the color-only fast path (used by fades);
         // toLinear folds the freshly-computed DrawAlpha into every corner.
@@ -1528,6 +1615,136 @@ public abstract partial class Drawable : IDependencyInjectionCandidate
 
     public event Action<Drawable> OnLoad = delegate { };
     public event Action<Drawable> OnLoadComplete = delegate { };
+
+    #endregion
+
+    #region Reactive Binding
+
+    /// <summary>
+    /// Undo actions for every binding made through <see cref="BindValueChanged{T}"/> /
+    /// <see cref="BindReactive{T}"/>, run in reverse on disposal.
+    /// </summary>
+    private List<Action>? unbindActions;
+
+    /// <summary>
+    /// Subscribes to <paramref name="reactive"/> for as long as this drawable is alive, unsubscribing
+    /// automatically when it is disposed.
+    /// </summary>
+    /// <remarks>
+    /// Prefer this over <see cref="Reactive.Reactive{T}.BindValueChanged"/> whenever the reactive
+    /// outlives the drawable. A reactive holds a strong reference to every handler, and a handler
+    /// written as a lambda captures the drawable, so subscribing directly to a long-lived reactive
+    /// (a <see cref="Configurations.ConfigManager{TLookup}"/> setting is the same instance for every
+    /// caller) keeps the drawable — and its whole subtree — alive for the process lifetime.
+    /// </remarks>
+    /// <param name="reactive">The reactive to observe.</param>
+    /// <param name="onChange">The handler to run on changes.</param>
+    /// <param name="runOnceImmediately">Whether to invoke the handler right away with the current value.</param>
+    protected void BindValueChanged<T>(IReactive<T> reactive, Action<ValueChangedEvent<T>> onChange, bool runOnceImmediately = false)
+    {
+        ArgumentNullException.ThrowIfNull(reactive);
+        ArgumentNullException.ThrowIfNull(onChange);
+
+        reactive.ValueChanged += onChange;
+        (unbindActions ??= new List<Action>()).Add(() => reactive.ValueChanged -= onChange);
+
+        if (runOnceImmediately)
+            onChange(new ValueChangedEvent<T>(reactive.Value, reactive.Value));
+    }
+
+    /// <summary>
+    /// Declares that <paramref name="reactive"/> belongs to this drawable, so every binding it has to
+    /// another reactive is severed when this drawable is disposed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Declare any reactive this drawable exposes for others to bind to — a control's <c>Current</c>, for
+    /// instance. The retaining edge runs the way round that is easy to miss: <c>Current.BindTo(setting)</c>
+    /// leaves the *setting* holding a handler that reaches into <c>Current</c>, and <c>Current</c>'s own
+    /// subscribers reach back into this drawable. The binding is made by whoever owns the control, so the
+    /// control cannot undo it by name — only by unbinding the reactive it owns.
+    /// </para>
+    /// <para>
+    /// Only bindings this reactive itself made are undone. Other subscribers of the sources it was bound
+    /// to are untouched, which matters because those sources are typically shared — a
+    /// <see cref="Configurations.ConfigManager{TLookup}"/> setting is one instance handed to every caller,
+    /// and its own persistence handler lives on that same event.
+    /// </para>
+    /// </remarks>
+    /// <param name="reactive">A reactive belonging to this drawable.</param>
+    protected void OwnReactive(IReactive reactive)
+    {
+        ArgumentNullException.ThrowIfNull(reactive);
+
+        (unbindActions ??= new List<Action>()).Add(reactive.UnbindAll);
+    }
+
+    #endregion
+
+    #region Disposal
+
+    /// <summary>
+    /// Whether <see cref="Dispose()"/> has run on this drawable. A disposed drawable may not be
+    /// re-added to a container.
+    /// </summary>
+    public bool IsDisposed { get; private set; }
+
+    /// <summary>
+    /// Set while this drawable is sitting in <see cref="DrawableDisposalQueue"/> waiting to be disposed.
+    /// Cleared if it is re-added to a container first, which is how the queue knows to skip it.
+    /// </summary>
+    internal bool DisposalPending;
+
+    /// <summary>
+    /// Releases everything this drawable owns, recursively through its children
+    /// (see <see cref="Container.Dispose(bool)"/>).
+    /// </summary>
+    /// <remarks>
+    /// Called automatically when this drawable is removed from its parent, unless the remover or
+    /// <see cref="DisposeOnRemoval"/> opted out — so most code never calls this directly. Disposing a
+    /// drawable that is still in the tree is a programming error: it stays attached, and will keep
+    /// being updated and drawn in its released state.
+    /// </remarks>
+    public void Dispose()
+    {
+        Dispose(true);
+    }
+
+    /// <summary>
+    /// Releases the resources held by this drawable. Override to release your own, and always call
+    /// <c>base.Dispose(isDisposing)</c>.
+    /// </summary>
+    /// <param name="isDisposing">
+    /// True when called from <see cref="Dispose()"/>. Always true today — no drawable has a finalizer —
+    /// and present so overrides read like the standard pattern rather than growing a second one later.
+    /// </param>
+    protected virtual void Dispose(bool isDisposing)
+    {
+        if (IsDisposed)
+            return;
+
+        IsDisposed = true;
+        DisposalPending = false;
+
+        // Reactive handlers first: until these are gone, whatever this drawable bound to still holds it
+        // (and everything below it) alive, which would make the rest of this pointless.
+        if (unbindActions != null)
+        {
+            for (int i = unbindActions.Count - 1; i >= 0; i--)
+                unbindActions[i]();
+
+            unbindActions = null;
+        }
+
+        ClearTransforms();
+        scheduler?.Clear();
+
+        // Draw nodes hold vertex arrays and texture references. The draw thread may still be reading a
+        // node it was handed for the frame in flight, which is safe: dropping our references only means
+        // the node is collected once that frame is done with it.
+        Array.Clear(drawNodes);
+        drawNode = null;
+    }
 
     #endregion
 

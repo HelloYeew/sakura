@@ -7,10 +7,22 @@ namespace Sakura.Framework.Graphics.Textures;
 
 public sealed class HeadlessNativeTexture : INativeTexture
 {
-    public nint Handle { get; } = 1;
+    private nint handle = 1;
+
+    public nint Handle => handle;
     public int Width { get; }
     public int Height { get; }
-    public bool Available => true;
+
+    // There is no upload to wait for headlessly but a released texture must stop
+    // reporting itself as available. Just match the real backend.
+    public bool Available { get; private set; } = true;
+
+    /// <summary>
+    /// CPU pixels backing this texture when <see cref="Rendering.HeadlessRenderer"/> pixel capture is on,
+    /// otherwise null. Only framebuffer color attachments carry one; a texture without a surface samples
+    /// as opaque white, which is enough for the compositing questions capture exists to answer.
+    /// </summary>
+    internal Rendering.PixelSurface? Surface { get; set; }
 
     public HeadlessNativeTexture(int width, int height)
     {
@@ -21,5 +33,10 @@ public sealed class HeadlessNativeTexture : INativeTexture
     public void Upload(ReadOnlySpan<byte> data) { }
     public void UploadRegion(int x, int y, int width, int height, ReadOnlySpan<byte> data) { }
     public void Bind(int slot = 0) { }
-    public void Dispose() { }
+
+    public void Dispose()
+    {
+        handle = 0;
+        Available = false;
+    }
 }

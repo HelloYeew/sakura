@@ -1,10 +1,13 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using Sakura.Framework.Allocation;
+using Sakura.Framework.Extensions.ObjectExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Maths;
+using Sakura.Framework.Platform;
 
 namespace Sakura.Framework.Graphics.Containers;
 
@@ -26,9 +29,10 @@ namespace Sakura.Framework.Graphics.Containers;
 /// captures that region). The container's <see cref="Drawable.Color"/> tints the composite.
 /// </para>
 /// <remarks>
-/// The framebuffers live in GPU memory for the lifetime of the process once created —
-/// prefer pooling/reusing buffered containers over creating and discarding many of them.
-/// Effects (blur/grayscale) currently run on the OpenGL renderer only.
+/// The framebuffers are GPU allocations sized to this container's on-screen bounds, released when the
+/// container is disposed (which happens automatically on removal, see
+/// <see cref="Container.Remove(Drawable, bool)"/>). Reusing a buffered container is still cheaper than
+/// creating and discarding many of them, since each new one pays a fresh framebuffer allocation.
 /// </remarks>
 /// </summary>
 public partial class BufferedContainer : Container
@@ -232,6 +236,25 @@ public partial class BufferedContainer : Container
     public void ForceRedraw() => Invalidate(InvalidationFlags.DrawInfo);
 
     /// <summary>
+    /// Always 1: this container is an alpha barrier, so its subtree renders at full opacity into the
+    /// offscreen buffer and <see cref="Drawable.DrawAlpha"/> is applied once to the flattened composite.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is what makes whole-subtree transparency real rather than nominal. Cascading alpha into the
+    /// buffer instead — as this container did until the fade was fixed — leaves each child individually
+    /// translucent before it is ever flattened, so the composite can at best reproduce what a plain
+    /// container already does, overlap seams and all.
+    /// </para>
+    /// <para>
+    /// A side benefit worth knowing when using <see cref="CacheDrawnFrameBuffer"/>: because a fade no
+    /// longer changes any child's color, the cached buffer contents stay valid across one, and only the
+    /// composite quad has to be redrawn.
+    /// </para>
+    /// </remarks>
+    protected internal override float ChildDrawAlpha => 1f;
+
+    /// <summary>
     /// State shared between this drawable and its (triple-buffered) draw nodes, so all
     /// of them reuse one set of framebuffers. Owned and touched by the draw thread only.
     /// </summary>
@@ -247,6 +270,32 @@ public partial class BufferedContainer : Container
     }
 
     protected override DrawNode CreateDrawNode() => new BufferedContainerDrawNode();
+
+    private IRenderer? renderer;
+
+    [BackgroundDependencyLoader]
+    private void load(AppHost host)
+    {
+        renderer = host.Renderer;
+    }
+
+    /// <summary>
+    /// Releases this container's framebuffers. Called automatically when the container is removed from
+    /// its parent (see <see cref="Container.Remove(Drawable, bool)"/>).
+    /// </summary>
+    /// <remarks>
+    /// Not a one-way latch: the draw node recreates any missing buffer on the next frame it draws, so a
+    /// container that is removed and later re-added simply pays a fresh allocation.
+    /// </remarks>
+    protected override void Dispose(bool isDisposing)
+    {
+        if (IsDisposed)
+            return;
+
+        SharedData.Release(renderer);
+
+        base.Dispose(isDisposing);
+    }
 
     /// <summary>
     /// Draw-thread-owned shared state for <see cref="BufferedContainer"/>.
@@ -275,6 +324,59 @@ public partial class BufferedContainer : Container
         /// (used by <see cref="CacheDrawnFrameBuffer"/>).
         /// </summary>
         public long RenderedVersion = -1;
+
+        /// <summary>
+        /// How many consecutive frames the draw node has skipped the offscreen pass for, used to decide
+        /// when the buffers held here are worth releasing.
+        /// </summary>
+        /// <remarks>
+        /// It lives here rather than on the draw node because the node is triple-buffered: three of them
+        /// share this state, so a counter on the node would only ever see every third frame.
+        /// </remarks>
+        public int ConsecutivePassthroughFrames;
+
+        /// <summary>
+        /// Frees every framebuffer held here and resets this state to "nothing allocated", so a
+        /// container that is re-added and drawn again simply allocates afresh.
+        /// </summary>
+        /// <param name="renderer">
+        /// The renderer owning the buffers, or null if this container never loaded (in which case
+        /// nothing was ever allocated).
+        /// </param>
+        public void Release(IRenderer? renderer)
+        {
+            // Detach the buffers before scheduling: the release runs a frame later, and if the owning
+            // container is re-added and drawn in the meantime the draw node will have allocated
+            // replacements here. Handing the closure a snapshot (and clearing the fields now) means the
+            // release can only ever free the buffers that existed at this moment — which is also what
+            // makes a repeated call a no-op rather than a double free.
+            var frameBuffer = FrameBuffer;
+            var effectBuffers = new IFrameBuffer?[EffectBuffers.Length];
+
+            for (int i = 0; i < effectBuffers.Length; i++)
+            {
+                effectBuffers[i] = EffectBuffers[i];
+                EffectBuffers[i] = null;
+            }
+
+            FrameBuffer = null;
+            // FinalEffectBuffer aliases whichever EffectBuffer the ping-pong landed on, so it is only
+            // cleared here — disposing it as well would be a double free.
+            FinalEffectBuffer = null;
+            RenderedVersion = -1;
+            ConsecutivePassthroughFrames = 0;
+
+            if (renderer.IsNull())
+                return;
+
+            renderer.ScheduleToDrawThread(() =>
+            {
+                frameBuffer?.Dispose();
+
+                foreach (var buffer in effectBuffers)
+                    buffer?.Dispose();
+            });
+        }
     }
 }
 

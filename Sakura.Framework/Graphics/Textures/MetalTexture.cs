@@ -2,7 +2,9 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Threading;
 using Sakura.Framework.Graphics.Rendering.Metal;
+using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Graphics.Textures;
 
@@ -15,6 +17,13 @@ public sealed class MetalTexture : INativeTexture
 {
     private readonly nint device; // SakuraMetalDevice*
     private nint handle;          // SakuraMetalTexture*
+
+    /// <summary>
+    /// Accounts for this texture's VRAM in <see cref="NativeMemoryTracker"/> until it is destroyed.
+    /// Released from both the explicit dispose and the finalizer, so a dropped texture stops being
+    /// counted at the same moment its handle is reclaimed.
+    /// </summary>
+    private readonly NativeMemoryLease memoryLease;
 
     public nint Handle => handle;
     public int Width { get; }
@@ -38,6 +47,8 @@ public sealed class MetalTexture : INativeTexture
 
         if (handle == nint.Zero)
             throw new InvalidOperationException($"Failed to create Metal texture ({width}x{height}).");
+
+        memoryLease = NativeTextureMemory.Lease(NativeMemoryCategory.Textures, width, height);
     }
 
     private MetalTexture(nint device, nint renderTargetHandle, int width, int height)
@@ -46,6 +57,8 @@ public sealed class MetalTexture : INativeTexture
         Width = width;
         Height = height;
         handle = renderTargetHandle;
+
+        memoryLease = NativeTextureMemory.Lease(NativeMemoryCategory.FrameBuffers, width, height);
 
         // A render target is GPU-only and is filled by rendering into it, so it's available immediately
         // (there is no CPU upload to wait for).
@@ -104,12 +117,34 @@ public sealed class MetalTexture : INativeTexture
             SakuraMetalNative.sakura_metal_set_fragment_texture(device, h, slot);
     }
 
+    /// <summary>
+    /// Destroys the underlying <c>MTLTexture</c>. Must be called on the draw thread.
+    /// </summary>
     public void Dispose()
     {
-        if (handle != nint.Zero)
-        {
-            SakuraMetalNative.sakura_metal_destroy_texture(handle);
-            handle = nint.Zero;
-        }
+        // Nothing can be sampled from a destroyed texture, so stop claiming otherwise: Available is what
+        // Texture.IsAvailable reports, and leaving it true made a destroyed texture indistinguishable
+        // from a healthy one to anything that asked.
+        Available = false;
+
+        // Claim the handle atomically so a concurrent finalizer can never destroy it twice.
+        nint claimed = Interlocked.Exchange(ref handle, nint.Zero);
+
+        GC.SuppressFinalize(this);
+
+        memoryLease?.Dispose();
+
+        if (claimed != nint.Zero)
+            SakuraMetalNative.sakura_metal_destroy_texture(claimed);
+    }
+
+    ~MetalTexture()
+    {
+        nint claimed = Interlocked.Exchange(ref handle, nint.Zero);
+
+        memoryLease?.Dispose();
+
+        if (claimed != nint.Zero)
+            NativeDisposalQueue.Enqueue(() => SakuraMetalNative.sakura_metal_destroy_texture(claimed));
     }
 }

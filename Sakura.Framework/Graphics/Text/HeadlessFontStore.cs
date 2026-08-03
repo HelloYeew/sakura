@@ -68,6 +68,8 @@ public class HeadlessFontStore : IFontStore
 
     public FontVariation GetVariation(FontUsage usage) => usage.ToVariation();
 
+    public ShapedText Shape(FontUsage usage, string text, float dpiScale) => ShapedText.Empty;
+
     public void Dispose()
     {
         throw new System.NotImplementedException();

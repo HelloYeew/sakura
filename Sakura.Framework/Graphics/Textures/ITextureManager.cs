@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 
 namespace Sakura.Framework.Graphics.Textures;
 
@@ -32,6 +33,34 @@ public interface ITextureManager : IDisposable
     /// <param name="pixelData">Raw pixel data in RGBA format.</param>
     /// <returns>A new <see cref="Texture"/> object.</returns>
     Texture FromPixelData(int width, int height, ReadOnlySpan<byte> pixelData, string cacheKey = null);
+
+    /// <summary>
+    /// Decodes an encoded image (PNG, JPEG, …) from a stream and returns a GPU texture for it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the one-call path from "I have a file" to "I have a texture": it decodes through the
+    /// framework's <see cref="IImageLoader"/> at the requested size, uploads through the per-frame budgeted
+    /// queue, names the result for the texture viewer, and optionally reference-counts it under a share
+    /// key. Prefer it over decoding yourself and calling <see cref="FromPixelData"/> — that route means
+    /// owning an imaging dependency, a downscale, an unpooled pixel buffer, and the texture's lifetime.
+    /// </para>
+    /// <para>
+    /// The texture is always standalone (never packed into <see cref="Atlas"/>), since a texture created
+    /// this way is expected to be large and individually releasable.
+    /// </para>
+    /// <para>
+    /// The stream is read but not disposed; that stays with the caller. When
+    /// <see cref="TextureCreationOptions.ShareKey"/> hits an existing entry the stream is not read at all.
+    /// </para>
+    /// </remarks>
+    /// <param name="stream">The encoded image. Read from its current position; not disposed.</param>
+    /// <param name="options">Decode size, debug name and optional share key.</param>
+    /// <returns>
+    /// The texture, or null if the image could not be decoded. A shared texture must be released via
+    /// <see cref="ReleaseSharedTexture"/> rather than disposed.
+    /// </returns>
+    Texture? CreateFromStream(Stream stream, TextureCreationOptions options);
 
     /// <summary>
     /// Removes a texture from the cache and immediately disposes its GPU resources.
@@ -64,9 +93,17 @@ public interface ITextureManager : IDisposable
     void ReleaseSharedTexture(string cacheKey);
 
     /// <summary>
-    /// Retrieves all currently loaded and cached regular textures.
+    /// Every live standalone texture in the process, whether it was cached under a key.
+    /// Exclude atlas that report separately via <see cref="Atlas"/>. For the narrower "what is cached under a key"
+    /// question, use <see cref="GetCachedTextures"/>.
     /// </summary>
     IEnumerable<Texture> GetAllTextures();
+
+    /// <summary>
+    /// Only the textures held in this manager's key-based cache (i.e. loaded via <see cref="Get"/> or
+    /// given a cache key). A subset of <see cref="GetAllTextures"/>.
+    /// </summary>
+    IEnumerable<Texture> GetCachedTextures();
 
     /// <summary>
     /// Registers a video texture so it appears in the texture viewer and can be tracked.

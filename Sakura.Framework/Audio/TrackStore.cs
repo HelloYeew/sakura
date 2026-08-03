@@ -24,4 +24,14 @@ public class TrackStore : AudioStore<ITrack>
     {
         return audioManager.CreateTrack(stream);
     }
+
+    /// <summary>
+    /// Tracks are long, few, and played from start to end, so letting the audio backend stream them
+    /// off disk is strictly better than holding the encoded file in memory for as long as the track
+    /// is cached — <see cref="MaxCachedComponents"/> of those adds up to tens of megabytes.
+    /// </summary>
+    protected override ITrack? CreateComponent(string filePath)
+    {
+        return audioManager.CreateTrackFromFile(filePath);
+    }
 }

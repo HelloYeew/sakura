@@ -29,7 +29,7 @@ using Sakura.Framework.Timing;
 
 namespace Sakura.Framework;
 
-public partial class App : Container, IFocusManager, IInputManagerProvider, IDisposable
+public partial class App : Container, IFocusManager, IInputManagerProvider
 {
     public IWindow Window => Host?.Window;
 
@@ -279,9 +279,14 @@ public partial class App : Container, IFocusManager, IInputManagerProvider, IDis
         return new BassAudioManager();
     }
 
-    public void Dispose()
+    protected override void Dispose(bool isDisposing)
     {
+        if (IsDisposed)
+            return;
+
         (AudioManager as IDisposable)?.Dispose();
+
+        base.Dispose(isDisposing);
     }
 
     public override void Update()

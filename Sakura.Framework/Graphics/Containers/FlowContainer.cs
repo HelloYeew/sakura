@@ -75,12 +75,21 @@ public partial class FlowContainer : Container
     /// </summary>
     protected internal override void OnChildGeometryInvalidated() => InvalidateLayout();
 
+    /// <summary>
+    /// Whether a layout pass is owed. Tracked separately from <see cref="Drawable.Invalidation"/> because
+    /// that is cleared by <see cref="Drawable.Update"/> every frame the drawable is reached, including
+    /// frames where layout was skipped for being invisible, the pending work has to outlive it.
+    /// </summary>
+    private bool layoutPending = true;
+
     public override void Update()
     {
-        bool layoutWasInvalidated = (Invalidation & InvalidationFlags.DrawInfo) != 0;
+        layoutPending |= (Invalidation & InvalidationFlags.DrawInfo) != 0;
 
-        if (layoutWasInvalidated)
+        if (layoutPending && !IsEffectivelyHidden)
         {
+            layoutPending = false;
+
             UpdateTransforms();
             PerformLayout();
         }

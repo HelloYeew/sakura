@@ -29,8 +29,6 @@ public partial class SpriteText : Drawable
     private ShapedText? shapedText;
     private int lastCacheVersion = -1;
 
-    private Font? resolvedFont;
-
     [Resolved]
     private IFontStore fontStore { get; set; } = null!;
 
@@ -120,7 +118,6 @@ public partial class SpriteText : Drawable
             {
                 fontUsage = value;
                 layoutInvalidated = true;
-                resolvedFont = null;
                 Invalidate(InvalidationFlags.DrawInfo);
             }
         }
@@ -157,20 +154,16 @@ public partial class SpriteText : Drawable
         computingLayout = true;
         try
         {
-            if (resolvedFont == null)
-                resolvedFont = fontStore.Get(fontUsage);
-
-            if (resolvedFont == null) return;
-
-            var fallbacks = fontStore.GetFallbacks(fontUsage);
-
             window.GetPhysicalSize(out int physW, out int physH);
             float dpiScale = (float)physW / window.Width;
 
             if (dpiScale <= 0) dpiScale = 1.0f;
 
-            var variation = fontStore.GetVariation(fontUsage);
-            shapedText = resolvedFont.ProcessText(Text, fontUsage.Size, dpiScale, fallbacks, variation);
+            // Shaped through the store rather than by resolving a Font and calling ProcessText: the store
+            // caches the result, and only it knows when one has been invalidated by a font being
+            // registered, a fallback family changing, or the glyph atlas being cleared. The result is
+            // shared with every other drawable showing the same text at the same size, so it is read-only.
+            shapedText = fontStore.Shape(fontUsage, Text, dpiScale);
             // Assign the backing field directly; the ContentSize getter forces layout, which we're
             // already inside of (guarded by computingLayout).
             contentSize = new Vector2(shapedText.BoundingBox.X, shapedText.BoundingBox.Y);
@@ -319,7 +312,7 @@ public partial class SpriteText : Drawable
 
     protected override void UpdateDrawColor()
     {
-        DrawAlpha = (Parent?.DrawAlpha ?? 1f) * Alpha;
+        DrawAlpha = (Parent?.ChildDrawAlpha ?? 1f) * Alpha;
 
         var drawColor = new Vector4(
             ColorExtensions.SrgbToLinear(Color.R),

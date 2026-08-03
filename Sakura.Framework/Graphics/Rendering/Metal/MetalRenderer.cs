@@ -118,7 +118,7 @@ public sealed class MetalRenderer : IMetalRenderer
         var whiteTex = new MetalTexture(device, 1, 1);
         whiteTex.Upload(new byte[] { 255, 255, 255, 255 });
         MetalTexture.WhitePixel = whiteTex; // shared fallback for un-uploaded textures (see MetalTexture.Bind)
-        WhitePixel = new Texture(whiteTex);
+        WhitePixel = new Texture(whiteTex, TextureOwnership.Shared);
 
         logDeviceInfo();
     }
@@ -235,6 +235,10 @@ public sealed class MetalRenderer : IMetalRenderer
     {
         if (device == nint.Zero)
             return;
+
+        // Release native resources orphaned by the GC (a missed Dispose) before anything else this
+        // frame, so their memory is freed before new allocations are made against it.
+        Sakura.Framework.Graphics.Textures.NativeDisposalQueue.Process();
 
         // Drain queued uploads (textures, glyphs) on the draw thread, before the render pass opens.
         while (drawThreadQueue.TryDequeue(out var action))

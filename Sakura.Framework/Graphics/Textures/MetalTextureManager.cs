@@ -42,7 +42,10 @@ public class MetalTextureManager : ITextureManager
 
         // The Metal renderer owns a 1x1 white texture; reuse it so solid-color drawables sample white.
         WhitePixel = renderer.WhitePixel;
-        missingTexture = new Texture(renderer.CreateNativeTexture(1, 1));
+
+        // Handed back from Get() on any failure, so many callers end up holding it. Shared ownership is
+        // what stops one of them disposing it out from under the others.
+        missingTexture = new Texture(renderer.CreateNativeTexture(1, 1), TextureOwnership.Shared);
         atlas = new TextureAtlas(renderer, usage: AtlasUsage.Textures);
     }
 
@@ -60,24 +63,31 @@ public class MetalTextureManager : ITextureManager
             if (stream == null) throw new FileNotFoundException($"Texture not found: {path}");
 
             var rawImage = imageLoader.Load(stream);
-            byte[] pixelDataCopy = rawImage.Data.ToArray();
             int imageWidth = rawImage.Width;
             int imageHeight = rawImage.Height;
-
-            rawImage.Dispose();
 
             Texture? texture = null;
 
             if (imageWidth <= TextureAtlas.MAX_ATLAS_TEXTURE_SIZE && imageHeight <= TextureAtlas.MAX_ATLAS_TEXTURE_SIZE)
-                texture = atlas.AddRegion(imageWidth, imageHeight, pixelDataCopy);
+            {
+                texture = atlas.AddRegion(imageWidth, imageHeight, rawImage.Data);
+
+                // The atlas takes its own pooled copy, since the region is blitted into a page rather than
+                // uploaded as a whole texture.
+                rawImage.Dispose();
+            }
 
             if (texture == null)
             {
                 var nativeTexture = renderer.CreateNativeTexture(imageWidth, imageHeight);
                 texture = new Texture(nativeTexture);
-                renderer.ScheduleTextureUpload(() => nativeTexture.Upload(pixelDataCopy), (long)imageWidth * imageHeight * 4);
+
+                // Ownership of the decoded pixels passes to the upload, which releases them afterwards, so
+                // nothing is copied between decode and GPU.
+                TextureUploads.ScheduleOwned(renderer, nativeTexture, rawImage);
             }
 
+            texture.Name = path;
             textureCache[path] = texture;
             GlobalStatistics.Get<int>("Textures", "Loaded Textures").Value = textureCache.Count;
             return texture;
@@ -94,22 +104,14 @@ public class MetalTextureManager : ITextureManager
         var nativeTexture = renderer.CreateNativeTexture(width, height);
         var texture = new Texture(nativeTexture);
 
-        byte[] dataCopy = pixelData.ToArray();
-
-        renderer.ScheduleTextureUpload(() =>
-        {
-            ReadOnlySpan<byte> span = dataCopy;
-            nativeTexture.Upload(span);
-        }, (long)width * height * 4);
+        TextureUploads.Schedule(renderer, nativeTexture, width, height, pixelData);
 
         if (!string.IsNullOrEmpty(cacheKey))
         {
             if (textureCache.TryGetValue(cacheKey, out var oldTexture))
-            {
-                var oldNative = oldTexture.BackendTexture;
-                renderer.ScheduleToDrawThread(() => oldNative?.Dispose());
-            }
+                release(oldTexture);
 
+            texture.Name = cacheKey;
             textureCache[cacheKey] = texture;
             GlobalStatistics.Get<int>("Textures", "Loaded Textures").Value = textureCache.Count;
             GlobalStatistics.Get<int>("Textures", "Texture Updates").Value++;
@@ -118,27 +120,54 @@ public class MetalTextureManager : ITextureManager
         return texture;
     }
 
-    public bool TryAcquireSharedTexture(string cacheKey, out Texture texture) => sharedTextures.TryAcquire(cacheKey, out texture);
+    public Texture? CreateFromStream(Stream stream, TextureCreationOptions options)
+        => TextureUploads.FromStream(stream, options, renderer, imageLoader, sharedTextures, release);
+
+    public bool TryAcquireSharedTexture(string cacheKey, out Texture texture)
+    {
+        bool hit = sharedTextures.TryAcquire(cacheKey, out texture);
+
+        if (hit)
+            SharedTextureStatistics.RecordHit();
+
+        return hit;
+    }
 
     public Texture AcquireSharedTexture(string cacheKey, int width, int height, ReadOnlySpan<byte> pixelData)
     {
-        byte[] dataCopy = pixelData.ToArray();
+        // Copied up front because a span cannot be captured by the create callback, and released again
+        // below if an existing entry turned out to satisfy the request.
+        var pixels = ImageRawData.CopyFrom(width, height, pixelData);
+        bool used = false;
 
-        return sharedTextures.AddOrAcquire(cacheKey, () =>
+        var texture = sharedTextures.AddOrAcquire(cacheKey, () =>
         {
+            used = true;
+
             var nativeTexture = renderer.CreateNativeTexture(width, height);
-            var texture = new Texture(nativeTexture);
-            renderer.ScheduleTextureUpload(() => nativeTexture.Upload(dataCopy), (long)width * height * 4);
-            return texture;
+            var created = new Texture(nativeTexture)
+            {
+                Name = cacheKey
+            };
+            TextureUploads.ScheduleOwned(renderer, nativeTexture, pixels);
+            return created;
         });
+
+        if (!used)
+        {
+            pixels.Dispose();
+            SharedTextureStatistics.RecordHit();
+        }
+
+        SharedTextureStatistics.SetKeyCount(sharedTextures.Count);
+        return texture;
     }
 
-    public void ReleaseSharedTexture(string cacheKey) => sharedTextures.Release(cacheKey, texture =>
+    public void ReleaseSharedTexture(string cacheKey)
     {
-        var native = texture.BackendTexture;
-        if (native != null && native != WhitePixel.BackendTexture && native != missingTexture.BackendTexture && !atlas.OwnsNativeTexture(native))
-            renderer.ScheduleToDrawThread(native.Dispose);
-    });
+        sharedTextures.Release(cacheKey, release);
+        SharedTextureStatistics.SetKeyCount(sharedTextures.Count);
+    }
 
     public bool Evict(string path)
     {
@@ -146,8 +175,7 @@ public class MetalTextureManager : ITextureManager
 
         if (textureCache.TryGetValue(path, out var texture))
         {
-            if (texture.BackendTexture != null && texture.BackendTexture != WhitePixel.BackendTexture && texture.BackendTexture != missingTexture.BackendTexture && !atlas.OwnsNativeTexture(texture.BackendTexture))
-                renderer.ScheduleToDrawThread(() => texture.BackendTexture!.Dispose());
+            release(texture);
 
             textureCache.Remove(path);
             GlobalStatistics.Get<int>("Textures", "Loaded Textures").Value = textureCache.Count;
@@ -160,16 +188,34 @@ public class MetalTextureManager : ITextureManager
     public void Dispose()
     {
         foreach (var texture in textureCache.Values)
-        {
-            if (texture.BackendTexture != null && texture.BackendTexture != WhitePixel.BackendTexture && texture.BackendTexture != missingTexture.BackendTexture && !atlas.OwnsNativeTexture(texture.BackendTexture))
-                renderer.ScheduleToDrawThread(() => texture.BackendTexture!.Dispose());
-        }
+            release(texture);
 
         textureCache.Clear();
         atlas.Dispose();
     }
 
-    public IEnumerable<Texture> GetAllTextures() => textureCache.Values.Where(t => !atlas.OwnsNativeTexture(t.BackendTexture));
+    /// <summary>
+    /// Releases a texture this manager handed out, on the draw thread.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Texture.Dispose"/> is the whole release: it unregisters the texture and destroys its
+    /// GPU resource only if it owns one. That is why there is no longer a per-call-site check for the
+    /// shared white/missing singletons or for atlas-owned pages — <see cref="TextureOwnership"/> carries
+    /// it. Scheduled rather than immediate because destroying a GPU resource must happen on the draw
+    /// thread.
+    /// </remarks>
+    private void release(Texture texture)
+    {
+        if (texture == null)
+            return;
+
+        renderer.ScheduleToDrawThread(texture.Dispose);
+    }
+
+    public IEnumerable<Texture> GetAllTextures() => TextureRegistry.GetAll()
+        .Where(t => t.BackendTexture != null && !atlas.OwnsNativeTexture(t.BackendTexture));
+
+    public IEnumerable<Texture> GetCachedTextures() => textureCache.Values.Where(t => !atlas.OwnsNativeTexture(t.BackendTexture));
 
     public void RegisterVideoTexture(IVideoTexture texture) => videoTextures.TryAdd(texture, 0);
     public void UnregisterVideoTexture(IVideoTexture texture) => videoTextures.TryRemove(texture, out _);

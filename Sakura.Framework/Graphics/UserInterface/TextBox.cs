@@ -199,6 +199,8 @@ public abstract partial class TextBox : Container
             AddInternal(textContainer);
         }
 
+        OwnReactive(Text);
+
         Text.ValueChanged += e =>
         {
             string newText = e.NewValue ?? "";

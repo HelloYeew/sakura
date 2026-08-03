@@ -55,6 +55,21 @@ public abstract class Storage
     public abstract string GetFullPath(string path, bool createIfNotExists = false);
 
     /// <summary>
+    /// Get a path to an existing file on the real filesystem, if this storage is backed by one.
+    /// </summary>
+    /// <remarks>
+    /// Unlike <see cref="GetFullPath"/>, which returns whatever identifier the backing store uses
+    /// (a manifest resource name for <see cref="EmbeddedResourceStorage"/>, for example), this only
+    /// returns non-null when the result can be handed to a native library that opens files itself.
+    /// That lets consumers skip buffering a file into memory when nothing needs it there — see
+    /// <see cref="Audio.TrackStore"/>, which lets BASS read audio files directly rather than
+    /// holding a multi-megabyte copy per resident track.
+    /// </remarks>
+    /// <param name="path">A path relative to this storage.</param>
+    /// <returns>An absolute filesystem path, or null if the file is not on the filesystem.</returns>
+    public virtual string GetFileSystemPath(string path) => null;
+
+    /// <summary>
     /// Get the list of files at the specified path that match the search pattern.
     /// </summary>
     /// <param name="path">Path to the directory to search in.</param>

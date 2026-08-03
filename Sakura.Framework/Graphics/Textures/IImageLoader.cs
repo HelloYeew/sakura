@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using System.IO;
 
 namespace Sakura.Framework.Graphics.Textures;
@@ -34,4 +35,22 @@ public interface IImageLoader
     /// </param>
     /// <returns>The raw image data.</returns>
     ImageRawData Load(Stream stream, int maxDimension);
+
+    /// <summary>
+    /// Loads image data from the provided stream, reduced according to <paramref name="options"/>.
+    /// </summary>
+    /// <remarks>
+    /// Prefer this over <see cref="Load(Stream, int)"/> when the image will be drawn with
+    /// <see cref="TextureFillMode.Fill"/>, a Fill only shows the center band of the source, so capping
+    /// the longest edge alone still keeps (and uploads) pixels that are clipped off-screen. A 1920×1080
+    /// background bound for a 768×128 bar is 768×432 under a longest-edge cap but only 768×128 when the
+    /// band is cropped — 3.4× fewer pixels for the same result on screen.
+    /// </remarks>
+    /// <param name="stream">The input stream containing image data.</param>
+    /// <param name="options">How to reduce the image while decoding.</param>
+    /// <returns>The raw image data.</returns>
+    ImageRawData Load(Stream stream, ImageLoadOptions options)
+        // Default implementation so existing implementors keep compiling: honours the target size but
+        // not the Fill crop. Override to support cropping.
+        => Load(stream, options.TargetSize is { } size ? (int)MathF.Ceiling(MathF.Max(size.X, size.Y)) : 0);
 }

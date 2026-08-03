@@ -5,6 +5,7 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using Sakura.Framework.Statistic;
 using Silk.NET.OpenGL;
 
 namespace Sakura.Framework.Graphics.Textures;
@@ -27,6 +28,11 @@ public class GLTexture : INativeTexture
     private bool disposed;
 
     private bool mipmapsDirty;
+
+    /// <summary>
+    /// Accounts for this texture's VRAM in <see cref="NativeMemoryTracker"/> until it is deleted.
+    /// </summary>
+    private NativeMemoryLease? memoryLease;
 
     public static GLTexture WhitePixel { get; private set; }
 
@@ -69,6 +75,7 @@ public class GLTexture : INativeTexture
         if (GLHandle == 0)
         {
             GLHandle = gl.GenTexture();
+            memoryLease ??= NativeTextureMemory.Lease(NativeMemoryCategory.Textures, Width, Height);
         }
 
         gl.ActiveTexture(TextureUnit.Texture0);
@@ -108,7 +115,7 @@ public class GLTexture : INativeTexture
         }
 
         gl.BindTexture(TextureTarget.Texture2D, GLHandle);
-        
+
         if (mipmapsDirty)
         {
             gl.GenerateMipmap(TextureTarget.Texture2D);
@@ -125,6 +132,7 @@ public class GLTexture : INativeTexture
     {
         var texture = new GLTexture(gl, width, height);
         texture.GLHandle = gl.GenTexture();
+        texture.memoryLease = NativeTextureMemory.Lease(NativeMemoryCategory.FrameBuffers, width, height);
 
         gl.GetInteger(GLEnum.TextureBinding2D, out int previouslyBound);
 
@@ -150,15 +158,44 @@ public class GLTexture : INativeTexture
     {
         if (disposed) return;
 
-        if (GLHandle != 0)
-        {
-            // Scrub the renderer's slot tracking first: GL recycles handle IDs, so a
-            // future texture could alias this handle and be mistaken for already-bound.
-            Rendering.GLRenderer.NotifyTextureDeleted(GLHandle);
-            gl.DeleteTexture(GLHandle);
-        }
-
+        uint claimed = GLHandle;
+        GLHandle = 0;
         disposed = true;
+
+        // Nothing can be sampled from a deleted texture (see MetalTexture.Dispose).
+        Available = false;
+
         GC.SuppressFinalize(this);
+
+        memoryLease?.Dispose();
+
+        if (claimed != 0)
+        {
+            // GL recycles handle IDs, so a future texture could
+            // alias this handle and be mistaken for already-bound
+            Rendering.GLRenderer.NotifyTextureDeleted(claimed);
+            gl.DeleteTexture(claimed);
+        }
+    }
+
+    ~GLTexture()
+    {
+        memoryLease?.Dispose();
+
+        uint claimed = GLHandle;
+        if (claimed == 0)
+            return;
+
+        GLHandle = 0;
+
+        var glApi = gl;
+        if (glApi == null)
+            return;
+
+        NativeDisposalQueue.Enqueue(() =>
+        {
+            Rendering.GLRenderer.NotifyTextureDeleted(claimed);
+            glApi.DeleteTexture(claimed);
+        });
     }
 }

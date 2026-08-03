@@ -19,6 +19,17 @@ internal class BassAudioChannel : IAudioChannel
     public event Action OnStop = () => { };
     public event Action OnEnd = () => { };
 
+    /// <summary>
+    /// Raised once this channel's BASS handles have been freed, on the audio thread.
+    /// </summary>
+    /// <remarks>
+    /// Used by whatever created the channel to release resources the channel was reading from —
+    /// notably <see cref="BassTrack"/>'s unmanaged data block, which must outlive every channel
+    /// decoding out of it. Raised after <see cref="Bass.StreamFree"/>, which is the earliest point
+    /// at which BASS is known to be done with it.
+    /// </remarks>
+    internal event Action Disposed;
+
     public ReactiveBool IsRunning { get; } = new ReactiveBool();
 
     public int ChannelHandle { get; }
@@ -362,6 +373,10 @@ internal class BassAudioChannel : IAudioChannel
 
             // Unpin the sync procedure
             endSyncProcedure = null;
+
+            var disposed = Disposed;
+            Disposed = null;
+            disposed?.Invoke();
         });
     }
 }

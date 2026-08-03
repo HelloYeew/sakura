@@ -69,6 +69,6 @@ public partial class TestBox : TestScene
     [TearDown]
     public void TearDown()
     {
-        AddStep("Clear all children", Clear);
+        AddStep("Clear all children", () => Clear());
     }
 }

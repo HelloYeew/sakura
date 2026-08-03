@@ -4,6 +4,7 @@
 #nullable disable
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Logging;
 using Silk.NET.OpenGL;
@@ -16,6 +17,7 @@ namespace Sakura.Framework.Graphics.Rendering;
 /// single color attachment. Masking in this framework is shader-based, so no depth/stencil
 /// attachment is needed.
 /// </summary>
+[SuppressMessage("ReSharper", "InconsistentNaming", Justification = "GL naming conventions")]
 public class GLFrameBuffer : IFrameBuffer
 {
     private readonly GL gl;
@@ -52,7 +54,8 @@ public class GLFrameBuffer : IFrameBuffer
         // mid-frame, so the previous binding must be preserved.
         gl.GetInteger(GLEnum.FramebufferBinding, out int previousBinding);
 
-        colorTexture?.Dispose();
+        releaseAttachment();
+
         colorTexture = GLTexture.CreateRenderTarget(gl, Width, Height, pixelSnapping);
         Texture = new Texture(colorTexture);
 
@@ -74,15 +77,49 @@ public class GLFrameBuffer : IFrameBuffer
         createAttachment(width, height);
     }
 
+    /// <summary>
+    /// Releases the current color attachment, if any.
+    /// </summary>
+    private void releaseAttachment()
+    {
+        Texture?.Dispose();
+        Texture = null;
+        colorTexture = null;
+    }
+
+    /// <summary>
+    /// Deletes the framebuffer object and its color attachment. Must be called on the draw thread.
+    /// </summary>
     public void Dispose()
     {
-        colorTexture?.Dispose();
-        colorTexture = null;
+        GC.SuppressFinalize(this);
 
-        if (Handle != 0)
-        {
-            gl.DeleteFramebuffer(Handle);
-            Handle = 0;
-        }
+        releaseAttachment();
+
+        uint claimed = Handle;
+        Handle = 0;
+
+        if (claimed != 0)
+            gl.DeleteFramebuffer(claimed);
+    }
+
+    /// <summary>
+    /// Safety net for a framebuffer dropped without being disposed. Only the framebuffer object name is
+    /// released here — the color attachment is a <see cref="GLTexture"/> with its own
+    /// finalizer, and reaching into it from this one would be unsafe (finalization order is undefined).
+    /// </summary>
+    ~GLFrameBuffer()
+    {
+        uint claimed = Handle;
+        if (claimed == 0)
+            return;
+
+        Handle = 0;
+
+        var glApi = gl;
+        if (glApi == null)
+            return;
+
+        NativeDisposalQueue.Enqueue(() => glApi.DeleteFramebuffer(claimed));
     }
 }

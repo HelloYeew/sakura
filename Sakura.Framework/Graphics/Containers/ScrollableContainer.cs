@@ -160,7 +160,7 @@ public partial class ScrollableContainer : Container
         CreateHorizontalScrollbar();
     }
 
-    public override void Clear() => ScrollContent.Clear();
+    public override void Clear(bool dispose = true) => ScrollContent.Clear(dispose);
 
     protected virtual void CreateVerticalScrollbar()
     {
@@ -196,12 +196,12 @@ public partial class ScrollableContainer : Container
             ScrollContent.Add(drawable);
     }
 
-    public override void Remove(Drawable drawable)
+    public override void Remove(Drawable drawable, bool dispose = true)
     {
         if (drawable == ScrollContent || drawable == verticalScrollbar || drawable == horizontalScrollbar)
-            base.Remove(drawable);
+            base.Remove(drawable, dispose);
         else
-            ScrollContent.Remove(drawable);
+            ScrollContent.Remove(drawable, dispose);
     }
 
     #region Programmatic Scrolling
