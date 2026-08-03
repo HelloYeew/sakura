@@ -388,7 +388,7 @@ public abstract class AppHost : IDisposable
             Logger.AppIdentifier = Name;
             Logger.VersionIdentifier = RuntimeInfo.EntryAssembly.GetName().Version?.ToString() ?? Logger.VersionIdentifier;
 
-            Logger.Initialize();
+            Logger.Initialize(DebugUtils.IsDebugBuild ? LogLevel.Debug : LogLevel.Verbose);
 
             if (!host_running_mutex.Wait(10000))
             {
