@@ -70,8 +70,29 @@ public class TextureRegistryTest
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(TextureRegistry.LiveCount, Is.EqualTo(3), "every texture is tracked");
-            Assert.That(TextureRegistry.LiveBytes, Is.EqualTo(1024L * 1024 * 4), "but slices share the page's memory");
+            Assert.That(TextureRegistry.LiveCount, Is.EqualTo(1), "only the page owns an allocation");
+            Assert.That(TextureRegistry.LiveSliceCount, Is.EqualTo(2), "the slices are tracked, separately");
+            Assert.That(TextureRegistry.LiveBytes, Is.EqualTo(1024L * 1024 * 4), "and slices share the page's memory");
+        }
+    }
+    
+    [Test]
+    public void GlyphSlicesDoNotMoveTheLiveTextureCount()
+    {
+        var atlasPage = new HeadlessNativeTexture(1024, 1024);
+        _ = new Texture(atlasPage);
+
+        int countWithPageOnly = TextureRegistry.LiveCount;
+
+        // A screen's worth of glyphs sliced out of that page.
+        for (int i = 0; i < 500; i++)
+            _ = new Texture(atlasPage, new RectangleF(0, 0, 0.01f, 0.01f));
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(TextureRegistry.LiveCount, Is.EqualTo(countWithPageOnly), "no new GPU allocations exist");
+            Assert.That(TextureRegistry.LiveSliceCount, Is.EqualTo(500));
+            Assert.That(TextureRegistry.LiveBytes, Is.EqualTo(1024L * 1024 * 4), "still one page's worth");
         }
     }
 
@@ -83,7 +104,8 @@ public class TextureRegistryTest
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(TextureRegistry.LiveCount, Is.EqualTo(1));
+            Assert.That(TextureRegistry.LiveCount, Is.Zero, "it owns no allocation, so it is not a live texture");
+            Assert.That(TextureRegistry.LiveSliceCount, Is.EqualTo(1), "but it is still tracked");
             Assert.That(TextureRegistry.LiveBytes, Is.Zero);
         }
     }

@@ -36,14 +36,16 @@ public static class TextureRegistry
     private static readonly List<Entry> entries = new List<Entry>();
 
     private static readonly GlobalStatistic<int> stat_live_count = GlobalStatistics.Get<int>("Textures", "Live Count");
+    private static readonly GlobalStatistic<int> stat_live_slices = GlobalStatistics.Get<int>("Textures", "Live Atlas Slices");
     private static readonly GlobalStatistic<long> stat_live_bytes = GlobalStatistics.Get<long>("Textures", "Live Bytes");
     private static readonly GlobalStatistic<long> stat_peak_bytes = GlobalStatistics.Get<long>("Textures", "Peak Bytes");
 
     private static int liveCount;
+    private static int liveSliceCount;
     private static long liveBytes;
 
     /// <summary>
-    /// Number of textures constructed and not yet disposed.
+    /// Number of textures that own a GPU allocation, constructed and not yet disposed.
     /// </summary>
     public static int LiveCount
     {
@@ -51,6 +53,20 @@ public static class TextureRegistry
         {
             lock (mutex)
                 return liveCount;
+        }
+    }
+
+    /// <summary>
+    /// Number of live textures that hold no GPU allocation of their own: atlas slices (a view into a page
+    /// that is itself registered, and counted once there) and dimension-only proxies such as the video
+    /// pipeline's. Reported separately so they neither inflate <see cref="LiveCount"/> nor go unnoticed.
+    /// </summary>
+    public static int LiveSliceCount
+    {
+        get
+        {
+            lock (mutex)
+                return liveSliceCount;
         }
     }
 
@@ -83,6 +99,14 @@ public static class TextureRegistry
         /// </summary>
         public bool Released;
 
+        /// <summary>
+        /// Whether this texture has a GPU allocation of its own, and so belongs in
+        /// <see cref="LiveCount"/> rather than <see cref="LiveSliceCount"/>. Recorded at registration
+        /// because the counters have to be reconciled long after the texture itself may have been
+        /// collected.
+        /// </summary>
+        public bool OwnsAllocation;
+
         public Entry(Texture texture, long bytes)
         {
             Reference = new WeakReference<Texture>(texture);
@@ -92,13 +116,20 @@ public static class TextureRegistry
 
     internal static Entry Register(Texture texture)
     {
-        var entry = new Entry(texture, bytesOf(texture));
+        var entry = new Entry(texture, bytesOf(texture))
+        {
+            OwnsAllocation = ownsAllocation(texture)
+        };
 
         lock (mutex)
         {
             entries.Add(entry);
 
-            liveCount++;
+            if (entry.OwnsAllocation)
+                liveCount++;
+            else
+                liveSliceCount++;
+
             liveBytes += entry.Bytes;
 
             publish();
@@ -206,6 +237,7 @@ public static class TextureRegistry
 
             entries.Clear();
             liveCount = 0;
+            liveSliceCount = 0;
             liveBytes = 0;
             stat_peak_bytes.Value = 0;
             publish();
@@ -223,7 +255,11 @@ public static class TextureRegistry
 
         entry.Released = true;
 
-        liveCount = Math.Max(0, liveCount - 1);
+        if (entry.OwnsAllocation)
+            liveCount = Math.Max(0, liveCount - 1);
+        else
+            liveSliceCount = Math.Max(0, liveSliceCount - 1);
+
         liveBytes = Math.Max(0, liveBytes - entry.Bytes);
 
         return true;
@@ -233,20 +269,28 @@ public static class TextureRegistry
     /// Atlas slices share their page's GPU allocation, so only whole textures are counted.
     /// </summary>
     private static long bytesOf(Texture texture)
+        => ownsAllocation(texture) ? (long)texture.Width * texture.Height * 4 : 0;
+
+    /// <summary>
+    /// Whether this texture has a GPU allocation of its own, as opposed to being a view into one that is
+    /// registered separately. The single predicate behind both the byte total and the count split, so the
+    /// two can never disagree about what a texture is.
+    /// </summary>
+    private static bool ownsAllocation(Texture texture)
     {
+        // Dimension-only proxy (e.g. the video pipeline): no GPU allocation at all.
         if (texture.BackendTexture == null)
-            return 0; // dimension-only proxy (e.g. the video pipeline): no GPU allocation of its own.
+            return false;
 
+        // A slice of a page that is registered in its own right.
         var uv = texture.UvRect;
-        if (uv.Width < 1f || uv.Height < 1f)
-            return 0; // a slice of a page that is registered in its own right.
-
-        return (long)texture.Width * texture.Height * 4;
+        return uv.Width >= 1f && uv.Height >= 1f;
     }
 
     private static void publish()
     {
         stat_live_count.Value = liveCount;
+        stat_live_slices.Value = liveSliceCount;
         stat_live_bytes.Value = liveBytes;
 
         if (liveBytes > stat_peak_bytes.Value)
