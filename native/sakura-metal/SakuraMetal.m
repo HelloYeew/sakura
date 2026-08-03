@@ -13,6 +13,18 @@
 #import <AppKit/AppKit.h>
 #endif
 
+// The draw thread is a plain .NET Thread running a bare frame loop (Threading/AppThread.runLoop), so it
+// has no run loop and therefore nothing that drains the thread's autorelease pool. Metal and QuartzCore
+// hand back autoreleased objects from every per-frame call — the command buffer, its render context, the
+// render-pass descriptor and its attachment array, and the CAMetalDrawable — so without an explicit pool
+// every one of them stays live for the process lifetime.
+//
+// A frame spans two C entry points (begin_frame / end_frame), so an @autoreleasepool block cannot
+// bracket it. Push/pop with the token held on the device is the supported way to scope a pool across a
+// call boundary. Pools are per-thread and strictly LIFO, begin/end always run on the draw thread.
+extern void* objc_autoreleasePoolPush(void);
+extern void objc_autoreleasePoolPop(void* context);
+
 // Buffer index for the interleaved vertex data fed to [[stage_in]]. SPIRV-Cross places UBOs at
 // low buffer indices (the projection block is [[buffer(0)]] on the vertex stage), so the geometry
 // buffer must avoid those. Metal guarantees at least 31 buffer slots; 30 is the conventional high
@@ -66,6 +78,10 @@ struct SakuraMetalDevice
 
     // Per-frame transient objects (valid only between begin_frame and end_frame).
     __unsafe_unretained id<CAMetalDrawable> drawable;
+
+    // objc_autoreleasePoolPush token for the currently open frame; NULL when no frame is open. Popped in
+    // end_frame, and on begin_frame's own early-out so a skipped frame does not strand a pool.
+    void* framePool;
 
     // Render-target stack. targets[0] is the drawable (set up in begin_frame); begin/end_offscreen
     // push/pop offscreen passes. `encoder`/`commandBuffer` always mirror the top of the stack (the
@@ -312,6 +328,13 @@ void sakura_metal_begin_frame(SakuraMetalDevice* device, float r, float g, float
         device->semaphoreWaitedThisFrame = YES;
     }
 
+    // Open this frame's autorelease pool before the first call that can autorelease anything. Defensive:
+    // an unbalanced begin_frame would otherwise strand the previous token — pop it rather than leak it
+    // (it is still the innermost pool on this thread, so LIFO order holds).
+    if (device->framePool != NULL)
+        objc_autoreleasePoolPop(device->framePool);
+    device->framePool = objc_autoreleasePoolPush();
+
     id<CAMetalDrawable> drawable = [device->layer nextDrawable];
     if (drawable == nil)
     {
@@ -322,6 +345,10 @@ void sakura_metal_begin_frame(SakuraMetalDevice* device, float r, float g, float
             dispatch_semaphore_signal(device->frameSemaphore);
             device->semaphoreWaitedThisFrame = NO;
         }
+
+        // end_frame early-returns on targetDepth < 0 and so will not run for this frame, drain here.
+        objc_autoreleasePoolPop(device->framePool);
+        device->framePool = NULL;
         return;
     }
 
@@ -437,6 +464,16 @@ void sakura_metal_end_frame(SakuraMetalDevice* device)
 
     // Advance to the next ring slot for the next frame.
     device->frameIndex++;
+
+    // Drain the frame. Last, after every Metal call above: the command buffer has been committed and the
+    // objects we still needed are retained by the queue (or by our own CFRetains), so what this releases
+    // is only the per-frame autoreleased references — the command buffers, encoders, render-pass
+    // descriptors and the drawable. Committed work is unaffected, the GPU holds its own references.
+    if (device->framePool != NULL)
+    {
+        objc_autoreleasePoolPop(device->framePool);
+        device->framePool = NULL;
+    }
 }
 
 // Builds a render-pass descriptor for a colour target with the given load action + clear colour, and
@@ -476,15 +513,15 @@ void sakura_metal_begin_offscreen(SakuraMetalDevice* device, SakuraMetalTexture*
     // parent's encoder/command buffer now; when we ascend back to it, end_offscreen opens a fresh
     // command buffer for it with a LOAD action so its already-rendered contents are preserved.
     SakuraMetalTarget* parent = &device->targets[device->targetDepth];
-    if (parent->encoder) { 
-        [parent->encoder endEncoding]; 
-        CFRelease((__bridge CFTypeRef)parent->encoder); 
-        parent->encoder = nil; 
+    if (parent->encoder) {
+        [parent->encoder endEncoding];
+        CFRelease((__bridge CFTypeRef)parent->encoder);
+        parent->encoder = nil;
     }
-    if (parent->commandBuffer) { 
-        [parent->commandBuffer commit]; 
-        CFRelease((__bridge CFTypeRef)parent->commandBuffer); 
-        parent->commandBuffer = nil; 
+    if (parent->commandBuffer) {
+        [parent->commandBuffer commit];
+        CFRelease((__bridge CFTypeRef)parent->commandBuffer);
+        parent->commandBuffer = nil;
     }
 
     id<MTLCommandBuffer> cmd = nil;
@@ -509,15 +546,15 @@ void sakura_metal_end_offscreen(SakuraMetalDevice* device)
     // Finish the offscreen pass: end its encoder, commit its command buffer (so its writes to the
     // render-target texture complete before the parent reload reads them), and release both.
     SakuraMetalTarget* child = &device->targets[device->targetDepth];
-    if (child->encoder){ 
-        [child->encoder endEncoding]; 
-        CFRelease((__bridge CFTypeRef)child->encoder); 
-        child->encoder = nil; 
+    if (child->encoder){
+        [child->encoder endEncoding];
+        CFRelease((__bridge CFTypeRef)child->encoder);
+        child->encoder = nil;
     }
-    if (child->commandBuffer) { 
-        [child->commandBuffer commit]; 
-        CFRelease((__bridge CFTypeRef)child->commandBuffer); 
-        child->commandBuffer = nil; 
+    if (child->commandBuffer) {
+        [child->commandBuffer commit];
+        CFRelease((__bridge CFTypeRef)child->commandBuffer);
+        child->commandBuffer = nil;
     }
     child->texture = nil;
 
@@ -656,20 +693,20 @@ SakuraMetalPipeline* sakura_metal_create_pipeline(
         MTLVertexFormat format;
         switch (a.componentCount)
         {
-            case 1: 
-                format = MTLVertexFormatFloat;  
+            case 1:
+                format = MTLVertexFormatFloat;
                 break;
-            case 2: 
-                format = MTLVertexFormatFloat2; 
+            case 2:
+                format = MTLVertexFormatFloat2;
                 break;
-            case 3: 
-                format = MTLVertexFormatFloat3; 
+            case 3:
+                format = MTLVertexFormatFloat3;
                 break;
             case 4:
-                format = MTLVertexFormatFloat4; 
+                format = MTLVertexFormatFloat4;
                 break;
-            default: 
-                format = MTLVertexFormatFloat; 
+            default:
+                format = MTLVertexFormatFloat;
                 break;
         }
 
@@ -799,14 +836,23 @@ SakuraMetalTexture* sakura_metal_create_texture(SakuraMetalDevice* device, int w
     // mipmapped:YES only makes sense for textures larger than 1x1; a 1x1 (white pixel) has one level.
     BOOL wantMips = (width > 1 || height > 1);
 
-    MTLTextureDescriptor* td = [MTLTextureDescriptor
-        texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm_sRGB
-                                     width:(NSUInteger)width
-                                    height:(NSUInteger)height
-                                 mipmapped:wantMips];
-    td.usage = MTLTextureUsageShaderRead;
+    // Pooled: texture2DDescriptorWithPixelFormat: is a class factory method, so the descriptor comes back
+    // autoreleased, and texture creation runs from the upload queue where no frame pool is open. `texture`
+    // is declared outside the block so ARC's strong reference carries it past the pop —
+    // newTextureWithDescriptor: returns an owned (+1) object, so it is not the pool's to release.
+    id<MTLTexture> texture = nil;
+    @autoreleasepool
+    {
+        MTLTextureDescriptor* td = [MTLTextureDescriptor
+            texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm_sRGB
+                                         width:(NSUInteger)width
+                                        height:(NSUInteger)height
+                                     mipmapped:wantMips];
+        td.usage = MTLTextureUsageShaderRead;
 
-    id<MTLTexture> texture = [device->device newTextureWithDescriptor:td];
+        texture = [device->device newTextureWithDescriptor:td];
+    }
+
     if (texture == nil)
         return NULL;
 
@@ -814,9 +860,9 @@ SakuraMetalTexture* sakura_metal_create_texture(SakuraMetalDevice* device, int w
     if (t == NULL)
         return NULL;
 
-    t->texture = texture; 
+    t->texture = texture;
     CFRetain((__bridge CFTypeRef)texture);
-    t->queue = device->queue; 
+    t->queue = device->queue;
     CFRetain((__bridge CFTypeRef)device->queue);
     t->hasMips = wantMips;
     return t;
@@ -828,15 +874,21 @@ SakuraMetalTexture* sakura_metal_create_render_target(SakuraMetalDevice* device,
         return NULL;
 
     // Renderable + sampleable, single mip level, sRGB (matches the drawable + GL's Srgb8Alpha8 RTs).
-    MTLTextureDescriptor* td = [MTLTextureDescriptor
-        texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm_sRGB
-                                     width:(NSUInteger)width
-                                    height:(NSUInteger)height
-                                 mipmapped:NO];
-    td.usage       = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
-    td.storageMode = MTLStorageModePrivate; // GPU-only; never CPU-uploaded.
+    // Pooled for the same reason as sakura_metal_create_texture above.
+    id<MTLTexture> texture = nil;
+    @autoreleasepool
+    {
+        MTLTextureDescriptor* td = [MTLTextureDescriptor
+            texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm_sRGB
+                                         width:(NSUInteger)width
+                                        height:(NSUInteger)height
+                                     mipmapped:NO];
+        td.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+        td.storageMode = MTLStorageModePrivate; // GPU-only; never CPU-uploaded.
 
-    id<MTLTexture> texture = [device->device newTextureWithDescriptor:td];
+        texture = [device->device newTextureWithDescriptor:td];
+    }
+
     if (texture == nil)
         return NULL;
 
@@ -907,14 +959,21 @@ void sakura_metal_upload_texture_region(SakuraMetalTexture* texture, int x, int 
     // invisible on fast ones (e.g. M3 Max) where it usually finishes before the next sample. Uploads
     // are already infrequent (see above), so the CPU stall here is cheap and removes the race
     // entirely instead of relying on timing luck.
+    // Pooled: the command buffer and blit encoder are both autoreleased, and an upload can be drained
+    // outside begin_frame/end_frame, where the frame pool is not open. Left unpooled this path stranded
+    // one command buffer + blit context per upload for the process lifetime (measured: 832 live
+    // AGXG15XFamilyBlitContext). waitUntilCompleted above means nothing here outlives the block.
     if (texture->hasMips && texture->queue != nil)
     {
-        id<MTLCommandBuffer> cb = [texture->queue commandBuffer];
-        id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
-        [blit generateMipmapsForTexture:texture->texture];
-        [blit endEncoding];
-        [cb commit];
-        [cb waitUntilCompleted];
+        @autoreleasepool
+        {
+            id<MTLCommandBuffer> cb = [texture->queue commandBuffer];
+            id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
+            [blit generateMipmapsForTexture:texture->texture];
+            [blit endEncoding];
+            [cb commit];
+            [cb waitUntilCompleted];
+        }
     }
 }
 
@@ -937,14 +996,20 @@ SakuraMetalTexture* sakura_metal_create_plane_texture(SakuraMetalDevice* device,
 
     // Single-channel R8Unorm — raw luma/chroma samples, NOT sRGB (the video shader does its own
     // YUV→RGB + gamma). No mips; sampled with the clamp sampler.
-    MTLTextureDescriptor* td = [MTLTextureDescriptor
-        texture2DDescriptorWithPixelFormat:MTLPixelFormatR8Unorm
-                                     width:(NSUInteger)width
-                                    height:(NSUInteger)height
-                                 mipmapped:NO];
-    td.usage = MTLTextureUsageShaderRead;
+    // Pooled for the same reason as sakura_metal_create_texture above.
+    id<MTLTexture> texture = nil;
+    @autoreleasepool
+    {
+        MTLTextureDescriptor* td = [MTLTextureDescriptor
+            texture2DDescriptorWithPixelFormat:MTLPixelFormatR8Unorm
+                                         width:(NSUInteger)width
+                                        height:(NSUInteger)height
+                                     mipmapped:NO];
+        td.usage = MTLTextureUsageShaderRead;
 
-    id<MTLTexture> texture = [device->device newTextureWithDescriptor:td];
+        texture = [device->device newTextureWithDescriptor:td];
+    }
+
     if (texture == nil)
         return NULL;
 
