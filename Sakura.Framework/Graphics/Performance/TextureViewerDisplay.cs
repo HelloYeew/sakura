@@ -31,6 +31,7 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
     private readonly SpriteText runningTimeText;
     private readonly SpriteText bindsText;
     private readonly SpriteText vramText;
+    private readonly SpriteText nativeMemoryText;
 
     private int lastTextureUpdates = -1;
     private int lastAtlasPageCount = -1;
@@ -149,6 +150,18 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
             Height = 30
         });
 
+        Add(nativeMemoryText = new SpriteText
+        {
+            Text = "",
+            Font = FontUsage.Default.With(size: 16),
+            Anchor = Anchor.TopLeft,
+            Origin = Anchor.TopLeft,
+            Position = new Vector2(10, 130),
+            Color = Color.LightGreen,
+            RelativeSizeAxes = Axes.X,
+            Height = 30
+        });
+
         Add(contentContainer = new Container
         {
             Anchor = Anchor.Centre,
@@ -215,6 +228,14 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
         vramText.Text = $"Live: {TextureRegistry.LiveCount} textures, {toMegabytes(liveBytes)} (peak {toMegabytes(peakBytes)})"
                         + (slices > 0 ? $"+ {slices} atlas slices" : "")
                         + (reclaimed > 0 ? $"— {reclaimed} reclaimed by GC (a Dispose is being missed!)" : "");
+
+        nativeMemoryText.Text =
+            $"Native: {toMegabytes(NativeMemoryTracker.TotalBytes)} (peak {toMegabytes(NativeMemoryTracker.PeakTotalBytes)})"
+            + $"   tex {toMegabytes(NativeMemoryTracker.BytesFor(NativeMemoryCategory.Textures))}"
+            + $"   fb {toMegabytes(NativeMemoryTracker.BytesFor(NativeMemoryCategory.FrameBuffers))}"
+            + $"   video {toMegabytes(NativeMemoryTracker.BytesFor(NativeMemoryCategory.Video))}"
+            + $"   audio {toMegabytes(NativeMemoryTracker.BytesFor(NativeMemoryCategory.Audio))}"
+            + $"   other {toMegabytes(NativeMemoryTracker.BytesFor(NativeMemoryCategory.Other))}";
 
         if (host.UpdateClock.CurrentTime - lastUpdateTime < 100)
             return;

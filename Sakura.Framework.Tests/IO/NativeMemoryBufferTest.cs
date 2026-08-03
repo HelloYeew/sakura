@@ -6,6 +6,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using NUnit.Framework;
 using Sakura.Framework.IO;
+using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Tests.IO;
 
@@ -173,6 +174,69 @@ public class NativeMemoryBufferTest
         byte[] copy = new byte[buffer.Length];
         Marshal.Copy(buffer.Pointer, copy, 0, copy.Length);
         return copy;
+    }
+
+    [Test]
+    public void TheBlockIsAccountedForUnderItsCategoryUntilFreed()
+    {
+        NativeMemoryTracker.Reset();
+
+        try
+        {
+            byte[] payload = new byte[4096];
+
+            using (var stream = new MemoryStream(payload))
+            {
+                var buffer = NativeMemoryBuffer.CreateFrom(stream, NativeMemoryCategory.Audio);
+
+                Assert.That(buffer, Is.Not.Null);
+                Assert.Multiple(() =>
+                {
+                    Assert.That(NativeMemoryTracker.BytesFor(NativeMemoryCategory.Audio), Is.EqualTo(payload.Length));
+                    Assert.That(NativeMemoryTracker.TotalBytes, Is.EqualTo(payload.Length));
+                });
+
+                buffer!.Dispose();
+
+                Assert.That(NativeMemoryTracker.BytesFor(NativeMemoryCategory.Audio), Is.Zero);
+            }
+        }
+        finally
+        {
+            NativeMemoryTracker.Reset();
+        }
+    }
+
+    /// <summary>
+    /// The block outlives the creator while a consumer still holds a reference, and so must its accounting:
+    /// subtracting on the creator's dispose would report memory as freed while BASS was still reading it.
+    /// </summary>
+    [Test]
+    public void AccountingFollowsTheLastReferenceRatherThanTheCreator()
+    {
+        NativeMemoryTracker.Reset();
+
+        try
+        {
+            using var stream = new MemoryStream(new byte[2048]);
+            var buffer = NativeMemoryBuffer.CreateFrom(stream, NativeMemoryCategory.Audio);
+
+            Assert.That(buffer, Is.Not.Null);
+            Assert.That(buffer!.AddReference(), Is.True);
+
+            buffer.Dispose();
+
+            Assert.That(NativeMemoryTracker.BytesFor(NativeMemoryCategory.Audio), Is.EqualTo(2048),
+                "a consumer still holds the block, so it is still resident");
+
+            buffer.Release();
+
+            Assert.That(NativeMemoryTracker.BytesFor(NativeMemoryCategory.Audio), Is.Zero);
+        }
+        finally
+        {
+            NativeMemoryTracker.Reset();
+        }
     }
 
     /// <summary>
