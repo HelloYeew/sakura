@@ -62,13 +62,20 @@ public abstract partial class SliderBar<T> : Container, IHasTooltip where T : st
         set => Current.Precision = value;
     }
 
-    private int? decimalPlaces;
+    /// <summary>
+    /// The <see cref="DecimalPlaces"/> a slider gets when its creator does not choose one.
+    /// </summary>
+    public const int DEFAULT_DECIMAL_PLACES = 2;
+
+    private int? decimalPlaces = DEFAULT_DECIMAL_PLACES;
 
     /// <summary>
     /// Rounds <see cref="Current"/> to this many decimal places on every change, trimming
     /// floating-point drift from continuous dragging (e.g. 0.748274837 -> 0.75 when set to 2).
     /// Only meaningful for fractional <typeparamref name="T"/> (float/double/decimal), a no-op
-    /// for integer types, which are already whole numbers. Null (default) disables rounding.
+    /// for integer types, which are already whole numbers.
+    /// Defaults to <see cref="DEFAULT_DECIMAL_PLACES"/>; set to null to disable rounding and get a
+    /// genuinely continuous slider.
     /// </summary>
     public int? DecimalPlaces
     {
