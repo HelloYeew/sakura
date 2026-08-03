@@ -6,6 +6,7 @@ using System.Buffers;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
+using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.IO;
 
@@ -32,6 +33,18 @@ public sealed class NativeMemoryBuffer : IDisposable
     private int referenceCount = 1;
 
     /// <summary>
+    /// Accounts for this block in <see cref="NativeMemoryTracker"/> until it is freed.
+    /// </summary>
+    /// <remarks>
+    /// Held here rather than by each consumer, because the consumers were previously each adding and
+    /// subtracting the figure by hand and had to remember the original size to subtract — a
+    /// <see cref="Length"/> that this class zeroes the moment it frees. Accounting where the allocation
+    /// happens means it cannot be forgotten at a new call site, and there is exactly one place that knows
+    /// the block is really gone.
+    /// </remarks>
+    private readonly NativeMemoryLease memoryLease;
+
+    /// <summary>
     /// Pointer to the start of the block, or <see cref="IntPtr.Zero"/> once every reference has
     /// been released.
     /// </summary>
@@ -47,10 +60,11 @@ public sealed class NativeMemoryBuffer : IDisposable
     /// </summary>
     public bool IsFreed => Volatile.Read(ref referenceCount) <= 0;
 
-    private NativeMemoryBuffer(IntPtr pointer, long length)
+    private NativeMemoryBuffer(IntPtr pointer, long length, NativeMemoryCategory category)
     {
         this.pointer = pointer;
         Length = length;
+        memoryLease = NativeMemoryTracker.Add(category, length);
     }
 
     /// <summary>
@@ -58,18 +72,23 @@ public sealed class NativeMemoryBuffer : IDisposable
     /// position to its end and is <em>not</em> disposed.
     /// </summary>
     /// <param name="stream">The stream to read.</param>
+    /// <param name="category">
+    /// What the block is being held for, for <see cref="NativeMemoryTracker"/> attribution. Defaults to
+    /// <see cref="NativeMemoryCategory.Other"/> so an untagged caller is still counted in the total rather
+    /// than being silently missing from it.
+    /// </param>
     /// <returns>
     /// A buffer with one reference held by the caller, or <c>null</c> if the stream held no bytes.
     /// </returns>
-    public static NativeMemoryBuffer? CreateFrom(Stream stream)
+    public static NativeMemoryBuffer? CreateFrom(Stream stream, NativeMemoryCategory category = NativeMemoryCategory.Other)
     {
         ArgumentNullException.ThrowIfNull(stream);
 
         long knownLength = tryGetRemainingLength(stream);
 
         return knownLength > 0
-            ? createFromKnownLength(stream, knownLength)
-            : createByGrowing(stream);
+            ? createFromKnownLength(stream, knownLength, category)
+            : createByGrowing(stream, category);
     }
 
     /// <summary>
@@ -78,10 +97,10 @@ public sealed class NativeMemoryBuffer : IDisposable
     /// <returns>
     /// A buffer with one reference held by the caller, or <c>null</c> if the file is empty.
     /// </returns>
-    public static NativeMemoryBuffer? CreateFromFile(string path)
+    public static NativeMemoryBuffer? CreateFromFile(string path, NativeMemoryCategory category = NativeMemoryCategory.Other)
     {
         using (var stream = File.OpenRead(path))
-            return CreateFrom(stream);
+            return CreateFrom(stream, category);
     }
 
     /// <summary>
@@ -104,7 +123,7 @@ public sealed class NativeMemoryBuffer : IDisposable
         }
     }
 
-    private static unsafe NativeMemoryBuffer? createFromKnownLength(Stream stream, long length)
+    private static unsafe NativeMemoryBuffer? createFromKnownLength(Stream stream, long length, NativeMemoryCategory category)
     {
         byte* destination = (byte*)NativeMemory.Alloc((nuint)length);
 
@@ -126,7 +145,7 @@ public sealed class NativeMemoryBuffer : IDisposable
             return null;
         }
 
-        return new NativeMemoryBuffer((IntPtr)destination, written);
+        return new NativeMemoryBuffer((IntPtr)destination, written, category);
     }
 
     /// <summary>
@@ -135,7 +154,7 @@ public sealed class NativeMemoryBuffer : IDisposable
     /// <see cref="NativeMemory.Realloc"/> can extend in place, so this is still cheaper than a
     /// grow-by-doubling <see cref="MemoryStream"/> followed by a <c>ToArray</c>.
     /// </summary>
-    private static unsafe NativeMemoryBuffer? createByGrowing(Stream stream)
+    private static unsafe NativeMemoryBuffer? createByGrowing(Stream stream, NativeMemoryCategory category)
     {
         byte[] transfer = ArrayPool<byte>.Shared.Rent(copy_buffer_size);
 
@@ -180,7 +199,7 @@ public sealed class NativeMemoryBuffer : IDisposable
         if (written < capacity)
             destination = (byte*)NativeMemory.Realloc(destination, (nuint)written);
 
-        return new NativeMemoryBuffer((IntPtr)destination, written);
+        return new NativeMemoryBuffer((IntPtr)destination, written, category);
     }
 
     /// <summary>
@@ -285,6 +304,8 @@ public sealed class NativeMemoryBuffer : IDisposable
 
         NativeMemory.Free((void*)toFree);
         Length = 0;
+
+        memoryLease?.Dispose();
     }
 
     ~NativeMemoryBuffer()
