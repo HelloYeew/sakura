@@ -75,7 +75,7 @@ public class TextureRegistryTest
             Assert.That(TextureRegistry.LiveBytes, Is.EqualTo(1024L * 1024 * 4), "and slices share the page's memory");
         }
     }
-    
+
     [Test]
     public void GlyphSlicesDoNotMoveTheLiveTextureCount()
     {
