@@ -5,6 +5,7 @@ using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using FFmpeg.AutoGen;
+using Sakura.Framework.Statistic;
 using Silk.NET.OpenGL;
 
 namespace Sakura.Framework.Graphics.Textures;
@@ -34,6 +35,11 @@ public sealed class VideoGLTexture : INativeVideoTexture
     private readonly GL gl;
     private bool disposed;
 
+    /// <summary>
+    /// Accounts for all three plane textures in <see cref="NativeMemoryTracker"/> until they are destroyed.
+    /// </summary>
+    private readonly NativeMemoryLease memoryLease;
+
     public VideoGLTexture(GL gl, int width, int height)
     {
         this.gl = gl;
@@ -43,6 +49,8 @@ public sealed class VideoGLTexture : INativeVideoTexture
         YHandle = gl.GenTexture();
         UHandle = gl.GenTexture();
         VHandle = gl.GenTexture();
+
+        memoryLease = NativeMemoryTracker.Add(NativeMemoryCategory.Video, NativeTextureMemory.BytesForVideoPlanes(width, height));
     }
 
     /// <summary>
@@ -113,6 +121,8 @@ public sealed class VideoGLTexture : INativeVideoTexture
         gl.DeleteTexture(YHandle);
         gl.DeleteTexture(UHandle);
         gl.DeleteTexture(VHandle);
+
+        memoryLease?.Dispose();
 
         GC.SuppressFinalize(this);
     }

@@ -1708,11 +1708,6 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
     public void Dispose()
     {
         Dispose(true);
-
-        // Deliberately no GC.SuppressFinalize: Drawable has no finalizer and must never gain one.
-        // There are tens of thousands of them and a finalizable object survives an extra collection
-        // and is promoted a generation (see SF-1's finalizer discipline). The safety net for a missed
-        // native release lives on the handle wrappers instead.
     }
 
     /// <summary>

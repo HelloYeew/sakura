@@ -423,7 +423,7 @@ public abstract class AppHost : IDisposable
             };
 
             // From here on there is an update loop to drain it, so removal-triggered disposal can be
-            // deferred and budgeted rather than walking a whole subtree inline (see SF-4).
+            // deferred and budgeted rather than walking a whole subtree inline
             DrawableDisposalQueue.Enabled = true;
 
             executionState = ExecutionState.Running;

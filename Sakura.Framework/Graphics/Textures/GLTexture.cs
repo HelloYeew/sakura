@@ -5,6 +5,7 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using Sakura.Framework.Statistic;
 using Silk.NET.OpenGL;
 
 namespace Sakura.Framework.Graphics.Textures;
@@ -27,6 +28,11 @@ public class GLTexture : INativeTexture
     private bool disposed;
 
     private bool mipmapsDirty;
+
+    /// <summary>
+    /// Accounts for this texture's VRAM in <see cref="NativeMemoryTracker"/> until it is deleted.
+    /// </summary>
+    private NativeMemoryLease? memoryLease;
 
     public static GLTexture WhitePixel { get; private set; }
 
@@ -69,6 +75,7 @@ public class GLTexture : INativeTexture
         if (GLHandle == 0)
         {
             GLHandle = gl.GenTexture();
+            memoryLease ??= NativeTextureMemory.Lease(NativeMemoryCategory.Textures, Width, Height);
         }
 
         gl.ActiveTexture(TextureUnit.Texture0);
@@ -125,6 +132,7 @@ public class GLTexture : INativeTexture
     {
         var texture = new GLTexture(gl, width, height);
         texture.GLHandle = gl.GenTexture();
+        texture.memoryLease = NativeTextureMemory.Lease(NativeMemoryCategory.FrameBuffers, width, height);
 
         gl.GetInteger(GLEnum.TextureBinding2D, out int previouslyBound);
 
@@ -159,6 +167,8 @@ public class GLTexture : INativeTexture
 
         GC.SuppressFinalize(this);
 
+        memoryLease?.Dispose();
+
         if (claimed != 0)
         {
             // GL recycles handle IDs, so a future texture could
@@ -170,6 +180,8 @@ public class GLTexture : INativeTexture
 
     ~GLTexture()
     {
+        memoryLease?.Dispose();
+
         uint claimed = GLHandle;
         if (claimed == 0)
             return;

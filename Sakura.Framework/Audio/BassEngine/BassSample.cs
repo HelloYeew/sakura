@@ -34,12 +34,12 @@ internal class BassSample : ISample, IHasActiveChannels, IDisposable
     public bool HasActiveChannels => Volatile.Read(ref activeChannelCount) > 0;
 
     public BassSample(BassAudioManager manager, Stream stream)
-        : this(manager, NativeMemoryBuffer.CreateFrom(stream))
+        : this(manager, NativeMemoryBuffer.CreateFrom(stream, NativeMemoryCategory.Audio))
     {
     }
 
     public BassSample(BassAudioManager manager, string path)
-        : this(manager, NativeMemoryBuffer.CreateFromFile(path))
+        : this(manager, NativeMemoryBuffer.CreateFromFile(path, NativeMemoryCategory.Audio))
     {
     }
 
@@ -56,8 +56,6 @@ internal class BassSample : ISample, IHasActiveChannels, IDisposable
 
         dataPtr = data.Pointer;
         dataLength = data.Length;
-
-        BassAudioStatistics.AddNativeBufferBytes(dataLength);
 
         GlobalStatistics.Get<int>("Audio", "Loaded Samples").Value++;
 
@@ -123,8 +121,7 @@ internal class BassSample : ISample, IHasActiveChannels, IDisposable
         if (data == null)
             return;
 
-        if (data.Release())
-            BassAudioStatistics.AddNativeBufferBytes(-dataLength);
+        data.Release();
     }
 
     private bool isDisposed;

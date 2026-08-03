@@ -56,7 +56,7 @@ internal class BassTrack : ITrack, IHasActiveChannels, IDisposable
         this.manager = manager;
         filePath = null;
 
-        data = NativeMemoryBuffer.CreateFrom(stream);
+        data = NativeMemoryBuffer.CreateFrom(stream, NativeMemoryCategory.Audio);
 
         if (data == null)
         {
@@ -66,8 +66,6 @@ internal class BassTrack : ITrack, IHasActiveChannels, IDisposable
 
         dataPtr = data.Pointer;
         dataLength = data.Length;
-
-        BassAudioStatistics.AddNativeBufferBytes(dataLength);
 
         decoderStreamHandle = Bass.CreateStream(dataPtr, 0, dataLength, BassFlags.Decode | BassFlags.Prescan);
 
@@ -193,8 +191,9 @@ internal class BassTrack : ITrack, IHasActiveChannels, IDisposable
         if (data == null)
             return;
 
-        if (data.Release())
-            BassAudioStatistics.AddNativeBufferBytes(-dataLength);
+        // The buffer accounts for its own bytes in NativeMemoryTracker and subtracts them when it
+        // actually frees, so there is nothing to adjust here any more.
+        data.Release();
     }
 
     private bool isDisposed;

@@ -5,6 +5,7 @@ using System;
 using System.Threading;
 using FFmpeg.AutoGen;
 using Sakura.Framework.Graphics.Textures;
+using Sakura.Framework.Statistic;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
 
@@ -54,6 +55,11 @@ public sealed class D3D11VideoTexture : INativeVideoTexture
 
     private bool disposed;
 
+    /// <summary>
+    /// Accounts for all three plane textures in <see cref="NativeMemoryTracker"/> until they are destroyed.
+    /// </summary>
+    private readonly NativeMemoryLease memoryLease;
+
     public D3D11VideoTexture(ID3D11Device device, ID3D11DeviceContext context, int width, int height)
     {
         this.device = device;
@@ -75,6 +81,8 @@ public sealed class D3D11VideoTexture : INativeVideoTexture
 
         clampSampler = createSampler(TextureAddressMode.Clamp);
         repeatSampler = createSampler(TextureAddressMode.Wrap);
+
+        memoryLease = NativeMemoryTracker.Add(NativeMemoryCategory.Video, NativeTextureMemory.BytesForVideoPlanes(width, height));
     }
 
     private ID3D11Texture2D createPlane(int width, int height) =>
@@ -163,6 +171,8 @@ public sealed class D3D11VideoTexture : INativeVideoTexture
 
         clampSampler?.Dispose(); clampSampler = null;
         repeatSampler?.Dispose(); repeatSampler = null;
+
+        memoryLease?.Dispose();
 
         GC.SuppressFinalize(this);
     }

@@ -43,7 +43,7 @@ public sealed class MetalFrameBuffer : IFrameBuffer
     }
 
     /// <summary>
-    /// Releases the current colour attachment, if any.
+    /// Releases the current color attachment, if any.
     /// </summary>
     /// <remarks>
     /// Disposes the <see cref="Texture"/> wrapper rather than the backend it wraps. Only
@@ -69,7 +69,7 @@ public sealed class MetalFrameBuffer : IFrameBuffer
     }
 
     /// <summary>
-    /// Releases the colour attachment. Must be called on the draw thread.
+    /// Releases the color attachment. Must be called on the draw thread.
     /// </summary>
     /// <remarks>
     /// Deliberately has no finalizer: this type owns no native handle of its own (a Metal render pass

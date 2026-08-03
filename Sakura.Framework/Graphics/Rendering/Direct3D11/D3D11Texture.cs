@@ -3,6 +3,7 @@
 
 using System;
 using Sakura.Framework.Graphics.Textures;
+using Sakura.Framework.Statistic;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
 using Vortice.Mathematics;
@@ -20,6 +21,11 @@ public sealed class D3D11Texture : INativeTexture
     private ID3D11Texture2D texture;
     private ID3D11ShaderResourceView srv;
     private ID3D11RenderTargetView rtv;
+
+    /// <summary>
+    /// Accounts for this texture's VRAM in <see cref="NativeMemoryTracker"/> until it is released.
+    /// </summary>
+    private readonly NativeMemoryLease memoryLease;
 
     public nint Handle => srv?.NativePointer ?? nint.Zero;
     public int Width { get; }
@@ -58,6 +64,8 @@ public sealed class D3D11Texture : INativeTexture
 
         texture = device.CreateTexture2D(desc);
         srv = device.CreateShaderResourceView(texture);
+
+        memoryLease = NativeTextureMemory.Lease(NativeMemoryCategory.Textures, Width, Height);
     }
 
     private D3D11Texture(ID3D11Device device, ID3D11DeviceContext context, int width, int height, bool renderTarget)
@@ -84,6 +92,8 @@ public sealed class D3D11Texture : INativeTexture
         texture = device.CreateTexture2D(desc);
         srv = device.CreateShaderResourceView(texture);
         rtv = device.CreateRenderTargetView(texture);
+
+        memoryLease = NativeTextureMemory.Lease(NativeMemoryCategory.FrameBuffers, Width, Height);
 
         // GPU-only: filled by rendering into it, so it's available immediately (no CPU upload).
         Available = true;
@@ -153,5 +163,7 @@ public sealed class D3D11Texture : INativeTexture
         srv = null;
         texture?.Dispose();
         texture = null;
+
+        memoryLease?.Dispose();
     }
 }

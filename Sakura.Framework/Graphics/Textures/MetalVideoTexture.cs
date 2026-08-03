@@ -5,6 +5,7 @@ using System;
 using System.Threading;
 using FFmpeg.AutoGen;
 using Sakura.Framework.Graphics.Rendering.Metal;
+using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Graphics.Textures;
 
@@ -34,6 +35,11 @@ public sealed class MetalVideoTexture : INativeVideoTexture
 
     private bool disposed;
 
+    /// <summary>
+    /// Accounts for all three plane textures in <see cref="NativeMemoryTracker"/> until they are destroyed.
+    /// </summary>
+    private readonly NativeMemoryLease memoryLease;
+
     public MetalVideoTexture(nint device, int width, int height)
     {
         this.device = device;
@@ -50,6 +56,11 @@ public sealed class MetalVideoTexture : INativeVideoTexture
 
         if (yHandle == nint.Zero || uHandle == nint.Zero || vHandle == nint.Zero)
             throw new InvalidOperationException($"Failed to create Metal video plane textures ({width}x{height}).");
+
+        // All three planes together, since they are allocated and freed as a unit. Single-channel R8, so
+        // this is not the RGBA8 sizing the color textures use. Taken after the check above, so a failed
+        // creation leaves nothing on the books.
+        memoryLease = NativeMemoryTracker.Add(NativeMemoryCategory.Video, NativeTextureMemory.BytesForVideoPlanes(width, height));
     }
 
     /// <summary>
@@ -97,6 +108,8 @@ public sealed class MetalVideoTexture : INativeVideoTexture
         if (yHandle != nint.Zero) { SakuraMetalNative.sakura_metal_destroy_texture(yHandle); yHandle = nint.Zero; }
         if (uHandle != nint.Zero) { SakuraMetalNative.sakura_metal_destroy_texture(uHandle); uHandle = nint.Zero; }
         if (vHandle != nint.Zero) { SakuraMetalNative.sakura_metal_destroy_texture(vHandle); vHandle = nint.Zero; }
+
+        memoryLease?.Dispose();
 
         GC.SuppressFinalize(this);
     }
