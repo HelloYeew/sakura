@@ -1,12 +1,13 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System.Numerics;
 using NUnit.Framework;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.UserInterface;
 using Sakura.Framework.Logging;
-using Sakura.Framework.Maths;
 using Sakura.Framework.Timing;
+using Vector2 = Sakura.Framework.Maths.Vector2;
 
 namespace Sakura.Framework.Tests.Graphics;
 
@@ -43,7 +44,7 @@ public class SliderBarPrecisionTest
     /// precision of its own.
     /// </summary>
     private BasicSliderBar<T> addSlider<T>(T min, T max)
-        where T : struct, System.Numerics.INumber<T>, System.Numerics.IMinMaxValue<T>
+        where T : struct, INumber<T>, IMinMaxValue<T>
     {
         var slider = new BasicSliderBar<T>
         {
