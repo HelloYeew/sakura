@@ -11,7 +11,7 @@ namespace Sakura.Framework.Platform;
 public class HeadlessAppHost : AppHost
 {
     private readonly HeadlessTextureManager textureManager;
-    private TemporaryStorage temporaryStorage;
+    private TemporaryStorage? temporaryStorage;
 
     public HeadlessAppHost(string appName, HostOptions? options = null) : base(appName, options)
     {
@@ -55,7 +55,7 @@ public class HeadlessAppHost : AppHost
         base.Dispose(isDisposing);
         if (isDisposing)
         {
-            temporaryStorage.Dispose();
+            temporaryStorage?.Dispose();
             textureManager.Dispose();
         }
     }
