@@ -15,7 +15,7 @@ namespace Sakura.Framework.IO;
 /// require a pointer which stays valid for as long as they hold it (BASS memory streams,
 /// FreeType faces, HarfBuzz blobs).
 /// </summary>
-public sealed class NativeMemoryBuffer : IDisposable
+public sealed class NativeMemoryBuffer : INativeBytes
 {
     /// <summary>
     /// Size of the transfer buffer used to copy a stream into unmanaged memory. Rented from

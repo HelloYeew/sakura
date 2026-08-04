@@ -27,6 +27,12 @@ public partial class GlobalStatisticsDisplay : FocusedOverlayContainer, IRemoveF
     private readonly Container contentContainer;
     private readonly Dictionary<string, FlowContainer> groupContainers = new Dictionary<string, FlowContainer>();
     private readonly Dictionary<IGlobalStatistic, SpriteText> statValueTexts = new Dictionary<IGlobalStatistic, SpriteText>();
+
+    /// <summary>
+    /// Each group's rows in display order, so a statistic that registers after its group was already built
+    /// can be put in its alphabetical place rather than appended.
+    /// </summary>
+    private readonly Dictionary<string, List<(string Name, Drawable Row)>> groupRows = new Dictionary<string, List<(string, Drawable)>>();
     private readonly SpriteText currentTimeText;
     private readonly SpriteText runningTimeText;
 
@@ -149,6 +155,20 @@ public partial class GlobalStatisticsDisplay : FocusedOverlayContainer, IRemoveF
         });
     }
 
+    /// <summary>
+    /// Puts a group's rows back into alphabetical order after one arrived out of turn.
+    /// </summary>
+    private static void reorderRows(FlowContainer groupFlow, List<(string Name, Drawable Row)> rows)
+    {
+        rows.Sort(static (a, b) => string.CompareOrdinal(a.Name, b.Name));
+
+        foreach (var row in rows)
+            groupFlow.Remove(row.Row, dispose: false);
+
+        foreach (var row in rows)
+            groupFlow.Add(row.Row);
+    }
+
     public override void Update()
     {
         base.Update();
@@ -213,6 +233,16 @@ public partial class GlobalStatisticsDisplay : FocusedOverlayContainer, IRemoveF
                 rowContainer.Add(valueTextElement);
                 statValueTexts[stat] = valueTextElement;
                 groupFlow.Add(rowContainer);
+
+                if (!groupRows.TryGetValue(stat.Group, out var rows))
+                    groupRows[stat.Group] = rows = new List<(string, Drawable)>();
+
+                rows.Add((stat.Name, rowContainer));
+
+                // Rows arrive in order, so the common case is that the one just appended already belongs
+                // last and there is nothing to do.
+                if (rows.Count > 1 && string.CompareOrdinal(stat.Name, rows[^2].Name) < 0)
+                    reorderRows(groupFlow, rows);
             }
 
             string newDisplayValue = stat.DisplayValue;

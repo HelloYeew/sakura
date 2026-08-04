@@ -2,9 +2,12 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Buffers;
 using System.IO;
+using System.Threading;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Logging;
+using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Graphics.Textures;
 
@@ -19,6 +22,137 @@ namespace Sakura.Framework.Graphics.Textures;
 /// </remarks>
 internal static class TextureUploads
 {
+    /// <summary>
+    /// Bounds how many image decodes run at once, process-wide.
+    /// </summary>
+    public static int MaxConcurrentDecodes
+    {
+        get => maxConcurrentDecodes;
+        set
+        {
+            int clamped = Math.Max(1, value);
+
+            lock (decode_gate_lock)
+            {
+                if (clamped == maxConcurrentDecodes)
+                    return;
+
+                maxConcurrentDecodes = clamped;
+
+                // SemaphoreSlim can only be released beyond its initial
+                // count, not resized, and a decode in flight still holds a permit on the old instance.
+                decodeGate = new SemaphoreSlim(clamped, clamped);
+            }
+        }
+    }
+
+    private static int maxConcurrentDecodes = 1;
+
+    private static readonly Lock decode_gate_lock = new Lock();
+
+    private static SemaphoreSlim decodeGate = new SemaphoreSlim(1, 1);
+
+    /// <summary>
+    /// How many decoded images may be waiting for their GPU upload before a new decode is made to wait.
+    /// Zero or less disables the limit.
+    /// </summary>
+    public static int MaxOutstandingUploads { get; set; }
+
+    /// <summary>
+    /// How long a decode waits for upload headroom before giving up and proceeding anyway.
+    /// </summary>
+    /// <remarks>
+    /// A memory optimization must never be able to wedge loading. If the draw thread is not draining the
+    /// queue (a minimized window, a renderer being disposed, a queue nobody pumps) waiting forever would
+    /// hang every texture load, so the wait is bounded and simply degrades to the previous behavior.
+    /// Settable so tests do not have to spend it.
+    /// </remarks>
+    internal static TimeSpan UploadHeadroomTimeout { get; set; } = TimeSpan.FromSeconds(1);
+
+    private static readonly object upload_headroom_lock = new object();
+
+    private static int outstandingUploads;
+
+    /// <summary>
+    /// Set when a wait for headroom timed out, and cleared by the next upload that completes. While it is
+    /// set the limit is not enforced, so a stalled queue costs one timeout in total rather than one per
+    /// decode.
+    /// </summary>
+    private static bool uploadQueueStalled;
+
+    private static readonly GlobalStatistic<int> stat_outstanding_uploads
+        = GlobalStatistics.Get<int>("Textures", "Uploads Awaiting Draw Thread");
+
+    /// <summary>
+    /// Decoded buffers currently rented and waiting for their upload to run.
+    /// </summary>
+    internal static int OutstandingUploads
+    {
+        get
+        {
+            lock (upload_headroom_lock)
+                return outstandingUploads;
+        }
+    }
+
+    /// <summary>
+    /// Blocks until fewer than <see cref="MaxOutstandingUploads"/> decoded buffers are awaiting upload.
+    /// Called before a decode rents anything, since waiting afterward would hold the very buffer it is
+    /// trying not to duplicate.
+    /// </summary>
+    private static void waitForUploadHeadroom()
+    {
+        int limit = MaxOutstandingUploads;
+
+        if (limit <= 0)
+            return;
+
+        // Only thread-pool callers are made to wait, and this is a correctness rule rather than a
+        // preference. The queue is drained by the draw thread, so anything waiting here depends on that
+        // thread making progress — and a synchronous load *on* the draw thread would then be waiting for
+        // uploads only it can run. The framework's own threads are dedicated (`new Thread`, see AppThread),
+        // so they are never pool threads, while every load that motivates this limit arrives through
+        // LoadComponentAsync on the pool. Erring this way costs some back-pressure on an unusual caller;
+        // erring the other way risks a stall on the one thread that must never stall.
+        if (!Thread.CurrentThread.IsThreadPoolThread)
+            return;
+
+        lock (upload_headroom_lock)
+        {
+            // A queue already known to be stalled is not waited on at all — see uploadQueueStalled.
+            while (!uploadQueueStalled && outstandingUploads >= limit)
+            {
+                if (Monitor.Wait(upload_headroom_lock, UploadHeadroomTimeout))
+                    continue;
+
+                // Nothing drained for a whole timeout, so stop enforcing the limit until something does.
+                // The count is deliberately *not* cleared: every queued upload still releases its slot if
+                // the draw thread comes back, so the count is the truth and clearing it would let far more
+                // rentals through than intended once draining resumes.
+                Logger.Log($"Texture upload queue did not drain within {UploadHeadroomTimeout.TotalMilliseconds:N0} ms "
+                           + $"with {outstandingUploads} upload(s) outstanding; not enforcing the limit until it does.",
+                    level: LogLevel.Debug);
+
+                uploadQueueStalled = true;
+                return;
+            }
+        }
+    }
+
+    private static void releaseUploadSlot()
+    {
+        lock (upload_headroom_lock)
+        {
+            outstandingUploads = Math.Max(0, outstandingUploads - 1);
+            stat_outstanding_uploads.Value = outstandingUploads;
+
+            // Something drained, so whatever the stall was, it is over.
+            uploadQueueStalled = false;
+
+            Monitor.PulseAll(upload_headroom_lock);
+        }
+    }
+
     /// <summary>
     /// Schedules an upload of pixel data the caller still owns, copying it into a pooled buffer that
     /// survives until the upload actually runs.
@@ -47,17 +181,65 @@ internal static class TextureUploads
     {
         long bytes = (long)raw.Width * raw.Height * 4;
 
-        renderer.ScheduleTextureUpload(() =>
+        // Counted from here rather than from the decode, because this is the point the buffer starts waiting
+        // on another thread. Released when the upload has actually run — see MaxOutstandingUploads.
+        lock (upload_headroom_lock)
         {
-            try
+            outstandingUploads++;
+            stat_outstanding_uploads.Value = outstandingUploads;
+        }
+
+        bool scheduled = false;
+
+        try
+        {
+            renderer.ScheduleTextureUpload(() =>
             {
-                nativeTexture.Upload(raw.Data);
-            }
-            finally
-            {
-                raw.Dispose();
-            }
-        }, bytes);
+                try
+                {
+                    nativeTexture.Upload(raw.Data);
+                }
+                finally
+                {
+                    raw.Dispose();
+                    releaseUploadSlot();
+                }
+            }, bytes);
+
+            scheduled = true;
+        }
+        finally
+        {
+            // If scheduling itself threw, the upload will never run and nothing else will release the slot.
+            if (!scheduled)
+                releaseUploadSlot();
+        }
+    }
+
+    /// <summary>
+    /// Runs one decode under <see cref="MaxConcurrentDecodes"/>.
+    /// </summary>
+    private static ImageRawData decode(IImageLoader imageLoader, Stream stream, TextureCreationOptions options)
+    {
+        // Before the gate, and before anything is rented: this waits for buffers already decoded to be
+        // uploaded and returned to the pool, so it must not itself be holding one or a permit to make one.
+        waitForUploadHeadroom();
+
+        SemaphoreSlim gate;
+
+        lock (decode_gate_lock)
+            gate = decodeGate;
+
+        gate.Wait();
+
+        try
+        {
+            return imageLoader.Load(stream, options.Decode);
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
 
     /// <summary>
@@ -98,9 +280,11 @@ internal static class TextureUploads
 
         try
         {
-            // Deliberately outside the shared store's lock: decoding is slow, and holding a global lock
-            // across it would serialise every texture load in the process.
-            raw = imageLoader.Load(stream, options.Decode);
+            // Deliberately outside the shared store's lock: decoding is slow, and holding that lock across
+            // it would serialize every texture load behind an unrelated one. The gate below bounds decode
+            // concurrency without contending on the store — see MaxConcurrentDecodes for why bounding it
+            // at all is the point.
+            raw = decode(imageLoader, stream, options);
 
             if (!raw.IsValid || raw.Width <= 0 || raw.Height <= 0)
             {

@@ -401,19 +401,14 @@ public partial class SpriteText : Drawable
         private GlyphBatch[] batches = Array.Empty<GlyphBatch>();
         private int batchCount;
 
-        private int textVertexCount;
-
         protected override void ApplyVertices(Drawable source)
         {
             var text = (SpriteText)source;
 
-            textVertexCount = text.currentVertexCount;
-
-            // make it grow only, draw only reads up to textVertexCount via the glyph batches
-            if (Vertices.Length < textVertexCount)
-                Vertices = new Vertex[textVertexCount];
-
-            Array.Copy(text.textVertices, Vertices, textVertexCount);
+            // The source buffer is itself grow-only, so it is sliced to the live count rather than copied
+            // whole. The node's storage is grow-only too (see DrawNode.SetVertexCount).
+            SetVertexCount(text.currentVertexCount);
+            text.textVertices.AsSpan(0, VertexCount).CopyTo(WritableVertices);
         }
 
         public override void ApplyState(Drawable source)
@@ -492,15 +487,14 @@ public partial class SpriteText : Drawable
 
         public override void Draw(IRenderer renderer)
         {
-            if (DrawAlpha <= 0 || textVertexCount == 0) return;
+            if (DrawAlpha <= 0 || VertexCount == 0) return;
 
             renderer.SetBlendMode(Blending);
 
             for (int i = 0; i < batchCount; i++)
             {
                 var batch = batches[i];
-                var slice = Vertices.AsSpan(batch.VertexStart, batch.VertexCount);
-                renderer.DrawQuads(slice, batch.Texture);
+                renderer.DrawQuads(Vertices.Slice(batch.VertexStart, batch.VertexCount), batch.Texture);
             }
         }
     }

@@ -35,6 +35,11 @@ public enum NativeMemoryCategory
     Audio,
 
     /// <summary>
+    /// Font files held outside the managed heap for as long as FreeType and HarfBuzz read them.
+    /// </summary>
+    Fonts,
+
+    /// <summary>
     /// Unmanaged memory that does not fall into a category above.
     /// </summary>
     Other,

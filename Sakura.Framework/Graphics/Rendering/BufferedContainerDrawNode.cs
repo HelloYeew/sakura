@@ -101,9 +101,9 @@ public class BufferedContainerDrawNode : ContainerDrawNode
             if (Vertices.Length == 0)
                 return false;
 
-            foreach (var vertex in Vertices)
+            for (int i = 0; i < Vertices.Length; i++)
             {
-                var color = vertex.Color;
+                var color = Vertices[i].Color;
 
                 if (color.X != 1f || color.Y != 1f || color.Z != 1f || color.W != 1f)
                     return false;
@@ -259,32 +259,29 @@ public class BufferedContainerDrawNode : ContainerDrawNode
     {
         int radius = sigmaTexels > 0 ? Math.Min(max_blur_radius, (int)MathF.Ceiling(sigmaTexels * 3)) : 0;
 
-        runShaderPass(renderer, source, target, rect, blurShader!, shader =>
+        runShaderPass(renderer, source, target, rect, blurShader!, "BlurBlock", new Uniforms.BlurBlock
         {
-            shader.SetUniformBlock("BlurBlock", new Uniforms.BlurBlock
-            {
-                TexelSize = new Vector2(1f / source.Width, 1f / source.Height),
-                Direction = new Vector2(direction.X, direction.Y),
-                Sigma = sigmaTexels,
-                Radius = radius,
-            });
+            TexelSize = new Vector2(1f / source.Width, 1f / source.Height),
+            Direction = direction,
+            Sigma = sigmaTexels,
+            Radius = radius,
         });
     }
 
     private void grayscalePass(IRenderer renderer, IFrameBuffer source, IFrameBuffer target, RectangleF rect)
     {
-        runShaderPass(renderer, source, target, rect, grayscaleShader!, shader =>
-            shader.SetUniformBlock("GrayscaleBlock", new Uniforms.GrayscaleBlock
-            {
-                Strength = grayscaleStrength
-            }));
+        runShaderPass(renderer, source, target, rect, grayscaleShader!, "GrayscaleBlock", new Uniforms.GrayscaleBlock
+        {
+            Strength = grayscaleStrength
+        });
     }
 
     /// <summary>
     /// Draws a full-buffer quad from <paramref name="source"/> into <paramref name="target"/>
-    /// using a custom shader
+    /// using a custom shader, whose pass-specific uniform block is <paramref name="block"/>.
     /// </summary>
-    private static void runShaderPass(IRenderer renderer, IFrameBuffer source, IFrameBuffer target, RectangleF rect, IShader shader, Action<IShader> setUniforms)
+    private static void runShaderPass<TBlock>(IRenderer renderer, IFrameBuffer source, IFrameBuffer target, RectangleF rect, IShader shader, string blockName, in TBlock block)
+        where TBlock : unmanaged
     {
         renderer.BindFrameBuffer(target, rect);
         renderer.FlushBatch();
@@ -295,7 +292,7 @@ public class BufferedContainerDrawNode : ContainerDrawNode
             Projection = renderer.ProjectionMatrix
         });
         shader.SetUniform("u_Texture", 0);
-        setUniforms(shader);
+        shader.SetUniformBlock(blockName, in block);
 
         // Bind the source attachment to unit 0 for the pass. The backend texture is bound directly so
         // it bypasses the renderer's slot tracking (this is a raw, custom-shader pass).

@@ -16,7 +16,34 @@ public class DrawNode
 
     public long InvalidationID { get; internal set; }
 
-    public Vertex.Vertex[] Vertices { get; protected set; } = Array.Empty<Vertex.Vertex>();
+    /// <summary>
+    /// Backing storage for <see cref="Vertices"/>. Grow-only, so its length is a capacity and says nothing
+    /// about how many vertices are live (that is <see cref="VertexCount"/>).
+    /// </summary>
+    private Vertex.Vertex[] vertices = Array.Empty<Vertex.Vertex>();
+
+    /// <summary>
+    /// How many vertices this node will draw.
+    /// </summary>
+    public int VertexCount { get; private set; }
+
+    /// <summary>
+    /// The node's live vertices. <c>Length</c> is the vertex count, not the capacity behind it.
+    /// </summary>
+    public ReadOnlySpan<Vertex.Vertex> Vertices => vertices.AsSpan(0, VertexCount);
+
+    /// <summary>
+    /// The same range, writable, for subclasses that fill their vertices themselves rather than copying
+    /// them from <see cref="Drawable.Vertices"/>.
+    /// </summary>
+    protected Span<Vertex.Vertex> WritableVertices => vertices.AsSpan(0, VertexCount);
+
+    /// <summary>
+    /// Capacity of the backing array. Exposed so a test can assert that a shrink then a regrow does not
+    /// reallocate; nothing in the draw path should care about it.
+    /// </summary>
+    internal int VertexCapacity => vertices.Length;
+
     public Texture? Texture { get; protected set; }
     public BlendingMode Blending { get; protected set; }
     public float DrawAlpha { get; protected set; }
@@ -43,15 +70,24 @@ public class DrawNode
     }
 
     /// <summary>
+    /// Sets how many vertices are live, growing the backing array only when it is too small.
+    /// </summary>
+    protected void SetVertexCount(int count)
+    {
+        if (vertices.Length < count)
+            vertices = new Vertex.Vertex[count];
+
+        VertexCount = count;
+    }
+
+    /// <summary>
     /// Snapshots the source drawable's vertices into this node.
     /// Subclasses with custom vertex storage can override this to copy from their own source.
     /// </summary>
     protected virtual void ApplyVertices(Drawable source)
     {
-        if (Vertices.Length != source.Vertices.Length)
-            Vertices = new Vertex.Vertex[source.Vertices.Length];
-
-        Array.Copy(source.Vertices, Vertices, source.Vertices.Length);
+        SetVertexCount(source.VertexCount);
+        source.Vertices.AsSpan(0, source.VertexCount).CopyTo(WritableVertices);
     }
 
     /// <summary>
@@ -60,7 +96,7 @@ public class DrawNode
     /// </summary>
     public virtual void Draw(IRenderer renderer)
     {
-        if (DrawAlpha <= 0 || Vertices.Length == 0)
+        if (DrawAlpha <= 0 || VertexCount == 0)
             return;
 
         stat_drawn_last_frame.Value++;

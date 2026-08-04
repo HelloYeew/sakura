@@ -15,6 +15,7 @@ using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Input;
+using Sakura.Framework.IO;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
@@ -235,7 +236,14 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
             + $"   fb {toMegabytes(NativeMemoryTracker.BytesFor(NativeMemoryCategory.FrameBuffers))}"
             + $"   video {toMegabytes(NativeMemoryTracker.BytesFor(NativeMemoryCategory.Video))}"
             + $"   audio {toMegabytes(NativeMemoryTracker.BytesFor(NativeMemoryCategory.Audio))}"
-            + $"   other {toMegabytes(NativeMemoryTracker.BytesFor(NativeMemoryCategory.Other))}";
+            + $"   fonts {toMegabytes(NativeMemoryTracker.BytesFor(NativeMemoryCategory.Fonts))}"
+            + $"   other {toMegabytes(NativeMemoryTracker.BytesFor(NativeMemoryCategory.Other))}"
+            // mapped font files are a ceiling of file-backed pages the OS may never fault in,
+            // so folding them into Native would overstate a figure whose
+            // whole job is to be read against the process footprint. Referencing it here also forces the
+            // statistic to register, so "Fonts -> Mapped Bytes" reads 0 rather than being absent when
+            // nothing has been mapped.
+            + $"   (mapped {toMegabytes(NativeFileMapping.MappedBytes)})";
 
         if (host.UpdateClock.CurrentTime - lastUpdateTime < 100)
             return;

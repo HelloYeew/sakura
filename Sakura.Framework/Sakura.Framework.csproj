@@ -13,7 +13,7 @@
     <Authors>HelloYeew</Authors>
     <Copyright>Copyright (c) 2026 HelloYeew</Copyright>
     <PackageReleaseNotes>Automated build</PackageReleaseNotes>
-    <PackageTags>sakura framework ui game cross-platform opengl sdl</PackageTags>
+    <PackageTags>sakura framework ui game cross-platform opengl metal direct3d sdl</PackageTags>
     <RepositoryUrl>https://github.com/HelloYeew/sakura</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
@@ -32,7 +32,7 @@
     <PackageReference Include="ManagedBass.Fx" Version="4.0.2" />
     <PackageReference Include="ManagedBass.Mix" Version="4.0.2" />
     <PackageReference Include="NUnit" Version="4.6.1" />
-    <PackageReference Include="Sakura.Framework.NativeLibraries" Version="2026.803.0" />
+    <PackageReference Include="Sakura.Framework.NativeLibraries" Version="2026.804.0" />
     <PackageReference Include="Sakura.Framework.SourceGenerators" Version="2026.708.0">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

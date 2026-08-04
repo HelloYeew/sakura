@@ -94,11 +94,8 @@ public partial class BezierCurve : Drawable
 
     protected override void GenerateVertices()
     {
-        int requiredVertices = segments * 6;
-        if (Vertices.Length != requiredVertices)
-        {
-            Vertices = new Vertex[requiredVertices];
-        }
+        const int required_vertices = segments * 6;
+        SetVertexCount(required_vertices);
 
         float rLinear = ColorExtensions.SrgbToLinear(Color.R);
         float gLinear = ColorExtensions.SrgbToLinear(Color.G);

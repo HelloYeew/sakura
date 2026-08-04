@@ -8,6 +8,7 @@ using System.Threading;
 using FreeTypeSharp;
 using HarfBuzzSharp;
 using Sakura.Framework.Graphics.Textures;
+using Sakura.Framework.IO;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Statistic;
@@ -39,7 +40,13 @@ public class Font : IDisposable
     private readonly TextureAtlas atlas;
 
     private readonly FreeTypeLibrary library;
-    private readonly IntPtr faceHandle;
+    private IntPtr faceHandle;
+
+    /// <summary>
+    /// 1 once <see cref="Dispose"/> has run, claimed with an interlocked exchange so the second caller
+    /// cannot double-free the FreeType face.
+    /// </summary>
+    private int disposed;
 
     private readonly HarfBuzzSharp.Blob hbBlob;
     private readonly HarfBuzzSharp.Face hbFace;
@@ -123,27 +130,54 @@ public class Font : IDisposable
         public bool IsColorGlyph;
     }
 
-    public Font(string name, byte[] fontData, TextureAtlas atlas)
+    /// <param name="name">The family name this face is registered under.</param>
+    /// <param name="fontData">
+    /// The face's raw bytes, outside the managed heap — either a <see cref="NativeMemoryBuffer"/> read into
+    /// unmanaged memory or a <see cref="NativeFileMapping"/> of the file itself. <b>Ownership transfers to
+    /// this font</b>, which releases it in <see cref="Dispose"/> once FreeType and HarfBuzz are done with
+    /// it, and releases it immediately if construction fails.
+    /// </param>
+    /// <param name="atlas">The atlas glyphs are rasterized into.</param>
+    public Font(string name, INativeBytes fontData, TextureAtlas atlas)
     {
+        ArgumentNullException.ThrowIfNull(fontData);
+
+        // Both native consumers below take a 32-bit length, and a face this large is not a real font.
+        if (fontData.Length > int.MaxValue)
+        {
+            fontData.Dispose();
+            throw new ArgumentOutOfRangeException(nameof(fontData), $"Font data is too large to load ({fontData.Length} bytes).");
+        }
+
         Name = name;
         this.atlas = atlas;
+        this.fontData = fontData;
+
+        int length = (int)fontData.Length;
+        IntPtr fontPtr = fontData.Pointer;
 
         library = new FreeTypeLibrary();
 
-        pinnedFontData = GCHandle.Alloc(fontData, GCHandleType.Pinned);
-        IntPtr fontPtr = pinnedFontData.AddrOfPinnedObject();
-
-        unsafe
+        try
         {
-            IntPtr facePtr = IntPtr.Zero;
-            FT_Error err = FT.FT_New_Memory_Face(library.Native, (byte*)fontPtr, fontData.Length, 0, (FT_FaceRec_**)&facePtr);
-            if (err != FT_Error.FT_Err_Ok) throw new Exception($"Failed to load font face: {err}");
-            faceHandle = facePtr;
-        }
+            unsafe
+            {
+                IntPtr facePtr = IntPtr.Zero;
+                FT_Error err = FT.FT_New_Memory_Face(library.Native, (byte*)fontPtr, length, 0, (FT_FaceRec_**)&facePtr);
+                if (err != FT_Error.FT_Err_Ok) throw new Exception($"Failed to load font face: {err}");
+                faceHandle = facePtr;
+            }
 
-        hbBlob = new Blob(fontPtr, fontData.Length, MemoryMode.ReadOnly);
-        hbFace = new Face(hbBlob, 0);
-        hbFont = new HarfBuzzSharp.Font(hbFace);
+            hbBlob = new Blob(fontPtr, length, MemoryMode.ReadOnly);
+            hbFace = new Face(hbBlob, 0);
+            hbFont = new HarfBuzzSharp.Font(hbFace);
+        }
+        catch
+        {
+            library.Dispose();
+            fontData.Dispose();
+            throw;
+        }
 
         // Detect variable fonts and read their axis table once at load time. Static fonts skip all
         // of this and behave exactly as before.
@@ -227,7 +261,10 @@ public class Font : IDisposable
         }
     }
 
-    private GCHandle pinnedFontData;
+    /// <summary>
+    /// The face's raw bytes, owned by this font and outliving every native object that reads them.
+    /// </summary>
+    private readonly INativeBytes fontData;
 
     public ShapedText ProcessText(string text, float fontSize, float dpiScale = 1.0f, IEnumerable<Font>? fallbacks = null, FontVariation variation = default)
     {
@@ -706,8 +743,15 @@ public class Font : IDisposable
         }
     }
 
+    /// <summary>
+    /// Releases the FreeType face, the HarfBuzz objects and the face's unmanaged bytes, in that order.
+    /// Repeated calls are a no-op.
+    /// </summary>
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref disposed, 1) != 0)
+            return;
+
         sharedBuffer.Dispose();
         hbFont.Dispose();
         hbFace.Dispose();
@@ -716,12 +760,14 @@ public class Font : IDisposable
         if (faceHandle != IntPtr.Zero)
         {
             unsafe { FT.FT_Done_Face((FT_FaceRec_*)faceHandle); }
+            faceHandle = IntPtr.Zero;
         }
 
         library.Dispose();
 
-        if (pinnedFontData.IsAllocated)
-            pinnedFontData.Free();
+        // FT_Done_Face and the HarfBuzz objects above all read the
+        // block right up until they are destroyed, so freeing it any earlier is a use-after-free.
+        fontData.Dispose();
     }
 }
 

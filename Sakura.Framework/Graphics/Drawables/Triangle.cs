@@ -13,12 +13,12 @@ namespace Sakura.Framework.Graphics.Drawables;
 /// </summary>
 public partial class Triangle : Drawable
 {
-    protected new readonly Vertex[] Vertices = new Vertex[3];
-
     protected internal override VertexTopology Topology => VertexTopology.Triangles;
 
     protected override void GenerateVertices()
     {
+        SetVertexCount(3);
+
         float rLinear = ColorExtensions.SrgbToLinear(Color.R);
         float gLinear = ColorExtensions.SrgbToLinear(Color.G);
         float bLinear = ColorExtensions.SrgbToLinear(Color.B);
