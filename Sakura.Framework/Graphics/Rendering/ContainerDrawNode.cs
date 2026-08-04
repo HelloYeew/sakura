@@ -150,7 +150,7 @@ public class ContainerDrawNode : DrawNode
         Vector2 br = new Vector2(quadCenter.X + expandedHalf.X - skew, quadCenter.Y + expandedHalf.Y);
         Vector2 bl = new Vector2(quadCenter.X - expandedHalf.X - skew, quadCenter.Y + expandedHalf.Y);
 
-        var quad = new Vertex.Vertex[4];
+        Span<Vertex.Vertex> quad = stackalloc Vertex.Vertex[4];
         quad[0] = new Vertex.Vertex { Position = tl, TexCoords = new Vector2(0, 0), Color = new Vector4(1, 1, 1, 1) };
         quad[1] = new Vertex.Vertex { Position = tr, TexCoords = new Vector2(1, 0), Color = new Vector4(1, 1, 1, 1) };
         quad[2] = new Vertex.Vertex { Position = br, TexCoords = new Vector2(1, 1), Color = new Vector4(1, 1, 1, 1) };
