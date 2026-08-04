@@ -156,10 +156,10 @@ public partial class AudioVisualizer : Drawable
 
     protected override void GenerateVertices()
     {
-        // Each bar is one quad (4 verts). Allocate/resize the shared vertex buffer.
-        int requiredVertices = bars_per_visualiser * 4;
-        if (Vertices.Length != requiredVertices)
-            Vertices = new Vertex[requiredVertices];
+        // Each bar is one quad (4 verts). The count is a constant today, so this never actually
+        // reallocated — grow-only anyway, so it stays correct if the bar count ever becomes dynamic.
+        const int required_vertices = bars_per_visualiser * 4;
+        SetVertexCount(required_vertices);
 
         var color = new Vector4(
             ColorExtensions.SrgbToLinear(Color.R),

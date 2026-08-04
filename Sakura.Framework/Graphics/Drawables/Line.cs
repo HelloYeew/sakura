@@ -14,8 +14,6 @@ namespace Sakura.Framework.Graphics.Drawables;
 /// </summary>
 public partial class Line : Drawable
 {
-    protected new readonly Vertex[] Vertices = new Vertex[6];
-
     private Vector2 startPoint = Vector2.Zero;
     public Vector2 StartPoint
     {
@@ -67,6 +65,8 @@ public partial class Line : Drawable
 
     protected override void GenerateVertices()
     {
+        SetVertexCount(6);
+
         float rLinear = ColorExtensions.SrgbToLinear(Color.R);
         float gLinear = ColorExtensions.SrgbToLinear(Color.G);
         float bLinear = ColorExtensions.SrgbToLinear(Color.B);

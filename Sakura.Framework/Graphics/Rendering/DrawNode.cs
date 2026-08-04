@@ -86,8 +86,8 @@ public class DrawNode
     /// </summary>
     protected virtual void ApplyVertices(Drawable source)
     {
-        SetVertexCount(source.Vertices.Length);
-        source.Vertices.AsSpan().CopyTo(WritableVertices);
+        SetVertexCount(source.VertexCount);
+        source.Vertices.AsSpan(0, source.VertexCount).CopyTo(WritableVertices);
     }
 
     /// <summary>

@@ -215,6 +215,42 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
     protected internal Vertex[] Vertices = new Vertex[4];
 
     /// <summary>
+    /// Set by <see cref="SetVertexCount"/>, or negative when this drawable has not opted into grow-only
+    /// vertex storage and its array is exactly the size it writes.
+    /// </summary>
+    private int explicitVertexCount = -1;
+
+    /// <summary>
+    /// How many entries of <see cref="Vertices"/> this drawable actually writes.
+    /// </summary>
+    /// <remarks>
+    /// Defaults to <c>Vertices.Length</c>, so a subclass that sizes the array exactly — by assigning a new
+    /// array whenever the count changes — needs no changes and keeps working. A subclass that calls
+    /// <see cref="SetVertexCount"/> instead gets grow-only storage, and then the array's length is a capacity
+    /// and this is the count. Do not mix the two on one drawable: an explicit count set once is not undone by
+    /// a later direct assignment to <see cref="Vertices"/>.
+    /// </remarks>
+    protected internal int VertexCount => explicitVertexCount >= 0 ? explicitVertexCount : Vertices.Length;
+
+    /// <summary>
+    /// Declares how many vertices this drawable writes, growing <see cref="Vertices"/> only when it is too
+    /// small to hold them.
+    /// </summary>
+    /// <remarks>
+    /// The alternative — assigning a right-sized array whenever the count changes — reallocates in
+    /// <em>both</em> directions, so a shape whose vertex count oscillates allocates on every change. This is
+    /// the same fix <see cref="Rendering.DrawNode.SetVertexCount"/> applies on the draw-node side; the two
+    /// are independent, and this is the one that runs once per drawable rather than once per buffered node.
+    /// </remarks>
+    protected void SetVertexCount(int count)
+    {
+        if (Vertices.Length < count)
+            Vertices = new Vertex[count];
+
+        explicitVertexCount = count;
+    }
+
+    /// <summary>
     /// How <see cref="Vertices"/> is interpreted by the renderer. The base drawable produces
     /// an indexed quad (4 vertices, ordered TL, TR, BR, BL); drawables that generate arbitrary
     /// triangle lists in <see cref="GenerateVertices"/> must override this to

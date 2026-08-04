@@ -98,15 +98,11 @@ public partial class Path : Drawable
     {
         if (vertices.Count < 2)
         {
-            Vertices = Array.Empty<Vertex>();
+            SetVertexCount(0);
             return;
         }
 
-        int requiredVertices = (vertices.Count - 1) * 6;
-        if (Vertices.Length != requiredVertices)
-        {
-            Vertices = new Vertex[requiredVertices];
-        }
+        SetVertexCount((vertices.Count - 1) * 6);
 
         float rLinear = ColorExtensions.SrgbToLinear(Color.R);
         float gLinear = ColorExtensions.SrgbToLinear(Color.G);
