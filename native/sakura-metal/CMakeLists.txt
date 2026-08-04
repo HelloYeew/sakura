@@ -11,11 +11,25 @@ if(NOT APPLE)
     message(FATAL_ERROR "sakura-metal is Apple-only (Metal framework). Configure on macOS/iOS.")
 endif()
 
+# Both of these are already in the cache as empty strings by the time project() returns -- CMake's Darwin
+# platform module puts them there -- so a plain `set(... CACHE ...)` is silently a no-op and the defaults
+# below never apply. FORCE is what makes them stick; the empty check is what keeps an explicit
+# -DCMAKE_OSX_* on the command line winning.
+
+# Default to a universal binary on macOS. Without this the dylib is built for the host arch alone, which
+# no build step fails on -- it only shows up as a missing slice in `lipo -info`, by which point the
+# single-arch binary is already shipped. iOS is left to the toolchain/SDK to decide.
+if(NOT IOS AND NOT CMAKE_OSX_ARCHITECTURES)
+    set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64" CACHE STRING "macOS architectures to build" FORCE)
+endif()
+
+# Likewise silent: with no deployment target the dylib takes the build machine's SDK version as its
+# minimum, so it refuses to load on anything older than whatever Xcode happened to be installed.
 if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     if(IOS)
-        set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum iOS deployment version")
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum iOS deployment version" FORCE)
     else()
-        set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Minimum macOS deployment version")
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Minimum macOS deployment version" FORCE)
     endif()
 endif()
 
