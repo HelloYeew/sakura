@@ -2,7 +2,6 @@
 // See the LICENSE file for full license text.
 
 using System;
-using System.Buffers;
 using System.IO;
 using Sakura.Framework.Maths;
 using SixLabors.ImageSharp;
@@ -32,20 +31,27 @@ public class ImageSharpImageLoader : IImageLoader
         var target = options.TargetSize!.Value;
         bool crop = options.CropToFill;
 
-        var encoded = EncodedBuffer.Read(stream);
-
-        try
+        // A seekable source can be read twice, so read the header, rewind, and decode straight from it.
+        if (stream.CanSeek)
         {
-            var decoderOptions = new DecoderOptions { TargetSize = decodeSizeFor(encoded.Span, target, crop) };
+            long origin = stream.Position;
+            var decodeSize = decodeSizeFor(stream, target, crop);
+            stream.Position = origin;
 
-            using var encodedStream = encoded.AsStream();
-            using var image = Image.Load<Rgba32>(decoderOptions, encodedStream);
-
+            using var image = Image.Load<Rgba32>(new DecoderOptions { TargetSize = decodeSize }, stream);
             return finish(image, target, crop);
         }
-        finally
+
+        // Non-seekable (an embedded resource or an archive entry): the header read cannot be undone, so
+        // the bytes have to be buffered before the size hint can be computed.
+        var encoded = EncodedBuffer.Read(stream);
+        var buffered = new DecoderOptions { TargetSize = decodeSizeFor(encoded.Span, target, crop) };
+
+        using var encodedStream = encoded.AsStream();
+
         {
-            encoded.Dispose();
+            using var image = Image.Load<Rgba32>(buffered, encodedStream);
+            return finish(image, target, crop);
         }
     }
 
@@ -77,28 +83,48 @@ public class ImageSharpImageLoader : IImageLoader
     }
 
     /// <summary>
-    /// The size hint passed to the decoder, or <c>null</c> to decode at full resolution. Only ever
-    /// downscales (a source already at or below the target is never enlarged), and keeps enough
-    /// resolution for the region that will ultimately be displayed so <see cref="reduce"/> is a clean
-    /// final shrink
+    /// <see cref="decodeSizeFor(int,int,Vector2,bool)"/> for an already-buffered image.
     /// </summary>
     private static Size? decodeSizeFor(ReadOnlySpan<byte> encoded, Vector2 target, bool cropToFill)
     {
-        int tw = Math.Max(1, (int)MathF.Ceiling(target.X));
-        int th = Math.Max(1, (int)MathF.Ceiling(target.Y));
-
-        int sw, sh;
-
         try
         {
             var info = Image.Identify(encoded);
-            sw = info.Width;
-            sh = info.Height;
+            return decodeSizeFor(info.Width, info.Height, target, cropToFill);
         }
         catch
         {
             return null; // header unreadable, fall back to a full decode, reduce() still caps it
         }
+    }
+
+    /// <summary>
+    /// <see cref="decodeSizeFor(int,int,Vector2,bool)"/> for a stream, read in place. Leaves the stream
+    /// positioned wherever the header read ended, so the caller must rewind before decoding.
+    /// </summary>
+    private static Size? decodeSizeFor(Stream stream, Vector2 target, bool cropToFill)
+    {
+        try
+        {
+            var info = Image.Identify(stream);
+            return decodeSizeFor(info.Width, info.Height, target, cropToFill);
+        }
+        catch
+        {
+            return null; // header unreadable, fall back to a full decode, reduce() still caps it
+        }
+    }
+
+    /// <summary>
+    /// The size hint passed to the decoder, or <c>null</c> to decode at full resolution. Only ever
+    /// downscales (a source already at or below the target is never enlarged), and keeps enough
+    /// resolution for the region that will ultimately be displayed so <see cref="reduce"/> is a clean
+    /// final shrink
+    /// </summary>
+    private static Size? decodeSizeFor(int sw, int sh, Vector2 target, bool cropToFill)
+    {
+        int tw = Math.Max(1, (int)MathF.Ceiling(target.X));
+        int th = Math.Max(1, (int)MathF.Ceiling(target.Y));
 
         if (sw <= 0 || sh <= 0)
             return null;
@@ -168,21 +194,20 @@ public class ImageSharpImageLoader : IImageLoader
     }
 
     /// <summary>
-    /// A right-sized (and, where possible, pooled) copy of an encoded image's bytes, readable both as a
-    /// span (for <see cref="Image.Identify(ReadOnlySpan{byte})"/>) and as a non-copying stream (for the
-    /// decode itself).
+    /// An encoded image's bytes held in memory, readable both as a span (for
+    /// <see cref="Image.Identify(ReadOnlySpan{byte})"/>) and as a non-copying stream (for the decode
+    /// itself). Only for sources that cannot be read twice, a seekable stream is identified and decoded
+    /// in place instead.
     /// </summary>
-    private readonly struct EncodedBuffer : IDisposable
+    private readonly struct EncodedBuffer
     {
         private readonly byte[] array;
         private readonly int length;
-        private readonly bool pooled;
 
-        private EncodedBuffer(byte[] array, int length, bool pooled)
+        private EncodedBuffer(byte[] array, int length)
         {
             this.array = array;
             this.length = length;
-            this.pooled = pooled;
         }
 
         public ReadOnlySpan<byte> Span => array.AsSpan(0, length);
@@ -194,38 +219,11 @@ public class ImageSharpImageLoader : IImageLoader
 
         public static EncodedBuffer Read(Stream stream)
         {
-            if (stream.CanSeek)
-            {
-                long remaining = stream.Length - stream.Position;
-
-                if (remaining > 0 && remaining <= int.MaxValue)
-                {
-                    byte[] rented = ArrayPool<byte>.Shared.Rent((int)remaining);
-                    int read = 0;
-
-                    while (read < remaining)
-                    {
-                        int count = stream.Read(rented, read, (int)remaining - read);
-                        if (count <= 0)
-                            break;
-
-                        read += count;
-                    }
-
-                    return new EncodedBuffer(rented, read, pooled: true);
-                }
-            }
-
-            // non-seekable or unknown length: grow, then hand over the stream's own buffer (no copy)
+            // the length is not known ahead of time, so grow, then hand over the stream's own buffer
+            // rather than the ToArray() copy of it.
             using var ms = new MemoryStream();
             stream.CopyTo(ms);
-            return new EncodedBuffer(ms.GetBuffer(), (int)ms.Length, pooled: false);
-        }
-
-        public void Dispose()
-        {
-            if (pooled)
-                ArrayPool<byte>.Shared.Return(array);
+            return new EncodedBuffer(ms.GetBuffer(), (int)ms.Length);
         }
     }
 }
