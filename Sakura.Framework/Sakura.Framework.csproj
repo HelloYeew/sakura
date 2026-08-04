@@ -13,7 +13,7 @@
     <Authors>HelloYeew</Authors>
     <Copyright>Copyright (c) 2026 HelloYeew</Copyright>
     <PackageReleaseNotes>Automated build</PackageReleaseNotes>
-    <PackageTags>sakura framework ui game cross-platform opengl sdl</PackageTags>
+    <PackageTags>sakura framework ui game cross-platform opengl metal direct3d sdl</PackageTags>
     <RepositoryUrl>https://github.com/HelloYeew/sakura</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
