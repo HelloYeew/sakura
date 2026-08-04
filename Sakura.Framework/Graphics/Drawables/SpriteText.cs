@@ -65,6 +65,97 @@ public partial class SpriteText : Drawable
         }
     }
 
+    private bool truncate;
+    private float maxWidth = float.PositiveInfinity;
+    private string ellipsis = TextTruncation.DEFAULT_ELLIPSIS;
+    private string displayedText = string.Empty;
+
+    /// <summary>
+    /// Whether text wider than <see cref="MaxWidth"/> is shortened to fit, with <see cref="Ellipsis"/>
+    /// standing in for what was dropped. Has no effect while <see cref="MaxWidth"/> is unlimited.
+    /// </summary>
+    /// <remarks>
+    /// This sprite still sizes itself to its content, truncating is what keeps that content inside the
+    /// budget. It does not wrap, the text stays on one line.
+    /// </remarks>
+    public bool Truncate
+    {
+        get => truncate;
+        set
+        {
+            if (truncate == value)
+                return;
+
+            truncate = value;
+            layoutInvalidated = true;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+    }
+
+    /// <summary>
+    /// The width budget in local pixels used when <see cref="Truncate"/> is set. Unlimited by default.
+    /// </summary>
+    public float MaxWidth
+    {
+        get => maxWidth;
+        set
+        {
+            if (maxWidth.Equals(value))
+                return;
+
+            maxWidth = value;
+            layoutInvalidated = true;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+    }
+
+    /// <summary>
+    /// Appended to shortened text. Defaults to a single "…". Set it to an empty string to cut with no
+    /// marker at all.
+    /// </summary>
+    public string Ellipsis
+    {
+        get => ellipsis;
+        set
+        {
+            value ??= string.Empty;
+
+            if (ellipsis == value)
+                return;
+
+            ellipsis = value;
+            layoutInvalidated = true;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+    }
+
+    /// <summary>
+    /// The text actually shaped and drawn: <see cref="Text"/> unless it was shortened, in which case a
+    /// prefix of it plus <see cref="Ellipsis"/>.
+    /// </summary>
+    public string DisplayedText
+    {
+        get
+        {
+            ensureLayout();
+            return displayedText;
+        }
+    }
+
+    /// <summary>
+    /// Whether <see cref="Text"/> did not fit <see cref="MaxWidth"/> and was shortened.
+    /// </summary>
+    public bool IsTruncated
+    {
+        get
+        {
+            ensureLayout();
+            return isTruncated;
+        }
+    }
+
+    private bool isTruncated;
+
     /// <summary>
     /// The measured size of this sprite. Reading any size component forces a layout pass so the
     /// returned value reflects the current <see cref="Text"/> immediately (callers commonly read
@@ -163,7 +254,22 @@ public partial class SpriteText : Drawable
             // caches the result, and only it knows when one has been invalidated by a font being
             // registered, a fallback family changing, or the glyph atlas being cleared. The result is
             // shared with every other drawable showing the same text at the same size, so it is read-only.
-            shapedText = fontStore.Shape(fontUsage, Text, dpiScale);
+            if (truncate)
+            {
+                // Measures the full text first and only re-shapes when it overflows, so a sprite that
+                // fits pays exactly what it did before.
+                var truncation = TextTruncation.Apply(fontStore, fontUsage, Text, dpiScale, maxWidth, ellipsis);
+                shapedText = truncation.Shaped;
+                displayedText = truncation.Text;
+                isTruncated = truncation.Truncated;
+            }
+            else
+            {
+                shapedText = fontStore.Shape(fontUsage, Text, dpiScale);
+                displayedText = Text;
+                isTruncated = false;
+            }
+
             // Assign the backing field directly; the ContentSize getter forces layout, which we're
             // already inside of (guarded by computingLayout).
             contentSize = new Vector2(shapedText.BoundingBox.X, shapedText.BoundingBox.Y);
@@ -349,6 +455,10 @@ public partial class SpriteText : Drawable
     /// Gets the local position of a character at the specified index.
     /// Useful for positioning a caret or IME composition text.
     /// </summary>
+    /// <remarks>
+    /// The index runs over <see cref="DisplayedText"/>, which differs from <see cref="Text"/> while
+    /// <see cref="IsTruncated"/> — a caret should not be driven from a truncating sprite.
+    /// </remarks>
     public Vector2 GetCharacterPosition(int index)
     {
         // Parents (e.g. a text box positioning its caret) update before this drawable does,

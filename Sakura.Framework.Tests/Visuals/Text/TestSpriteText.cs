@@ -113,6 +113,17 @@ public partial class TestSpriteText : TestScene
                         Origin = Anchor.TopLeft,
                         Text = "English, สวัสดี, こんにちは, مرحبا, 😡!",
                         Font = new FontUsage("NotoSans", size: 24, weight: "Bold", italics: false)
+                    },
+
+                    // Truncated to a width budget (see TestSpriteTextTruncation for the full coverage)
+                    new SpriteText
+                    {
+                        Anchor = Anchor.TopLeft,
+                        Origin = Anchor.TopLeft,
+                        Text = "This line is far too long to fit and is truncated with an ellipsis",
+                        Font = new FontUsage("NotoSans", size: 24, weight: "Regular", italics: false),
+                        Truncate = true,
+                        MaxWidth = 320
                     }
                 }
             }
