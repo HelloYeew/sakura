@@ -87,6 +87,95 @@ public class DrawNodeSnapshotTest
         });
     }
 
+    /// <summary>
+    /// The node's vertex storage is grow-only: shrinking the source and growing it back to a size already
+    /// seen must reuse the same array. It used to reallocate on any change in either direction, and there
+    /// are three nodes per drawable, so an oscillating vertex count allocated on every frame it changed.
+    /// </summary>
+    [Test]
+    public void TestVertexStorageGrowsButNeverShrinks()
+    {
+        var path = new Path { Thickness = 2 };
+
+        for (int i = 0; i < 6; i++)
+            path.AddVertex(new Vector2(i * 10, i * 10));
+
+        parent.Add(path);
+        path.Load();
+        path.LoadComplete();
+
+        var node = pathNode(frame(0));
+        int grownCapacity = node.VertexCapacity;
+
+        Assert.That(grownCapacity, Is.EqualTo(node.VertexCount), "the first fill sizes the array exactly");
+        Assert.That(grownCapacity, Is.GreaterThan(0));
+
+        // Shrink: the count follows the source down, the array must not be replaced.
+        path.ClearVertices();
+
+        for (int i = 0; i < 3; i++)
+            path.AddVertex(new Vector2(i * 10, i * 10));
+
+        node = pathNode(frame(0));
+
+        var node1 = node;
+        Assert.Multiple(() =>
+        {
+            Assert.That(node1.VertexCount, Is.LessThan(grownCapacity), "fewer vertices are live");
+            Assert.That(node1.VertexCapacity, Is.EqualTo(grownCapacity), "but the array is kept");
+        });
+
+        // Grow back to a size already seen: still no reallocation.
+        path.ClearVertices();
+
+        for (int i = 0; i < 6; i++)
+            path.AddVertex(new Vector2(i * 10, i * 10));
+
+        node = pathNode(frame(0));
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(node.VertexCount, Is.EqualTo(grownCapacity), "back to the original count");
+            Assert.That(node.VertexCapacity, Is.EqualTo(grownCapacity), "and the array was never replaced");
+        }
+    }
+
+    /// <summary>
+    /// Only the live range is drawn, so a node whose backing array is larger than its count must not leak
+    /// the stale tail into <see cref="DrawNode.Vertices"/>.
+    /// </summary>
+    [Test]
+    public void TestVerticesExposesOnlyTheLiveRange()
+    {
+        var path = new Path { Thickness = 2 };
+
+        for (int i = 0; i < 6; i++)
+            path.AddVertex(new Vector2(i * 10, i * 10));
+
+        parent.Add(path);
+        path.Load();
+        path.LoadComplete();
+
+        int fullCount = pathNode(frame(0)).VertexCount;
+
+        path.ClearVertices();
+
+        for (int i = 0; i < 3; i++)
+            path.AddVertex(new Vector2(i * 10, i * 10));
+
+        var node = pathNode(frame(0));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(node.Vertices.Length, Is.EqualTo(node.VertexCount), "the span is the count, not the capacity");
+            Assert.That(node.Vertices.Length, Is.LessThan(fullCount));
+            Assert.That(node.VertexCapacity, Is.EqualTo(fullCount), "the spare capacity is still there, just not exposed");
+        });
+    }
+
+    private static DrawNode pathNode(DrawNode rootNode)
+        => ((ContainerDrawNode)((ContainerDrawNode)rootNode).Children.Single()).Children.OfType<DrawNode>().Last();
+
     [Test]
     public void TestNodeIsExactSnapshotOfDrawable()
     {
@@ -96,7 +185,7 @@ public class DrawNodeSnapshotTest
 
         // Every vertex must match the drawable's current vertices exactly — a snapshot,
         // not an interpolation of any previous state.
-        Assert.That(node.Vertices, Has.Length.EqualTo(box.SourceVertices.Length));
+        Assert.That(node.VertexCount, Is.EqualTo(box.SourceVertices.Length));
 
         for (int i = 0; i < node.Vertices.Length; i++)
         {

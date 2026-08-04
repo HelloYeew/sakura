@@ -163,6 +163,95 @@ public class ImageSharpImageLoaderTest
         }
     }
 
+    [Test]
+    public void DecodesFromSeekableStreamWithoutBufferingIt()
+    {
+        using var seekable = jpeg(1200, 800);
+        using var stream = new RewindCountingStream(seekable);
+
+        var raw = loader.Load(stream, ImageLoadOptions.FillTarget(new Vector2(300, 300)));
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(raw.Width, Is.EqualTo(300));
+            Assert.That(raw.Height, Is.EqualTo(300));
+            // the header is identified in place and the stream rewound for the decode, rather than the
+            // whole encoded file being copied into a buffer that can be read twice.
+            Assert.That(stream.Rewinds, Is.GreaterThan(0));
+        }
+    }
+
+    [Test]
+    public void DecodesFromSeekableStreamAtNonZeroPosition()
+    {
+        // an image that does not begin at byte 0, so the rewind after the header read has to return to
+        // where the caller left the stream rather than to its start.
+        using var seekable = new MemoryStream();
+        seekable.Write(new byte[64]);
+
+        using (var source = jpeg(1200, 800))
+            source.CopyTo(seekable);
+
+        seekable.Position = 64;
+
+        var raw = loader.Load(seekable, ImageLoadOptions.FillTarget(new Vector2(300, 300)));
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(raw.Width, Is.EqualTo(300));
+            Assert.That(raw.Height, Is.EqualTo(300));
+            Assert.That(raw.Data.Length, Is.EqualTo(raw.Width * raw.Height * 4));
+        }
+    }
+
+    /// <summary>
+    /// A seekable pass-through that counts how often it is asked to move backwards.
+    /// </summary>
+    private class RewindCountingStream : Stream
+    {
+        private readonly Stream inner;
+
+        public RewindCountingStream(Stream inner)
+        {
+            this.inner = inner;
+        }
+
+        public int Rewinds { get; private set; }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => true;
+        public override bool CanWrite => false;
+        public override long Length => inner.Length;
+
+        public override long Position
+        {
+            get => inner.Position;
+            set
+            {
+                if (value < inner.Position)
+                    Rewinds++;
+
+                inner.Position = value;
+            }
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+        public override void Flush() => inner.Flush();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override long Seek(long offset, SeekOrigin origin)
+        {
+            long from = inner.Position;
+            long to = inner.Seek(offset, origin);
+
+            if (to < from)
+                Rewinds++;
+
+            return to;
+        }
+    }
+
     private class NonSeekableStream : Stream
     {
         private readonly Stream inner;

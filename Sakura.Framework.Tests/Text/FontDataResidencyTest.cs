@@ -81,6 +81,37 @@ public class FontDataResidencyTest
     }
 
     /// <summary>
+    /// The acceptance criterion, in the portable form: nothing font-sized reaches the large object heap.
+    /// The bundled test font is 111 KB, comfortably over the 85 KB LOH threshold, so a managed copy of it
+    /// would land there and show up here.
+    /// </summary>
+    [Test]
+    public void LoadingAFontPutsNothingOnTheLargeObjectHeap()
+    {
+        long expected = fontFileLength();
+
+        long before = liveLargeObjectHeapBytes();
+
+        load("NoLoh");
+
+        Assert.That(liveLargeObjectHeapBytes() - before, Is.LessThan(expected), "a pinned managed copy of the face would show up here");
+    }
+
+    /// <summary>
+    /// Live large-object-heap size, with the heap settled first so the figure reflects what is retained
+    /// rather than what happens to be uncollected.
+    /// </summary>
+    private static long liveLargeObjectHeapBytes()
+    {
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true);
+        GC.WaitForPendingFinalizers();
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true);
+
+        // GenerationInfo index 3 is the large object heap.
+        return GC.GetGCMemoryInfo().GenerationInfo[3].SizeAfterBytes;
+    }
+
+    /// <summary>
     /// The statistic exists because the absence of any number for this is why a ~192 MB platform emoji
     /// font went unnoticed at startup.
     /// </summary>
@@ -124,6 +155,105 @@ public class FontDataResidencyTest
         Assert.DoesNotThrow(() => font.Dispose(), "the second dispose must be a no-op, not a double free");
         Assert.That(fontBytes, Is.EqualTo(before), "and must not subtract the block's size a second time");
     }
+
+    #region Mapped fonts
+
+    /// <summary>
+    /// Copies the bundled font out to a real file, since mapping needs one and the test resources are
+    /// embedded. Returns its path.
+    /// </summary>
+    private string materialiseFontOnDisk()
+    {
+        string path = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"mapped-{TestContext.CurrentContext.Test.Name}.ttf");
+
+        using (var source = fonts.GetStream(font_file)!)
+        using (var destination = File.Create(path))
+            source.CopyTo(destination);
+
+        return path;
+    }
+
+    /// <summary>
+    /// The whole point: a mapped face shapes text correctly. FreeType and HarfBuzz read the tables straight
+    /// out of the page cache, so if the pointer or the length were wrong this is where it would show.
+    /// </summary>
+    [Test]
+    public void AMappedFontShapesText()
+    {
+        string path = materialiseFontOnDisk();
+
+        try
+        {
+            store.AddFontFromFile(path, alias: "Mapped");
+
+            var shaped = store.Shape(FontUsage.Default.With(family: "Mapped"), "hello", 1f);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(shaped.Glyphs, Has.Count.EqualTo(5), "five glyphs from a mapped face");
+                Assert.That(shaped.Glyphs[0].Texture, Is.Not.Null, "and they rasterised");
+            });
+        }
+        finally
+        {
+            store.Dispose();
+            File.Delete(path);
+        }
+    }
+
+    /// <summary>
+    /// A mapped face is counted separately from allocated font memory, because file-backed pages are a
+    /// ceiling the OS may never fault in rather than memory the process has committed — putting them in
+    /// <c>Native Memory -> Total</c> would overstate a figure that is read against the process footprint.
+    /// </summary>
+    [Test]
+    public void AMappedFontIsCountedAsMappedRatherThanAllocated()
+    {
+        string path = materialiseFontOnDisk();
+
+        try
+        {
+            long allocatedBefore = fontBytes;
+            long mappedBefore = NativeFileMapping.MappedBytes;
+
+            store.AddFontFromFile(path, alias: "MappedCount");
+            store.Get(FontUsage.Default.With(family: "MappedCount"));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(NativeFileMapping.MappedBytes - mappedBefore, Is.EqualTo(new FileInfo(path).Length), "the whole face, as a mapping");
+                Assert.That(fontBytes, Is.EqualTo(allocatedBefore), "and nothing copied into unmanaged memory");
+            });
+
+            store.Dispose();
+
+            Assert.That(NativeFileMapping.MappedBytes, Is.EqualTo(mappedBefore), "unmapped on dispose");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    /// <summary>
+    /// An embedded resource has no filesystem path, so it still has to be copied — and must still work.
+    /// This is the routing, not a fallback for a failure.
+    /// </summary>
+    [Test]
+    public void AnEmbeddedFontStillLoadsByCopy()
+    {
+        long mappedBefore = NativeFileMapping.MappedBytes;
+
+        load("Embedded");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(fontBytes, Is.GreaterThan(0), "copied into unmanaged memory");
+            Assert.That(NativeFileMapping.MappedBytes, Is.EqualTo(mappedBefore), "an embedded resource cannot be mapped");
+        });
+    }
+
+    #endregion
 
     /// <summary>
     /// The store reads fonts through a stream, and a stream that cannot report its length takes
