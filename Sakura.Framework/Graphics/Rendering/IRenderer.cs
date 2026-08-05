@@ -51,6 +51,11 @@ public interface IRenderer
 
     void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius);
 
+    /// <summary>
+    /// Stamps the mask currently pushed on this renderer onto <paramref name="vertices"/>.
+    /// </summary>
+    void ApplyCurrentClip(Span<Vertex.Vertex> vertices);
+
     void PopMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<Vertex.Vertex> maskVertices = default);
 
     /// <summary>

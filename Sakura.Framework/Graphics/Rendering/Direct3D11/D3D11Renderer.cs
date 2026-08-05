@@ -662,9 +662,16 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         rebindFrameState();
     }
 
-    /// <summary>
-    /// Pushes a clip region
-    /// </summary>
+    public void ApplyCurrentClip(Span<SakuraVertex> vertices)
+    {
+        for (int i = 0; i < vertices.Length; i++)
+        {
+            vertices[i].ClipData = currentClip.ClipData;
+            vertices[i].ClipShearX = currentClip.ShearX;
+            vertices[i].ClipRadius = currentClip.Radius;
+        }
+    }
+
     public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius)
     {
         clipStack.Push(currentClip);
