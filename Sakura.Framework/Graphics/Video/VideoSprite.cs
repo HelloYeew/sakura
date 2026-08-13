@@ -356,7 +356,7 @@ public partial class VideoSprite : Drawable
     {
         if (IsDisposed) return;
 
-        if (decoder.IsNull())
+        if (decoder.IsNotNull())
         {
             decoder.ReturnFrames(availableFrames);
             availableFrames.Clear();

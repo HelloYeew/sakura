@@ -16,11 +16,11 @@ namespace Sakura.Framework.Graphics.Video;
 /// </summary>
 internal class VideoDrawNode : DrawNode
 {
-    private VideoTexture? videoTexture;
+    private IVideoTexture? videoTexture;
     private float[]? yuvMatrix;
     private IShader? videoShader;
 
-    public void ApplyVideoState(VideoTexture? tex, float[]? matrix, IShader? shader)
+    public void ApplyVideoState(IVideoTexture? tex, float[]? matrix, IShader? shader)
     {
         videoTexture = tex;
         yuvMatrix = matrix;
@@ -36,6 +36,12 @@ internal class VideoDrawNode : DrawNode
             return;
 
         if (!videoTexture.UploadComplete)
+            return;
+
+        // The texture may have been disposed since this node's state was applied (a pool torn down
+        // while the texture viewer still shows a preview of it). Its planes are destroyed on this
+        // thread, so checking here is enough to never bind a dead handle.
+        if (videoTexture.IsDisposed)
             return;
 
         // TODO: This is still really bad????
@@ -65,6 +71,8 @@ internal class VideoDrawNode : DrawNode
 
         if (yuvMatrix != null)
             videoShader.SetUniformBlock("VideoBlock", VideoBlock.FromMat3(yuvMatrix));
+
+        renderer.ApplyCurrentClip(WritableVertices);
 
         if (renderer is IGLRenderer glRenderer)
             glRenderer.DrawVerticesRaw(Vertices);
