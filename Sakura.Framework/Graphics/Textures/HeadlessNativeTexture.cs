@@ -18,6 +18,12 @@ public sealed class HeadlessNativeTexture : INativeTexture
     public bool Available { get; private set; } = true;
 
     /// <summary>
+    /// Note: it's always zero since the headless rasterizer samples <see cref="Surface"/> straight from the CPU and never
+    /// binds anything, so there is nothing to count.
+    /// </summary>
+    public TextureBindCounter Binds { get; } = new TextureBindCounter();
+
+    /// <summary>
     /// CPU pixels backing this texture when <see cref="Rendering.HeadlessRenderer"/> pixel capture is on,
     /// otherwise null. Only framebuffer color attachments carry one; a texture without a surface samples
     /// as opaque white, which is enough for the compositing questions capture exists to answer.

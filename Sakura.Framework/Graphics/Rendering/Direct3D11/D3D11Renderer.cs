@@ -527,6 +527,8 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
         rootNode?.Draw(this);
 
+        TextureBindTracker.EndFrame();
+
         // VSync -> sync interval 1, no flags. Uncapped -> interval 0, tear (if the output supports it)
         // rather than stall on a flip-model swapchain. AllowTearing is illegal with interval > 0.
         if (presentSyncInterval == 0)

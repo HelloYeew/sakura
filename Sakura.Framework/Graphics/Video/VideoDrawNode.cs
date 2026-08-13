@@ -50,7 +50,7 @@ internal class VideoDrawNode : DrawNode
         bool isD3D11 = renderer is Rendering.Direct3D11.ID3D11Renderer;
         if (!isGL && !isMetal && !isD3D11)
             return;
-        
+
         renderer.SetBlendMode(Blending);
 
         renderer.FlushBatch();

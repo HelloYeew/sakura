@@ -15,6 +15,11 @@ internal sealed class HeadlessNativeVideoTexture : INativeVideoTexture
     public int Height { get; }
     public bool Available => false;
 
+    /// <summary>
+    /// Note: it's always zero since nothing is bound headlessly, so there is nothing to count.
+    /// </summary>
+    public TextureBindCounter Binds { get; } = new TextureBindCounter();
+
     public HeadlessNativeVideoTexture(int width, int height)
     {
         Width = width;

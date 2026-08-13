@@ -21,6 +21,13 @@ public interface INativeVideoTexture : IDisposable
     bool Available { get; }
 
     /// <summary>
+    /// How often this texture has been bound, per frame. One <see cref="BindPlanes"/> counts once, not
+    /// once per plane: the three planes are always bound together, so counting each would only ever
+    /// report tripling the same number. See <see cref="TextureBindTracker"/>.
+    /// </summary>
+    TextureBindCounter Binds { get; }
+
+    /// <summary>
     /// Binds the Y, U, V planes to the appropriate texture slots for the current backend.
     /// For OpenGL: activates TextureUnit.Texture0/1/2 and binds each plane.
     /// For Metal: records the plane textures on the current render command encoder.

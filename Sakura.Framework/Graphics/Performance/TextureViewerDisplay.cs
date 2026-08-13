@@ -77,6 +77,12 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
     /// </summary>
     private readonly List<(SpriteText Label, List<IVideoTexture> Pool)> videoPoolLabels = new List<(SpriteText, List<IVideoTexture>)>();
 
+    /// <summary>
+    /// The per-frame bind label of every card, refreshed on the throttled tick like the video state
+    /// labels. A bind count changes every frame, so these can never be baked in at card-build time.
+    /// </summary>
+    private readonly List<(SpriteText Label, TextureBindCounter Counter)> bindLabels = new List<(SpriteText, TextureBindCounter)>();
+
     [Resolved]
     private ITextureManager textureManager { get; set; }
 
@@ -289,6 +295,7 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
         lastUpdateTime = host.UpdateClock.CurrentTime;
 
         updateVideoLabels();
+        updateBindLabels();
 
         int currentTextureUpdates = GlobalStatistics.Get<int>("Textures", "Texture Updates").Value;
         int currentAtlasPageCount = fontStore.Atlas != null ? fontStore.Atlas.GetAllPages().Count() : 0;
@@ -344,11 +351,48 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
         }
     }
 
+    /// <summary>
+    /// Re-reads how often each card's texture was bound during the last completed frame.
+    /// </summary>
+    private void updateBindLabels()
+    {
+        foreach (var (label, counter) in bindLabels)
+        {
+            int binds = counter.LastFrame;
+
+            label.Text = $"{binds} bind{(binds == 1 ? "" : "s")} last frame";
+            label.Color = binds > 0 ? Color.LightGray : Color.Gray;
+        }
+    }
+
+    /// <summary>
+    /// A card's bind label, registered so <see cref="updateBindLabels"/> keeps it current. Returns null
+    /// when there is nothing to count against, which is what an atlas slice or a dimension-only proxy is.
+    /// </summary>
+    private SpriteText? createBindLabel(TextureBindCounter? counter)
+    {
+        if (counter == null)
+            return null;
+
+        var label = new SpriteText
+        {
+            Anchor = Anchor.TopLeft,
+            Origin = Anchor.TopLeft,
+            Font = FontUsage.Default.With(size: 10),
+            Color = Color.Gray,
+            Text = "0 binds last frame"
+        };
+
+        bindLabels.Add((label, counter));
+        return label;
+    }
+
     private void refreshTextures()
     {
         flowContainer.Clear();
         videoStateLabels.Clear();
         videoPoolLabels.Clear();
+        bindLabels.Clear();
         builtWithVideoShader = videoShader != null;
 
         var fontAtlas = fontStore.Atlas;
@@ -529,9 +573,10 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
     {
         const float card_size = 256;
         const float padding = 5;
-        const float spacing = 5;
+        const float spacing = 4;
         const float title_height = 20;
         const float state_height = 14;
+        const float bind_height = 14;
 
         var state = describeVideoState(videoTexture);
 
@@ -546,10 +591,9 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
 
         videoStateLabels.Add((stateText, videoTexture));
 
-        // Whatever the two labels and the gaps around them leave over. Unlike a texture card's sprite,
-        // the letterbox behind a preview is opaque, so an area that overflowed the card would be
-        // visible on top of the card below it.
-        var area = new Vector2(card_size - padding * 2, card_size - padding * 2 - title_height - state_height - spacing * 2);
+        var bindText = createBindLabel(videoTexture.Binds)!;
+
+        var area = new Vector2(card_size - padding * 2, card_size - padding * 2 - title_height - state_height - bind_height - spacing * 3);
 
         // A video frame lives in YUV planes rather than a Texture, so FillMode has no aspect ratio to
         // letterbox against — scale the preview to the frame's aspect within the card by hand.
@@ -598,6 +642,7 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
                             MaxWidth = card_size - padding * 2
                         },
                         stateText,
+                        bindText,
                         new Container
                         {
                             Anchor = Anchor.TopLeft,
@@ -633,6 +678,7 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
         var state = describeState(texture);
 
         const float title_height = 20;
+        const float bind_height = 14;
         float stateHeight = state == null ? 0 : 14;
 
         var labels = new List<Drawable>
@@ -659,11 +705,16 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
             });
         }
 
+        var bindLabel = createBindLabel(texture.BackendTexture?.Binds);
+
+        if (bindLabel != null)
+            labels.Add(bindLabel);
+
         labels.Add(new Container
         {
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
-            Size = new Vector2(256, 256 - title_height - stateHeight),
+            Size = new Vector2(256, 256 - title_height - stateHeight - (bindLabel == null ? 0 : bind_height)),
             Child = new Sprite
             {
                 Anchor = Anchor.Centre,

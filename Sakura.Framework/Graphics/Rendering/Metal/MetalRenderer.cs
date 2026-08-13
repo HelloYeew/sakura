@@ -327,6 +327,9 @@ public sealed class MetalRenderer : IMetalRenderer
 
         rootNode?.Draw(this);
 
+        // Metal draws immediately, so every bind for the frame has already been issued by here.
+        TextureBindTracker.EndFrame();
+
         SakuraMetalNative.sakura_metal_end_frame(device);
     }
 

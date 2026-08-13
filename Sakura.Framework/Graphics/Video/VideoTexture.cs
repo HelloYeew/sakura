@@ -25,6 +25,8 @@ public sealed class VideoTexture : IVideoTexture
     public int Width  => NativeTexture.Width;
     public int Height => NativeTexture.Height;
 
+    public TextureBindCounter Binds => NativeTexture.Binds;
+
     /// <summary>
     /// True once the render thread has flushed the pending upload.
     /// Written via <see cref="Volatile"/> — safe to read from any thread.

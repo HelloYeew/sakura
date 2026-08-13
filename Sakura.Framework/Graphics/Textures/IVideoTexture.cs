@@ -14,6 +14,12 @@ public interface IVideoTexture
     int Height { get; }
 
     /// <summary>
+    /// How often this texture's planes have been bound, per frame.
+    /// See <see cref="INativeVideoTexture.Binds"/>.
+    /// </summary>
+    TextureBindCounter Binds { get; }
+
+    /// <summary>
     /// True once the GPU upload for the current frame is complete.
     /// </summary>
     bool UploadComplete { get; }
