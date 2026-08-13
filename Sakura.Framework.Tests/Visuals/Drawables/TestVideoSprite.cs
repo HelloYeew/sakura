@@ -3,8 +3,12 @@
 
 using NUnit.Framework;
 using Sakura.Framework.Allocation;
+using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Colors;
+using Sakura.Framework.Graphics.Containers;
+using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
+using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Graphics.Video;
 using Sakura.Framework.Maths;
@@ -148,7 +152,7 @@ public partial class TestVideoSprite : TestScene
         AddAssert("Showing a frame after rapid seeks", () => videoSprite.Alpha == 1f);
         AddAssert("Not stuck buffering", () => !videoSprite.Buffering);
     }
-    
+
     [Test]
     public void TestSeekThenPlaybackContinues()
     {
@@ -196,6 +200,49 @@ public partial class TestVideoSprite : TestScene
         AddStep("Force Dispose", () => videoSprite.Dispose());
 
         AddWaitStep("Wait to ensure no background crashes", 500);
+    }
+
+    [Test]
+    public void TestFadeOverBufferedContainer()
+    {
+        Container videoContainer = null!;
+
+        AddStep("Add blurred backdrop and video", () =>
+        {
+            Add(new BufferedContainer
+            {
+                RelativeSizeAxes = Axes.Both,
+                FrameBufferScale = new Vector2(0.5f),
+                BlurSigma = new Vector2(8f),
+                Child = new Box
+                {
+                    RelativeSizeAxes = Axes.Both,
+                    Color = Color.Red
+                }
+            });
+
+            Add(videoContainer = new Container
+            {
+                RelativeSizeAxes = Axes.Both,
+                Child = videoSprite = new VideoSprite(videoStore.GetDecoder("test.avi"))
+                {
+                    Anchor = Anchor.Centre,
+                    Origin = Anchor.Centre,
+                    RelativeSizeAxes = Axes.Both,
+                    FillMode = TextureFillMode.Fill
+                }
+            });
+        });
+
+        AddAssert("VideoSprite is loaded", () => videoSprite.IsLoaded);
+        AddWaitStep("Let a frame arrive", 500);
+
+        AddStep("Fade video out", () => videoContainer.FadeOut(2000));
+        AddWaitStep("Watch the fade", 2500);
+        AddAssert("Video container is fully faded", () => videoContainer.Alpha == 0f);
+
+        AddStep("Fade video back in", () => videoContainer.FadeIn(2000));
+        AddWaitStep("Watch the fade", 2500);
     }
 
     [Test]
