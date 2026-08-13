@@ -14,20 +14,19 @@ layout(location = 0) out vec4 FragColor;
 
 layout(set = 1, binding = 0) uniform sampler2D u_Textures[16];
 
-// Masking + border state. Field order matches the std140 layout in MaskBlock in C#
+// Border + edge-effect state. Field order matches the std140 layout in MaskBlock in C#
 //   vec4 u_BorderColor (offset 0)
 //   vec2 u_MaskCenter (offset 16)
 //   vec2 u_MaskHalfSize (offset 24)
 //   float u_ShearX (offset 32)
 //   float u_CornerRadius (offset 36)
 //   float u_BorderThickness(offset 40)
-//   int u_IsMasking (offset 44)
-//   int u_IsBorder (offset 48)
-//   int u_IsEdgeEffect (offset 52)
-//   float u_EdgeRadius (offset 56)
-//   vec2 u_EdgeOffset (offset 64)
-//   int u_EdgeHollow (offset 72)
-//   int u_EdgeGlow (offset 76)
+//   int u_IsBorder (offset 44)
+//   int u_IsEdgeEffect (offset 48)
+//   float u_EdgeRadius (offset 52)
+//   vec2 u_EdgeOffset (offset 56)
+//   int u_EdgeHollow (offset 64)
+//   int u_EdgeGlow (offset 68)
 layout(set = 0, binding = 1, std140) uniform MaskBlock
 {
     vec4 u_BorderColor;
@@ -36,7 +35,6 @@ layout(set = 0, binding = 1, std140) uniform MaskBlock
     float u_ShearX;
     float u_CornerRadius;
     float u_BorderThickness;
-    int u_IsMasking;
     int u_IsBorder;
     int u_IsEdgeEffect;
     float u_EdgeRadius;
@@ -126,17 +124,6 @@ void main()
     else texColor = vec4(1.0);
 
     texColor *= v_Color;
-
-    if (u_IsMasking != 0 && u_CornerRadius > 0.0)
-    {
-        vec2 posInRect = v_FragPos - u_MaskCenter;
-        float sk = u_ShearX * u_MaskHalfSize.y;
-
-        float dist = sdRoundParallelogram(posInRect, u_MaskHalfSize, sk, u_CornerRadius);
-
-        // Discard fragments outside the sheared rounded rectangle
-        if (dist > 0.0) discard;
-    }
 
     FragColor = texColor;
 

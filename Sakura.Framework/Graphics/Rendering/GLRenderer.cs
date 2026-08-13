@@ -308,7 +308,6 @@ public class GLRenderer : IGLRenderer, IDisposable
         uploadProjection();
         projectionBuffer.Bind();
 
-        maskState.IsMasking = 0;
         maskState.IsBorder = 0;
         uploadMaskState();
         maskBuffer.Bind();
@@ -380,7 +379,6 @@ public class GLRenderer : IGLRenderer, IDisposable
             ShearX = 0,
             Radius = 0
         };
-        maskState.IsMasking = 0;
         maskState.IsBorder = 0;
         uploadMaskState();
         maskBuffer.Bind();
