@@ -33,7 +33,7 @@ public struct ProjectionBlock
 }
 
 /// <summary>
-/// Masking + border state for the main shader. Matches <c>MaskBlock</c> in shader.frag.
+/// Border + edge-effect state for the main shader. Matches <c>MaskBlock</c> in shader.frag.
 /// </summary>
 [StructLayout(LayoutKind.Explicit, Size = 80)]
 public struct MaskBlock
@@ -76,46 +76,41 @@ public struct MaskBlock
     public float BorderThickness;
 
     /// <summary>
-    /// Masking enabled (0/1). Maps to <c>int u_IsMasking</c> (GLSL bool).
-    /// </summary>
-    [FieldOffset(44)]
-    public int IsMasking;
-
-    /// <summary>
     /// Border pass enabled (0/1). Maps to <c>int u_IsBorder</c> (GLSL bool).
     /// </summary>
-    [FieldOffset(48)]
+    [FieldOffset(44)]
     public int IsBorder;
 
     /// <summary>
     /// Edge-effect pass enabled (0/1). Maps to <c>int u_IsEdgeEffect</c> (GLSL bool).
     /// </summary>
-    [FieldOffset(52)]
+    [FieldOffset(48)]
     public int IsEdgeEffect;
 
     /// <summary>
     /// Edge-effect soft falloff radius in screen pixels. Maps to <c>float u_EdgeRadius</c>.
     /// </summary>
-    [FieldOffset(56)]
+    [FieldOffset(52)]
     public float EdgeRadius;
 
     /// <summary>
     /// Edge-effect offset in screen space (added to the shape centre). Maps to <c>vec2 u_EdgeOffset</c>.
-    /// Aligned to 8 bytes per std140; placed at offset 64 so it does not straddle a 16-byte boundary.
+    /// Aligned to 8 bytes per std140; offset 56 satisfies that and keeps it inside one 16-byte block
+    /// (48..63) rather than straddling a boundary.
     /// </summary>
-    [FieldOffset(64)]
+    [FieldOffset(56)]
     public Vector2 EdgeOffset;
 
     /// <summary>
     /// Hollow edge effect (cut out the interior) (0/1). Maps to <c>int u_EdgeHollow</c> (GLSL bool).
     /// </summary>
-    [FieldOffset(72)]
+    [FieldOffset(64)]
     public int EdgeHollow;
 
     /// <summary>
     /// Glow (1) vs shadow (0) edge effect. Affects falloff shaping. Maps to <c>int u_EdgeGlow</c> (GLSL bool).
     /// </summary>
-    [FieldOffset(76)]
+    [FieldOffset(68)]
     public int EdgeGlow;
 }
 

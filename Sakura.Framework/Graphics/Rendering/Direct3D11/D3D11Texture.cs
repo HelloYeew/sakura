@@ -164,6 +164,9 @@ public sealed class D3D11Texture : INativeTexture
         // Nothing can be sampled from a released texture; see MetalTexture.Dispose.
         Available = false;
 
+        // Before the next view can recycle the COM address (see NotifyTextureDeleted).
+        D3D11Renderer.NotifyTextureDeleted(srv?.NativePointer ?? nint.Zero);
+
         rtv?.Dispose();
         rtv = null;
         srv?.Dispose();

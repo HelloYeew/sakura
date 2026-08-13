@@ -143,7 +143,11 @@ public sealed class MetalTexture : INativeTexture
         memoryLease?.Dispose();
 
         if (claimed != nint.Zero)
+        {
+            // Before the address can be recycled by the next allocation (see NotifyTextureDeleted).
+            MetalRenderer.NotifyTextureDeleted(claimed);
             SakuraMetalNative.sakura_metal_destroy_texture(claimed);
+        }
     }
 
     ~MetalTexture()
@@ -153,6 +157,12 @@ public sealed class MetalTexture : INativeTexture
         memoryLease?.Dispose();
 
         if (claimed != nint.Zero)
-            NativeDisposalQueue.Enqueue(() => SakuraMetalNative.sakura_metal_destroy_texture(claimed));
+        {
+            NativeDisposalQueue.Enqueue(() =>
+            {
+                MetalRenderer.NotifyTextureDeleted(claimed);
+                SakuraMetalNative.sakura_metal_destroy_texture(claimed);
+            });
+        }
     }
 }

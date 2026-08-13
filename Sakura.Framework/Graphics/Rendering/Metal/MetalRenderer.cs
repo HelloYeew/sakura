@@ -7,12 +7,14 @@ using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
 using Sakura.Framework.Graphics.Colors;
+using Sakura.Framework.Graphics.Rendering.Batches;
 using Sakura.Framework.Graphics.Rendering.Uniforms;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.IO;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
+using Sakura.Framework.Statistic;
 using Sakura.Framework.Timing;
 using SakuraVertex = Sakura.Framework.Graphics.Rendering.Vertex.Vertex;
 
@@ -23,11 +25,70 @@ namespace Sakura.Framework.Graphics.Rendering.Metal;
 /// </summary>
 public sealed class MetalRenderer : IMetalRenderer
 {
+    private static readonly GlobalStatistic<int> stat_draw_calls = GlobalStatistics.Get<int>("Renderer", "Draw Calls");
+    private static readonly GlobalStatistic<int> stat_vertices_drawn = GlobalStatistics.Get<int>("Renderer", "Vertices Drawn");
+    private static readonly GlobalStatistic<int> stat_slot_exhaustion_flushes = GlobalStatistics.Get<int>("Renderer", "Slot Exhaustion Flushes");
+    private static readonly GlobalStatistic<int> stat_state_change_flushes = GlobalStatistics.Get<int>("Renderer", "State Change Flushes");
+
+    /// <summary>
+    /// The live renderer instance, for static notifications (texture deletion). Effectively a
+    /// singleton: only one Metal renderer exists per process.
+    /// </summary>
+    private static MetalRenderer instance;
+
+    /// <summary>
+    /// Must be called whenever an <c>MTLTexture</c> is destroyed. A freed texture's address can be
+    /// handed straight back to the next allocation, so a new texture (a glyph atlas page, a recreated
+    /// framebuffer attachment) can carry the same handle as a dead one — and if the slot mirror still
+    /// maps that handle to a slot, the renderer would skip the bind and draw with whatever now occupies
+    /// it. Draw thread only, same as the destruction itself.
+    /// </summary>
+    internal static void NotifyTextureDeleted(nint handle)
+    {
+        var renderer = instance;
+        if (renderer == null || handle == nint.Zero)
+            return;
+
+        for (int i = 0; i < renderer.boundTextureHandles.Length; i++)
+        {
+            if (renderer.boundTextureHandles[i] == handle)
+                renderer.boundTextureHandles[i] = -1; // never matches a live handle
+        }
+    }
+
     private nint device; // SakuraMetalDevice*
     private MetalShader mainShader;
 
     private MetalShader currentShader;
     private BlendingMode currentBlendMode = BlendingMode.Alpha;
+
+    /// <summary>
+    /// Vertex capacity of <see cref="batch"/>. Matches the GL batch's 12000, which at 6 vertices per
+    /// quad (Metal is non-indexed, see <see cref="FlushBatch"/>) is 2000 quads before a capacity flush.
+    /// </summary>
+    private const int max_batch_vertices = 1000 * 12;
+
+    /// <summary>
+    /// Matches <c>u_Textures[]</c> in shader.frag, which the cross-compiled MSL declares as
+    /// <c>array&lt;texture2d&lt;float&gt;, 16&gt; [[texture(0)]]</c> with a matching sampler array.
+    /// </summary>
+    private const int max_texture_slots = 16;
+
+    /// <summary>
+    /// CPU mirror of the encoder's fragment-texture argument table: <c>MTLTexture*</c> per slot, dense
+    /// from 0. A render pass switch opens a fresh encoder and drops every binding, so this is cleared
+    /// by <see cref="resetTextureSlots"/> wherever that happens (and wherever something binds a texture
+    /// behind the renderer's back, i.e., the raw custom-shader passes).
+    /// </summary>
+    private readonly nint[] boundTextureHandles = new nint[max_texture_slots];
+    private int boundTextureCount;
+
+    /// <summary>
+    /// The frame's pending geometry. Unlike GL, this batch is non-indexed — the bridge's
+    /// <c>sakura_metal_draw_triangles</c> is a <c>drawPrimitives</c> call — so quads arrive expanded to
+    /// 6 vertices and <see cref="FlushBatch"/> issues one <c>drawPrimitives</c> for the lot.
+    /// </summary>
+    private VertexBatch batch;
 
     private readonly ConcurrentQueue<Action> drawThreadQueue = new();
     private readonly Sakura.Framework.Graphics.Textures.TextureUploadQueue textureUploadQueue = new();
@@ -98,6 +159,8 @@ public sealed class MetalRenderer : IMetalRenderer
         if (graphicsSurface is not IMetalGraphicsSurface metalSurface)
             throw new InvalidOperationException($"{nameof(MetalRenderer)} requires an {nameof(IMetalGraphicsSurface)}.");
 
+        instance = this;
+
         SakuraMetalNative.SetupLibraryResolvers();
 
         device = SakuraMetalNative.sakura_metal_create(metalSurface.MetalLayer);
@@ -106,12 +169,14 @@ public sealed class MetalRenderer : IMetalRenderer
 
         // Cross-compile the main shader to MSL (cached) and build the pipeline with a vertex layout
         // matching the Vertex struct (attribute index = GLSL location, offset = struct field offset).
-        var (vertMsl, fragMsl) = ShaderCompiler.GetOrCompile(
+        (string vertMsl, string fragMsl) = ShaderCompiler.GetOrCompile(
             ShaderStorage, "shader.vert", "shader.frag", SPIRV.CrossCompileTarget.MSL, ShaderCache);
 
         var attributes = buildVertexAttributes();
         mainShader = new MetalShader(device, vertMsl, fragMsl, attributes, SakuraVertex.Size, mainShaderUniformBindings());
         currentShader = mainShader;
+
+        batch = new VertexBatch(max_batch_vertices, FlushBatch, indexed: false);
 
         // 1x1 white pixel. The main shader always samples u_Textures[index]; solid-color drawables
         // sample this white texel so the result is white × v_Color. Bound to slot 0 each frame.
@@ -238,9 +303,9 @@ public sealed class MetalRenderer : IMetalRenderer
 
         // Release native resources orphaned by the GC (a missed Dispose) before anything else this
         // frame, so their memory is freed before new allocations are made against it.
-        Sakura.Framework.Graphics.Textures.NativeDisposalQueue.Process();
+        NativeDisposalQueue.Process();
 
-        // Drain queued uploads (textures, glyphs) on the draw thread, before the render pass opens.
+        // Drain queued uploads (textures, glyphs) on the draw thread before the render pass opens.
         while (drawThreadQueue.TryDequeue(out var action))
             action();
 
@@ -279,11 +344,44 @@ public sealed class MetalRenderer : IMetalRenderer
         uploadProjection();
         uploadMaskState();
 
-        // Bind the white pixel to slot 0 so solid-color drawables (TexIndex 0) sample white.
-        (WhitePixel?.BackendTexture as MetalTexture)?.Bind(0);
+        // The new encoder's fragment-texture table is empty, so the CPU mirror must start empty too
+        // otherwise the next draw would trust a slot assignment that no longer exists on the GPU.
+        fillTextureSlotsWithWhite();
     }
 
-    // Binds the pipeline variant for the current (shader, blend mode) pair to the encoder.
+    /// <summary>
+    /// Binds the white pixel to every one of the 16 fragment texture/sampler slots and resets the slot
+    /// mirror to "slot 0 holds white". Called after every render-pass switch, which is what empties the
+    /// encoder's argument table.
+    /// </summary>
+    /// <remarks>
+    /// All 16, not just the ones in use, because Metal API Validation rejects a draw whose fragment
+    /// function statically references an unbound slot — the cross-compiled MSL's <c>if</c> -chain
+    /// references all 16 of <c>u_Textures[]</c>, so all 16 samplers must be bound even though only the
+    /// selected index is ever read. (This is the mitigation RB-7's first open question called for; with
+    /// <c>METAL_DEVICE_WRAPPER_TYPE=1</c> the old single-slot path asserted with
+    /// <i>"missing Sampler binding at index 2..15"</i>.) Mirrors what D3D11 already does with
+    /// <c>whiteSrvs</c>.
+    /// </remarks>
+    private void fillTextureSlotsWithWhite()
+    {
+        resetTextureSlots();
+
+        if (WhitePixel?.BackendTexture is not MetalTexture white)
+            return;
+
+        for (int i = 0; i < max_texture_slots; i++)
+            white.Bind(i);
+
+        // Slot 0 is recorded as taken, so the very common white-pixel draw costs no further bind. The
+        // rest stay "free" and are overwritten by prepareTexture as it hands them out.
+        boundTextureHandles[0] = white.Handle;
+        boundTextureCount = 1;
+    }
+
+    /// <summary>
+    /// Binds the pipeline variant for the current (shader, blend mode) pair to the encoder
+    /// </summary>
     private void bindPipeline()
     {
         if (currentShader != null)
@@ -325,67 +423,103 @@ public sealed class MetalRenderer : IMetalRenderer
         if (device == nint.Zero)
             return;
 
+        stat_draw_calls.Value = 0;
+        stat_vertices_drawn.Value = 0;
+        stat_slot_exhaustion_flushes.Value = 0;
+        stat_state_change_flushes.Value = 0;
+
         rootNode?.Draw(this);
 
-        // Metal draws immediately, so every bind for the frame has already been issued by here.
+        // Anything still pending belongs to this frame's drawable — issue it before the pass closes.
+        FlushBatch();
+
+        // Done after the final flush, so the batch's binds land in this frame's count rather than the
+        // next one's.
         TextureBindTracker.EndFrame();
 
         SakuraMetalNative.sakura_metal_end_frame(device);
     }
 
     /// <summary>
-    /// Scratch buffer for forcing TexIndex to 0 on the drawn vertices (see below). Reused across draws.
+    /// Resolves a texture to a batch slot index, binding it (and flushing on slot exhaustion) as
+    /// required. Mirrors <c>GLRenderer.prepareTexture</c>; the slot key here is the <c>MTLTexture*</c>
+    /// rather than a GL name.
     /// </summary>
-    private SakuraVertex[] drawScratch = new SakuraVertex[256];
+    private float prepareTexture(Texture texture)
+    {
+        var native = texture?.BackendTexture as MetalTexture;
 
-    public unsafe void DrawVertices(ReadOnlySpan<SakuraVertex> vertices, Texture texture)
+        // A texture with no Metal backing (e.g., a video texture, drawn by VideoDrawNode itself) or one
+        // whose pixels haven't landed yet samples white. MetalTexture.Bind applies that fallback
+        // internally, so it has to be resolved here too — otherwise the slot would be keyed by a handle
+        // that is not what ends up bound to it.
+        if (native == null || !native.Available)
+            native = MetalTexture.WhitePixel;
+
+        if (native == null)
+            return 0f;
+
+        nint handle = native.Handle;
+
+        for (int i = 0; i < boundTextureCount; i++)
+        {
+            if (boundTextureHandles[i] == handle)
+                return i;
+        }
+
+        if (boundTextureCount < max_texture_slots)
+        {
+            int slot = boundTextureCount;
+            // MetalTexture.Bind counts the bind itself, so every backend's figure comes from the same place.
+            native.Bind(slot);
+            boundTextureHandles[slot] = handle;
+            boundTextureCount++;
+            return slot;
+        }
+
+        // All slots taken: flush and start a fresh slot set.
+        stat_slot_exhaustion_flushes.Value++;
+        FlushBatch();
+        resetTextureSlots();
+
+        native.Bind(0);
+        boundTextureHandles[0] = handle;
+        boundTextureCount = 1;
+        return 0;
+    }
+
+    public void DrawVertices(ReadOnlySpan<SakuraVertex> vertices, Texture texture)
     {
         if (device == nint.Zero || vertices.Length == 0)
             return;
 
-        // One texture per draw on Metal (no multi-texture batching yet): bind it to slot 0.
-        var native = (texture?.BackendTexture ?? WhitePixel.BackendTexture) as MetalTexture;
-        native?.Bind(0);
+        float textureIndex = prepareTexture(texture);
 
-        // The vertices may carry a TexIndex chosen for the GL batch's slot assignment. Since we bind
-        // a single texture to slot 0, force TexIndex 0 so the shader samples the texture we bound,
-        // not an unbound slot. Copy into a reusable scratch buffer to avoid mutating the caller's span.
-        //
-        // We also inject the current clip state into each vertex here. Unlike GL — where TriangleBatch
-        // writes currentClip.ClipData into every vertex on its way into the batch — the Metal path has
-        // no batch, so the draw nodes hand over vertices with default (zero) clip data. The fragment
-        // shader's applyClipping reads these per-vertex attributes, so without this injection masking
-        // would silently do nothing. ClipData (0,0,-1,-1) means "no active clip" to the shader.
-        if (drawScratch.Length < vertices.Length)
-            drawScratch = new SakuraVertex[Math.Max(vertices.Length, drawScratch.Length * 2)];
-
-        for (int i = 0; i < vertices.Length; i++)
-        {
-            drawScratch[i] = vertices[i];
-            drawScratch[i].TexIndex = 0f;
-            drawScratch[i].ClipData = currentClip.ClipData;
-            drawScratch[i].ClipShearX = currentClip.ShearX;
-            drawScratch[i].ClipRadius = currentClip.Radius;
-        }
-
-        fixed (SakuraVertex* ptr = drawScratch)
-            SakuraMetalNative.sakura_metal_draw_triangles(device, ptr, vertices.Length, SakuraVertex.Size);
+        // The clip state is injected per-vertex on the way into the batch (the fragment shader's
+        // applyClipping reads v_ClipData/v_ClipShearX/v_ClipRadius), exactly as GL's batch does.
+        batch.AddRange(vertices, textureIndex, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
     }
 
     public void DrawQuads(ReadOnlySpan<SakuraVertex> vertices, Texture texture)
     {
-        // Expand each quad (TL, TR, BR, BL) into two triangles, since the bridge draws triangle lists.
-        Span<SakuraVertex> tri = stackalloc SakuraVertex[6];
+        if (device == nint.Zero)
+            return;
+
+        float textureIndex = prepareTexture(texture);
+
+        // The batch is non-indexed, so AddQuad expands each quad (TL, TR, BR, BL) into two triangles.
         for (int i = 0; i + 4 <= vertices.Length; i += 4)
-        {
-            tri[0] = vertices[i];
-            tri[1] = vertices[i + 1];
-            tri[2] = vertices[i + 2];
-            tri[3] = vertices[i + 2];
-            tri[4] = vertices[i + 3];
-            tri[5] = vertices[i];
-            DrawVertices(tri, texture);
-        }
+            batch.AddQuad(vertices.Slice(i, 4), textureIndex, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
+    }
+
+    /// <summary>
+    /// Drops the CPU mirror of the encoder's fragment-texture table. The textures themselves stay bound
+    /// on the encoder and are simply re-tracked (or replaced) on their next use.
+    /// </summary>
+    private void resetTextureSlots()
+    {
+        boundTextureCount = 0;
+        Array.Clear(boundTextureHandles, 0, boundTextureHandles.Length);
     }
 
     #region Masking / borders
@@ -475,6 +609,10 @@ public sealed class MetalRenderer : IMetalRenderer
         if (borderThickness <= 0 || vertices.Length < 4)
             return;
 
+        // The MaskBlock upload below applies to every draw the encoder has not yet issued, so pending
+        // geometry has to be drawn under the *previous* mask state first.
+        FlushBatch();
+
         // Enter the border pass: populate and upload the MaskBlock the fragment shader reads.
         maskState.IsBorder = 1;
         maskState.MaskCenter = new Vector2(maskCenter.X, maskCenter.Y);
@@ -491,6 +629,7 @@ public sealed class MetalRenderer : IMetalRenderer
         // Draw the single mask quad (TL, TR, BR, BL). The border ring is shaded by the SDF, and the
         // current clip is applied per-vertex (the border honours any enclosing parent mask).
         DrawQuads(vertices[..4], WhitePixel);
+        FlushBatch();
 
         // Leave the border pass so subsequent draws render normally.
         maskState.IsBorder = 0;
@@ -506,6 +645,10 @@ public sealed class MetalRenderer : IMetalRenderer
     {
         if (color.A == 0 || quadVertices.Length < 4)
             return;
+
+        // As in drawBorder: the MaskBlock upload (and the glow blend swap) would otherwise apply
+        // retroactively to pending geometry.
+        FlushBatch();
 
         var previousBlend = currentBlendMode;
         if (glow)
@@ -524,6 +667,7 @@ public sealed class MetalRenderer : IMetalRenderer
         uploadMaskState();
 
         DrawQuads(quadVertices[..4], WhitePixel);
+        FlushBatch();
 
         maskState.IsEdgeEffect = 0;
         uploadMaskState();
@@ -544,6 +688,11 @@ public sealed class MetalRenderer : IMetalRenderer
     {
         if (blendingMode == currentBlendMode)
             return;
+
+        // Blend is baked into the pipeline, and the pipeline applies to every draw the encoder has not
+        // yet issued so the pending batch must go out under the old mode first.
+        stat_state_change_flushes.Value++;
+        FlushBatch();
 
         currentBlendMode = blendingMode;
         bindPipeline();
@@ -566,6 +715,9 @@ public sealed class MetalRenderer : IMetalRenderer
     {
         if (device == nint.Zero || frameBuffer is not MetalFrameBuffer metalFrameBuffer)
             return;
+
+        // Anything batched so far targets the previous render target — flush it there first.
+        FlushBatch();
 
         frameBufferStack.Push(new FrameBufferState
         {
@@ -614,6 +766,9 @@ public sealed class MetalRenderer : IMetalRenderer
         if (device == nint.Zero || frameBufferStack.Count == 0)
             throw new InvalidOperationException($"{nameof(UnbindFrameBuffer)} was called without a matching {nameof(BindFrameBuffer)}.");
 
+        // Pending geometry belongs to the framebuffer — draw it before the pass is closed.
+        FlushBatch();
+
         SakuraMetalNative.sakura_metal_end_offscreen(device);
 
         var state = frameBufferStack.Pop();
@@ -648,6 +803,9 @@ public sealed class MetalRenderer : IMetalRenderer
     /// </summary>
     internal void UseShader(MetalShader shader)
     {
+        // Pending geometry was recorded for the main shader's pipeline; draw it before switching.
+        FlushBatch();
+
         currentShader = shader;
         bindPipeline();
     }
@@ -662,9 +820,13 @@ public sealed class MetalRenderer : IMetalRenderer
         bindPipeline();
         uploadProjection();
 
-        maskState.IsMasking = 0;
         maskState.IsBorder = 0;
         uploadMaskState();
+
+        // The custom pass bound its own source texture(s) to slots 0..2 without going through
+        // prepareTexture, so the CPU mirror no longer describes the encoder. No re-padding needed —
+        // the pass replaced bindings rather than clearing them, so every slot still holds something.
+        resetTextureSlots();
     }
 
     /// <summary>
@@ -676,6 +838,10 @@ public sealed class MetalRenderer : IMetalRenderer
     {
         if (device == nint.Zero || vertices.Length == 0)
             return;
+
+        // This draws immediately, so anything still batched would end up *behind* it. Callers already
+        // flush (VideoDrawNode, runShaderPass), but the ordering guarantee belongs here.
+        FlushBatch();
 
         if (vertices.Length == 4)
         {
@@ -690,11 +856,25 @@ public sealed class MetalRenderer : IMetalRenderer
 
             fixed (SakuraVertex* ptr = tri)
                 SakuraMetalNative.sakura_metal_draw_triangles(device, ptr, 6, SakuraVertex.Size);
+
+            rawDrawDone();
             return;
         }
 
         fixed (SakuraVertex* ptr = vertices)
             SakuraMetalNative.sakura_metal_draw_triangles(device, ptr, vertices.Length, SakuraVertex.Size);
+
+        rawDrawDone();
+    }
+
+    /// <summary>
+    /// Bookkeeping after a raw draw: the caller bound its own textures (the effect source, or the three
+    /// video planes) straight onto the encoder, so the slot mirror no longer describes it.
+    /// </summary>
+    private void rawDrawDone()
+    {
+        stat_draw_calls.Value++;
+        resetTextureSlots();
     }
 
     #endregion
@@ -705,9 +885,32 @@ public sealed class MetalRenderer : IMetalRenderer
 
     public void ScheduleTextureUpload(Action upload, long approximateBytes) => textureUploadQueue.Enqueue(upload, approximateBytes);
 
-    public void FlushBatch()
+    /// <summary>
+    /// Uploads the pending batch and issues a single <c>drawPrimitives</c> for it. Load-bearing: every
+    /// state change the recorded geometry depends on (blend mode, render target, mask block, shader)
+    /// must call this first, or geometry recorded under one state is drawn under another.
+    /// </summary>
+    /// <remarks>
+    /// The texture slot assignment deliberately survives a flush. The encoder's argument table is
+    /// unchanged by a draw, so a texture already bound to slot 3 is still there for the next batch —
+    /// only an encoder switch (or a raw pass binding textures behind our back) invalidates it, and
+    /// those call <see cref="resetTextureSlots"/> themselves. GL resets on every flush because its
+    /// slot tracking is cheap to rebuild; here, not resetting is what keeps the bind count down.
+    /// </remarks>
+    public unsafe void FlushBatch()
     {
-        // Metal draws immediately (no batch), so there's nothing buffered to flush.
+        if (device == nint.Zero || batch == null || batch.IsEmpty)
+            return;
+
+        int vertexCount = batch.VertexCount;
+
+        fixed (SakuraVertex* ptr = batch.Vertices)
+            SakuraMetalNative.sakura_metal_draw_triangles(device, ptr, vertexCount, SakuraVertex.Size);
+
+        stat_draw_calls.Value++;
+        stat_vertices_drawn.Value += vertexCount;
+
+        batch.Reset();
     }
 
     public INativeVideoTexture CreateVideoTexture(int width, int height) => new MetalVideoTexture(device, width, height);

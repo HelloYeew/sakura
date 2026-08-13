@@ -11,15 +11,14 @@ using SakuraVertex = Sakura.Framework.Graphics.Rendering.Vertex.Vertex;
 namespace Sakura.Framework.Graphics.Rendering.Batches;
 
 /// <summary>
-/// An indexed batch for rendering quads and triangle lists in submission order.
-/// Quads contribute 4 vertices + 6 indices (a 33% vertex-bandwidth saving over raw
-/// triangle pairs); arbitrary triangle lists contribute sequential indices.
-/// Buffers are orphaned on every flush so the GPU never stalls waiting on a region
-/// it is still reading from the previous draw.
+/// The OpenGL half of an indexed batch: the VAO/VBO/EBO, the static quad index buffer, and the
+/// upload + <c>DrawElements</c> that consumes a <see cref="VertexBatch"/>. The CPU-side accumulation
+/// itself lives in <see cref="VertexBatch"/> and is shared with the other backends.
+/// Buffers are orphaned on every flush so the GPU never stalls waiting on a region it is still
+/// reading from the previous draw.
 /// </summary>
 public class TriangleBatch : IDisposable
 {
-    private static readonly GlobalStatistic<int> stat_buffer_full_flushes = GlobalStatistics.Get<int>("Renderer", "Buffer Full Flushes");
     private static readonly GlobalStatistic<int> stat_draw_calls = GlobalStatistics.Get<int>("Renderer", "Draw Calls");
     private static readonly GlobalStatistic<int> stat_vertices_drawn = GlobalStatistics.Get<int>("Renderer", "Vertices Drawn");
 
@@ -30,12 +29,8 @@ public class TriangleBatch : IDisposable
 
     private readonly uint quadEbo;
 
-    private bool batchHasNonQuad;
+    private readonly VertexBatch batch;
 
-    private readonly SakuraVertex[] vertices;
-    private readonly uint[] indices;
-    private int vertexCount;
-    private int indexCount;
     private readonly int vertexSize;
     private readonly int maxVertices;
     private readonly int maxIndices;
@@ -45,11 +40,9 @@ public class TriangleBatch : IDisposable
         this.gl = gl;
         vertexSize = Marshal.SizeOf<SakuraVertex>();
         this.maxVertices = maxVertices;
-        // Quads use 6 indices per 4 vertices (1.5×); triangle lists use 1 index per vertex.
-        maxIndices = maxVertices * 3 / 2;
 
-        vertices = new SakuraVertex[this.maxVertices];
-        indices = new uint[maxIndices];
+        batch = new VertexBatch(maxVertices, () => Draw());
+        maxIndices = batch.MaxIndices;
 
         vao = gl.GenVertexArray();
         vbo = gl.GenBuffer();
@@ -100,8 +93,10 @@ public class TriangleBatch : IDisposable
 
         // Fill the static quad index buffer once. Done with no VAO bound so it doesn't disturb the
         // VAO's element-buffer binding, Draw() explicitly binds whichever EBO it needs each flush.
+        //
+        // This stays GL-specific: the shared piece is the accumulation, not the index strategy.
         int maxQuads = maxVertices / 4;
-        var quadIndices = new uint[maxQuads * 6];
+        uint[] quadIndices = new uint[maxQuads * 6];
         for (int q = 0; q < maxQuads; q++)
         {
             uint baseIndex = (uint)(q * 4);
@@ -120,69 +115,17 @@ public class TriangleBatch : IDisposable
         gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, 0);
     }
 
-    private void ensureCapacity(int vertexSpace, int indexSpace)
-    {
-        if (vertexCount + vertexSpace > maxVertices || indexCount + indexSpace > maxIndices)
-        {
-            stat_buffer_full_flushes.Value++;
-            Draw();
-        }
-    }
-
     /// <summary>
     /// Adds a quad of exactly 4 vertices ordered top-left, top-right, bottom-right, bottom-left.
     /// </summary>
     public void AddQuad(ReadOnlySpan<SakuraVertex> quad, float textureIndex = 0f, Vector4? clipData = null, float clipShearX = 0f, float clipRadius = 0f)
-    {
-        ensureCapacity(4, 6);
-
-        Vector4 actualClipData = clipData ?? new Vector4(0, 0, -1, -1);
-
-        uint baseIndex = (uint)vertexCount;
-
-        for (int i = 0; i < 4; i++)
-        {
-            var v = quad[i];
-            v.TexIndex = textureIndex;
-            v.ClipData = actualClipData;
-            v.ClipShearX = clipShearX;
-            v.ClipRadius = clipRadius;
-            vertices[vertexCount++] = v;
-        }
-
-        indices[indexCount++] = baseIndex;
-        indices[indexCount++] = baseIndex + 1;
-        indices[indexCount++] = baseIndex + 2;
-        indices[indexCount++] = baseIndex + 2;
-        indices[indexCount++] = baseIndex + 3;
-        indices[indexCount++] = baseIndex;
-    }
+        => batch.AddQuad(quad, textureIndex, clipData, clipShearX, clipRadius);
 
     /// <summary>
     /// Adds an arbitrary triangle list (sequentially indexed).
     /// </summary>
     public void AddRange(ReadOnlySpan<SakuraVertex> newVertices, float textureIndex = 0f, Vector4? clipData = null, float clipShearX = 0f, float clipRadius = 0f)
-    {
-        // Triangle-list vertices break the quad alignment, so this flush must use the dynamic index buffer.
-        batchHasNonQuad = true;
-
-        // If no clip rect is provided, use an invalid rect so let shader ignore it
-        Vector4 actualClipData = clipData ?? new Vector4(0, 0, -1, -1);
-
-        foreach (var vertex in newVertices)
-        {
-            ensureCapacity(1, 1);
-
-            var v = vertex;
-            v.TexIndex = textureIndex;
-            v.ClipData = actualClipData;
-            v.ClipShearX = clipShearX;
-            v.ClipRadius = clipRadius;
-
-            indices[indexCount++] = (uint)vertexCount;
-            vertices[vertexCount++] = v;
-        }
-    }
+        => batch.AddRange(newVertices, textureIndex, clipData, clipShearX, clipRadius);
 
     /// <summary>
     /// Uploads the provided vertices directly into the VBO and issues a non-indexed
@@ -216,6 +159,9 @@ public class TriangleBatch : IDisposable
     /// </summary>
     public unsafe int Draw()
     {
+        int indexCount = batch.IndexCount;
+        int vertexCount = batch.VertexCount;
+
         if (indexCount == 0)
         {
             return 0;
@@ -229,18 +175,18 @@ public class TriangleBatch : IDisposable
         gl.BindBuffer(BufferTargetARB.ArrayBuffer, vbo);
         gl.BufferData(BufferTargetARB.ArrayBuffer, (nuint)(maxVertices * vertexSize), null, BufferUsageARB.DynamicDraw);
 
-        fixed (SakuraVertex* ptr = vertices)
+        fixed (SakuraVertex* ptr = batch.Vertices)
         {
             gl.BufferSubData(BufferTargetARB.ArrayBuffer, 0, (nuint)(vertexCount * vertexSize), ptr);
         }
 
-        if (batchHasNonQuad)
+        if (batch.HasNonQuad)
         {
             // upload the CPU-built indices into the dynamic buffer.
             gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, ebo);
             gl.BufferData(BufferTargetARB.ElementArrayBuffer, (nuint)(maxIndices * sizeof(uint)), null, BufferUsageARB.DynamicDraw);
 
-            fixed (uint* ptr = indices)
+            fixed (uint* ptr = batch.Indices)
             {
                 gl.BufferSubData(BufferTargetARB.ElementArrayBuffer, 0, (nuint)(indexCount * sizeof(uint)), ptr);
             }
@@ -257,11 +203,8 @@ public class TriangleBatch : IDisposable
         stat_draw_calls.Value++;
         stat_vertices_drawn.Value += vertexCount;
 
-        int count = vertexCount;
-        vertexCount = 0;
-        indexCount = 0;
-        batchHasNonQuad = false;
-        return count;
+        batch.Reset();
+        return vertexCount;
     }
 
     private bool disposed;

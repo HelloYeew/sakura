@@ -41,6 +41,11 @@ static const NSUInteger SAKURA_METAL_VERTEX_BUFFER_INDEX = 30;
 // can stall; >3 adds latency for no gain).
 #define SAKURA_METAL_MAX_FRAMES_IN_FLIGHT 3
 
+// How many one-off overflow vertex buffers a single frame may allocate when its ring slot is too
+// small (see the overflow notes on SakuraMetalDevice). In steady state this is zero — the ring grows
+// to the previous frame's peak — so this only has to cover a startup frame or a sudden spike.
+#define SAKURA_METAL_MAX_OVERFLOW_BUFFERS 8
+
 struct SakuraMetalPipeline
 {
     __unsafe_unretained id<MTLRenderPipelineState> state;
@@ -103,10 +108,19 @@ struct SakuraMetalDevice
     //
     // Within a frame the active buffer never reallocates (that would strand already-recorded draws on a
     // freed buffer — a use-after-free). It is grown only at the START of a frame, sized to the previous
-    // frame's peak; a draw that would overflow the current frame's buffer is skipped, and the recorded
-    // peak ensures next time round the ring the buffer is large enough.
+    // frame's peak; a draw that would overflow the current frame's buffer gets its own one-off
+    // OVERFLOW BUFFER (see below), and the recorded peak ensures next time round the ring the buffer is
+    // large enough.
     __unsafe_unretained id<MTLBuffer> ringBuffers[SAKURA_METAL_MAX_FRAMES_IN_FLIGHT];
     NSUInteger ringCapacity[SAKURA_METAL_MAX_FRAMES_IN_FLIGHT]; // allocated size of each ring buffer
+
+    // the first frame (the ring is
+    // still empty), and spikes above the 1.5x headroom. Dropping such a draw was survivable when a
+    // draw was one quad; now that the host batches, a dropped draw is most of a frame's geometry, so
+    // it is served from a dedicated buffer instead. Released in end_frame — the command buffer retains
+    // the resources its encoders reference, so the GPU can still be reading them.
+    __unsafe_unretained id<MTLBuffer> overflowBuffers[SAKURA_METAL_MAX_OVERFLOW_BUFFERS];
+    int overflowCount;
     __unsafe_unretained dispatch_semaphore_t frameSemaphore; // limits CPU to MAX_FRAMES_IN_FLIGHT ahead of GPU
     BOOL semaphoreWaitedThisFrame;             // did begin_frame take the semaphore? (balance the signal)
     int frameIndex;                            // increments per frame; ring slot = frameIndex % count
@@ -258,6 +272,11 @@ void sakura_metal_destroy(SakuraMetalDevice* device)
         if (device->ringBuffers[i])
             CFRelease((__bridge CFTypeRef)device->ringBuffers[i]);
 
+    // Defensive: end_frame clears these, but destroy may land on a frame that never ended.
+    for (int i = 0; i < device->overflowCount; i++)
+        if (device->overflowBuffers[i])
+            CFRelease((__bridge CFTypeRef)device->overflowBuffers[i]);
+
     if (device->frameSemaphore)
         CFRelease((__bridge CFTypeRef)device->frameSemaphore);
 
@@ -384,6 +403,7 @@ void sakura_metal_begin_frame(SakuraMetalDevice* device, float r, float g, float
     // Start this frame's vertex allocations from the top of the selected buffer.
     device->vertexBufferOffset = 0;
     device->vertexBytesThisFrame = 0;
+    device->overflowCount = 0;
 
     // Grow THIS slot's buffer ONCE here (never mid-frame) to fit the previous frame's peak usage, so no
     // draw recorded this frame sees a reallocation. Headroom (1.5x) absorbs frame-to-frame growth. Each
@@ -443,6 +463,18 @@ void sakura_metal_end_frame(SakuraMetalDevice* device)
 
     if (top->commandBuffer)
         [top->commandBuffer commit];
+
+    // Drop this frame's one-off overflow buffers. Safe after commit: an encoder retains the resources
+    // it references for as long as the command buffer needs them.
+    for (int i = 0; i < device->overflowCount; i++)
+    {
+        if (device->overflowBuffers[i])
+        {
+            CFRelease((__bridge CFTypeRef)device->overflowBuffers[i]);
+            device->overflowBuffers[i] = nil;
+        }
+    }
+    device->overflowCount = 0;
 
     // Release the drawable target's objects (balances the CFRetains in begin_frame / the last reopen).
     if (top->encoder) {
@@ -807,10 +839,44 @@ void sakura_metal_draw_triangles(SakuraMetalDevice* device, const void* data, in
 
     NSUInteger drawOffset = device->vertexBufferOffset;
 
-    // If this frame's buffer can't fit the draw (e.g. first frame, or a sudden spike), skip drawing
-    // it this frame. begin_frame will have grown the buffer by next frame thanks to the peak above.
+    // If this frame's ring slot can't fit the draw (the first frame, or a spike past the 1.5x
+    // headroom), serve it from a one-off buffer rather than dropping it. The host batches, so a
+    // dropped draw is not one quad any more — it is most of a frame's geometry, and visibly missing.
+    // begin_frame will have grown the ring by next frame thanks to the peak recorded above.
     if (device->vertexBuffer == nil || drawOffset + byteLength > device->vertexBufferCapacity)
+    {
+        if (device->overflowCount >= SAKURA_METAL_MAX_OVERFLOW_BUFFERS)
+        {
+            NSLog(@"sakura-metal: dropping a %lu-byte draw; %d overflow buffers already allocated this frame",
+                  (unsigned long)byteLength, device->overflowCount);
+            return;
+        }
+
+        id<MTLBuffer> overflow = [device->device newBufferWithLength:byteLength
+                                                            options:MTLResourceStorageModeShared];
+        if (overflow == nil)
+        {
+            NSLog(@"sakura-metal: dropping a %lu-byte draw; overflow buffer allocation failed",
+                  (unsigned long)byteLength);
+            return;
+        }
+
+        // Released in end_frame; the command buffer retains what its encoders reference, so the GPU
+        // can still be reading this after the release.
+        device->overflowBuffers[device->overflowCount++] = overflow;
+        CFRetain((__bridge CFTypeRef)overflow);
+
+        memcpy(overflow.contents, data, byteLength);
+
+        [device->encoder setVertexBuffer:overflow
+                                  offset:0
+                                 atIndex:SAKURA_METAL_VERTEX_BUFFER_INDEX];
+
+        [device->encoder drawPrimitives:MTLPrimitiveTypeTriangle
+                            vertexStart:0
+                            vertexCount:(NSUInteger)vertexCount];
         return;
+    }
 
     memcpy((char*)device->vertexBuffer.contents + drawOffset, data, byteLength);
     device->vertexBufferOffset += byteLength;
