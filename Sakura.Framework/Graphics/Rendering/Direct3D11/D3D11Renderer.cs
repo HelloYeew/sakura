@@ -5,12 +5,14 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using Sakura.Framework.Graphics.Rendering.Batches;
 using Sakura.Framework.Graphics.Rendering.Uniforms;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.IO;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
+using Sakura.Framework.Statistic;
 using Sakura.Framework.Timing;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
@@ -27,6 +29,36 @@ namespace Sakura.Framework.Graphics.Rendering.Direct3D11;
 /// </summary>
 public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 {
+    private static readonly GlobalStatistic<int> stat_draw_calls = GlobalStatistics.Get<int>("Renderer", "Draw Calls");
+    private static readonly GlobalStatistic<int> stat_vertices_drawn = GlobalStatistics.Get<int>("Renderer", "Vertices Drawn");
+    private static readonly GlobalStatistic<int> stat_slot_exhaustion_flushes = GlobalStatistics.Get<int>("Renderer", "Slot Exhaustion Flushes");
+    private static readonly GlobalStatistic<int> stat_state_change_flushes = GlobalStatistics.Get<int>("Renderer", "State Change Flushes");
+
+    /// <summary>
+    /// The live renderer instance, for static notifications (texture deletion). Effectively a
+    /// singleton, only one D3D11 renderer exists per process.
+    /// </summary>
+    private static D3D11Renderer instance;
+
+    /// <summary>
+    /// Must be called whenever a texture's shader resource view is released. COM addresses are
+    /// recycled, so a new SRV can land on the address of a dead one and if the slot mirror still maps
+    /// that address to a slot, the renderer would skip the bind and draw with whatever now occupies it.
+    /// Draw thread only, same as the release itself.
+    /// </summary>
+    internal static void NotifyTextureDeleted(nint handle)
+    {
+        var renderer = instance;
+        if (renderer == null || handle == nint.Zero)
+            return;
+
+        for (int i = 0; i < renderer.boundTextureHandles.Length; i++)
+        {
+            if (renderer.boundTextureHandles[i] == handle)
+                renderer.boundTextureHandles[i] = -1; // never matches a live SRV
+        }
+    }
+
     private ID3D11Device device;
     private ID3D11DeviceContext context;
 
@@ -69,10 +101,29 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     private const int projection_cb_slot = 0;
     private const int mask_cb_slot = 1;
 
-    // Matches u_Textures[] in shader.frag. D3D11 still draws one texture at slot 0 and forces
-    // TexIndex 0; the remaining slots are padded with the white SRV purely so the shader's declared
-    // array is fully bound.
+    // Matches u_Textures[] in shader.frag: the batch assigns a slot per distinct texture and stamps the
+    // index into every vertex. All 16 are padded with the white SRV at frame start so the shader's
+    // declared array is fully bound whatever the batch ends up using.
     private const int texture_slot_count = 16;
+
+    /// <summary>
+    /// Vertex capacity of <see cref="batch"/>, matching the GL batch (12000 vertices), i.e., 3000 quads
+    /// (indexed, 4 vertices each) before a capacity flush.
+    /// </summary>
+    private const int max_batch_vertices = 1000 * 12;
+
+    /// <summary>
+    /// CPU mirror of the pixel stage's shader-resource slots, dense from 0. The pixel-stage bindings
+    /// survive a draw and a render-target switch, so this only needs clearing when something binds
+    /// behind the renderer's back (the raw custom-shader passes, and <see cref="rebindFrameState"/>).
+    /// </summary>
+    private readonly nint[] boundTextureHandles = new nint[texture_slot_count];
+    private int boundTextureCount;
+
+    /// <summary>
+    /// The frame's pending geometry, indexed (see <see cref="quadIndexBuffer"/>).
+    /// </summary>
+    private VertexBatch batch;
 
     private D3D11Shader mainShader;
     private D3D11Shader currentShader;
@@ -90,7 +141,23 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     private ID3D11Buffer vertexBuffer;
     private int vertexBufferCapacity;
 
-    // White-pixel SRVs bound to all 8 texture slots so the shader's u_Textures[] array is fully bound.
+    /// <summary>
+    /// Immutable index buffer holding the quad pattern (0,1,2, 2,3,0 per quad) for the whole batch
+    /// capacity, mirroring GL's <c>quadEbo</c>. A batch of nothing but quads draws straight from this,
+    /// so the common flush uploads vertices only.
+    /// </summary>
+    private ID3D11Buffer quadIndexBuffer;
+
+    /// <summary>
+    /// Dynamic index buffer for a batch that contains a triangle list (see
+    /// <see cref="VertexBatch.HasNonQuad"/>), whose indices don't follow the static quad pattern.
+    /// </summary>
+    private ID3D11Buffer dynamicIndexBuffer;
+
+    // White-pixel SRVs bound to all texture_slot_count slots in one call, so the shader's u_Textures[]
+    // array is fully bound whatever the batch ends up assigning. Note this padding is not counted by
+    // TextureBindTracker (it doesn't go through D3D11Texture.Bind), unlike Metal's equivalent — so the
+    // two backends' bind figures aren't directly comparable.
     private ID3D11ShaderResourceView[] whiteSrvs;
 
     // No-clip state injected into every vertex, PushMask/PopMask maintain the stack.
@@ -98,8 +165,6 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     private readonly Stack<ClipState> clipStack = new();
 
     private MaskBlock maskState;
-
-    private SakuraVertex[] drawScratch = new SakuraVertex[256];
 
     // Currently-bound render target + viewport, so BindFrameBuffer can save/restore across nesting.
     private ID3D11RenderTargetView currentRtv;
@@ -157,6 +222,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         if (graphicsSurface is not IWin32GraphicsSurface win32Surface)
             throw new InvalidOperationException($"{nameof(D3D11Renderer)} requires an {nameof(IWin32GraphicsSurface)}.");
 
+        instance = this;
         windowHandle = win32Surface.WindowHandle;
 
         var flags = DeviceCreationFlags.BgraSupport;
@@ -182,6 +248,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         createConstantBuffers();
         createMainShader();
         createWhitePixel();
+        createBatch();
     }
 
     private bool tryCreateDevice(DeviceCreationFlags flags, FeatureLevel[] featureLevels)
@@ -402,6 +469,36 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
             whiteSrvs[i] = white.ShaderResourceView;
     }
 
+    private unsafe void createBatch()
+    {
+        batch = new VertexBatch(max_batch_vertices, FlushBatch);
+
+        // Sized to the batch's capacity so a flush never has to reallocate.
+        ensureVertexCapacity(max_batch_vertices);
+
+        dynamicIndexBuffer = device.CreateBuffer(new BufferDescription(
+            (uint)(batch.MaxIndices * sizeof(uint)), BindFlags.IndexBuffer, ResourceUsage.Dynamic, CpuAccessFlags.Write));
+
+        // The static quad pattern, filled once. Immutable: the contents are the same every frame, so an
+        // all-quad batch (the overwhelming majority) uploads vertices only.
+        int maxQuads = max_batch_vertices / 4;
+        uint[] quadIndices = new uint[maxQuads * 6];
+        for (int q = 0; q < maxQuads; q++)
+        {
+            uint baseIndex = (uint)(q * 4);
+            int o = q * 6;
+            quadIndices[o + 0] = baseIndex;
+            quadIndices[o + 1] = baseIndex + 1;
+            quadIndices[o + 2] = baseIndex + 2;
+            quadIndices[o + 3] = baseIndex + 2;
+            quadIndices[o + 4] = baseIndex + 3;
+            quadIndices[o + 5] = baseIndex;
+        }
+
+        quadIndexBuffer = device.CreateBuffer(quadIndices, new BufferDescription(
+            (uint)(quadIndices.Length * sizeof(uint)), BindFlags.IndexBuffer, ResourceUsage.Immutable));
+    }
+
     #endregion
 
     public void Clear()
@@ -469,7 +566,10 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         context.VSSetConstantBuffer(projection_cb_slot, projectionCb);
         context.PSSetConstantBuffer(mask_cb_slot, maskCb);
         context.PSSetSampler(0, linearClampSampler);
+
+        // Every declared slot gets a valid view; the batch overwrites the ones it assigns.
         context.PSSetShaderResources(0, whiteSrvs);
+        resetTextureSlotsToWhite();
 
         context.RSSetState(rasterizerState);
         context.OMSetDepthStencilState(depthStencilOff, 0);
@@ -525,8 +625,17 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         if (device == null || swapChain == null)
             return;
 
+        stat_draw_calls.Value = 0;
+        stat_vertices_drawn.Value = 0;
+        stat_slot_exhaustion_flushes.Value = 0;
+        stat_state_change_flushes.Value = 0;
+
         rootNode?.Draw(this);
 
+        // Anything still pending belongs to this frame — issue it before the present.
+        FlushBatch();
+
+        // After the final flush, so the batch's binds land in this frame's count.
         TextureBindTracker.EndFrame();
 
         // VSync -> sync interval 1, no flags. Uncapped -> interval 0, tear (if the output supports it)
@@ -549,54 +658,84 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
     #region Draw path
 
-    public unsafe void DrawVertices(ReadOnlySpan<SakuraVertex> vertices, Texture texture)
+    /// <summary>
+    /// Resolves a texture to a batch slot index, binding it (and flushing on slot exhaustion) as
+    /// required. Mirrors <c>GLRenderer.prepareTexture</c>, keyed on the shader resource view.
+    /// </summary>
+    private float prepareTexture(Texture texture)
+    {
+        var native = texture?.BackendTexture as D3D11Texture;
+
+        // A texture with no D3D11 backing (e.g., a video texture, drawn by VideoDrawNode itself) or one
+        // whose pixels haven't landed yet samples white. D3D11Texture.Bind applies that fallback
+        // internally, so it has to be resolved here too, otherwise the slot would be keyed by a view
+        // that is not what ends up bound to it.
+        if (native == null || !native.Available)
+            native = D3D11Texture.WhitePixel;
+
+        if (native == null)
+            return 0f;
+
+        nint handle = native.Handle;
+
+        for (int i = 0; i < boundTextureCount; i++)
+        {
+            if (boundTextureHandles[i] == handle)
+                return i;
+        }
+
+        if (boundTextureCount < texture_slot_count)
+        {
+            int slot = boundTextureCount;
+            // D3D11Texture.Bind counts the bind itself, so every backend's figure comes from the same place.
+            native.Bind(slot);
+            boundTextureHandles[slot] = handle;
+            boundTextureCount++;
+            return slot;
+        }
+
+        // All slots taken: flush and start a fresh slot set.
+        stat_slot_exhaustion_flushes.Value++;
+        FlushBatch();
+        resetTextureSlots();
+
+        native.Bind(0);
+        boundTextureHandles[0] = handle;
+        boundTextureCount = 1;
+        return 0;
+    }
+
+    public void DrawVertices(ReadOnlySpan<SakuraVertex> vertices, Texture texture)
     {
         if (device == null || vertices.Length == 0)
             return;
 
-        // Bind the draw's texture to slot 0 (falls back to white pixel via D3D11Texture.Bind),
-        // or the white pixel directly for non-D3D11 (e.g. headless proxy) textures.
-        if (texture?.BackendTexture is D3D11Texture native)
-            native.Bind(0);
-        else
-            D3D11Texture.WhitePixel?.Bind(0);
+        float textureIndex = prepareTexture(texture);
 
-        // Force TexIndex 0 (single texture bound at slot 0) and inject the current clip into each
-        // vertex, mirroring the Metal path (no CPU batch, so draw nodes hand over default clip data).
-        if (drawScratch.Length < vertices.Length)
-            drawScratch = new SakuraVertex[Math.Max(vertices.Length, drawScratch.Length * 2)];
-
-        for (int i = 0; i < vertices.Length; i++)
-        {
-            drawScratch[i] = vertices[i];
-            drawScratch[i].TexIndex = 0f;
-            drawScratch[i].ClipData = currentClip.ClipData;
-            drawScratch[i].ClipShearX = currentClip.ShearX;
-            drawScratch[i].ClipRadius = currentClip.Radius;
-        }
-
-        uploadAndDraw(drawScratch.AsSpan(0, vertices.Length));
+        // The clip state is injected per-vertex on the way into the batch (the pixel shader's
+        // applyClipping reads it from the interpolators), exactly as GL's batch does.
+        batch.AddRange(vertices, textureIndex, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
     }
 
     public void DrawQuads(ReadOnlySpan<SakuraVertex> vertices, Texture texture)
     {
-        Span<SakuraVertex> tri = stackalloc SakuraVertex[6];
+        if (device == null)
+            return;
+
+        float textureIndex = prepareTexture(texture);
+
         for (int i = 0; i + 4 <= vertices.Length; i += 4)
-        {
-            tri[0] = vertices[i];
-            tri[1] = vertices[i + 1];
-            tri[2] = vertices[i + 2];
-            tri[3] = vertices[i + 2];
-            tri[4] = vertices[i + 3];
-            tri[5] = vertices[i];
-            DrawVertices(tri, texture);
-        }
+            batch.AddQuad(vertices.Slice(i, 4), textureIndex, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
     }
 
-    public unsafe void DrawVerticesRaw(ReadOnlySpan<SakuraVertex> vertices)
+    public void DrawVerticesRaw(ReadOnlySpan<SakuraVertex> vertices)
     {
         if (device == null || vertices.Length == 0)
             return;
+
+        // This draws immediately, so anything still batched would end up *behind* it. Callers already
+        // flush (VideoDrawNode, runShaderPass), but the ordering guarantee belongs here.
+        FlushBatch();
 
         if (vertices.Length == 4)
         {
@@ -608,10 +747,58 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
             tri[4] = vertices[3];
             tri[5] = vertices[0];
             uploadAndDraw(tri);
-            return;
+        }
+        else
+        {
+            uploadAndDraw(vertices);
         }
 
-        uploadAndDraw(vertices);
+        // The caller bound its own textures (the effect source, or the three video planes) straight
+        // onto the pixel stage, so the slot mirror no longer describes it.
+        resetTextureSlots();
+    }
+
+    /// <summary>
+    /// Uploads and draws the pending batch with a single <c>DrawIndexed</c>. Load-bearing: every state
+    /// change the recorded geometry depends on (blend state, render target, mask constant buffer,
+    /// shader) must call this first, or geometry recorded under one state is drawn under another.
+    /// </summary>
+    public unsafe void FlushBatch()
+    {
+        if (device == null || batch == null || batch.IsEmpty)
+            return;
+
+        int stride = SakuraVertex.Size;
+        int vertexCount = batch.VertexCount;
+        int indexCount = batch.IndexCount;
+
+        MappedSubresource mappedVertices = context.Map(vertexBuffer, 0, MapMode.WriteDiscard, Vortice.Direct3D11.MapFlags.None);
+        fixed (SakuraVertex* src = batch.Vertices)
+            Buffer.MemoryCopy(src, (void*)mappedVertices.DataPointer, (long)vertexBufferCapacity * stride, (long)vertexCount * stride);
+        context.Unmap(vertexBuffer, 0);
+
+        if (batch.HasNonQuad)
+        {
+            MappedSubresource mappedIndices = context.Map(dynamicIndexBuffer, 0, MapMode.WriteDiscard, Vortice.Direct3D11.MapFlags.None);
+            fixed (uint* src = batch.Indices)
+                Buffer.MemoryCopy(src, (void*)mappedIndices.DataPointer, (long)batch.MaxIndices * sizeof(uint), (long)indexCount * sizeof(uint));
+            context.Unmap(dynamicIndexBuffer, 0);
+
+            context.IASetIndexBuffer(dynamicIndexBuffer, Format.R32_UInt, 0);
+        }
+        else
+        {
+            // The static quad buffer already holds the exact pattern for indices [0, indexCount).
+            context.IASetIndexBuffer(quadIndexBuffer, Format.R32_UInt, 0);
+        }
+
+        context.IASetVertexBuffer(0, vertexBuffer, (uint)stride, 0);
+        context.DrawIndexed((uint)indexCount, 0, 0);
+
+        stat_draw_calls.Value++;
+        stat_vertices_drawn.Value += vertexCount;
+
+        batch.Reset();
     }
 
     private unsafe void uploadAndDraw(ReadOnlySpan<SakuraVertex> vertices)
@@ -626,6 +813,35 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
         context.IASetVertexBuffer(0, vertexBuffer, (uint)stride, 0);
         context.Draw((uint)vertices.Length, 0);
+
+        stat_draw_calls.Value++;
+        stat_vertices_drawn.Value += vertices.Length;
+    }
+
+    /// <summary>
+    /// Drops the CPU mirror of the pixel stage's shader-resource slots. The views themselves stay bound
+    /// and are simply re-tracked (or replaced) on their next use.
+    /// </summary>
+    private void resetTextureSlots()
+    {
+        boundTextureCount = 0;
+        Array.Clear(boundTextureHandles, 0, boundTextureHandles.Length);
+    }
+
+    /// <summary>
+    /// Drops the slot mirror and records the white pixel as the slot-0 occupant, matching the
+    /// <c>PSSetShaderResources(0, whiteSrvs)</c> that <see cref="rebindFrameState"/> has just issued.
+    /// Solid-color drawables then cost no bind at all.
+    /// </summary>
+    private void resetTextureSlotsToWhite()
+    {
+        resetTextureSlots();
+
+        if (D3D11Texture.WhitePixel == null)
+            return;
+
+        boundTextureHandles[0] = D3D11Texture.WhitePixel.Handle;
+        boundTextureCount = 1;
     }
 
     private void ensureVertexCapacity(int vertexCount)
@@ -644,13 +860,12 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         if (blendingMode == currentBlendMode)
             return;
 
+        // The blend state applies at draw time, so the pending batch must go out under the old mode.
+        stat_state_change_flushes.Value++;
+        FlushBatch();
+
         currentBlendMode = blendingMode;
         context.OMSetBlendState(blendStates[(int)currentBlendMode]);
-    }
-
-    public void FlushBatch()
-    {
-        // Draws are issued immediately (no CPU batch), so nothing is buffered to flush.
     }
 
     public void RestoreMainShader()
@@ -658,7 +873,6 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         // A custom shader's SetUniformBlock rebinds its own CBs to VS b0 / PS b1, so restore the full
         // main-shader frame state (shader, CBs, sampler, textures) not just the projection content.
         currentShader = mainShader;
-        maskState.IsMasking = 0;
         maskState.IsBorder = 0;
         maskState.IsEdgeEffect = 0;
         rebindFrameState();
@@ -728,6 +942,10 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         if (borderThickness <= 0 || vertices.Length < 4)
             return;
 
+        // The MaskBlock upload below applies at draw time, so pending geometry has to be drawn under
+        // the previous mask state first.
+        FlushBatch();
+
         maskState.IsBorder = 1;
         maskState.MaskCenter = new Vector2(maskCenter.X, maskCenter.Y);
         maskState.MaskHalfSize = new Vector2(maskHalfSize.X, maskHalfSize.Y);
@@ -738,6 +956,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         uploadMaskState();
 
         DrawQuads(vertices[..4], WhitePixel);
+        FlushBatch();
 
         maskState.IsBorder = 0;
         uploadMaskState();
@@ -750,6 +969,10 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     {
         if (color.A == 0 || quadVertices.Length < 4)
             return;
+
+        // As in drawBorder: the MaskBlock upload (and the glow blend swap) would otherwise apply
+        // retroactively to pending geometry.
+        FlushBatch();
 
         var previousBlend = currentBlendMode;
         if (glow)
@@ -768,6 +991,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         uploadMaskState();
 
         DrawQuads(quadVertices[..4], WhitePixel);
+        FlushBatch();
 
         maskState.IsEdgeEffect = 0;
         uploadMaskState();
@@ -823,6 +1047,9 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         if (device == null || frameBuffer is not D3D11FrameBuffer fb)
             return;
 
+        // Anything batched so far targets the previous render target — flush it there first.
+        FlushBatch();
+
         frameBufferStack.Push(new FrameBufferState(currentRtv, currentViewportW, currentViewportH, projectionMatrix, currentClip));
 
         projectionMatrix = Matrix4x4.CreateOrthographicOffCenter(
@@ -840,6 +1067,9 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     {
         if (device == null || frameBufferStack.Count == 0)
             return;
+
+        // Pending geometry belongs to the framebuffer — draw it before switching away.
+        FlushBatch();
 
         var state = frameBufferStack.Pop();
         projectionMatrix = state.Projection;
@@ -864,6 +1094,11 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         projectionCb?.Dispose();
         maskCb?.Dispose();
         vertexBuffer?.Dispose();
+        quadIndexBuffer?.Dispose();
+        dynamicIndexBuffer?.Dispose();
+
+        if (instance == this)
+            instance = null;
 
         backBufferRtv?.Dispose();
         waitableSwapChain?.Dispose();
