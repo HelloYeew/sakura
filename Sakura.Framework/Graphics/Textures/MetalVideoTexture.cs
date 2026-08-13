@@ -30,6 +30,8 @@ public sealed class MetalVideoTexture : INativeVideoTexture
     public bool Available => Volatile.Read(ref available);
     private bool available;
 
+    public TextureBindCounter Binds { get; } = new TextureBindCounter();
+
     public int Width { get; }
     public int Height { get; }
 
@@ -70,6 +72,8 @@ public sealed class MetalVideoTexture : INativeVideoTexture
     /// </summary>
     public void BindPlanes(bool tiling)
     {
+        Binds.Record();
+
         int repeat = tiling ? 1 : 0;
         SakuraMetalNative.sakura_metal_set_fragment_texture_wrap(device, yHandle, 0, repeat);
         SakuraMetalNative.sakura_metal_set_fragment_texture_wrap(device, uHandle, 1, repeat);

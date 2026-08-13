@@ -24,6 +24,8 @@ public class GLTexture : INativeTexture
 
     public bool Available { get; private set; }
 
+    public TextureBindCounter Binds { get; } = new TextureBindCounter();
+
     private readonly GL gl;
     private bool disposed;
 
@@ -110,10 +112,15 @@ public class GLTexture : INativeTexture
         if (!Available || disposed || GLHandle == 0)
         {
             if (WhitePixel != null)
+            {
+                WhitePixel.Binds.Record();
                 gl.BindTexture(TextureTarget.Texture2D, WhitePixel.GLHandle);
+            }
+
             return;
         }
 
+        Binds.Record();
         gl.BindTexture(TextureTarget.Texture2D, GLHandle);
 
         if (mipmapsDirty)

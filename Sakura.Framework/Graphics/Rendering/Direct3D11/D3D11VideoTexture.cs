@@ -53,6 +53,8 @@ public sealed class D3D11VideoTexture : INativeVideoTexture
     public bool Available => Volatile.Read(ref available);
     private bool available;
 
+    public TextureBindCounter Binds { get; } = new TextureBindCounter();
+
     private bool disposed;
 
     /// <summary>
@@ -119,6 +121,8 @@ public sealed class D3D11VideoTexture : INativeVideoTexture
     /// </summary>
     public void BindPlanes(bool tiling)
     {
+        Binds.Record();
+
         var sampler = tiling ? repeatSampler : clampSampler;
 
         context.PSSetShaderResources(0, new[] { ySrv, uSrv, vSrv });

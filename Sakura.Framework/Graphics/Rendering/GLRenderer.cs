@@ -30,9 +30,7 @@ public class GLRenderer : IGLRenderer, IDisposable
     private static readonly GlobalStatistic<int> stat_draw_calls = GlobalStatistics.Get<int>("Renderer", "Draw Calls");
     private static readonly GlobalStatistic<int> stat_vertices_drawn = GlobalStatistics.Get<int>("Renderer", "Vertices Drawn");
     private static readonly GlobalStatistic<int> stat_shader_binds = GlobalStatistics.Get<int>("Renderer", "Shader Binds");
-    private static readonly GlobalStatistic<int> stat_texture_binds = GlobalStatistics.Get<int>("Renderer", "Texture Binds");
 
-    private static readonly GlobalStatistic<int> stat_texture_binds_last_frame = GlobalStatistics.Get<int>("Renderer", "Texture Binds (Last Frame)");
     private static readonly GlobalStatistic<int> stat_slot_exhaustion_flushes = GlobalStatistics.Get<int>("Renderer", "Slot Exhaustion Flushes");
     private static readonly GlobalStatistic<int> stat_state_change_flushes = GlobalStatistics.Get<int>("Renderer", "State Change Flushes");
     private static readonly GlobalStatistic<int> stat_buffer_full_flushes = GlobalStatistics.Get<int>("Renderer", "Buffer Full Flushes");
@@ -359,7 +357,6 @@ public class GLRenderer : IGLRenderer, IDisposable
         stat_draw_calls.Value = 0;
         stat_vertices_drawn.Value = 0;
         stat_shader_binds.Value = 0;
-        stat_texture_binds.Value = 0;
 
         stat_slot_exhaustion_flushes.Value = 0;
         stat_state_change_flushes.Value = 0;
@@ -407,7 +404,7 @@ public class GLRenderer : IGLRenderer, IDisposable
 
         // Publish a stable snapshot of this frame's totals for cross-thread consumers (e.g. the
         // texture viewer). Done after the final batch flush so all binds for the frame are counted.
-        stat_texture_binds_last_frame.Value = stat_texture_binds.Value;
+        TextureBindTracker.EndFrame();
 
         insertFrameFence();
     }
@@ -544,10 +541,10 @@ public class GLRenderer : IGLRenderer, IDisposable
         if (boundTextureCount < textureSlotCount)
         {
             int slot = boundTextureCount;
+            // GLTexture.Bind counts the bind itself, so every backend's figure comes from the same place.
             glTexture.Bind(slot);
             boundTextureHandles[slot] = handle;
             boundTextureCount++;
-            stat_texture_binds.Value++;
             return slot;
         }
 
@@ -559,7 +556,6 @@ public class GLRenderer : IGLRenderer, IDisposable
         glTexture.Bind(0);
         boundTextureHandles[0] = handle;
         boundTextureCount = 1;
-        stat_texture_binds.Value++;
         return 0;
     }
 
@@ -663,6 +659,16 @@ public class GLRenderer : IGLRenderer, IDisposable
 
         if (glow)
             SetBlendMode(previousBlend);
+    }
+
+    public void ApplyCurrentClip(Span<SakuraVertex> vertices)
+    {
+        for (int i = 0; i < vertices.Length; i++)
+        {
+            vertices[i].ClipData = currentClip.ClipData;
+            vertices[i].ClipShearX = currentClip.ShearX;
+            vertices[i].ClipRadius = currentClip.Radius;
+        }
     }
 
     public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius)

@@ -30,6 +30,8 @@ public sealed class MetalTexture : INativeTexture
     public int Height { get; }
     public bool Available { get; private set; }
 
+    public TextureBindCounter Binds { get; } = new TextureBindCounter();
+
     /// <summary>
     /// Shared 1×1 white fallback, set once by <see cref="Rendering.Metal.MetalRenderer"/> at startup.
     /// Bound in place of any texture that isn't <see cref="Available"/> yet (or has been disposed), so
@@ -105,16 +107,22 @@ public sealed class MetalTexture : INativeTexture
         nint h = handle;
 
         // fallback to white pixel, matching GLTexture.Bind behavior
+        var bound = this;
+
         if (!Available || h == nint.Zero)
         {
             var white = WhitePixel;
             if (white == null || ReferenceEquals(white, this))
                 return;
             h = white.handle;
+            bound = white;
         }
 
-        if (h != nint.Zero)
-            SakuraMetalNative.sakura_metal_set_fragment_texture(device, h, slot);
+        if (h == nint.Zero)
+            return;
+
+        bound.Binds.Record();
+        SakuraMetalNative.sakura_metal_set_fragment_texture(device, h, slot);
     }
 
     /// <summary>

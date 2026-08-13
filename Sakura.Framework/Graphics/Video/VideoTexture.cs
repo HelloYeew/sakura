@@ -25,12 +25,27 @@ public sealed class VideoTexture : IVideoTexture
     public int Width  => NativeTexture.Width;
     public int Height => NativeTexture.Height;
 
+    public TextureBindCounter Binds => NativeTexture.Binds;
+
     /// <summary>
     /// True once the render thread has flushed the pending upload.
     /// Written via <see cref="Volatile"/> — safe to read from any thread.
     /// </summary>
     public bool UploadComplete => Volatile.Read(ref uploadComplete);
     private bool uploadComplete;
+
+    /// <summary>
+    /// True once <see cref="Dispose"/> has run. The native planes are disposed on the draw thread, so a
+    /// draw-thread reader that checks this can never bind a destroyed plane.
+    /// </summary>
+    public bool IsDisposed => Volatile.Read(ref isDisposed);
+
+    /// <summary>
+    /// The YUV -> RGB matrix for the frames uploaded here, stamped on by
+    /// <see cref="SetData"/>. Null until the first frame arrives.
+    /// </summary>
+    public float[]? ConversionMatrix => Volatile.Read(ref conversionMatrix);
+    private float[]? conversionMatrix;
 
     private volatile VideoTextureUpload? pendingUpload;
 
@@ -49,9 +64,19 @@ public sealed class VideoTexture : IVideoTexture
     /// <summary>
     /// Stores a pending upload. Called from the decode thread — no render-thread calls.
     /// </summary>
-    public void SetData(VideoTextureUpload upload)
+    /// <param name="upload">The frame to upload on the next render-thread flush.</param>
+    /// <param name="conversionMatrix">
+    /// The YUV→RGB matrix for this frame's colorspace, exposed as <see cref="ConversionMatrix"/> so a
+    /// consumer holding only this texture can convert it. Ignored when null, keeping whatever the last
+    /// frame set.
+    /// </param>
+    public void SetData(VideoTextureUpload upload, float[]? conversionMatrix = null)
     {
         Volatile.Write(ref uploadComplete, false);
+
+        if (conversionMatrix != null)
+            Volatile.Write(ref this.conversionMatrix, conversionMatrix);
+
         pendingUpload = upload;
     }
 
@@ -90,7 +115,7 @@ public sealed class VideoTexture : IVideoTexture
     public void Dispose()
     {
         if (isDisposed) return;
-        isDisposed = true;
+        Volatile.Write(ref isDisposed, true);
 
         pendingUpload?.Dispose();
         pendingUpload = null;

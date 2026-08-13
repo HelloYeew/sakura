@@ -29,6 +29,8 @@ public sealed class VideoGLTexture : INativeVideoTexture
     public bool Available => Volatile.Read(ref available);
     private bool available;
 
+    public TextureBindCounter Binds { get; } = new TextureBindCounter();
+
     public int Width { get; }
     public int Height { get; }
 
@@ -60,6 +62,8 @@ public sealed class VideoGLTexture : INativeVideoTexture
     /// </summary>
     public void BindPlanes(bool tiling)
     {
+        Binds.Record();
+
         int wrap = tiling ? (int)TextureWrapMode.Repeat : (int)TextureWrapMode.ClampToEdge;
 
         bindPlane(TextureUnit.Texture0, YHandle, wrap);

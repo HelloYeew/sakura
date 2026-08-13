@@ -725,11 +725,11 @@ public unsafe class VideoDecoder : IDisposable
             if (!texturePoolWarmed)
             {
                 texturePoolWarmed = true;
-                var capturedW = width;
-                var capturedH = height;
+                int capturedW = width;
+                int capturedH = height;
                 renderer.ScheduleToDrawThread(() =>
                 {
-                    while (availableTextures.Count < max_pending_frames)
+                    for (int i = 0; i < max_pending_frames; i++)
                         availableTextures.Enqueue(new VideoTexture(renderer, textureManager, capturedW, capturedH));
                 });
             }
@@ -763,7 +763,8 @@ public unsafe class VideoDecoder : IDisposable
         int height = frame.Pointer->height;
 
         var upload = new VideoTextureUpload(frame);
-        tex.SetData(upload);
+
+        tex.SetData(upload, GetConversionMatrix());
 
         // Texture is a dimension-only proxy — no GL handles, no Video namespace import needed.
         // VideoSprite reads NativeTexture directly for rendering.

@@ -23,6 +23,12 @@ public interface INativeTexture : IDisposable
     bool Available { get; }
 
     /// <summary>
+    /// How often this texture has been bound, per frame. Implementations record a bind from
+    /// <see cref="Bind"/> (see <see cref="TextureBindTracker"/>).
+    /// </summary>
+    TextureBindCounter Binds { get; }
+
+    /// <summary>
     /// Uploads the full texture data. Must be called on the draw/render thread.
     /// Data is expected in RGBA8 format, row-major.
     /// </summary>

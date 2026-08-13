@@ -32,6 +32,8 @@ public sealed class D3D11Texture : INativeTexture
     public int Height { get; }
     public bool Available { get; private set; }
 
+    public TextureBindCounter Binds { get; } = new TextureBindCounter();
+
     internal ID3D11ShaderResourceView ShaderResourceView => srv;
     internal ID3D11RenderTargetView RenderTargetView => rtv;
 
@@ -138,6 +140,7 @@ public sealed class D3D11Texture : INativeTexture
     public void Bind(int slot = 0)
     {
         var view = srv;
+        var bound = this;
 
         // Fall back to the white pixel when this texture hasn't been uploaded yet.
         if (!Available || view == null)
@@ -146,10 +149,14 @@ public sealed class D3D11Texture : INativeTexture
             if (white == null || ReferenceEquals(white, this))
                 return;
             view = white.srv;
+            bound = white;
         }
 
-        if (view != null)
-            context.PSSetShaderResource((uint)slot, view);
+        if (view == null)
+            return;
+
+        bound.Binds.Record();
+        context.PSSetShaderResource((uint)slot, view);
     }
 
     public void Dispose()

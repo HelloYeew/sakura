@@ -82,4 +82,6 @@ public struct EdgeEffectParameters : IEquatable<EdgeEffectParameters>
     public static bool operator ==(EdgeEffectParameters left, EdgeEffectParameters right) => left.Equals(right);
 
     public static bool operator !=(EdgeEffectParameters left, EdgeEffectParameters right) => !left.Equals(right);
+
+    public override string ToString() => $"EdgeEffectParameters(Color={Color}, Offset={Offset}, Type={Type}, Radius={Radius}, Roundness={Roundness}, Hollow={Hollow})";
 }

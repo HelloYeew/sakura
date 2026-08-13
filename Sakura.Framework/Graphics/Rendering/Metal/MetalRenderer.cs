@@ -327,6 +327,9 @@ public sealed class MetalRenderer : IMetalRenderer
 
         rootNode?.Draw(this);
 
+        // Metal draws immediately, so every bind for the frame has already been issued by here.
+        TextureBindTracker.EndFrame();
+
         SakuraMetalNative.sakura_metal_end_frame(device);
     }
 
@@ -392,6 +395,16 @@ public sealed class MetalRenderer : IMetalRenderer
     /// AABB, accounting for horizontal shear) with any parent mask, and the result becomes the active
     /// clip carried into subsequent vertices by <see cref="DrawVertices"/>.
     /// </summary>
+    public void ApplyCurrentClip(Span<SakuraVertex> vertices)
+    {
+        for (int i = 0; i < vertices.Length; i++)
+        {
+            vertices[i].ClipData = currentClip.ClipData;
+            vertices[i].ClipShearX = currentClip.ShearX;
+            vertices[i].ClipRadius = currentClip.Radius;
+        }
+    }
+
     public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius)
     {
         clipStack.Push(currentClip);
