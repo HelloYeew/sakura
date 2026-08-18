@@ -19,13 +19,21 @@ FFMPEG_FLAGS=(
     --enable-avutil
     --enable-swscale
 
-    # Formats & Protocols
-    --enable-demuxer='avi,flv,asf,mov,matroska' 
+    # Video formats, parsers & decoders
+    --enable-demuxer='avi,flv,asf,mov,matroska'
     --enable-parser='mpeg4video,h264,hevc,vp8,vp9'
     --enable-decoder='flv,msmpeg4v1,msmpeg4v2,msmpeg4v3,mpeg4,vp6,vp6f,wmv2,h264,hevc,vp8,vp9'
-    
+
+    # Audio formats, parsers & decoders for the SDL audio backend
+    --enable-demuxer='mp3,ogg,flac,wav,aiff'
+    --enable-parser='mpegaudio,flac,vorbis,aac,opus'
+    --enable-decoder='mp1,mp1float,mp2,mp2float,mp3,mp3float,vorbis,flac,aac,alac,opus'
+    --enable-decoder='pcm_s8,pcm_u8,pcm_s16le,pcm_s16be,pcm_s24le,pcm_s32le,pcm_f32le,pcm_f64le'
+    --enable-decoder='pcm_alaw,pcm_mulaw,adpcm_ms,adpcm_ima_wav'
+
+    # Protocols
     --enable-protocol=pipe
-    --enable-protocol=file 
+    --enable-protocol=file
 )
 
 function prep_ffmpeg() {
