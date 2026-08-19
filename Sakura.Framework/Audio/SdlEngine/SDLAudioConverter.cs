@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using SDL;
 using static SDL.SDL3;
 
@@ -13,9 +14,10 @@ namespace Sakura.Framework.Audio.SdlEngine;
 /// </summary>
 /// <remarks>
 /// This class stand for <c>libswresample</c>, which the shipped FFmpeg build deliberately omits.
-/// Also, this is not thread-safe, an instance belongs to whichever thread is decoding into it.
+/// Also, this is not thread-safe; an instance belongs to whichever thread is decoding into it.
 /// </remarks>
-internal sealed unsafe class SdlAudioConverter : IDisposable
+[SuppressMessage("ReSharper", "InconsistentNaming")]
+internal sealed unsafe class SDLAudioConverter : IDisposable
 {
     private const int bytes_per_float = sizeof(float);
 
@@ -51,7 +53,7 @@ internal sealed unsafe class SdlAudioConverter : IDisposable
     /// <param name="targetRate">Output sample rate in Hz.</param>
     /// <param name="targetChannels">Output channel count.</param>
     /// <exception cref="InvalidOperationException">SDL could not create the stream.</exception>
-    public SdlAudioConverter(int sourceRate, int sourceChannels, int targetRate, int targetChannels)
+    public SDLAudioConverter(int sourceRate, int sourceChannels, int targetRate, int targetChannels)
     {
         var source = new SDL_AudioSpec
         {

@@ -164,7 +164,7 @@ public class SdlPcmSourceTest
     [Test]
     public void Converter_ResamplesToTheTargetRate()
     {
-        using var converter = new SdlAudioConverter(22050, 2, 44100, 2);
+        using var converter = new SDLAudioConverter(22050, 2, 44100, 2);
 
         // One second of stereo at the source rate should come back as roughly one second at the
         // target rate, i.e. twice as many frames.
@@ -185,7 +185,7 @@ public class SdlPcmSourceTest
     [Test]
     public void Converter_UpmixesMonoToStereo()
     {
-        using var converter = new SdlAudioConverter(44100, 1, 44100, 2);
+        using var converter = new SDLAudioConverter(44100, 1, 44100, 2);
 
         float[] input = new float[1000];
         Array.Fill(input, 0.5f);
@@ -206,7 +206,7 @@ public class SdlPcmSourceTest
     [Test]
     public void Converter_ClearDiscardsPendingAudio()
     {
-        using var converter = new SdlAudioConverter(44100, 2, 44100, 2);
+        using var converter = new SDLAudioConverter(44100, 2, 44100, 2);
 
         converter.Put(new float[4096]);
         converter.Clear();

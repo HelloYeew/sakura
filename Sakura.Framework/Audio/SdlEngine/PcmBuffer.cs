@@ -36,6 +36,22 @@ internal sealed class PcmBuffer
     }
 
     /// <summary>
+    /// Wraps already-decoded interleaved samples, which are taken as-is and not copied.
+    /// </summary>
+    /// <remarks>
+    /// For callers that produced PCM by some route other than <see cref="Decode"/> synthesized
+    /// audio, and the test suite, which needs buffers with exactly known contents.
+    /// </remarks>
+    public static PcmBuffer FromSamples(float[] samples, int channels, int sampleRate)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(channels);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sampleRate);
+
+        return samples.Length % channels != 0 ? throw new ArgumentException("Sample count must be a whole number of frames.", nameof(samples)) : new PcmBuffer(samples, channels, sampleRate);
+
+    }
+
+    /// <summary>
     /// Decodes <paramref name="stream"/> in full and converts it to the given device format.
     /// </summary>
     /// <remarks>Takes ownership of the stream.</remarks>
@@ -43,7 +59,7 @@ internal sealed class PcmBuffer
     public static PcmBuffer Decode(Stream stream, int deviceSampleRate, int deviceChannels)
     {
         using var decoder = new FFmpegAudioDecoder(stream);
-        using var converter = new SdlAudioConverter(decoder.SampleRate, decoder.Channels, deviceSampleRate, deviceChannels);
+        using var converter = new SDLAudioConverter(decoder.SampleRate, decoder.Channels, deviceSampleRate, deviceChannels);
 
         // Sized from the source duration where the container reports one, so the common case is a
         // single allocation rather than a doubling walk.
@@ -79,7 +95,7 @@ internal sealed class PcmBuffer
         return new PcmBuffer(output, deviceChannels, deviceSampleRate);
     }
 
-    private static int drain(SdlAudioConverter converter, float[] scratch, ref float[] output, int written)
+    private static int drain(SDLAudioConverter converter, float[] scratch, ref float[] output, int written)
     {
         int total = 0;
 

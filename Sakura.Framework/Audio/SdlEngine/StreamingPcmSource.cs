@@ -56,7 +56,7 @@ internal sealed class StreamingPcmSource : IPcmSource
     private readonly float[] convertScratch = new float[8192];
 
     private FFmpegAudioDecoder? decoder;
-    private SdlAudioConverter? converter;
+    private SDLAudioConverter? converter;
 
     private double? pendingSeekMs;
     private int seekGeneration;
@@ -136,7 +136,7 @@ internal sealed class StreamingPcmSource : IPcmSource
 
         try
         {
-            converter = new SdlAudioConverter(decoder.SampleRate, decoder.Channels, deviceSampleRate, deviceChannels);
+            converter = new SDLAudioConverter(decoder.SampleRate, decoder.Channels, deviceSampleRate, deviceChannels);
         }
         catch
         {
