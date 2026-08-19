@@ -22,7 +22,7 @@ public class DrawNodeGenerationBenchmarks
     private ManualClock gridClock = null!;
     private Container gridHolder = null!;
 
-    private int frame;
+    private long frame;
 
     [GlobalSetup]
     public void Setup()
@@ -44,7 +44,7 @@ public class DrawNodeGenerationBenchmarks
     public DrawNode Generate_CleanTree_Wide1000()
     {
         frame++;
-        return wideRoot.GenerateDrawNodeSubtree(frame % 3);
+        return wideRoot.GenerateDrawNodeSubtree((int)(frame % 3));
     }
 
     /// <summary>
@@ -54,7 +54,7 @@ public class DrawNodeGenerationBenchmarks
     public DrawNode Generate_CleanTree_Grid10x100()
     {
         frame++;
-        return gridRoot.GenerateDrawNodeSubtree(frame % 3);
+        return gridRoot.GenerateDrawNodeSubtree((int)(frame % 3));
     }
 
     /// <summary>
@@ -69,6 +69,6 @@ public class DrawNodeGenerationBenchmarks
 
         gridClock.CurrentTime += BenchmarkTree.FRAME_STEP_MS;
         gridRoot.UpdateSubTree();
-        return gridRoot.GenerateDrawNodeSubtree(frame % 3);
+        return gridRoot.GenerateDrawNodeSubtree((int)(frame % 3));
     }
 }
