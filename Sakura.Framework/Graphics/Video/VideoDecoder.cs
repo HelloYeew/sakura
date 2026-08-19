@@ -12,6 +12,7 @@ using FFmpeg.AutoGen;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Logging;
+using Sakura.Framework.Platform;
 using Sakura.Framework.Reactive;
 using Sakura.Framework.Statistic;
 using Texture = Sakura.Framework.Graphics.Textures.Texture;
@@ -105,24 +106,7 @@ public unsafe class VideoDecoder : IDisposable
     private readonly IRenderer renderer;
     private readonly ITextureManager textureManager;
 
-    static VideoDecoder()
-    {
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-            ffmpeg.RootPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "runtimes", "osx", "native");
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            string arch = RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? "win-arm64" : "win-x64";
-            ffmpeg.RootPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "runtimes", arch, "native");
-        }
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-        {
-            string arch = RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? "linux-arm64" : "linux-x64";
-            ffmpeg.RootPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "runtimes", arch, "native");
-        }
-
-        Logger.Verbose($"Initialized FFmpeg with root path {ffmpeg.RootPath}");
-        DynamicallyLoadedBindings.Initialize();
-    }
+    static VideoDecoder() => FFmpegLibrary.EnsureInitialized();
 
     public VideoDecoder(IRenderer renderer, ITextureManager textureManager, string filePath)
         : this(renderer, textureManager, File.OpenRead(filePath)) { }
