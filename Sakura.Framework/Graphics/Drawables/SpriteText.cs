@@ -434,19 +434,23 @@ public partial class SpriteText : Drawable
         {
             for (int i = 0; i < currentVertexCount; i++)
                 textVertices[i].Color = drawColor;
-            return;
         }
-
-        var glyphs = shapedText.Glyphs;
-        int vIndex = 0;
-
-        for (int glyphIndex = 0; glyphIndex < glyphs.Count; glyphIndex++)
+        else
         {
-            var glyphColor = glyphs[glyphIndex].IsColorGlyph ? colorGlyphDrawColor : drawColor;
+            var glyphs = shapedText.Glyphs;
+            int vIndex = 0;
 
-            for (int i = 0; i < 4 && vIndex < currentVertexCount; i++, vIndex++)
-                textVertices[vIndex].Color = glyphColor;
+            for (int glyphIndex = 0; glyphIndex < glyphs.Count; glyphIndex++)
+            {
+                var glyphColor = glyphs[glyphIndex].IsColorGlyph ? colorGlyphDrawColor : drawColor;
+
+                for (int i = 0; i < 4 && vIndex < currentVertexCount; i++, vIndex++)
+                    textVertices[vIndex].Color = glyphColor;
+            }
         }
+
+        // This override does not chain to base.UpdateDrawColor, so it has to stamp the new state itself.
+        MarkDrawStateRecomputed();
     }
 
     protected override DrawNode CreateDrawNode() => new SpriteTextDrawNode();
