@@ -59,7 +59,11 @@ internal class SDLAudioChannel : IAudioChannel
 
     private readonly IPcmSource? source;
     private readonly CubicResampler? resampler;
-    private readonly AmplitudeTap tap = new AmplitudeTap();
+
+    /// <summary>
+    /// Metering for this node, fed with its post-gain output.
+    /// </summary>
+    protected readonly AmplitudeTap Tap = new AmplitudeTap();
 
     /// <summary>
     /// Scratch for one block of this voice's own output before it is summed into the destination.
@@ -77,6 +81,12 @@ internal class SDLAudioChannel : IAudioChannel
     private SDLLowPassFilter? filter;
 
     private volatile bool isDisposed;
+
+    /// <summary>
+    /// Whether <see cref="Dispose"/> has been called. Checked by the mix loop before touching
+    /// anything this channel owns.
+    /// </summary>
+    protected bool IsDisposed => isDisposed;
 
     /// <summary>
     /// Set on the mix thread when the source runs out, so the end is handled once on the audio
@@ -169,16 +179,25 @@ internal class SDLAudioChannel : IAudioChannel
         }
 
         if (produced > 0)
-        {
-            var produsedBlock = block.Slice(0, produced * channels);
+            ApplyInsertsAndMix(block.Slice(0, produced * channels), destination);
+    }
 
-            filter?.Process(produsedBlock);
-            applyGain(produsedBlock, channels);
-            tap.Feed(produsedBlock);
+    /// <summary>
+    /// Runs a block of this node's own audio through its insert chain — filter, then gain and pan,
+    /// then metering — and sums the result into <paramref name="destination"/>.
+    /// </summary>
+    /// <remarks>
+    /// Shared with <see cref="SDLAudioMixer"/>, whose children produce the block instead of a
+    /// source, so that a mixer's own volume, filter and metering behave exactly like a channel's.
+    /// </remarks>
+    protected void ApplyInsertsAndMix(Span<float> block, Span<float> destination)
+    {
+        filter?.Process(block);
+        applyGain(block, Context.Channels);
+        Tap.Feed(block);
 
-            for (int i = 0; i < produsedBlock.Length; i++)
-                destination[i] += produsedBlock[i];
-        }
+        for (int i = 0; i < block.Length && i < destination.Length; i++)
+            destination[i] += block[i];
     }
 
     private void applyGain(Span<float> block, int channels)
@@ -297,7 +316,7 @@ internal class SDLAudioChannel : IAudioChannel
         source?.Seek(milliseconds);
         resampler?.Reset();
         filter?.ClearState();
-        tap.Reset();
+        Tap.Reset();
         Context.WakeDecoder();
     }
 
@@ -333,7 +352,7 @@ internal class SDLAudioChannel : IAudioChannel
             if (isDisposed || !IsRunning.Value)
                 return ChannelAmplitudes.Empty;
 
-            return tap.Read();
+            return Tap.Read();
         }
     }
 
