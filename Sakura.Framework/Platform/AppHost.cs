@@ -14,6 +14,7 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using JetBrains.Annotations;
+using Sakura.Framework.Audio;
 using Sakura.Framework.Configurations;
 using Sakura.Framework.Development;
 using Sakura.Framework.Extensions.ExceptionExtensions;
@@ -49,6 +50,9 @@ public abstract class AppHost : IDisposable
 
     public IWindow Window { get; private set; }
     public IRenderer Renderer { get; private set; }
+
+    [CanBeNull]
+    public IAudioManager AudioManager { get; set; }
 
     private App app;
 

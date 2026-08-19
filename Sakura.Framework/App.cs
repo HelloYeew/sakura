@@ -135,6 +135,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
         Cache(Host.Window);
 
         AudioManager = CreateAudioManager();
+        Host.AudioManager = AudioManager;
         var masterVolume = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.MasterVolume);
         var trackVolume = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.TrackVolume);
         var sampleVolume = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.SampleVolume);
