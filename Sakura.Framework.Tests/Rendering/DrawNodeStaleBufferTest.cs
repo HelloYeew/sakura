@@ -11,10 +11,7 @@ using Sakura.Framework.Timing;
 namespace Sakura.Framework.Tests.Rendering;
 
 /// <summary>
-/// Reproduction for the "stuttering drawable" bug: a drawable that is invalidated *after* its own
-/// update pass (but before this frame's draw-node generation) stamps the current buffer's node with
-/// the new invalidation id while the node still holds the pre-change geometry. That buffer then
-/// never re-applies, so the drawn value flickers between the old and the new one at draw rate.
+/// Reproduction for the stuttering drawable bug (https://github.com/HelloYeew/sakura/pull/166)
 /// </summary>
 [TestFixture]
 public class DrawNodeStaleBufferTest

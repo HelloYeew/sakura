@@ -659,6 +659,8 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
         DrawSize = finalDrawSize;
 
         GenerateVertices();
+
+        MarkDrawStateRecomputed();
     }
 
     /// <summary>
@@ -1008,6 +1010,19 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
     }
 
     protected internal long DrawNodeInvalidationId { get; private set; } = 1;
+
+    /// <summary>
+    /// Announces that this drawable's drawn state (matrices, vertices, colors) has just been
+    /// recomputed, so every buffered draw node holding an older snapshot must re-apply.
+    /// </summary>
+    protected void MarkDrawStateRecomputed()
+    {
+        DrawNodeInvalidationId++;
+
+        if ((!IsMaskedAway || AlwaysPresent) && !IsEffectivelyHidden)
+            Parent?.MarkSubtreeDrawStateDirty();
+    }
+
     private readonly DrawNode?[] drawNodes = new DrawNode?[3];
     private DrawNode? drawNode;
 
@@ -1268,6 +1283,8 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
         // Rewrite per-corner colors so gradients survive the color-only fast path (used by fades);
         // toLinear folds the freshly-computed DrawAlpha into every corner.
         writeCornerColors();
+
+        MarkDrawStateRecomputed();
     }
 
     /// <summary>

@@ -1133,6 +1133,8 @@ public abstract class AppHost : IDisposable
             Console.CancelKeyPress -= cancelKeyPressHandler;
             cancelKeyPressHandler = null;
         }
+        
+        FrameworkConfigManager?.Flush();
 
         Logger.Shutdown();
 
