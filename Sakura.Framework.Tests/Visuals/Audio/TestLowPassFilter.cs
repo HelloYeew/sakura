@@ -4,7 +4,6 @@
 using NUnit.Framework;
 using Sakura.Framework.Allocation;
 using Sakura.Framework.Audio;
-using Sakura.Framework.Audio.BassEngine;
 using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests.Visuals.Audio;
@@ -18,7 +17,7 @@ public partial class TestLowPassFilter : TestScene
 
     private ITrack track = null!;
     private IAudioChannel channel = null!;
-    private BassLowPassFilter filter = null!;
+    private ILowPassFilter filter = null!;
 
     public override void Load()
     {
@@ -35,7 +34,7 @@ public partial class TestLowPassFilter : TestScene
             channel.Play();
         });
 
-        AddStep("Attach low-pass filter", () => filter = channel.AddLowPassFilter());
+        AddStep("Attach low-pass filter", () => filter = channel.AddLowPassFilter()!);
         AddAssert("Filter was created", () => filter != null);
     }
 
@@ -45,7 +44,7 @@ public partial class TestLowPassFilter : TestScene
         createFilteredChannel();
 
         AddAssert("Cutoff starts at default",
-            () => filter.CutoffFrequency.Value == BassLowPassFilter.DefaultCutoffFrequency);
+            () => filter.CutoffFrequency.Value == ILowPassFilter.DefaultCutoffFrequency);
     }
 
     [Test]
@@ -71,7 +70,7 @@ public partial class TestLowPassFilter : TestScene
     {
         createFilteredChannel();
 
-        AddSliderStep("Cutoff frequency (Hz)", 1.0, 22050.0, BassLowPassFilter.DefaultCutoffFrequency,
+        AddSliderStep("Cutoff frequency (Hz)", 1.0, 22050.0, ILowPassFilter.DefaultCutoffFrequency,
             v => filter.CutoffFrequency.Value = v);
     }
 
@@ -96,7 +95,7 @@ public partial class TestLowPassFilter : TestScene
         AddAssert("Cutoff is 500Hz", () => filter.CutoffFrequency.Value == 500);
         AddStep("Reset filter", () => filter.Reset());
         AddAssert("Cutoff back to default",
-            () => filter.CutoffFrequency.Value == BassLowPassFilter.DefaultCutoffFrequency);
+            () => filter.CutoffFrequency.Value == ILowPassFilter.DefaultCutoffFrequency);
     }
 
     [Test]

@@ -11,6 +11,7 @@ public enum FrameworkSetting
     MasterVolume,
     TrackVolume,
     SampleVolume,
+    AudioBackend,
     WindowMode,
     ExecutionMode,
     HardwareAcceleration,

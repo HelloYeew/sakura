@@ -21,6 +21,7 @@ using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Graphics.Video;
 using Sakura.Framework.Input;
+using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Platform.Dialogs;
 using Sakura.Framework.Reactive;
@@ -270,12 +271,24 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
     protected virtual IImageLoader CreateImageLoader() => new ImageSharpImageLoader();
 
     /// <summary>
-    /// Create the audio manager used for this app, defaults to <see cref="BassAudioManager"/>.
+    /// Create the audio manager used for this app, selected by
+    /// <see cref="FrameworkSetting.AudioBackend"/> and default to <see cref="BassAudioManager"/>.
     /// </summary>
     protected virtual IAudioManager CreateAudioManager()
     {
         if (Host.IsHeadless)
             return new HeadlessAudioManager();
+
+        var backend = Host.FrameworkConfigManager.Get<AudioBackend>(FrameworkSetting.AudioBackend).Value;
+
+        switch (backend)
+        {
+            case AudioBackend.SDL:
+                // TODO: waiting for SDL audio backend implementation
+                Logger.Warning("The SDL audio backend is not implemented yet, falling back to BASS.");
+                break;
+        }
+
         return new BassAudioManager();
     }
 

@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using Sakura.Framework.Audio;
 using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Threading;
@@ -22,6 +23,7 @@ public class FrameworkConfigManager : ConfigManager<FrameworkSetting>
         Get(FrameworkSetting.MasterVolume, 1.0);
         Get(FrameworkSetting.TrackVolume, 1.0);
         Get(FrameworkSetting.SampleVolume, 1.0);
+        Get(FrameworkSetting.AudioBackend, AudioBackend.BASS);
         Get(FrameworkSetting.WindowMode, WindowMode.Windowed);
         Get(FrameworkSetting.HardwareAcceleration, true);
         Get(FrameworkSetting.RendererType, RendererType.Automatic);

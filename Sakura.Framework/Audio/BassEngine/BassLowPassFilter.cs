@@ -12,20 +12,14 @@ namespace Sakura.Framework.Audio.BassEngine;
 /// <summary>
 /// Apply low-pass filter effect to a BASS channel or mixer.
 /// </summary>
-public class BassLowPassFilter : IDisposable
+public class BassLowPassFilter : ILowPassFilter
 {
     private readonly int targetChannelHandle;
     private int fxHandle;
     private bool isDisposed;
 
-    public static double DefaultCutoffFrequency => 20000.0; // 44.1kHz
-
-    /// <summary>
-    /// The cutoff frequency of the filter in Hertz.
-    /// Frequencies above this value will be reduced.
-    /// Max is typically half the sample rate (e.g., 22050 for a 44100Hz stream).
-    /// </summary>
-    public Reactive<double> CutoffFrequency { get; } = new Reactive<double>(DefaultCutoffFrequency);
+    /// <inheritdoc cref="ILowPassFilter.CutoffFrequency"/>
+    public Reactive<double> CutoffFrequency { get; } = new Reactive<double>(ILowPassFilter.DefaultCutoffFrequency);
 
     public BassLowPassFilter(int channelHandle, int priority = 0)
     {
@@ -76,7 +70,7 @@ public class BassLowPassFilter : IDisposable
     {
         if (fxHandle == 0 || isDisposed) return;
 
-        CutoffFrequency.Value = DefaultCutoffFrequency;
+        CutoffFrequency.Value = ILowPassFilter.DefaultCutoffFrequency;
     }
 
     public void Dispose()
