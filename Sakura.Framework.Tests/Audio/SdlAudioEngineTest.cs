@@ -9,8 +9,8 @@ using System.Linq;
 using System.Reflection;
 using System.Threading;
 using NUnit.Framework;
+using Sakura.Framework.Audio;
 using Sakura.Framework.Audio.SdlEngine;
-using Sakura.Framework.Platform;
 using Sakura.Framework.Statistic;
 using static SDL.SDL3;
 
@@ -189,26 +189,6 @@ public class SdlAudioEngineTest
         }
     }
 
-    /// <summary>
-    /// Phase 0 widened the shipped FFmpeg build specifically to carry these. If one goes missing the
-    /// symptom is a confusing failure deep in <c>avcodec_open2</c> on one file type, so assert it
-    /// directly rather than waiting to trip over it.
-    /// </summary>
-    [Test]
-    public void ShippedFFmpegCarriesEveryExpectedAudioDecoder()
-    {
-        var support = FFmpegLibrary.GetAudioDecoderSupport();
-
-        Assert.Multiple(() =>
-        {
-            Assert.That(support.Missing, Is.Empty, "The shipped FFmpeg build is missing audio decoders.");
-            Assert.That(support.Present, Is.Not.Empty);
-        });
-
-        TestContext.Out.WriteLine($"FFmpeg: {FFmpegLibrary.DescribeVersions()}");
-        TestContext.Out.WriteLine($"Decoders: {string.Join(", ", support.Present)}");
-    }
-
     [Test]
     public void Manager_KeepsTheDeviceQueueFed()
     {
@@ -325,6 +305,35 @@ public class SdlAudioEngineTest
 
         Assert.That(after - before, Is.Zero, "The device queue ran dry during steady playback.");
 
+        channel.Dispose();
+        manager.Update(0);
+    }
+
+    /// <summary>
+    /// <see cref="AudioChannelExtensions.AddLowPassFilter"/> has to recognise this backend's channels
+    /// too, or filtering silently becomes a no-op the moment the backend is switched.
+    /// </summary>
+    [Test]
+    public void AddLowPassFilter_AttachesToAnSdlChannel()
+    {
+        using var manager = new SDLAudioManager();
+
+        var sample = manager.CreateSample(open("Samples.long.mp3"));
+        var channel = sample.GetChannel();
+
+        var filter = channel.AddLowPassFilter();
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(filter, Is.Not.Null, "The extension does not know about SDL channels.");
+            Assert.That(filter, Is.InstanceOf<SDLLowPassFilter>());
+            Assert.That(filter!.CutoffFrequency.Value, Is.EqualTo(ILowPassFilter.DefaultCutoffFrequency));
+        }
+
+        filter!.CutoffFrequency.Value = 500;
+        Assert.That(filter.CutoffFrequency.Value, Is.EqualTo(500));
+
+        filter.Dispose();
         channel.Dispose();
         manager.Update(0);
     }

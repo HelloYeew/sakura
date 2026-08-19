@@ -4,6 +4,7 @@
 using System;
 using System.Threading.Tasks;
 using Sakura.Framework.Audio.BassEngine;
+using Sakura.Framework.Audio.SdlEngine;
 using Sakura.Framework.Extensions.ObjectExtensions;
 
 namespace Sakura.Framework.Audio;
@@ -97,11 +98,16 @@ public static class AudioChannelExtensions
     /// </returns>
     public static ILowPassFilter? AddLowPassFilter(this IAudioChannel channel)
     {
-        if (channel is BassAudioChannel bassChannel)
+        switch (channel)
         {
-            return new BassLowPassFilter(bassChannel.ChannelHandle);
-        }
+            case BassAudioChannel bassChannel:
+                return new BassLowPassFilter(bassChannel.ChannelHandle);
 
-        return null;
+            case SDLAudioChannel sdlChannel:
+                return sdlChannel.AttachLowPassFilter();
+
+            default:
+                return null;
+        }
     }
 }

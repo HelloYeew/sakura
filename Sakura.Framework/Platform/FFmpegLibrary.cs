@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -53,4 +54,56 @@ internal static class FFmpegLibrary
             Volatile.Write(ref initialised, true);
         }
     }
+
+    /// <summary>
+    /// Which of the audio formats the framework expects to handle are actually decodable by the
+    /// shipped FFmpeg build.
+    /// </summary>
+    public static AudioDecoderSupport GetAudioDecoderSupport()
+    {
+        EnsureInitialized();
+
+        (string Name, AVCodecID Id)[] expected =
+        [
+            ("mp3", AVCodecID.AV_CODEC_ID_MP3),
+            ("vorbis", AVCodecID.AV_CODEC_ID_VORBIS),
+            ("flac", AVCodecID.AV_CODEC_ID_FLAC),
+            ("aac", AVCodecID.AV_CODEC_ID_AAC),
+            ("alac", AVCodecID.AV_CODEC_ID_ALAC),
+            ("opus", AVCodecID.AV_CODEC_ID_OPUS),
+            ("pcm_s16le", AVCodecID.AV_CODEC_ID_PCM_S16LE)
+        ];
+
+        var present = new List<string>();
+        var missing = new List<string>();
+
+        foreach (var (name, id) in expected)
+        {
+            unsafe
+            {
+                (ffmpeg.avcodec_find_decoder(id) != null ? present : missing).Add(name);
+            }
+        }
+
+        return new AudioDecoderSupport(present, missing);
+    }
+
+    /// <summary>
+    /// Version numbers of the loaded FFmpeg libraries for logging.
+    /// </summary>
+    public static string DescribeVersions()
+    {
+        EnsureInitialized();
+
+        return $"avcodec {version(ffmpeg.avcodec_version())}, " +
+               $"avformat {version(ffmpeg.avformat_version())}, " +
+               $"avutil {version(ffmpeg.avutil_version())} ({ffmpeg.av_version_info()})";
+
+        static string version(uint packed) => $"{packed >> 16 & 0xFF}.{packed >> 8 & 0xFF}.{packed & 0xFF}";
+    }
 }
+
+/// <summary>
+/// The audio formats the shipped FFmpeg build can and cannot decode.
+/// </summary>
+internal readonly record struct AudioDecoderSupport(IReadOnlyList<string> Present, IReadOnlyList<string> Missing);
