@@ -235,7 +235,7 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
                                     Size = new Vector2(200, 10),
                                     Color = Color.White,
                                     Font = boldGraphFontUsage,
-                                    Text = "AudioManager"
+                                    Text = "AudioBackend"
                                 },
                                 audioText = new SpriteText()
                                 {
