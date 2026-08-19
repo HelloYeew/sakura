@@ -19,6 +19,11 @@ FFMPEG_FLAGS=(
     --enable-avutil
     --enable-swscale
 
+    # It is here because FFmpeg's native Opus decoder declares "opus_decoder_deps=swresample", and
+    # configure silently drops any decoder whose dependencies are unmet. Without this, the 'opus'
+    # entry in the decoder list below is accepted and then discarded.
+    --enable-swresample
+
     # Video formats, parsers & decoders
     --enable-demuxer='avi,flv,asf,mov,matroska'
     --enable-parser='mpeg4video,h264,hevc,vp8,vp9'
