@@ -3,9 +3,11 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
@@ -19,11 +21,26 @@ namespace Sakura.Framework.Configurations;
 /// <typeparam name="TLookup"></typeparam>
 public abstract class ConfigManager<TLookup> where TLookup : struct, Enum
 {
+    /// <summary>
+    /// How long to wait after a change before writing to disk, to collapse bursts of changes into one write.
+    /// </summary>
+    private const int save_debounce_ms = 200;
+
     private readonly Storage? storage;
     private readonly string fileName;
-    private readonly Dictionary<TLookup, object> settings = new();
+    private readonly Dictionary<TLookup, object> settings = new Dictionary<TLookup, object>();
+
+    /// <summary>
+    /// Values read from the backing file for settings that have not been registered via <see cref="Get{TValue}"/> yet.
+    /// These are applied when the setting is eventually registered, and written back out in the meantime so that
+    /// a partially-initialised manager can never drop settings it doesn't know about.
+    /// </summary>
+    private readonly Dictionary<TLookup, string> unclaimedValues = new Dictionary<TLookup, string>();
+
+    private readonly Lock mutex = new Lock();
 
     private Task? saveTask;
+    private bool loading;
 
     protected ConfigManager(Storage? storage)
     {
@@ -49,20 +66,35 @@ public abstract class ConfigManager<TLookup> where TLookup : struct, Enum
     /// <exception cref="InvalidCastException">Thrown if the existing setting's type does not match the requested type.</exception>
     public Reactive<TValue> Get<TValue>(TLookup lookup, TValue defaultValue = default)
     {
-        if (settings.TryGetValue(lookup, out var existing))
+        lock (mutex)
         {
-            if (existing is Reactive<TValue> existingTyped)
-                return existingTyped;
+            if (settings.TryGetValue(lookup, out object? existing))
+            {
+                if (existing is Reactive<TValue> existingTyped)
+                    return existingTyped;
 
-            throw new InvalidCastException($"Setting '{lookup}' is of type '{existing.GetType().GetGenericArguments()[0]}' but was requested as '{typeof(TValue)}'.");
+                throw new InvalidCastException(
+                    $"Setting '{lookup}' is of type '{existing.GetType().GetGenericArguments()[0]}' but was requested as '{typeof(TValue)}'. "
+                    + $"If those two types are unrelated, the assembly declaring {typeof(TLookup).Name} is likely stale relative to its callers "
+                    + "(a member added or removed in the middle of the enum shifts every value after it) — do a clean rebuild of all projects.");
+            }
+
+            var reactive = new Reactive<TValue>(defaultValue);
+
+            // apply any value that was read from disk before this setting was registered.
+            if (unclaimedValues.Remove(lookup, out string? unclaimed))
+                parseInto(lookup, reactive, unclaimed);
+
+            reactive.ValueChanged += _ =>
+            {
+                Logger.Debug($"[{GetType().Name}] Setting '{lookup}' changed to '{reactive.Value}'.");
+                Save();
+            };
+
+            settings[lookup] = reactive;
+
+            return reactive;
         }
-
-        var reactive = new Reactive<TValue>(defaultValue);
-        reactive.ValueChanged += _ => Save();
-        reactive.ValueChanged += _ => Logger.Debug($"[{GetType().Name}] Setting '{lookup}' changed to '{reactive.Value}'.");
-        settings[lookup] = reactive;
-
-        return reactive;
     }
 
     /// <summary>
@@ -70,52 +102,104 @@ public abstract class ConfigManager<TLookup> where TLookup : struct, Enum
     /// </summary>
     public virtual void Load()
     {
-        if (storage == null || !storage.Exists(fileName))
+        if (storage == null)
             return;
 
-        if (storage.Exists(fileName))
+        if (!storage.Exists(fileName))
         {
-            using var stream = storage.GetStream(fileName);
-            using var reader = new StreamReader(stream);
+            performSave();
+            return;
+        }
 
-            string? line;
-            while ((line = reader.ReadLine()) != null)
+        bool needsRewrite = false;
+
+        lock (mutex)
+        {
+            // suppress the save each parsed value would otherwise schedule; a single writing happens below if needed.
+            loading = true;
+
+            try
             {
-                if (string.IsNullOrWhiteSpace(line))
-                    continue;
+                using var stream = storage.GetStream(fileName);
 
-                string[] parts = line.Split('=', 2);
-                if (parts.Length != 2)
-                    continue;
+                if (stream == null)
+                    return;
 
-                string key = parts[0].Trim();
-                string value = parts[1].Trim();
+                using var reader = new StreamReader(stream);
 
-                if (Enum.TryParse<TLookup>(key, out var lookup))
+                string? line;
+
+                while ((line = reader.ReadLine()) != null)
                 {
-                    // Find the existing reactive object (which has the correct generic type)
-                    if (settings.TryGetValue(lookup, out var reactiveObject))
+                    if (string.IsNullOrWhiteSpace(line))
+                        continue;
+
+                    string[] parts = line.Split('=', 2);
+
+                    if (parts.Length != 2)
                     {
-                        try
-                        {
-                            var parseMethod = reactiveObject.GetType().GetMethod("Parse");
-                            parseMethod?.Invoke(reactiveObject, new object[]
-                            {
-                                value, System.Globalization.CultureInfo.InvariantCulture
-                            });
-                        }
-                        catch (Exception ex)
-                        {
-                            Logger.Warning($"[{GetType().Name}] Failed to parse setting '{lookup}' from value '{value}'. Falling back to default. Error: {ex.InnerException?.Message ?? ex.Message}");
-                            Save();
-                        }
+                        Logger.Warning($"[{GetType().Name}] Ignoring malformed line in {fileName}: '{line}'.");
+                        needsRewrite = true;
+                        continue;
+                    }
+
+                    string key = parts[0].Trim();
+                    string value = parts[1].Trim();
+
+                    // Enum.TryParse also accepts raw numeric strings, which would happily produce an out-of-range
+                    // member, so the key has to be checked against the declared members as well.
+                    if (!Enum.TryParse<TLookup>(key, out var lookup) || !Enum.IsDefined(lookup))
+                    {
+                        Logger.Warning($"[{GetType().Name}] Ignoring unknown setting '{key}' in {fileName}.");
+                        needsRewrite = true;
+                        continue;
+                    }
+
+                    if (settings.TryGetValue(lookup, out object? reactive))
+                    {
+                        if (!parseInto(lookup, reactive, value))
+                            needsRewrite = true;
+                    }
+                    else
+                    {
+                        // registered later by a Get() call, which will pick this up.
+                        unclaimedValues[lookup] = value;
                     }
                 }
             }
+            finally
+            {
+                loading = false;
+            }
         }
-        else
-        {
+
+        if (needsRewrite)
             performSave();
+    }
+
+    /// <summary>
+    /// Applies a string value read from the backing file to a <see cref="Reactive{T}"/>.
+    /// </summary>
+    /// <returns>Whether the value was applied successfully.</returns>
+    private bool parseInto(TLookup lookup, object reactive, string value)
+    {
+        try
+        {
+            var parseMethod = reactive.GetType().GetMethod("Parse");
+
+            if (parseMethod == null)
+            {
+                Logger.Warning($"[{GetType().Name}] Setting '{lookup}' has no Parse method; keeping its default.");
+                return false;
+            }
+
+            parseMethod.Invoke(reactive, new object[] { value, CultureInfo.InvariantCulture });
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[{GetType().Name}] Failed to parse setting '{lookup}' from value '{value}'. Falling back to default. Error: {ex.InnerException?.Message ?? ex.Message}");
+            return false;
         }
     }
 
@@ -124,29 +208,96 @@ public abstract class ConfigManager<TLookup> where TLookup : struct, Enum
     /// </summary>
     public virtual void Save()
     {
-        if (saveTask?.IsCompleted == false)
+        if (storage == null)
             return;
 
-        saveTask = Task.Run(async () =>
+        lock (mutex)
         {
-            await Task.Delay(200); // Debounce saves
-            performSave();
-        });
+            if (loading)
+                return;
+
+            // an in-flight save reads the current values when it runs, so it already covers this change.
+            if (saveTask?.IsCompleted == false)
+                return;
+
+            saveTask = Task.Run(async () =>
+            {
+                await Task.Delay(save_debounce_ms).ConfigureAwait(false);
+                performSave();
+            });
+        }
+    }
+
+    /// <summary>
+    /// Write any outstanding changes to disk immediately, waiting for a debounced <see cref="Save"/> to settle first.
+    /// Call this on shutdown, otherwise changes made within the debounce window are lost.
+    /// </summary>
+    public void Flush()
+    {
+        if (storage == null)
+            return;
+
+        Task? pending;
+
+        lock (mutex)
+            pending = saveTask;
+
+        try
+        {
+            pending?.Wait(TimeSpan.FromSeconds(5));
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[{GetType().Name}] A pending save failed before flush: {ex.InnerException?.Message ?? ex.Message}");
+        }
+
+        performSave();
     }
 
     private void performSave()
     {
-        if (storage == null) return;
+        if (storage == null)
+            return;
 
-        using var stream = storage.GetStream(fileName, FileAccess.Write);
-        using var writer = new StreamWriter(stream);
-
-        foreach (var (key, reactive) in settings.OrderBy(kvp => kvp.Key))
+        try
         {
-            var valueProperty = reactive.GetType().GetProperty("Value");
-            object? value = valueProperty?.GetValue(reactive);
+            lock (mutex)
+            {
+                // FileMode.Create rather than the storage default of OpenOrCreate: without truncation, writing a file
+                // shorter than the one already on disk leaves the tail of the old content behind, producing garbage
+                // lines like "rsorSensitivity = 1" after the real settings.
+                using var stream = storage.GetStream(fileName, FileAccess.Write, FileMode.Create);
+                using var writer = new StreamWriter(stream);
 
-            writer.WriteLine($"{key} = {value}");
+                var lines = settings
+                    .Select(kvp => (kvp.Key, Value: format(kvp.Value)))
+                    // settings that were never registered this run are preserved as-is rather than dropped.
+                    .Concat(unclaimedValues.Select(kvp => (kvp.Key, kvp.Value)))
+                    .OrderBy(pair => pair.Key);
+
+                foreach ((var key, string value) in lines)
+                    writer.WriteLine($"{key} = {value}");
+            }
         }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[{GetType().Name}] Failed to write {fileName}: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Formats a setting's value for the backing file. Values are always written with the invariant culture, since
+    /// that is what they are parsed back with.
+    /// </summary>
+    private static string format(object reactive)
+    {
+        object? value = reactive.GetType().GetProperty("Value")?.GetValue(reactive);
+
+        return value switch
+        {
+            null => string.Empty,
+            IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
+            _ => value.ToString() ?? string.Empty
+        };
     }
 }
