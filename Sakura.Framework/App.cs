@@ -10,6 +10,7 @@ using System.Reflection;
 using Sakura.Framework.Audio;
 using Sakura.Framework.Audio.BassEngine;
 using Sakura.Framework.Audio.Headless;
+using Sakura.Framework.Audio.SdlEngine;
 using Sakura.Framework.Configurations;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
@@ -284,8 +285,15 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
         switch (backend)
         {
             case AudioBackend.SDL:
-                // TODO: waiting for SDL audio backend implementation
-                Logger.Warning("The SDL audio backend is not implemented yet, falling back to BASS.");
+                try
+                {
+                    return new SDLAudioManager();
+                }
+                catch (Exception e)
+                {
+                    Logger.Error("Failed to initialise the SDL audio backend, falling back to BASS.", e);
+                }
+
                 break;
         }
 
