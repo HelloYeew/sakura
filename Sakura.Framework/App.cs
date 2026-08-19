@@ -10,6 +10,7 @@ using System.Reflection;
 using Sakura.Framework.Audio;
 using Sakura.Framework.Audio.BassEngine;
 using Sakura.Framework.Audio.Headless;
+using Sakura.Framework.Audio.SdlEngine;
 using Sakura.Framework.Configurations;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
@@ -21,6 +22,7 @@ using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Graphics.Video;
 using Sakura.Framework.Input;
+using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Platform.Dialogs;
 using Sakura.Framework.Reactive;
@@ -133,6 +135,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
         Cache(Host.Window);
 
         AudioManager = CreateAudioManager();
+        Host.AudioManager = AudioManager;
         var masterVolume = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.MasterVolume);
         var trackVolume = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.TrackVolume);
         var sampleVolume = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.SampleVolume);
@@ -270,12 +273,31 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
     protected virtual IImageLoader CreateImageLoader() => new ImageSharpImageLoader();
 
     /// <summary>
-    /// Create the audio manager used for this app, defaults to <see cref="BassAudioManager"/>.
+    /// Create the audio manager used for this app, selected by
+    /// <see cref="FrameworkSetting.AudioBackend"/> and default to <see cref="BassAudioManager"/>.
     /// </summary>
     protected virtual IAudioManager CreateAudioManager()
     {
         if (Host.IsHeadless)
             return new HeadlessAudioManager();
+
+        var backend = Host.FrameworkConfigManager.Get<AudioBackend>(FrameworkSetting.AudioBackend).Value;
+
+        switch (backend)
+        {
+            case AudioBackend.SDL:
+                try
+                {
+                    return new SDLAudioManager();
+                }
+                catch (Exception e)
+                {
+                    Logger.Error("Failed to initialise the SDL audio backend, falling back to BASS.", e);
+                }
+
+                break;
+        }
+
         return new BassAudioManager();
     }
 

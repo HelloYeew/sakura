@@ -3,9 +3,11 @@
 
 using System;
 using Sakura.Framework.Allocation;
+using Sakura.Framework.Audio;
 using Sakura.Framework.Configurations;
 using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Extensions.DrawableExtensions;
+using Sakura.Framework.Extensions.ObjectExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
@@ -39,6 +41,7 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
     private SpriteText windowModeText;
     private SpriteText executionModeText;
     private SpriteText rendererText;
+    private SpriteText audioText;
 
     private readonly FontUsage graphFontUsage = FontUsage.Default.With(size: 14);
     private readonly FontUsage boldGraphFontUsage = FontUsage.Default.With(size: 14, weight: "Bold");
@@ -77,7 +80,7 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
         {
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
-            Size = new Vector2(extended_width, 100),
+            Size = new Vector2(extended_width, 120),
             Children = new Drawable[]
             {
                 new Box()
@@ -214,6 +217,36 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
                                     Text = "N/A"
                                 }
                             }
+                        },
+                        new FlowContainer()
+                        {
+                            Anchor = Anchor.TopLeft,
+                            Origin = Anchor.TopLeft,
+                            Direction = FlowDirection.Horizontal,
+                            Size = new Vector2(1, 20),
+                            RelativeSizeAxes = Axes.X,
+                            Spacing = new Vector2(10, 0),
+                            Children = new Drawable[]
+                            {
+                                new SpriteText()
+                                {
+                                    Anchor = Anchor.TopLeft,
+                                    Origin = Anchor.TopLeft,
+                                    Size = new Vector2(200, 10),
+                                    Color = Color.White,
+                                    Font = boldGraphFontUsage,
+                                    Text = "AudioBackend"
+                                },
+                                audioText = new SpriteText()
+                                {
+                                    Anchor = Anchor.TopLeft,
+                                    Origin = Anchor.TopLeft,
+                                    Size = new Vector2(200, 10),
+                                    Color = Color.White,
+                                    Font = graphFontUsage,
+                                    Text = "N/A"
+                                }
+                            }
                         }
                     }
                 }
@@ -242,7 +275,37 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
         if (actual.EndsWith("Renderer"))
             actual = actual[..^"Renderer".Length];
 
-        return configured == RendererType.Automatic ? $"Automatic ({actual})" : actual;
+        return configured == RendererType.Automatic ? $"{getWindowType()} + Automatic ({actual})" : getWindowType() + actual;
+    }
+
+    private string getWindowType()
+    {
+        var type = host.Window?.GetType();
+        string windowType;
+        if (type.IsNotNull() && type.BaseType.IsNotNull())
+        {
+            windowType = type.BaseType.Name;
+        }
+        else
+        {
+            windowType = type?.Name ?? "None";
+        }
+
+        if (windowType.EndsWith("Window"))
+            windowType = windowType[..^"Window".Length];
+
+        return windowType;
+    }
+
+    private string getAudioText()
+    {
+        var configured = host.FrameworkConfigManager.Get<AudioBackend>(FrameworkSetting.AudioBackend).Value;
+        string actual = host.AudioManager?.GetType().Name ?? "None";
+
+        if (actual.EndsWith("AudioManager"))
+            actual = actual[..^"AudioManager".Length];
+
+        return configured == AudioBackend.Automatic ? $"Automatic ({actual})" : actual;
     }
 
     public override void LoadComplete()
@@ -253,6 +316,7 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
         executionModeText.Text = $"{host.ExecutionMode.Value}";
         limiterText.Text = $"{host.FrameLimiter.Value}";
         rendererText.Text = getRendererText();
+        audioText.Text = getAudioText();
 
         host.FrameLimiter.ValueChanged += value =>
         {

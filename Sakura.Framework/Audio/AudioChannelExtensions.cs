@@ -4,6 +4,8 @@
 using System;
 using System.Threading.Tasks;
 using Sakura.Framework.Audio.BassEngine;
+using Sakura.Framework.Audio.SdlEngine;
+using Sakura.Framework.Extensions.ObjectExtensions;
 
 namespace Sakura.Framework.Audio;
 
@@ -20,7 +22,7 @@ public static class AudioChannelExtensions
     /// <param name="duration">How long the fade should take in milliseconds.</param>
     public static async Task FadeVolumeToAsync(this IAudioChannel channel, double targetVolume, int duration)
     {
-        if (channel == null) return;
+        if (channel.IsNull()) return;
 
         if (duration <= 0)
         {
@@ -90,16 +92,22 @@ public static class AudioChannelExtensions
     /// <summary>
     /// Applies a reactive Low-Pass filter to the target audio channel.
     /// </summary>
-    /// <returns>The <see cref="BassLowPassFilter"/> instance to control the cutoff frequency.</returns>
-    public static BassLowPassFilter AddLowPassFilter(this IAudioChannel channel)
+    /// <returns>
+    /// An <see cref="ILowPassFilter"/> controlling the cutoff frequency, or null if the channel's
+    /// backend does not support filtering (e.g., the headless backend).
+    /// </returns>
+    public static ILowPassFilter? AddLowPassFilter(this IAudioChannel channel)
     {
-        if (channel is BassAudioChannel bassChannel)
+        switch (channel)
         {
-            // Attach the effect directly to the internal BASS handle
-            return new BassLowPassFilter(bassChannel.ChannelHandle);
-        }
+            case BassAudioChannel bassChannel:
+                return new BassLowPassFilter(bassChannel.ChannelHandle);
 
-        // Return null or a dummy filter if running in Headless mode
-        return null;
+            case SDLAudioChannel sdlChannel:
+                return sdlChannel.AttachLowPassFilter();
+
+            default:
+                return null;
+        }
     }
 }
