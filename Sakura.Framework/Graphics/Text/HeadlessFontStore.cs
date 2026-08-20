@@ -31,12 +31,22 @@ public class HeadlessFontStore : IFontStore
 
     }
 
-    public void AddFontFamily(Storage storage, string family, bool hasItalics = false)
+    public void AddFontFamily(Storage storage, string family, bool hasItalics = false, FontScript? script = null)
     {
 
     }
 
     public void AddFallbackFamily(string familyName)
+    {
+
+    }
+
+    public void AddFallbackFamily(string familyName, FontScript script)
+    {
+
+    }
+
+    public void SetScriptFamily(FontScript script, string familyName)
     {
 
     }
@@ -51,9 +61,29 @@ public class HeadlessFontStore : IFontStore
 
     }
 
+    public FontScript HanScript { get; set; } = FontScript.ChineseSimplified;
+
     public IEnumerable<Font> GetFallbacks(FontUsage usage)
     {
         return Array.Empty<Font>();
+    }
+
+    public IEnumerable<Font> GetFallbacks(FontUsage usage, FontScript script)
+    {
+        return Array.Empty<Font>();
+    }
+
+    public IFontFallbackSource GetFallbackSource(FontUsage usage) => EmptyFontFallbackSource.INSTANCE;
+
+    /// <summary>
+    /// Stands in for a real chain when there are no fonts to fall back to, so consumers do not have to
+    /// null-check the source.
+    /// </summary>
+    private sealed class EmptyFontFallbackSource : IFontFallbackSource
+    {
+        public static readonly EmptyFontFallbackSource INSTANCE = new EmptyFontFallbackSource();
+
+        public IEnumerable<Font> GetFallbacks(FontScript script) => Array.Empty<Font>();
     }
 
     public Font Get(FontUsage usage)
@@ -72,7 +102,7 @@ public class HeadlessFontStore : IFontStore
 
     public void Dispose()
     {
-        throw new System.NotImplementedException();
+        throw new NotImplementedException();
     }
 
     public void ClearCaches()
