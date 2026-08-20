@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Threading;
 using NUnit.Framework;
 using Sakura.Framework.Audio;
 using Sakura.Framework.Audio.SdlEngine;
@@ -285,6 +286,50 @@ public class SdlAudioDspTest
             Assert.That(amplitudes.AmplitudeRight, Is.Zero);
             Assert.That(amplitudes.FrequencyAmplitudes.ToArray(), Is.All.Zero);
         }
+    }
+
+    [Test]
+    public void Tap_HoldsPeakAcrossAReadThatSawNoAudio()
+    {
+        var tap = new AmplitudeTap();
+
+        // How the mix thread actually delivers audio: one device callback's worth in a burst, then a
+        // gap longer than the reader's cache interval. A reader that happens to land in the gap must
+        // still see the level rather than reporting silence mid-song.
+        float[] burst = new float[1024];
+        Array.Fill(burst, 0.75f);
+
+        tap.Feed(burst);
+        Assert.That(tap.Read().AmplitudeLeft, Is.EqualTo(0.75f).Within(0.001f));
+
+        Thread.Sleep(20);
+
+        var amplitudes = tap.Read();
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(amplitudes.AmplitudeLeft, Is.EqualTo(0.75f).Within(0.001f));
+            Assert.That(amplitudes.AmplitudeRight, Is.EqualTo(0.75f).Within(0.001f));
+        }
+    }
+
+    [Test]
+    public void Tap_PeakRollsOffAsQuieterAudioPassesThrough()
+    {
+        var tap = new AmplitudeTap();
+
+        float[] loud = new float[64];
+        Array.Fill(loud, 0.9f);
+        tap.Feed(loud);
+
+        // Enough quiet audio to push the loud segment out of the peak window entirely.
+        float[] quiet = new float[8192];
+        Array.Fill(quiet, 0.1f);
+        tap.Feed(quiet);
+
+        Thread.Sleep(20);
+
+        Assert.That(tap.Read().AmplitudeLeft, Is.EqualTo(0.1f).Within(0.001f), "The peak window must advance with the audio fed through it.");
     }
 
     [Test]

@@ -178,8 +178,10 @@ internal class SDLAudioChannel : IAudioChannel
                 handleEnd();
         }
 
-        if (produced > 0)
-            ApplyInsertsAndMix(block.Slice(0, produced * channels), destination);
+        // The whole block, silent tail included: a running channel occupies its slice of the timeline
+        // whether the decoder filled it, and the metering and the filter both want to see that
+        // silence rather than have the gap skipped over.
+        ApplyInsertsAndMix(block, destination);
     }
 
     /// <summary>
