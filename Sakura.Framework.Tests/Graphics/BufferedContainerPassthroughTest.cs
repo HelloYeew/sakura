@@ -57,7 +57,7 @@ public class BufferedContainerPassthroughTest
         };
 
         root.Load();
-        root.LoadComplete();
+        root.CompleteLoad();
 
         host = new HeadlessAppHost(nameof(BufferedContainerPassthroughTest));
         root.CacheHost(host);

@@ -106,7 +106,7 @@ public abstract partial class SliderBar<T> : Container, IHasTooltip where T : st
         Current.ValueChanged += onCurrentValueChanged;
     }
 
-    public override void LoadComplete()
+    protected override void LoadComplete()
     {
         base.LoadComplete();
 

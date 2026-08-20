@@ -52,7 +52,7 @@ public class InvisibleLayoutTest
         };
 
         root.Load();
-        root.LoadComplete();
+        root.CompleteLoad();
     }
 
     private void frame()

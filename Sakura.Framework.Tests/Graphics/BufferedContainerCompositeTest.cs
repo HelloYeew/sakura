@@ -57,7 +57,7 @@ public class BufferedContainerCompositeTest
         };
 
         root.Load();
-        root.LoadComplete();
+        root.CompleteLoad();
 
         host = new HeadlessAppHost(nameof(BufferedContainerCompositeTest));
         root.CacheHost(host);

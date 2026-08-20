@@ -308,7 +308,7 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
         return configured == AudioBackend.Automatic ? $"Automatic ({actual})" : actual;
     }
 
-    public override void LoadComplete()
+    protected override void LoadComplete()
     {
         base.LoadComplete();
 

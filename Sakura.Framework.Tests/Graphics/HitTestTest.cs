@@ -37,7 +37,7 @@ public class HitTestTest
         };
 
         root.Load();
-        root.LoadComplete();
+        root.CompleteLoad();
     }
 
     private void settle()

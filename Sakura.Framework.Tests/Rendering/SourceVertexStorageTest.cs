@@ -32,14 +32,14 @@ public class SourceVertexStorageTest
     {
         root = new Container { Size = new Vector2(800, 600) };
         root.Load();
-        root.LoadComplete();
+        root.CompleteLoad();
     }
 
     private DrawNode nodeFor(Drawable drawable)
     {
         root.Add(drawable);
         drawable.Load();
-        drawable.LoadComplete();
+        drawable.CompleteLoad();
 
         root.UpdateSubTree();
 

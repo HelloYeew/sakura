@@ -128,7 +128,7 @@ public static class BenchmarkTree
     public static void LoadAndSettle(Container root, ManualClock clock, int settleFrames = 3)
     {
         root.Load();
-        root.LoadComplete();
+        root.CompleteLoad();
 
         for (int i = 0; i < settleFrames; i++)
         {

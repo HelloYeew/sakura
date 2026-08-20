@@ -35,7 +35,7 @@ public class InputManagerQueueTest
         };
 
         root.Load();
-        root.LoadComplete();
+        root.CompleteLoad();
 
         manager = new InputManager();
     }

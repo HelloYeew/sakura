@@ -56,7 +56,7 @@ public class TransformRetargetTest
         root.Add(box);
 
         root.Load();
-        root.LoadComplete();
+        root.CompleteLoad();
 
         for (int i = 0; i < 3; i++)
             frame(null);

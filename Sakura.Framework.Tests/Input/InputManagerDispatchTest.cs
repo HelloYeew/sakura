@@ -41,7 +41,7 @@ public class InputManagerDispatchTest
         };
 
         root.Load();
-        root.LoadComplete();
+        root.CompleteLoad();
 
         manager = new InputManager();
     }

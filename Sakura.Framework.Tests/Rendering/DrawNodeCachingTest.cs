@@ -38,7 +38,7 @@ public class DrawNodeCachingTest
         };
 
         root.Load();
-        root.LoadComplete();
+        root.CompleteLoad();
     }
 
     private void frame()

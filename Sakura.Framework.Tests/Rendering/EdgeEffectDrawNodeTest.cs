@@ -42,7 +42,7 @@ public class EdgeEffectDrawNodeTest
 
         root.Add(target);
         root.Load();
-        root.LoadComplete();
+        root.CompleteLoad();
     }
 
     private ContainerDrawNode targetNode(int bufferIndex)

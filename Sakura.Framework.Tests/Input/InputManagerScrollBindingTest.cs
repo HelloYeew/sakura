@@ -41,7 +41,7 @@ public class InputManagerScrollBindingTest
             Clock = new FramedClock(manual)
         };
         root.Load();
-        root.LoadComplete();
+        root.CompleteLoad();
         manager = new InputManager();
     }
 

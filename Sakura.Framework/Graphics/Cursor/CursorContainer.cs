@@ -42,7 +42,7 @@ public partial class CursorContainer : Container, IRemoveFromDrawVisualiser
 
     protected virtual Drawable CreateCursor() => new DefaultCursor();
 
-    public override void LoadComplete()
+    protected override void LoadComplete()
     {
         base.LoadComplete();
         // TODO: This should be more centralized. Like add an interface for cursor drawable.

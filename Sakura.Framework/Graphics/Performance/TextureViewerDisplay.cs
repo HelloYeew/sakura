@@ -244,7 +244,7 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
         });
     }
 
-    public override void LoadComplete()
+    protected override void LoadComplete()
     {
         base.LoadComplete();
 

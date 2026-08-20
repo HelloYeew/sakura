@@ -37,7 +37,7 @@ public class RelativeChildSpaceTest
         };
 
         root.Load();
-        root.LoadComplete();
+        root.CompleteLoad();
     }
 
     private void frame() => frame(16);

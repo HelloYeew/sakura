@@ -18,7 +18,7 @@ public class LoadCompleteOnceTest
     {
         public int LoadCompleteCalls;
 
-        public override void LoadComplete()
+        protected override void LoadComplete()
         {
             base.LoadComplete();
             LoadCompleteCalls++;
@@ -35,9 +35,26 @@ public class LoadCompleteOnceTest
         };
 
         parent.Load();
-        parent.LoadComplete();
+        parent.CompleteLoad();
 
         Assert.That(child.LoadCompleteCalls, Is.EqualTo(1));
+    }
+
+    /// <summary>
+    /// The guarantee itself: completing a drawable that is already loaded does nothing, so no caller
+    /// can make its override run twice.
+    /// </summary>
+    [Test]
+    public void RepeatedCompleteLoadRunsOverrideOnce()
+    {
+        var drawable = new CountingContainer();
+
+        drawable.Load();
+        drawable.CompleteLoad();
+        drawable.CompleteLoad();
+        drawable.CompleteLoad();
+
+        Assert.That(drawable.LoadCompleteCalls, Is.EqualTo(1));
     }
 
     /// <summary>
@@ -49,7 +66,7 @@ public class LoadCompleteOnceTest
     {
         var parent = new Container();
         parent.Load();
-        parent.LoadComplete();
+        parent.CompleteLoad();
 
         var child = new CountingContainer();
         parent.Add(child);
@@ -57,7 +74,7 @@ public class LoadCompleteOnceTest
         Assert.That(child.LoadCompleteCalls, Is.EqualTo(1), "AddInternal should have completed the child exactly once.");
 
         // What a grandparent's cascade does on the next pass.
-        parent.LoadComplete();
+        parent.CompleteLoad();
 
         Assert.That(child.LoadCompleteCalls, Is.EqualTo(1), "A repeat cascade must not re-run the child's override.");
     }
@@ -79,7 +96,7 @@ public class LoadCompleteOnceTest
 
         root.Load();
         middle.Add(grandchild);
-        root.LoadComplete();
+        root.CompleteLoad();
 
         Assert.That(grandchild.LoadCompleteCalls, Is.EqualTo(1));
     }

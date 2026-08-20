@@ -108,7 +108,7 @@ public class InvalidationCascadeTest
         };
 
         root.Load();
-        root.LoadComplete();
+        root.CompleteLoad();
     }
 
     private void frame()

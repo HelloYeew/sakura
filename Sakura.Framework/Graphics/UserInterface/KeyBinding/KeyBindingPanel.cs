@@ -43,7 +43,7 @@ public abstract partial class KeyBindingPanel<T> : Container where T : struct, E
         AutoSizeAxes = Axes.Y;
     }
 
-    public override void LoadComplete()
+    protected override void LoadComplete()
     {
         base.LoadComplete();
         rebuild();

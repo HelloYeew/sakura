@@ -44,7 +44,7 @@ public class DrawableClockSharingTest
         };
 
         root.Load();
-        root.LoadComplete();
+        root.CompleteLoad();
 
         // settle one frame so the root clock has processed its source.
         advanceTo(1000);

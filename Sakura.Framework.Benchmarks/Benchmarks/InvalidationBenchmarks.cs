@@ -37,7 +37,7 @@ public class InvalidationBenchmarks
         (dirtyRoot, _) = BenchmarkTree.CreateRoot();
         (_, dirtyLeaf) = BenchmarkTree.AddDeep(dirtyRoot, 100);
         dirtyRoot.Load();
-        dirtyRoot.LoadComplete();
+        dirtyRoot.CompleteLoad();
         dirtyLeaf.Position = new Vector2(50, 50); // make the whole chain dirty once
     }
 

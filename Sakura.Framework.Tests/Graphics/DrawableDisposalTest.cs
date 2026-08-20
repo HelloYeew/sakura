@@ -384,7 +384,7 @@ public class DrawableDisposalTest
         var content = new TrackedDrawable();
 
         grid.Load();
-        grid.LoadComplete();
+        grid.CompleteLoad();
 
         grid.Content = new Drawable?[][] { new Drawable?[] { content } };
         grid.Update();

@@ -556,7 +556,7 @@ public abstract class AppHost : IDisposable
             this.app.Clock = UpdateClock;
 
             this.app.Load();
-            this.app.LoadComplete();
+            this.app.CompleteLoad();
 
             UpdateClock.Reset();
             DrawClock.Reset();

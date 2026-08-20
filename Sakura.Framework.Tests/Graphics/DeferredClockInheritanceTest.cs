@@ -37,7 +37,7 @@ public class DeferredClockInheritanceTest
         };
 
         root.Load();
-        root.LoadComplete();
+        root.CompleteLoad();
 
         advanceTo(1000);
     }

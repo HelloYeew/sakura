@@ -41,7 +41,7 @@ public class ClearGhostDrawNodeTest
         };
 
         root.Load();
-        root.LoadComplete();
+        root.CompleteLoad();
     }
 
     /// <summary>

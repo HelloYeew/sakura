@@ -50,7 +50,7 @@ public abstract partial class KeyBindingContainer<T> : KeyBindingContainer where
     /// </summary>
     public IKeyBindingSource? Source { get; set; }
 
-    public override void LoadComplete()
+    protected override void LoadComplete()
     {
         base.LoadComplete();
 

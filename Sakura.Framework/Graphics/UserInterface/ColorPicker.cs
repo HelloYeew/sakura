@@ -182,7 +182,7 @@ public abstract partial class ColorPicker : Container
         OwnReactive(Current);
     }
 
-    public override void LoadComplete()
+    protected override void LoadComplete()
     {
         base.LoadComplete();
 

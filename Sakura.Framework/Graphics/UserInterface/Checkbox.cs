@@ -22,7 +22,7 @@ public abstract partial class Checkbox : ClickableContainer
         Action = () => Current.Value = !Current.Value;
     }
 
-    public override void LoadComplete()
+    protected override void LoadComplete()
     {
         base.LoadComplete();
 

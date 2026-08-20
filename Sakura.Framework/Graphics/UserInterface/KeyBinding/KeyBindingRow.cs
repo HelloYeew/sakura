@@ -72,7 +72,7 @@ public abstract partial class KeyBindingRow<T> : Container where T : struct, Enu
         Height = 32;
     }
 
-    public override void LoadComplete()
+    protected override void LoadComplete()
     {
         base.LoadComplete();
 

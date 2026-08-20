@@ -36,7 +36,7 @@ public class DrawNodeStaleBufferTest
         };
 
         root.Load();
-        root.LoadComplete();
+        root.CompleteLoad();
     }
 
     /// <summary>

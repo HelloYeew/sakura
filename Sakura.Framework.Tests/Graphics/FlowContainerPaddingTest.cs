@@ -37,7 +37,7 @@ public class FlowContainerPaddingTest
         };
 
         root.Load();
-        root.LoadComplete();
+        root.CompleteLoad();
     }
 
     private void frame(double advanceMs = 16)

@@ -50,7 +50,7 @@ public class BasicSliderBarFillTest
         root.Add(slider);
 
         root.Load();
-        root.LoadComplete();
+        root.CompleteLoad();
 
         // Settle past the initial fill animation (LoadComplete fires one ResizeTo over
         // FillAnimationDuration) so it can't clobber a later instant set.

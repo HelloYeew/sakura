@@ -60,7 +60,7 @@ public class DrawNodeSnapshotTest
         root.Add(parent);
 
         root.Load();
-        root.LoadComplete();
+        root.CompleteLoad();
     }
 
     /// <summary>
@@ -102,7 +102,7 @@ public class DrawNodeSnapshotTest
 
         parent.Add(path);
         path.Load();
-        path.LoadComplete();
+        path.CompleteLoad();
 
         var node = pathNode(frame(0));
         int grownCapacity = node.VertexCapacity;
@@ -154,7 +154,7 @@ public class DrawNodeSnapshotTest
 
         parent.Add(path);
         path.Load();
-        path.LoadComplete();
+        path.CompleteLoad();
 
         int fullCount = pathNode(frame(0)).VertexCount;
 

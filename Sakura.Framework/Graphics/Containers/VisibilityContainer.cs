@@ -28,7 +28,7 @@ public abstract partial class VisibilityContainer : Container
     /// </summary>
     protected virtual bool StartHidden => true;
 
-    public override void LoadComplete()
+    protected override void LoadComplete()
     {
         base.LoadComplete();
 

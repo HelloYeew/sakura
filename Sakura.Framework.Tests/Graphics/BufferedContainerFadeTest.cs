@@ -40,7 +40,7 @@ public class BufferedContainerFadeTest
         };
 
         root.Load();
-        root.LoadComplete();
+        root.CompleteLoad();
 
         // BufferedContainer resolves the host to get at the renderer it releases its framebuffers through,
         // so the subtree needs one cached above it. Nothing here draws, the host is only a dependency.

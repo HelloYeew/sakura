@@ -55,7 +55,7 @@ public class SliderBarPrecisionTest
 
         root.Add(slider);
         root.Load();
-        root.LoadComplete();
+        root.CompleteLoad();
 
         return slider;
     }

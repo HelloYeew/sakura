@@ -11,7 +11,7 @@ namespace Sakura.Framework.Graphics.UserInterface;
 /// </summary>
 public abstract partial class Button : ClickableContainer
 {
-    public override void LoadComplete()
+    protected override void LoadComplete()
     {
         base.LoadComplete();
 
