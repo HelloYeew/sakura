@@ -997,16 +997,28 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
     }
 
     /// <summary>
-    /// Called after the drawable and all its children have been loaded.
-    /// This method is recursively called down the drawable hierarchy.
+    /// Marks this drawable as loaded, running <see cref="LoadComplete"/> once and only once.
     /// </summary>
-    public virtual void LoadComplete()
+    public void CompleteLoad()
     {
         if (LoadState >= LoadState.Loaded)
             return;
 
         LoadState = LoadState.Loaded;
+
+        LoadComplete();
+
+        // After the override, so a subscriber sees a drawable whose own load-complete work is done.
         OnLoadComplete(this);
+    }
+
+    /// <summary>
+    /// Called once after this drawable and all its children have been loaded. Override for one-time
+    /// setup that needs the loaded hierarchy like event subscriptions, reactive bindings, spawning
+    /// children.
+    /// </summary>
+    protected virtual void LoadComplete()
+    {
     }
 
     protected internal long DrawNodeInvalidationId { get; private set; } = 1;

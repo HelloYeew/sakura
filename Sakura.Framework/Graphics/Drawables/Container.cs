@@ -364,7 +364,7 @@ public partial class Container : Drawable
             try
             {
                 drawable.Load();
-                drawable.LoadComplete();
+                drawable.CompleteLoad();
                 drawable.Invalidate(InvalidationFlags.DrawInfo, false);
             }
             catch
@@ -754,20 +754,12 @@ public partial class Container : Drawable
         }
     }
 
-    public override void LoadComplete()
+    protected override void LoadComplete()
     {
         base.LoadComplete();
 
         foreach (var child in children)
-        {
-            // Skip children that are already loaded. A child added while this container was already
-            // loaded got its LoadComplete from AddInternal, and calling it again here would re-run
-            // the child's override body
-            if (child.LoadState >= LoadState.Loaded)
-                continue;
-
-            child.LoadComplete();
-        }
+            child.CompleteLoad();
     }
 
     protected override void OnClockChanged()
