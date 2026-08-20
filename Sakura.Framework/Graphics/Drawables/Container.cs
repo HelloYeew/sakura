@@ -757,8 +757,15 @@ public partial class Container : Drawable
     public override void LoadComplete()
     {
         base.LoadComplete();
+
         foreach (var child in children)
         {
+            // Skip children that are already loaded. A child added while this container was already
+            // loaded got its LoadComplete from AddInternal, and calling it again here would re-run
+            // the child's override body
+            if (child.LoadState >= LoadState.Loaded)
+                continue;
+
             child.LoadComplete();
         }
     }
