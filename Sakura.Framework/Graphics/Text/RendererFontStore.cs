@@ -7,7 +7,9 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.IO;
+using Sakura.Framework.Extensions.ObjectExtensions;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.IO;
@@ -22,13 +24,94 @@ public class RendererFontStore : IFontStore
 {
     private readonly TextureAtlas atlas;
     private readonly Dictionary<string, Lazy<Font>> fontCache = new Dictionary<string, Lazy<Font>>();
-    private readonly List<string> fallbackFamilies = new List<string>();
+
+    /// <summary>
+    /// One registered fallback family and the script it was claimed for. <see cref="FontScript.Any"/>
+    /// means the family applies to every script, which is what the script-less
+    /// <see cref="AddFallbackFamily(string)"/> registers.
+    /// </summary>
+    /// <param name="Family">The family name, as registered in the font cache.</param>
+    /// <param name="Script">The script claimed, or <see cref="FontScript.Any"/> for every script.</param>
+    /// <param name="Framework">
+    /// True for the framework's own bundled families. An application claim always outranks these for
+    /// the script it claims, regardless of registration order — the framework registers its fonts
+    /// during <see cref="LoadDefaultFont"/>, which runs before any application code, so ordering alone
+    /// would make an application claim unreachable.
+    /// </param>
+    private readonly record struct FallbackEntry(string Family, FontScript Script, bool Framework);
+
+    private readonly List<FallbackEntry> fallbackEntries = new List<FallbackEntry>();
+
+    /// <summary>
+    /// Families registered with <see cref="FontScript.Auto"/>, whose claims are derived from what the
+    /// font actually covers. Resolution needs the font loaded, so it is deferred until a chain is
+    /// first built rather than done at registration time.
+    /// </summary>
+    private readonly List<string> pendingAutoClaims = new List<string>();
 
     /// <summary>
     /// Fallback family names we have already warned about being unloaded, so the warning in
     /// GetFallbacks fires once per family rather than on every text layout.
     /// </summary>
     private readonly HashSet<string> warnedMissingFallbacks = new HashSet<string>();
+
+    /// <summary>
+    /// Claims we have already warned do not match the font's coverage, so the warning fires once per
+    /// (family, script) rather than on every text layout.
+    /// </summary>
+    private readonly HashSet<(string Family, FontScript Script)> warnedUncoveredClaims = new HashSet<(string, FontScript)>();
+
+    private FontScript hanScript = defaultHanScript();
+
+    /// <summary>
+    /// Which language's forms to prefer for unified CJK ideographs, the one thing a codepoint cannot
+    /// settle: 漢 is drawn differently in Japanese, Korean and the two Chinese variants while being the
+    /// same character. Defaults to the OS UI language, and is only consulted after the application's
+    /// own CJK claims — an application shipping a single CJK family never needs to set it.
+    /// </summary>
+    public FontScript HanScript
+    {
+        get => hanScript;
+        set
+        {
+            if (hanScript == value)
+                return;
+
+            hanScript = value;
+            invalidateFallbackCache();
+        }
+    }
+
+    /// <summary>
+    /// The CJK language to assume from the OS UI language. Falls back to simplified Chinese, which is
+    /// the order the framework's own families were historically registered in.
+    /// </summary>
+    private static FontScript defaultHanScript()
+    {
+        var culture = CultureInfo.CurrentUICulture;
+
+        switch (culture.TwoLetterISOLanguageName)
+        {
+            case "ja":
+                return FontScript.Japanese;
+
+            case "ko":
+                return FontScript.Korean;
+
+            case "zh":
+                string name = culture.Name;
+
+                bool traditional = name.Contains("Hant", StringComparison.OrdinalIgnoreCase)
+                                   || name.EndsWith("-TW", StringComparison.OrdinalIgnoreCase)
+                                   || name.EndsWith("-HK", StringComparison.OrdinalIgnoreCase)
+                                   || name.EndsWith("-MO", StringComparison.OrdinalIgnoreCase);
+
+                return traditional ? FontScript.ChineseTraditional : FontScript.ChineseSimplified;
+
+            default:
+                return FontScript.ChineseSimplified;
+        }
+    }
 
     public int CacheVersion { get; private set; }
 
@@ -55,24 +138,30 @@ public class RendererFontStore : IFontStore
             Logger.Warning("[FontLoader] NotoSans-Regular.ttf was not found. Default font is missing.");
         }
 
-        // fallback families for various languages
-        string[] fallbackFamiliesList = new[]
+        // The base font is a fallback in its own right, not just the default primary: it is the only
+        // bundled family covering Cyrillic, Greek and Vietnamese, so a label asking for a Latin-only
+        // application font needs to reach it. Registered first so it leads the generic tail.
+        addFrameworkFallback("NotoSans", FontScript.Any);
+
+        // Per-script fallback families. Each is claimed for the script it is drawn for, so a request
+        // for Japanese reaches NotoSansJP instead of whichever family happens to have the codepoint.
+        (string Family, FontScript Script)[] fallbackFamiliesList =
         {
-            "NotoSansSC",
-            "NotoSansTC",
-            "NotoSansJP",
-            "NotoSansKR",
-            "NotoSansThai",
-            "NotoSansArabic",
-            "NotoSansDevanagari",
-            "NotoSansHebrew"
+            ("NotoSansSC", FontScript.ChineseSimplified),
+            ("NotoSansTC", FontScript.ChineseTraditional),
+            ("NotoSansJP", FontScript.Japanese),
+            ("NotoSansKR", FontScript.Korean),
+            ("NotoSansThai", FontScript.Thai),
+            ("NotoSansArabic", FontScript.Arabic),
+            ("NotoSansDevanagari", FontScript.Devanagari),
+            ("NotoSansHebrew", FontScript.Hebrew)
         };
 
-        foreach (string family in fallbackFamiliesList)
+        foreach ((string family, var script) in fallbackFamiliesList)
         {
             // These families don't have italics
             loadFamily(resourceStorage, family, hasItalics: false);
-            AddFallbackFamily(family);
+            addFrameworkFallback(family, script);
         }
 
         loadEmojiFonts(resourceStorage);
@@ -84,7 +173,7 @@ public class RendererFontStore : IFontStore
         loadMaterialSymbol(resourceStorage, "MaterialSymbolsOutlined");
         loadMaterialSymbol(resourceStorage, "MaterialSymbolsRounded");
         loadMaterialSymbol(resourceStorage, "MaterialSymbolsSharp");
-        AddFallbackFamily("MaterialSymbolsOutlined");
+        addFrameworkFallback("MaterialSymbolsOutlined", FontScript.Any);
     }
 
     /// <summary>
@@ -104,10 +193,16 @@ public class RendererFontStore : IFontStore
 
     /// <summary>
     /// Public entry point for applications to register their own font family with the same
-    /// variable-aware loading the framework uses for its built-in fonts. Delegates to <see cref="loadFamily"/>.
+    /// variable-aware loading the framework uses for its built-in fonts. Delegates to <see cref="loadFamily"/>,
+    /// and claims <paramref name="script"/> for the family when one is given.
     /// </summary>
-    public void AddFontFamily(Storage storage, string family, bool hasItalics = false)
-        => loadFamily(storage, family, hasItalics);
+    public void AddFontFamily(Storage storage, string family, bool hasItalics = false, FontScript? script = null)
+    {
+        loadFamily(storage, family, hasItalics);
+
+        if (script.HasValue)
+            AddFallbackFamily(family, script.Value);
+    }
 
     private void loadFamily(Storage storage, string family, bool hasItalics)
     {
@@ -242,7 +337,7 @@ public class RendererFontStore : IFontStore
                     continue;
 
                 AddFontFromFile(path, alias: "AppleColorEmoji");
-                AddFallbackFamily("AppleColorEmoji");
+                addFrameworkFallback("AppleColorEmoji", FontScript.Emoji);
                 colorEmojiInChain = true;
                 Logger.Debug($"Using system Apple Color Emoji font from {path}");
                 break;
@@ -254,13 +349,13 @@ public class RendererFontStore : IFontStore
         // https://github.com/googlefonts/noto-emoji/blob/main/fonts/NotoColorEmoji.ttf
         if (notoColorAvailable)
         {
-            AddFallbackFamily("NotoColorEmoji");
+            addFrameworkFallback("NotoColorEmoji", FontScript.Emoji);
             colorEmojiInChain = true;
         }
 
         // Monochrome NotoEmoji
         loadFamily(resourceStorage, "NotoEmoji", hasItalics: false);
-        AddFallbackFamily("NotoEmoji");
+        addFrameworkFallback("NotoEmoji", FontScript.Emoji);
 
         if (!colorEmojiInChain)
             Logger.Debug("No color emoji font available; falling back to monochrome NotoEmoji.");
@@ -461,62 +556,343 @@ public class RendererFontStore : IFontStore
     }
 
     /// <summary>
+    /// Resolves <paramref name="family"/> at the usage's weight/italics through registered keys only,
+    /// returning null when the family was never loaded rather than standing in the default font.
+    /// </summary>
+    /// <remarks>
+    /// Fallback resolution needs this distinction: <see cref="Get(FontUsage)"/> answers with the default
+    /// font both for a family that failed to load and for the base family itself, so a chain built on it
+    /// can never contain the base family.
+    /// </remarks>
+    private Font getRegistered(FontUsage usage, string family)
+    {
+        if (string.IsNullOrEmpty(family))
+            return null;
+
+        string weighted = $"{family}-{usage.Weight}";
+
+        if (usage.Italics && tryGetLoaded(weighted + "Italic", out var italic))
+            return italic;
+
+        if (tryGetLoaded(weighted, out var font))
+            return font;
+
+        return tryGetLoaded(family, out var bare) ? bare : null;
+    }
+
+    private bool tryGetLoaded(string key, out Font font)
+    {
+        font = fontCache.TryGetValue(key, out var lazy) ? lazy.Value : null;
+        return font != null;
+    }
+
+    /// <summary>
     /// Derives the <see cref="FontVariation"/> for the requested usage (weight → <c>wght</c>, plus any
     /// Fill/Grade/OpticalSize overrides). Applied at render time; harmlessly ignored by static fonts.
     /// </summary>
     public FontVariation GetVariation(FontUsage usage) => usage.ToVariation();
 
-    public void AddFallbackFamily(string familyName)
+    public void AddFallbackFamily(string familyName) => AddFallbackFamily(familyName, FontScript.Any);
+
+    public void AddFallbackFamily(string familyName, FontScript script)
     {
-        if (fallbackFamilies.Contains(familyName))
+        if (script == FontScript.Auto)
+        {
+            if (!pendingAutoClaims.Contains(familyName))
+            {
+                pendingAutoClaims.Add(familyName);
+                invalidateFallbackCache();
+            }
+
+            return;
+        }
+
+        addEntry(new FallbackEntry(familyName, script, Framework: false));
+    }
+
+    public void SetScriptFamily(FontScript script, string familyName)
+    {
+        if (script == FontScript.Auto)
+        {
+            AddFallbackFamily(familyName, FontScript.Auto);
+            return;
+        }
+
+        var entry = new FallbackEntry(familyName, script, Framework: false);
+
+        if (fallbackEntries.Contains(entry))
+            fallbackEntries.Remove(entry);
+
+        // Ahead of every existing claim, so the last caller wins for this script. Claims for other
+        // scripts are unaffected: ordering within the list only decides ties inside one tier.
+        fallbackEntries.Insert(0, entry);
+        invalidateFallbackCache();
+    }
+
+    /// <summary>
+    /// Registers one of the framework's own bundled families. Kept separate from
+    /// <see cref="AddFallbackFamily(string,FontScript)"/> so an application claim can outrank it for the
+    /// same script even though the framework registers first.
+    /// </summary>
+    private void addFrameworkFallback(string familyName, FontScript script)
+        => addEntry(new FallbackEntry(familyName, script, Framework: true));
+
+    private void addEntry(FallbackEntry entry)
+    {
+        // A family may hold more than one claim (a CJK family covering both kana and ideographs), so
+        // duplicates are rejected per (family, script) rather than per family.
+        if (fallbackEntries.Contains(entry))
             return;
 
-        fallbackFamilies.Add(familyName);
+        fallbackEntries.Add(entry);
         invalidateFallbackCache();
     }
 
     public void InsertFallbackFamily(int index, string familyName)
     {
-        if (fallbackFamilies.Contains(familyName))
+        var entry = new FallbackEntry(familyName, FontScript.Any, Framework: false);
+
+        if (fallbackEntries.Contains(entry))
             return;
 
-        fallbackFamilies.Insert(index, familyName);
+        fallbackEntries.Insert(Math.Clamp(index, 0, fallbackEntries.Count), entry);
         invalidateFallbackCache();
     }
 
     public void ClearFallbackFamilies()
     {
-        fallbackFamilies.Clear();
+        fallbackEntries.Clear();
+        pendingAutoClaims.Clear();
         invalidateFallbackCache();
     }
 
     /// <summary>
-    /// Fallback chains, keyed by the only parts of a <see cref="FontUsage"/> that affect the result (the
-    /// family is substituted per fallback, and size plays no part in resolution).
+    /// Turns every <see cref="FontScript.Auto"/> registration into concrete claims, by probing what the
+    /// font actually covers. Runs once per registration, the first time a chain is built — probing needs
+    /// the font loaded, and doing it eagerly would defeat the store's lazy loading.
     /// </summary>
-    private readonly Dictionary<(string weight, bool italics), FallbackChain> fallbackCache = new Dictionary<(string, bool), FallbackChain>();
-
-    /// <summary>
-    /// The fallback fonts to try, in order, for glyphs the primary font does not cover.
-    /// </summary>
-    public IEnumerable<Font> GetFallbacks(FontUsage usage)
+    /// <remarks>
+    /// A script already claimed by the application is left alone, so an explicit claim always beats a
+    /// derived one and two auto-registered families resolve in registration order. Latin is never
+    /// auto-claimed (see <see cref="FontScripts.AutoClaimable"/>).
+    /// </remarks>
+    private void resolvePendingAutoClaims()
     {
-        var key = (usage.Weight, usage.Italics);
+        if (pendingAutoClaims.Count == 0)
+            return;
 
-        if (!fallbackCache.TryGetValue(key, out var chain))
-            fallbackCache[key] = chain = new FallbackChain(this, usage);
+        // Taken by value: addEntry invalidates, and the pending list is emptied as we go.
+        string[] pending = pendingAutoClaims.ToArray();
+        pendingAutoClaims.Clear();
 
-        return chain;
+        foreach (string family in pending)
+        {
+            var font = Get(family);
+
+            if (font.IsNull() || (font == defaultFont && family != "NotoSans"))
+            {
+                Logger.Warning($"[FontLoader] '{family}' was registered with FontScript.Auto but is not loaded, so no script could be claimed for it.");
+                continue;
+            }
+
+            var claimed = new List<FontScript>();
+
+            foreach (var script in FontScripts.AutoClaimable)
+            {
+                if (isClaimedByApplication(script))
+                    continue;
+
+                uint probe = FontScripts.ProbeFor(script);
+
+                if (probe == 0 || !font.HasGlyph(probe))
+                    continue;
+
+                addEntry(new FallbackEntry(family, script, Framework: false));
+                claimed.Add(script);
+            }
+
+            if (claimed.Count == 0)
+                Logger.Debug($"[FontLoader] '{family}' (FontScript.Auto) covers no unclaimed script; it stays available as a primary font only.");
+            else
+                Logger.Debug($"[FontLoader] '{family}' (FontScript.Auto) claimed {string.Join(", ", claimed)}.");
+        }
+    }
+
+    private bool isClaimedByApplication(FontScript script)
+    {
+        foreach (var entry in fallbackEntries)
+        {
+            if (!entry.Framework && entry.Script == script)
+                return true;
+        }
+
+        return false;
     }
 
     /// <summary>
-    /// A fallback chain for one (weight, italics) combination, resolved one family at a time as a
-    /// consumer walks it, and remembering what it resolved so later layouts pay nothing.
+    /// The fallback entries to consult for <paramref name="script"/>, most preferred first.
+    /// </summary>
+    /// <remarks>
+    /// <para>The tiers, in order:</para>
+    /// <list type="number">
+    /// <item>application claims for the script itself, then for the scripts related to it</item>
+    /// <item>application families registered for no particular script</item>
+    /// <item>the framework's family for the script (for ideographs, the one matching <see cref="HanScript"/>)</item>
+    /// <item>everything else in registration order</item>
+    /// </list>
+    /// <para>
+    /// An application claim outranking the framework's family is the whole point: the framework loads
+    /// its fonts before any application code runs, so a single ordered list can never let an
+    /// application override one script without also overriding every script that family happens to
+    /// cover. The last tier is what keeps text rendering at all for scripts nobody claimed — dropping
+    /// it would turn a wrong-font glyph into a missing one.
+    /// </para>
+    /// </remarks>
+    private List<FallbackEntry> orderedEntriesFor(FontScript script)
+    {
+        var ordered = new List<FallbackEntry>();
+        var used = new HashSet<FallbackEntry>();
+
+        void emit(Func<FallbackEntry, bool> match)
+        {
+            foreach (var entry in fallbackEntries)
+            {
+                if (match(entry) && used.Add(entry))
+                    ordered.Add(entry);
+            }
+        }
+
+        bool han = script == FontScript.Han;
+        bool cjk = FontScripts.IsCJK(script);
+
+        emit(e => !e.Framework && e.Script == script);
+
+        // Ideographs draw on every CJK claim the application made, in registration order: a game
+        // shipping one Japanese family gets its kanji from that family without having to say so twice.
+        // Conversely kana and hangul draw on a family claimed only for ideographs, which is normally a
+        // full CJK family.
+        if (han)
+            emit(e => !e.Framework && FontScripts.IsCJK(e.Script));
+        else if (cjk)
+            emit(e => !e.Framework && e.Script == FontScript.Han);
+
+        emit(e => !e.Framework && e.Script == FontScript.Any);
+
+        emit(e => e.Framework && e.Script == script);
+
+        if (han)
+        {
+            emit(e => e.Framework && e.Script == HanScript);
+            emit(e => e.Framework && FontScripts.IsCJK(e.Script));
+        }
+        else if (cjk)
+            emit(e => e.Framework && e.Script == FontScript.Han);
+
+        emit(_ => true);
+
+        return ordered;
+    }
+
+    /// <summary>
+    /// Warns once when a family was claimed for a script it does not actually cover — a typo in a
+    /// claim, or a font that only looked like it covered the script. The claim is left in place: a
+    /// chain entry that has no glyph is skipped per codepoint anyway, so honouring it costs nothing,
+    /// while dropping it would make the mistake harder to see rather than easier.
+    /// </summary>
+    private void verifyClaim(FallbackEntry entry, Font font)
+    {
+        // The framework's own families are verified by the resource build, and a missing file already
+        // warns through the not-loaded path above.
+        if (entry.Framework || font == null)
+            return;
+
+        uint probe = FontScripts.ProbeFor(entry.Script);
+
+        if (probe == 0 || font.HasGlyph(probe))
+            return;
+
+        if (warnedUncoveredClaims.Add((entry.Family, entry.Script)))
+            Logger.Warning($"[FontLoader] '{entry.Family}' is registered for FontScript.{entry.Script} but has no glyph for U+{probe:X4}, so the claim will contribute nothing. Did you mean a different script or a different family?");
+    }
+
+    /// <summary>
+    /// Fallback sources, keyed by the only parts of a <see cref="FontUsage"/> that affect the result (the
+    /// family is substituted per fallback, and size plays no part in resolution).
+    /// </summary>
+    private readonly Dictionary<(string weight, bool italics), FallbackSource> fallbackSources = new Dictionary<(string, bool), FallbackSource>();
+
+    /// <summary>
+    /// The per-script fallback chains for this usage, as <see cref="Font.ProcessText"/> needs them: it
+    /// classifies each codepoint while segmenting and asks for the chain matching the script it found.
+    /// </summary>
+    public IFontFallbackSource GetFallbackSource(FontUsage usage)
+    {
+        resolvePendingAutoClaims();
+
+        var key = (usage.Weight, usage.Italics);
+
+        if (!fallbackSources.TryGetValue(key, out var source))
+            fallbackSources[key] = source = new FallbackSource(this, usage);
+
+        return source;
+    }
+
+    /// <summary>
+    /// The fallback fonts to try, in order, for glyphs the primary font does not cover. Resolves for the
+    /// script the usage names, or the script-agnostic chain when it names none.
+    /// </summary>
+    public IEnumerable<Font> GetFallbacks(FontUsage usage) => GetFallbacks(usage, usage.Script ?? FontScript.Any);
+
+    /// <summary>
+    /// The fallback fonts to try, in order, for a glyph belonging to <paramref name="script"/>.
+    /// </summary>
+    public IEnumerable<Font> GetFallbacks(FontUsage usage, FontScript script) => GetFallbackSource(usage).GetFallbacks(script);
+
+    /// <summary>
+    /// The fallback chains for one (weight, italics) combination, one per script, each built on first
+    /// use. Holding them together means a layout that mixes scripts resolves each script once for the
+    /// whole application run rather than once per label.
+    /// </summary>
+    private sealed class FallbackSource : IFontFallbackSource
+    {
+        private readonly RendererFontStore store;
+        private readonly FontUsage usage;
+
+        private readonly Dictionary<FontScript, FallbackChain> chains = new Dictionary<FontScript, FallbackChain>();
+
+        public FallbackSource(RendererFontStore store, FontUsage usage)
+        {
+            this.store = store;
+            this.usage = usage;
+        }
+
+        public IEnumerable<Font> GetFallbacks(FontScript script)
+        {
+            // Auto is a registration-time sentinel; if one reaches here it describes no script.
+            if (script == FontScript.Auto)
+                script = FontScript.Any;
+
+            if (!chains.TryGetValue(script, out var chain))
+                chains[script] = chain = new FallbackChain(store, usage, store.orderedEntriesFor(script));
+
+            return chain;
+        }
+    }
+
+    /// <summary>
+    /// A fallback chain for one (weight, italics, script) combination, resolved one family at a time as
+    /// a consumer walks it, and remembering what it resolved so later layouts pay nothing.
     /// </summary>
     private sealed class FallbackChain : IEnumerable<Font>
     {
         private readonly RendererFontStore store;
         private readonly FontUsage usage;
+
+        /// <summary>
+        /// The families to try, in priority order for this chain's script. Ordering is pure string work
+        /// so it happens up front; loading the fonts they name is what stays lazy.
+        /// </summary>
+        private readonly List<FallbackEntry> entries;
 
         /// <summary>
         /// Fonts resolved so far, in chain order. Append-only.
@@ -526,14 +902,15 @@ public class RendererFontStore : IFontStore
         private readonly HashSet<Font> seen = new HashSet<Font>();
 
         /// <summary>
-        /// How far into <see cref="fallbackFamilies"/> resolution has reached.
+        /// How far into <see cref="entries"/> resolution has reached.
         /// </summary>
         private int nextFamily;
 
-        public FallbackChain(RendererFontStore store, FontUsage usage)
+        public FallbackChain(RendererFontStore store, FontUsage usage, List<FallbackEntry> entries)
         {
             this.store = store;
             this.usage = usage;
+            this.entries = entries;
         }
 
         public IEnumerator<Font> GetEnumerator()
@@ -555,26 +932,30 @@ public class RendererFontStore : IFontStore
         /// </summary>
         private bool resolveNext()
         {
-            while (nextFamily < store.fallbackFamilies.Count)
+            while (nextFamily < entries.Count)
             {
-                string family = store.fallbackFamilies[nextFamily++];
+                var entry = entries[nextFamily++];
+                string family = entry.Family;
 
-                var fallbackFont = store.Get(usage.With(family: family));
+                // Resolved through the registered keys only. Get(FontUsage) would answer with the
+                // default font for a family that was never loaded, which is indistinguishable from a
+                // family that legitimately *is* the default font — and the base family is a fallback in
+                // its own right (it is the only bundled one covering Cyrillic and Greek).
+                var fallbackFont = store.getRegistered(usage, family);
 
-                if (fallbackFont == store.defaultFont || fallbackFont == null)
-                    fallbackFont = store.Get(family);
-
-                // A registered fallback family that resolves to the default font was never loaded (its
-                // file is missing, or AddFallbackFamily was called without a matching AddFont/loadFamily).
-                // Such a family contributes nothing to glyph coverage, warn once so the misconfiguration
-                // is visible instead of silently rendering missing glyphs as .notdef ("tofu").
-                if (fallbackFont == null || fallbackFont == store.defaultFont)
+                // A registered fallback family that resolves to nothing was never loaded (its file is
+                // missing, or AddFallbackFamily was called without a matching AddFont/loadFamily). Such
+                // a family contributes nothing to glyph coverage, warn once so the misconfiguration is
+                // visible instead of silently rendering missing glyphs as .notdef ("tofu").
+                if (fallbackFont == null)
                 {
                     if (store.warnedMissingFallbacks.Add(family))
                         Logger.Debug($"Fallback family '{family}' is registered but not loaded, it will not contribute glyphs. Did you forget to load it?");
 
                     continue;
                 }
+
+                store.verifyClaim(entry, fallbackFont);
 
                 if (!seen.Add(fallbackFont))
                     continue;
@@ -645,10 +1026,10 @@ public class RendererFontStore : IFontStore
         stat_shape_misses.Value++;
 
         var font = Get(usage);
-        if (font == null)
+        if (font.IsNull())
             return ShapedText.Empty;
 
-        var shaped = font.ProcessText(text, usage.Size, dpiScale, GetFallbacks(usage), GetVariation(usage));
+        var shaped = font.ProcessText(text, usage.Size, dpiScale, GetFallbackSource(usage), GetVariation(usage), usage.Script);
 
         var node = shapeLru.AddFirst((key, shaped));
         shapeCache[key] = node;
@@ -693,7 +1074,7 @@ public class RendererFontStore : IFontStore
     /// </summary>
     private void invalidateFallbackCache()
     {
-        fallbackCache.Clear();
+        fallbackSources.Clear();
         invalidateShapeCache();
     }
 

@@ -39,6 +39,18 @@ public readonly struct FontUsage : IEquatable<FontUsage>
     public float? OpticalSize { get; }
 
     /// <summary>
+    /// The language this text is known to be in, when the caller knows it. Only affects unified CJK
+    /// ideographs, the one case a codepoint cannot attribute to a language on its own: a label set to
+    /// <see cref="FontScript.Japanese"/> renders 漢 with the Japanese family even on a machine whose
+    /// <see cref="IFontStore.HanScript"/> says otherwise. Null leaves resolution to the store.
+    /// </summary>
+    /// <remarks>
+    /// This is a hint about the text, not a font selection. Every other script is settled by the
+    /// codepoint, so setting this does nothing for them.
+    /// </remarks>
+    public FontScript? Script { get; }
+
+    /// <summary>
     /// Gets the default font usage (NotoSans-Regular, 24px).
     /// </summary>
     public static FontUsage Default => new FontUsage("NotoSans", weight: FontWeights.Regular);
@@ -50,7 +62,7 @@ public readonly struct FontUsage : IEquatable<FontUsage>
     /// constructor without overload ambiguity.
     /// </summary>
     public FontUsage(string family = DEFAULT_FONT_FAMILY, float size = DEFAULT_FONT_SIZE, FontWeight weight = default, bool italics = false,
-                     float? fill = null, float? grade = null, float? opticalSize = null)
+                     float? fill = null, float? grade = null, float? opticalSize = null, FontScript? script = null)
     {
         Family = family;
         Size = size;
@@ -59,10 +71,11 @@ public readonly struct FontUsage : IEquatable<FontUsage>
         Fill = fill;
         Grade = grade;
         OpticalSize = opticalSize;
+        Script = script;
     }
 
     public FontUsage With(string? family = null, float? size = null, FontWeight? weight = null, bool? italics = null,
-                          float? fill = null, float? grade = null, float? opticalSize = null)
+                          float? fill = null, float? grade = null, float? opticalSize = null, FontScript? script = null)
     {
         return new FontUsage(
             family ?? Family,
@@ -71,7 +84,8 @@ public readonly struct FontUsage : IEquatable<FontUsage>
             italics ?? Italics,
             fill ?? Fill,
             grade ?? Grade,
-            opticalSize ?? OpticalSize
+            opticalSize ?? OpticalSize,
+            script ?? Script
         );
     }
 
@@ -106,6 +120,7 @@ public readonly struct FontUsage : IEquatable<FontUsage>
         if (Fill.HasValue) s += $", Fill: {Fill}";
         if (Grade.HasValue) s += $", Grade: {Grade}";
         if (OpticalSize.HasValue) s += $", opsz: {OpticalSize}";
+        if (Script.HasValue) s += $", Script: {Script}";
         return s + ")";
     }
 
@@ -117,12 +132,13 @@ public readonly struct FontUsage : IEquatable<FontUsage>
                Italics == other.Italics &&
                Nullable.Equals(Fill, other.Fill) &&
                Nullable.Equals(Grade, other.Grade) &&
-               Nullable.Equals(OpticalSize, other.OpticalSize);
+               Nullable.Equals(OpticalSize, other.OpticalSize) &&
+               Nullable.Equals(Script, other.Script);
     }
 
     public override bool Equals(object? obj) => obj is FontUsage other && Equals(other);
 
-    public override int GetHashCode() => HashCode.Combine(Family, Size, Weight, Italics, Fill, Grade, OpticalSize);
+    public override int GetHashCode() => HashCode.Combine(Family, Size, Weight, Italics, Fill, Grade, OpticalSize, Script);
 
     public static bool operator ==(FontUsage left, FontUsage right) => left.Equals(right);
 

@@ -266,7 +266,125 @@ public class Font : IDisposable
     /// </summary>
     private readonly INativeBytes fontData;
 
-    public ShapedText ProcessText(string text, float fontSize, float dpiScale = 1.0f, IEnumerable<Font>? fallbacks = null, FontVariation variation = default)
+    /// <summary>
+    /// The script of every code unit in <paramref name="text"/>, with both halves of a surrogate pair
+    /// carrying the same value so the array can be indexed by string position.
+    /// </summary>
+    private static FontScript[] classifyScripts(string text, FontScript? languageHint)
+    {
+        var scripts = new FontScript[text.Length];
+        var current = FontScript.Any;
+
+        int i = 0;
+
+        while (i < text.Length)
+        {
+            int charLen;
+            uint codepoint;
+
+            if (char.IsHighSurrogate(text[i]) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
+            {
+                codepoint = (uint)char.ConvertToUtf32(text[i], text[i + 1]);
+                charLen = 2;
+            }
+            else
+            {
+                codepoint = text[i];
+                charLen = 1;
+            }
+
+            current = FontScripts.FromCodepoint(codepoint, current, languageHint);
+
+            for (int n = 0; n < charLen; n++)
+                scripts[i + n] = current;
+
+            i += charLen;
+        }
+
+        return scripts;
+    }
+
+    /// <summary>
+    /// Picks one font for the whole stretch of unified ideographs starting at <paramref name="start"/>,
+    /// or null if no single font covers all of it.
+    /// </summary>
+    /// <remarks>
+    /// the fallback chain for them is ordered by an assumed language (see
+    /// <see cref="IFontStore.HanScript"/>), so a word whose characters are unevenly covered would be drawn half
+    /// in one language's font and half in another's e.g. 你好 with a Japanese font ahead of a Chinese one
+    /// puts 你 in the Chinese face and 好 in the Japanese one. Preferring a font that covers the whole
+    /// stretch keeps a word in one face and makes the chain order decide the language rather than the
+    /// coverage gaps. Other scripts keep resolving per codepoint, where one missing character must not
+    /// drag its neighbors into another font.
+    /// </remarks>
+    private Font? chooseIdeographFont(string text, FontScript[] scripts, int start, IFontFallbackSource? fallbacks)
+    {
+        int end = start;
+
+        while (end < text.Length && scripts[end] == FontScript.Han)
+            end++;
+
+        if (covers(this, text, start, end))
+            return this;
+
+        if (fallbacks == null)
+            return null;
+
+        foreach (var fallback in fallbacks.GetFallbacks(FontScript.Han))
+        {
+            if (covers(fallback, text, start, end))
+                return fallback;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="font"/> has a glyph for every codepoint in <c>[start, end)</c>.
+    /// </summary>
+    private static bool covers(Font font, string text, int start, int end)
+    {
+        int i = start;
+
+        while (i < end)
+        {
+            uint codepoint;
+            int charLen;
+
+            if (char.IsHighSurrogate(text[i]) && i + 1 < end && char.IsLowSurrogate(text[i + 1]))
+            {
+                codepoint = (uint)char.ConvertToUtf32(text[i], text[i + 1]);
+                charLen = 2;
+            }
+            else
+            {
+                codepoint = text[i];
+                charLen = 1;
+            }
+
+            if (!font.HasGlyph(codepoint))
+                return false;
+
+            i += charLen;
+        }
+
+        return true;
+    }
+
+    /// <param name="text">The text to shape.</param>
+    /// <param name="fontSize">The logical font size.</param>
+    /// <param name="dpiScale">Physical pixels per logical pixel.</param>
+    /// <param name="fallbacks">
+    /// Where to look for glyphs this font is missing. Consulted per script, so a family claimed for
+    /// one writing system is not pulled into another.
+    /// </param>
+    /// <param name="variation">Variable-font axis coordinates to render at.</param>
+    /// <param name="languageHint">
+    /// The language the text is known to be in, when the caller knows it. Only affects unified CJK
+    /// ideographs, which no codepoint can attribute to a language on its own.
+    /// </param>
+    public ShapedText ProcessText(string text, float fontSize, float dpiScale = 1.0f, IFontFallbackSource? fallbacks = null, FontVariation variation = default,
+                                  FontScript? languageHint = null)
     {
         if (string.IsNullOrEmpty(text))
             return ShapedText.Empty;
@@ -275,7 +393,7 @@ public class Font : IDisposable
 
         // Determine base vertical metrics from the PRIMARY font so line height stays consistent
         float ascenderPx = 0;
-        float lineHeightPx = Size;
+        float lineHeightPx;
 
         lock (stateLock)
         {
@@ -300,6 +418,16 @@ public class Font : IDisposable
         int currentRunStart = 0;
         Font? currentFont = null;
 
+        // The script of each code unit, resolved up front so a stretch of ideographs can be looked at as
+        // a whole before a font is picked for it (see chooseIdeographFont).
+        var scripts = classifyScripts(text, languageHint);
+
+        var currentRunScript = FontScript.Any;
+
+        // The font chosen for the stretch of ideographs currently being walked, if one font covers all
+        // of it. Null outside such a stretch, and inside one no single font can cover.
+        Font? ideographFont = null;
+
         int i = 0;
         while (i < text.Length)
         {
@@ -319,13 +447,25 @@ public class Font : IDisposable
                 charLen = 1;
             }
 
-            // Find which font supports this codepoint
+            var runScript = scripts[i];
+
+            if (runScript == FontScript.Han)
+            {
+                if (i == 0 || scripts[i - 1] != FontScript.Han)
+                    ideographFont = chooseIdeographFont(text, scripts, i, fallbacks);
+            }
+            else
+                ideographFont = null;
+
+            // Find which font supports this codepoint, preferring the families claimed for its script
             Font assignedFont = this;
-            if (!HasGlyph(codepoint))
+            if (ideographFont != null && ideographFont.HasGlyph(codepoint))
+                assignedFont = ideographFont;
+            else if (!HasGlyph(codepoint))
             {
                 if (fallbacks != null)
                 {
-                    foreach (var fallback in fallbacks)
+                    foreach (var fallback in fallbacks.GetFallbacks(runScript))
                     {
                         if (fallback.HasGlyph(codepoint))
                         {
@@ -336,17 +476,21 @@ public class Font : IDisposable
                 }
             }
 
-            // If the font changed, process the previous run
-            if (currentFont != assignedFont)
+            // Break the run when the font changes, or when the script changes to one that cannot be
+            // shaped with the same properties even though the same font serves it (a Thai mark shaped
+            // as Latin would be positioned wrongly).
+            if (currentFont != assignedFont || !FontScripts.ShareShapingRun(currentRunScript, runScript))
             {
-                if (currentFont != null)
+                if (currentFont != null && currentRunStart < i)
                 {
                     string runText = text.Substring(currentRunStart, i - currentRunStart);
                     var runGlyphs = currentFont.shapeRun(runText, renderFontSize, dpiScale, ascenderPx, variation, currentRunStart, ref cursorX);
                     glyphs.AddRange(runGlyphs);
+                    currentRunStart = i;
                 }
+
                 currentFont = assignedFont;
-                currentRunStart = i;
+                currentRunScript = runScript;
             }
 
             i += charLen;
