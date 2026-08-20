@@ -300,6 +300,8 @@ public class RendererFontStore : IFontStore
                 string italicFileName = weight == "Regular" ? $"{family}-Italic.ttf" : $"{family}-{weight}Italic.ttf";
                 AddFont(storage, italicFileName, alias: $"{family}-{weight}Italic");
             }
+
+            Logger.Debug($"[FontLoader] loaded '{family}' weight '{weight}'{(hasItalics ? " with italics" : "")}.");
         }
     }
 
