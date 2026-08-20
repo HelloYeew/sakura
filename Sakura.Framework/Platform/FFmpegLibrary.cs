@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using FFmpeg.AutoGen;
@@ -36,22 +37,63 @@ internal static class FFmpegLibrary
                 return;
 
             if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-                ffmpeg.RootPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "runtimes", "osx", "native");
+                ffmpeg.RootPath = resolveRootPath("osx");
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                string arch = RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? "win-arm64" : "win-x64";
-                ffmpeg.RootPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "runtimes", arch, "native");
-            }
+                ffmpeg.RootPath = resolveRootPath($"win-{architectureSuffix()}");
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-            {
-                string arch = RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? "linux-arm64" : "linux-x64";
-                ffmpeg.RootPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "runtimes", arch, "native");
-            }
+                ffmpeg.RootPath = resolveRootPath($"linux-{architectureSuffix()}");
 
             Logger.Verbose($"Initialized FFmpeg with root path {ffmpeg.RootPath}");
+
+            // FFmpeg.AutoGen resolves lazily, so a wrong root path is not an error here — it is a
+            // NotSupportedException from whatever calls into FFmpeg first, which reads as "this
+            // method is not supported" and says nothing about a missing directory. Check now, while
+            // there is still somewhere useful to point.
+            warnIfNoLibrariesPresent(ffmpeg.RootPath);
+
             DynamicallyLoadedBindings.Initialize();
 
             Volatile.Write(ref initialised, true);
+        }
+    }
+
+    /// <summary>
+    /// Where the shipped FFmpeg binaries are for <paramref name="runtimeIdentifier"/>, accounting for
+    /// both publish layouts.
+    /// </summary>
+    private static string resolveRootPath(string runtimeIdentifier)
+    {
+        string baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
+        string ridDirectory = Path.Combine(baseDirectory, "runtimes", runtimeIdentifier, "native");
+
+        return Directory.Exists(ridDirectory) ? ridDirectory : baseDirectory;
+    }
+
+    /// <summary>
+    /// The architecture segment of a runtime identifier for the current process.
+    /// </summary>
+    private static string architectureSuffix() => RuntimeInformation.ProcessArchitecture switch
+    {
+        Architecture.Arm64 => "arm64",
+        Architecture.X86 => "x86",
+        _ => "x64"
+    };
+
+    /// <summary>
+    /// Logs a warning if <paramref name="rootPath"/> holds no FFmpeg libraries at all.
+    /// </summary>
+    private static void warnIfNoLibrariesPresent(string rootPath)
+    {
+        try
+        {
+            if (Directory.Exists(rootPath) && Directory.EnumerateFiles(rootPath, "*avutil*").Any())
+                return;
+
+            Logger.Warning($"No FFmpeg libraries found in '{rootPath}'. Anything that decodes audio or video will fail on its first call.");
+        }
+        catch (Exception e)
+        {
+            Logger.Verbose($"Could not check for FFmpeg libraries in '{rootPath}': {e.Message}");
         }
     }
 
