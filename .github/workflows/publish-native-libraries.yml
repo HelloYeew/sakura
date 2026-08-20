@@ -43,6 +43,46 @@ jobs:
             -p:Version=${{ steps.version.outputs.version }} \
             --output ./nupkg
 
+      - name: Verify package contents
+        run: |
+          set -eu
+
+          pkg=$(ls ./nupkg/*.nupkg)
+          echo "Inspecting $pkg"
+
+          entries=$(unzip -Z1 "$pkg")
+          runtimes_dir="Sakura.Framework.NativeLibraries/runtimes"
+          failed=0
+          checked=0
+
+          # Expected RIDs are whatever the repo actually carries, so adding a runtime directory
+          # becomes a checked requirement without anyone remembering to edit this workflow.
+          for path in "$runtimes_dir"/*/; do
+              rid=$(basename "$path")
+              checked=$((checked + 1))
+
+              on_disk=$(find "$path" -type f ! -name '.*' | wc -l | tr -d ' ')
+              packed=$(printf '%s\n' "$entries" | grep -c "^runtimes/$rid/" || true)
+
+              if [ "$packed" -eq 0 ]; then
+                  echo "::error::runtimes/$rid is in the repo ($on_disk files) but absent from the package. A directory-tree payload such as an .xcframework needs a recursive Include glob to be packed."
+                  failed=1
+              elif [ "$packed" -ne "$on_disk" ]; then
+                  echo "::error::runtimes/$rid: $on_disk files on disk, $packed packed — something was dropped."
+                  failed=1
+              else
+                  echo "  runtimes/$rid: $packed files"
+              fi
+          done
+
+          if [ "$checked" -eq 0 ]; then
+              echo "::error::No runtime directories found under $runtimes_dir."
+              exit 1
+          fi
+
+          [ "$failed" -eq 0 ] || exit 1
+          echo "All $checked runtime identifiers present."
+
       - name: NuGet login (Trusted Publishing)
         uses: NuGet/login@v1
         id: login

@@ -21,7 +21,7 @@
   </PropertyGroup>
   <ItemGroup>
     <None Include="..\icon.png" Pack="true" PackagePath="/" />
-    <None Include="runtimes\**\native\*">
+    <None Include="runtimes\**\native\**">
       <Pack>true</Pack>
       <PackagePath>runtimes</PackagePath>
     </None>

@@ -43,8 +43,17 @@ jobs:
           # Normalise the output location for the upload step.
           mkdir -p out
           cp "$BUILD_DIR/libsakura-metal.dylib" out/libsakura-metal.dylib
-          # Sanity check: must be a 2-arch fat binary.
+          # `lipo -info` prints the slices but exits 0 either way, including for a thin binary, so
+          # it reads as a check while being incapable of failing. Assert each slice explicitly: a
+          # silently single-arch dylib fails no build step and only surfaces as a load error on the
+          # architecture that was dropped, by which point it has shipped.
           lipo -info out/libsakura-metal.dylib
+          for arch in arm64 x86_64; do
+            if ! lipo out/libsakura-metal.dylib -verify_arch "$arch"; then
+              echo "::error::libsakura-metal.dylib has no $arch slice (got: $(lipo -archs out/libsakura-metal.dylib))."
+              exit 1
+            fi
+          done
 
       - name: Build iOS framework slices
         if: ${{ matrix.build_target == 'ios' }}
@@ -81,6 +90,27 @@ jobs:
             -framework "$DEVICE_FW" \
             -framework "$SIM_FW" \
             -output out/sakura-metal.xcframework
+
+          # Same reasoning as the macOS arch assertion: verify the bundle that was produced rather
+          # than trusting that two -framework arguments became two slices.
+          slices=$(find out/sakura-metal.xcframework -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
+          if [ "$slices" -ne 2 ]; then
+            echo "::error::sakura-metal.xcframework has $slices slice(s), expected 2 (device + simulator)."
+            exit 1
+          fi
+
+          SIM_BINARY=$(find out/sakura-metal.xcframework -path '*-simulator/*' -name sakura-metal -type f | head -1)
+          if [ -z "$SIM_BINARY" ]; then
+            echo "::error::sakura-metal.xcframework has no simulator slice binary."
+            exit 1
+          fi
+
+          for arch in arm64 x86_64; do
+            if ! lipo "$SIM_BINARY" -verify_arch "$arch"; then
+              echo "::error::The simulator slice has no $arch slice (got: $(lipo -archs "$SIM_BINARY"))."
+              exit 1
+            fi
+          done
 
           # Zip the bundle for a clean single-file artifact upload (directories don't round-trip well).
           (cd out && zip -r sakura-metal.xcframework.zip sakura-metal.xcframework)
