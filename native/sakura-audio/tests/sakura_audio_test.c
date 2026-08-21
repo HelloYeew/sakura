@@ -417,12 +417,18 @@ static void test_transport(void)
     CHECK(state.sourceFrames == 0);
 
     // Commands are applied in the order they were posted, so this seek wins over the play before it.
+    int64_t seeksBefore = state.seekEpoch;
     sakura_audio_node_play(engine, voice);
     sakura_audio_node_seek(engine, voice, 32);
     sakura_audio_engine_mix(engine, out, 8);
     sakura_audio_node_get_state(engine, voice, &state);
     CHECK(state.running == 1);
     CHECK(state.sourceFrames >= 32);
+
+    // The seek epoch is what tells a caller its seek has landed. Without it, a position read in the
+    // window between posting a seek and the audio thread applying it pairs the old cursor with the
+    // new base and reads as a jump.
+    CHECK(state.seekEpoch > seeksBefore);
 
     // Seeking past the end clamps rather than running off the buffer.
     sakura_audio_node_seek(engine, voice, 1000);
