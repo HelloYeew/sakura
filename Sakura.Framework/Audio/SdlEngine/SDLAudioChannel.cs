@@ -25,17 +25,21 @@ namespace Sakura.Framework.Audio.SdlEngine;
 /// </para>
 /// </remarks>
 [SuppressMessage("ReSharper", "InconsistentNaming")]
-internal class SDLAudioChannel : IAudioChannel
+internal class SDLAudioChannel : ISDLChannel
 {
     public event Action OnStart = () => { };
     public event Action OnStop = () => { };
     public event Action OnEnd = () => { };
 
+    /// <inheritdoc cref="ISDLChannel.Disposed"/>
+    /// <remarks>Raised on the audio thread.</remarks>
+    public event Action? Disposed;
+
     /// <summary>
-    /// Raised once this channel has released its source, on the audio thread. Whatever created the
-    /// channel uses it to drop the reference, keeping the underlying audio data alive.
+    /// Nothing to do since this mixer raises its own events from the audio thread through
+    /// <see cref="ISDLAudioContext.EnqueueAction"/> as they happen.
     /// </summary>
-    internal event Action? Disposed;
+    public void PollEvents() { }
 
     public ReactiveBool IsRunning { get; } = new ReactiveBool();
 

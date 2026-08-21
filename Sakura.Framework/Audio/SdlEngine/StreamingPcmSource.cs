@@ -27,7 +27,7 @@ namespace Sakura.Framework.Audio.SdlEngine;
 /// under a superseded generation rather than letting a moment of pre-seek audio through.
 /// </para>
 /// </remarks>
-internal sealed class StreamingPcmSource : IPcmSource
+internal sealed class StreamingPcmSource : IPcmSource, IDecodeSource
 {
     /// <summary>
     /// How far ahead to decode. Large enough that a GC pause or a slow read cannot starve the mixer,

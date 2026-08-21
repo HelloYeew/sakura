@@ -106,6 +106,9 @@ public static class AudioChannelExtensions
             case SDLAudioChannel sdlChannel:
                 return sdlChannel.AttachLowPassFilter();
 
+            case SDLNativeAudioChannel nativeChannel:
+                return nativeChannel.AttachLowPassFilter();
+
             default:
                 return null;
         }

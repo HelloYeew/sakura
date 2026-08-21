@@ -58,6 +58,17 @@ internal struct SakuraAudioNodeState
     /// </summary>
     public long EndEpoch;
 
+    /// <summary>
+    /// Bumped once per applied seek, so a caller can tell whether the seek it posted has landed.
+    /// </summary>
+    /// <remarks>
+    /// A seek is posted as a command and applied on the audio thread, so there is a window of one
+    /// device callback where <see cref="SourceFrames"/> is still the old cursor. Reporting a position
+    /// from it in that window pairs the old cursor with the new base, which reads as a jump backwards
+    /// and then forwards again — and a clock chain turns that into audible desync.
+    /// </remarks>
+    public long SeekEpoch;
+
     public int Running;
     public int Ended;
 
@@ -71,14 +82,18 @@ internal struct SakuraAudioNodeState
 /// </summary>
 internal static class SakuraAudioNative
 {
-    private const string lib_name = "libsakura-audio";
+    // Unprefixed on purpose: the runtime adds the "lib" prefix and the platform suffix on Unix, so
+    // this one name resolves libsakura-audio.dylib, libsakura-audio.so and sakura-audio.dll -- which
+    // is what CMake produces by default on each, and what every other native in runtimes/win-* looks
+    // like. iOS does not probe at all; see SetupLibraryResolvers.
+    private const string lib_name = "sakura-audio";
 
     /// <summary>
     /// The ABI this assembly was built against. Must match <c>SAKURA_AUDIO_ABI_VERSION</c> in
     /// <c>sakura_audio.h</c>, a shipped library that disagrees is refused rather than trusted to have
     /// the same struct layouts.
     /// </summary>
-    public const int ABI_VERSION = 1;
+    public const int ABI_VERSION = 2;
 
     /// <summary>
     /// Transform size and bin count of the native spectrum, fixed to line up with

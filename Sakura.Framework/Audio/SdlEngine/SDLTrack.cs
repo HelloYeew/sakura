@@ -133,8 +133,17 @@ internal sealed unsafe class SDLTrack : ITrack, IHasActiveChannels, IDisposable
                 return null!;
             }
 
-            var source = new StreamingPcmSource(stream, manager.SampleRate, manager.Channels);
-            var channel = manager.CreateChannel(source, manager.TrackMixer, streaming: true);
+            // Both engines stream a track: the difference is only whose ring buffer the decode thread
+            // fills. The native one is drained by the device callback with no managed code involved.
+            var channel = manager.UsesNativeMixEngine
+                ? manager.CreateNativeStreamingChannel(stream, manager.TrackMixer)
+                : manager.CreateChannel(new StreamingPcmSource(stream, manager.SampleRate, manager.Channels), manager.TrackMixer, streaming: true);
+
+            if (channel == null)
+            {
+                if (holdsReference) data!.Release();
+                return null!;
+            }
 
             Interlocked.Increment(ref activeChannelCount);
 

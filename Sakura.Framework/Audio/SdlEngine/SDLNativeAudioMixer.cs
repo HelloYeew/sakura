@@ -9,10 +9,17 @@ using System.Threading;
 namespace Sakura.Framework.Audio.SdlEngine;
 
 /// <summary>
-/// SDL implementation of <see cref="IAudioMixer"/>
+/// A mixer node inside <c>libsakura-audio</c>, presented as an <see cref="IAudioMixer"/>.
 /// </summary>
+/// <remarks>
+/// A native mixer sums its children and then applies its own gain, filter and metering exactly as a
+/// voice does, which is what preserves <see cref="BassEngine.BassAudioMixer"/>'s semantics. SDL's own
+/// device mixing is flat, so routing everything straight at the device would have left
+/// <see cref="IAudioManager.TrackMixer"/> and <see cref="IAudioManager.SampleMixer"/> as bookkeeping
+/// with no per-mixer volume, filter or spectrum.
+/// </remarks>
 [SuppressMessage("ReSharper", "InconsistentNaming")]
-internal sealed class SDLAudioMixer : SDLAudioChannel, ISDLMixer
+internal sealed class SDLNativeAudioMixer : SDLNativeAudioChannel, ISDLMixer
 {
     private readonly Lock sync = new Lock();
     private readonly List<IAudioChannel> channels = new List<IAudioChannel>();
@@ -27,13 +34,8 @@ internal sealed class SDLAudioMixer : SDLAudioChannel, ISDLMixer
     /// </remarks>
     private volatile IAudioChannel[] snapshot = Array.Empty<IAudioChannel>();
 
-    /// <summary>
-    /// Sum of this mixer's children for the current block, before its own inserts.
-    /// </summary>
-    private float[] scratch = Array.Empty<float>();
-
-    public SDLAudioMixer(ISDLAudioContext context)
-        : base(context, null)
+    public SDLNativeAudioMixer(SakuraAudioEngine engine, uint node)
+        : base(engine, node, 0)
     {
     }
 
@@ -50,12 +52,17 @@ internal sealed class SDLAudioMixer : SDLAudioChannel, ISDLMixer
 
     public void AddChannel(IAudioChannel channel)
     {
-        if (channel is not SDLAudioChannel)
+        if (channel is not SDLNativeAudioChannel native)
             return;
 
         lock (sync)
         {
             if (channels.Contains(channel))
+                return;
+
+            // The graph edge is the engine's; this list exists only so the visualiser has something to
+            // enumerate, since the native graph is not walkable from here.
+            if (!Engine.AddChild(Node, native.Node))
                 return;
 
             channels.Add(channel);
@@ -69,6 +76,9 @@ internal sealed class SDLAudioMixer : SDLAudioChannel, ISDLMixer
         {
             if (!channels.Remove(channel))
                 return;
+
+            if (channel is SDLNativeAudioChannel native)
+                Engine.RemoveChild(Node, native.Node);
 
             snapshot = channels.ToArray();
         }
@@ -92,32 +102,6 @@ internal sealed class SDLAudioMixer : SDLAudioChannel, ISDLMixer
 
             return count;
         }
-    }
-
-    public override void Fill(Span<float> destination)
-    {
-        if (IsDisposed || !IsRunning.Value)
-            return;
-
-        var current = snapshot;
-
-        if (current.Length == 0)
-            return;
-
-        if (scratch.Length < destination.Length)
-            scratch = new float[destination.Length];
-
-        var block = scratch.AsSpan(0, destination.Length);
-        block.Clear();
-
-        foreach (var channel in current)
-        {
-            // Children add into the shared block; a stopped or starved one contributes nothing.
-            if (channel is SDLAudioChannel sdlChannel)
-                sdlChannel.Fill(block);
-        }
-
-        ApplyInsertsAndMix(block, destination);
     }
 
     public override void Dispose()
