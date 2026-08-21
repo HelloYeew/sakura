@@ -60,7 +60,7 @@ public class ReactiveNumber<T> : Reactive<T>, IReactiveNumber<T>
             TriggerMinValueChanged(oldMinValue, value);
 
             // Re-apply constraints so the current value respects the new range.
-            setValue(base.Value);
+            ReapplyCoercion();
         }
     }
 
@@ -81,7 +81,7 @@ public class ReactiveNumber<T> : Reactive<T>, IReactiveNumber<T>
             TriggerMaxValueChanged(oldMaxValue, value);
 
             // Re-apply constraints so the current value respects the new range.
-            setValue(base.Value);
+            ReapplyCoercion();
         }
     }
 
@@ -101,52 +101,43 @@ public class ReactiveNumber<T> : Reactive<T>, IReactiveNumber<T>
             TriggerPrecisionChanged(oldPrecision, value);
 
             // Re-round the current value onto the new precision step.
-            setValue(base.Value);
+            ReapplyCoercion();
         }
     }
 
-    public override T Value
+    /// <summary>
+    /// Clamps into <see cref="MinValue"/>..<see cref="MaxValue"/> and rounds onto the
+    /// <see cref="Precision"/> grid.
+    /// </summary>
+    /// <remarks>
+    /// The coercion hook rather than an override of <see cref="Reactive{T}.Value"/>, so that it
+    /// applies to a value pushed in by a bound source as well as to a direct assignment. Overriding
+    /// the setter covered only the latter, which let a bound number hold something its own range and
+    /// grid say is impossible and, worse, let two reactive bound to each other disagree about what
+    /// the value was and hand it back and forth forever.
+    /// </remarks>
+    protected override T CoerceValue(T candidate)
     {
-        get => base.Value;
-        set => setValue(value);
-    }
+        candidate = T.Clamp(candidate, minValue, maxValue);
 
-    private void setValue(T value)
-    {
-        // Out-of-range values are clamped rather than rejected — the behaviour games
-        // generally want for sliders/settings
-        value = T.Clamp(value, minValue, maxValue);
+        if (precision <= DefaultPrecision)
+            return candidate;
 
-        if (precision > DefaultPrecision)
+        if (typeof(T) == typeof(decimal))
         {
-            if (typeof(T) == typeof(decimal))
-            {
-                // Only decimal values need decimal arithmetic for exactness.
-                decimal accurateResult = decimal.CreateTruncating(value);
-                accurateResult = Math.Round(accurateResult / decimal.CreateTruncating(precision)) * decimal.CreateTruncating(precision);
-                base.Value = T.Clamp(T.CreateTruncating(accurateResult), minValue, maxValue);
-            }
-            else
-            {
-                // Double arithmetic is exact for float/integral steps in practical ranges
-                // and an order of magnitude faster than routing through decimal.
-                double doubleResult = double.CreateTruncating(value);
-                double doublePrecision = double.CreateTruncating(precision);
-                doubleResult = Math.Round(doubleResult / doublePrecision) * doublePrecision;
-                base.Value = T.Clamp(T.CreateTruncating(doubleResult), minValue, maxValue);
-            }
+            // Only decimal values need decimal arithmetic for exactness.
+            decimal accurateResult = decimal.CreateTruncating(candidate);
+            accurateResult = Math.Round(accurateResult / decimal.CreateTruncating(precision)) * decimal.CreateTruncating(precision);
+            return T.Clamp(T.CreateTruncating(accurateResult), minValue, maxValue);
         }
-        else
-        {
-            base.Value = value;
-        }
-    }
 
-    public override void Parse(object input, IFormatProvider formatProvider = null)
-    {
-        base.Parse(input, formatProvider);
+        // Double arithmetic is exact for float/integral steps in practical ranges
+        // and an order of magnitude faster than routing through decimal.
+        double doubleResult = double.CreateTruncating(candidate);
+        double doublePrecision = double.CreateTruncating(precision);
+        doubleResult = Math.Round(doubleResult / doublePrecision) * doublePrecision;
 
-        setValue(Value);
+        return T.Clamp(T.CreateTruncating(doubleResult), minValue, maxValue);
     }
 
     protected virtual void TriggerMinValueChanged(T oldValue, T newValue)

@@ -3,7 +3,6 @@
 
 using System;
 using NUnit.Framework;
-using Sakura.Framework.Audio;
 using Sakura.Framework.Audio.SdlEngine;
 
 namespace Sakura.Framework.Tests.Audio;
