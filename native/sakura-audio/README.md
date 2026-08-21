@@ -84,7 +84,11 @@ isn't a portable one.
 `Sakura.Framework/Audio/SdlEngine` contains a complete managed mixer, and it is not dead code. It is
 the reference this implementation is diffed against, and the fallback when the native library is
 missing for a platform — an `AudioBackend.SDL` that degrades to managed mixing is much better than
-one that throws. Where behaviour is shared, the managed version is the source of truth:
+one that throws. That fallback is not theoretical: with the library absent, the backend starts on the
+managed mixer with nothing worse than a verbose log line. `AudioBackend.SDLManaged` forces it on a
+platform that has both, which is how the two get A/B'd.
+
+Where behaviour is shared, the managed version is the source of truth:
 
 - **Filter coefficients are computed managed-side.** This library only applies them, so the
   cutoff-to-coefficient maths has one home and one set of tests.

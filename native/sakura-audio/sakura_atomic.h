@@ -75,9 +75,60 @@ static inline uint32_t sakura_atomic_compare_exchange_u32(sakura_atomic_u32 *slo
     return (uint32_t)_InterlockedCompareExchange(&slot->v, (long)desired, (long)expected);
 }
 
+#if defined(_M_IX86)
+
+// 32-bit x86 is the one MSVC target where _InterlockedCompareExchange64 is the *only* 64-bit
+// interlocked intrinsic available -- there is no _InterlockedOr64, _InterlockedExchange64 or
+// _InterlockedExchangeAdd64 -- so the other three are built out of it. Same semantics, a
+// compare-and-swap loop where the other architectures get a single instruction.
+//
+// Not optional: ring positions, frame counters and epochs are all int64, so 64-bit atomicity is
+// load-bearing on every target this library builds for, x86 included.
+
+static inline uint64_t sakura_atomic_load_u64(const sakura_atomic_u64 *slot)
+{
+    // Comparing zero against zero reads the slot without changing it, which is the only atomic
+    // 64-bit read x86 offers: a plain read of eight bytes can tear.
+    return (uint64_t)_InterlockedCompareExchange64((volatile long long *)&slot->v, 0, 0);
+}
+
+static inline void sakura_atomic_store_u64(sakura_atomic_u64 *slot, uint64_t value)
+{
+    long long previous = (long long)sakura_atomic_load_u64(slot);
+
+    for (;;)
+    {
+        long long observed = _InterlockedCompareExchange64(&slot->v, (long long)value, previous);
+
+        if (observed == previous)
+            return;
+
+        previous = observed;
+    }
+}
+
+static inline uint64_t sakura_atomic_fetch_add_u64(sakura_atomic_u64 *slot, uint64_t delta)
+{
+    long long previous = (long long)sakura_atomic_load_u64(slot);
+
+    for (;;)
+    {
+        long long observed = _InterlockedCompareExchange64(&slot->v, previous + (long long)delta, previous);
+
+        if (observed == previous)
+            return (uint64_t)previous;
+
+        previous = observed;
+    }
+}
+
+#else
+
 static inline uint64_t sakura_atomic_load_u64(const sakura_atomic_u64 *slot) { return (uint64_t)_InterlockedOr64((volatile long long *)&slot->v, 0); }
 static inline void sakura_atomic_store_u64(sakura_atomic_u64 *slot, uint64_t value) { _InterlockedExchange64(&slot->v, (long long)value); }
 static inline uint64_t sakura_atomic_fetch_add_u64(sakura_atomic_u64 *slot, uint64_t delta) { return (uint64_t)_InterlockedExchangeAdd64(&slot->v, (long long)delta); }
+
+#endif
 
 #endif
 
