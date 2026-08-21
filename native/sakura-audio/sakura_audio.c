@@ -224,6 +224,7 @@ typedef struct Node
     // Published state.
     sakura_atomic_u64 sourceFrames;
     sakura_atomic_u64 endEpoch;
+    sakura_atomic_u64 seekEpoch;
     sakura_atomic_u32 ended;
 
     // Metering.
@@ -343,6 +344,7 @@ static uint64_t round_up_power_of_two(uint64_t value)
 
 static int64_t now_microseconds(void)
 {
+#ifdef SAKURA_AUDIO_HAVE_TIMESPEC_GET
     // timespec_get is C11 and needs no platform header, which is the whole reason it is used here
     // rather than clock_gettime or QueryPerformanceCounter. It is the one thing on the audio path
     // that is not pure arithmetic; it exists because a callback whose cost is not measured is a
@@ -353,6 +355,13 @@ static int64_t now_microseconds(void)
         return 0;
 
     return (int64_t)time.tv_sec * 1000000 + time.tv_nsec / 1000;
+#else
+    // Detected by CMake rather than assumed: bionic only declares timespec_get from API 29, and the
+    // Android legs target 21 to match the shipped FFmpeg. Giving up the measurement is the right
+    // trade -- reaching for clock_gettime or QueryPerformanceCounter instead would put a platform
+    // branch on the audio path, which is the thing this library does not have.
+    return 0;
+#endif
 }
 
 static Node *resolve_node(SakuraAudioEngine *engine, SakuraAudioHandle handle)
@@ -770,6 +779,10 @@ static void seek_internal(SakuraAudioEngine *engine, Node *node, int64_t frame)
 
     node->endHandled = 0;
     sakura_atomic_store_u32(&node->ended, 0);
+
+    // Published last, so a caller that has seen the new epoch is guaranteed to see the reset cursor
+    // that goes with it rather than the one it replaced.
+    sakura_atomic_add_i64(&node->seekEpoch, 1);
 }
 
 // Called the moment the source runs dry. A looping static voice wraps here, as tightly as the block
@@ -949,6 +962,7 @@ static void apply_command(SakuraAudioEngine *engine, const Command *command)
             tap_reset(node);
             node->endHandled = 0;
             sakura_atomic_store_u32(&node->ended, 0);
+            sakura_atomic_add_i64(&node->seekEpoch, 1);
 
             buffer_release_reference(previous);
             break;
@@ -1215,6 +1229,7 @@ int sakura_audio_node_get_state(SakuraAudioEngine *engine, SakuraAudioHandle han
 
     state->sourceFrames = sakura_atomic_load_i64(&node->sourceFrames);
     state->endEpoch = sakura_atomic_load_i64(&node->endEpoch);
+    state->seekEpoch = sakura_atomic_load_i64(&node->seekEpoch);
     state->running = (int32_t)sakura_atomic_load_u32(&node->running);
     state->ended = (int32_t)sakura_atomic_load_u32(&node->ended);
 
@@ -1655,6 +1670,7 @@ static void node_reset(SakuraAudioEngine *engine, Node *node, int kind)
 
     sakura_atomic_store_i64(&node->sourceFrames, 0);
     sakura_atomic_store_i64(&node->endEpoch, 0);
+    sakura_atomic_store_i64(&node->seekEpoch, 0);
     sakura_atomic_store_u32(&node->ended, 0);
 
     tap_reset(node);

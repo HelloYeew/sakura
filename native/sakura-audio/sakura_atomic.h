@@ -7,12 +7,12 @@
 // The handful of atomic operations sakura-audio needs, wrapped so that the choice is made here
 // rather than discovered on whichever platform happens to get built first.
 //
-// Two branches:
+// Two branches, split on the compiler rather than on what it happens to offer:
 //
-//   * C11 <stdatomic.h>, used by clang and gcc everywhere, and by MSVC when it is available
-//     (VS 2022 17.5+ with /std:c11 or /std:c17 exposes _Atomic for C).
-//   * MSVC _Interlocked* intrinsics, for older toolchains and for /std:c11 builds where
-//     <stdatomic.h> is not offered.
+//   * MSVC gets the _Interlocked* intrinsics. Whether a given MSVC exposes <stdatomic.h> depends on
+//     its version and on /experimental:c11atomics, and the intrinsics are always there and always
+//     correct -- so the Windows leg does not get to vary with the toolchain the runner installed.
+//   * everything else (clang, gcc, clang-cl) gets C11 <stdatomic.h>.
 //
 // Every operation here is sequentially consistent. That is stronger than most of the call sites
 // need, and it is deliberate: the alternative is a per-site memory-order argument that has to be
@@ -26,10 +26,10 @@
 #include <stdint.h>
 #include <string.h>
 
-#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L && !defined(__STDC_NO_ATOMICS__)
-#define SAKURA_ATOMIC_C11 1
-#elif defined(_MSC_VER)
+#if defined(_MSC_VER) && !defined(__clang__)
 #define SAKURA_ATOMIC_MSVC 1
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L && !defined(__STDC_NO_ATOMICS__)
+#define SAKURA_ATOMIC_C11 1
 #else
 #error "sakura-audio needs either C11 atomics or MSVC _Interlocked intrinsics."
 #endif

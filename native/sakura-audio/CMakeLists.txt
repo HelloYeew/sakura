@@ -15,15 +15,10 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-# C11 for <stdatomic.h>. MSVC only exposes it with this flag, and the fallback in sakura_atomic.h
-# covers the toolchains that still do not -- but ask for the standard path first.
+# No /experimental:c11atomics: sakura_atomic.h uses the _Interlocked* intrinsics on MSVC
+# unconditionally, so the Windows build does not depend on which MSVC the runner installed.
 if(MSVC)
     add_compile_options(/W4)
-    # /experimental:c11atomics is what makes <stdatomic.h> available in MSVC's C mode. Harmless where
-    # unsupported: the atomics shim falls back to _Interlocked intrinsics.
-    if(MSVC_VERSION GREATER_EQUAL 1935)
-        add_compile_options(/experimental:c11atomics)
-    endif()
 else()
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
@@ -48,9 +43,20 @@ if(APPLE)
     endif()
 endif()
 
+# The one thing about the host that has to be discovered rather than assumed. timespec_get is C11,
+# but bionic only declares it from API 29 and the Android legs target 21 to match the shipped FFmpeg,
+# so a compile-time check is the difference between "no callback timing on old Android" and "does not
+# build for Android". A feature check, not a platform branch.
+include(CheckSymbolExists)
+check_symbol_exists(timespec_get "time.h" SAKURA_AUDIO_HAVE_TIMESPEC_GET)
+
 add_library(sakura-audio SHARED sakura_audio.c)
 
 target_include_directories(sakura-audio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+if(SAKURA_AUDIO_HAVE_TIMESPEC_GET)
+    target_compile_definitions(sakura-audio PRIVATE SAKURA_AUDIO_HAVE_TIMESPEC_GET=1)
+endif()
 
 # libm, and nothing else, ever. A new link dependency here is a review failure, not a build detail:
 # it is what would put an SDK per target back into CI.
@@ -75,6 +81,10 @@ if(SAKURA_AUDIO_BUILD_TESTS)
     enable_testing()
     add_executable(sakura-audio-test tests/sakura_audio_test.c sakura_audio.c)
     target_include_directories(sakura-audio-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    if(SAKURA_AUDIO_HAVE_TIMESPEC_GET)
+        target_compile_definitions(sakura-audio-test PRIVATE SAKURA_AUDIO_HAVE_TIMESPEC_GET=1)
+    endif()
 
     if(NOT MSVC)
         target_link_libraries(sakura-audio-test m)

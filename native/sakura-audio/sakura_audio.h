@@ -39,7 +39,7 @@ extern "C" {
 //     The FFT behind read_spectrum runs on the calling thread by design; it must never be moved
 //     onto the callback.
 
-#define SAKURA_AUDIO_ABI_VERSION 1
+#define SAKURA_AUDIO_ABI_VERSION 2
 
 // Transform size and the number of magnitude bins it produces. Fixed rather than configurable
 // because they have to line up with ChannelAmplitudes.AMPLITUDES_SIZE on the managed side, which is
@@ -131,7 +131,8 @@ typedef struct SakuraAudioStats
     int64_t starvations;          // blocks where a running voice had less audio than was asked for
     int64_t putFailures;          // sakura_sdl_put_fn rejected a block
     int64_t commandsDropped;      // control commands lost to a full queue; should always be zero
-    int64_t callbackMicroseconds; // duration of the most recent callback
+    int64_t callbackMicroseconds; // duration of the most recent callback; 0 where the platform's C
+                                  // library has no timespec_get (Android below API 29)
     int32_t activeVoices;         // voices that produced audio in the most recent block
 } SakuraAudioStats;
 
@@ -213,6 +214,12 @@ typedef struct SakuraAudioNodeState
     // Bumped once each time the source runs out. The managed side watches it to fire OnEnd, and to
     // re-seek the decoder behind a looping streaming voice.
     int64_t endEpoch;
+
+    // Bumped once per applied seek, so a caller can tell whether the seek it posted has landed yet.
+    // Without it a position read in the window between posting a seek and the audio thread applying
+    // it returns the *old* cursor against the *new* base, which reads as a jump backwards and then
+    // forwards again -- the sort of thing a clock chain turns into audible desync.
+    int64_t seekEpoch;
 
     int32_t running;
     int32_t ended;

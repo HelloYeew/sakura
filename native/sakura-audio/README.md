@@ -57,7 +57,10 @@ stutter bug if broken:
 
 The one deliberate exception is `timespec_get`, used to measure callback duration. A callback whose
 cost is not measured is a callback whose latency budget is guesswork; C11's `timespec_get` needs no
-platform header, which is why it and not `clock_gettime` or `QueryPerformanceCounter`.
+platform header, which is why it and not `clock_gettime` or `QueryPerformanceCounter`. CMake
+feature-checks it rather than the C branching on the platform — bionic only declares it from API 29
+and the Android legs target 21 to match the shipped FFmpeg, so on those `callbackMicroseconds` reads
+zero and nothing else changes.
 
 ## Threading
 
@@ -125,13 +128,18 @@ is wrong, and that is the whole reason the managed mixer was written first.
 
 ## Where the library goes
 
-The .NET side loads it by name (`DllImport("libsakura-audio")`), so the built artifact has to sit
-where the framework's native loader finds it, alongside the other natives:
+The .NET side loads it by unprefixed name (`DllImport("sakura-audio")`) — the runtime adds the `lib`
+prefix and the platform suffix on Unix — so each platform keeps CMake's natural filename, which is
+also what every other native in `runtimes/win-*` looks like:
 
 ```
-Sakura.Framework.NativeLibraries/runtimes/<rid>/native/libsakura-audio.{dylib,so}
+Sakura.Framework.NativeLibraries/runtimes/osx/native/libsakura-audio.dylib
+Sakura.Framework.NativeLibraries/runtimes/{linux,android}-*/native/libsakura-audio.so
+Sakura.Framework.NativeLibraries/runtimes/win-*/native/sakura-audio.dll
 Sakura.Framework.NativeLibraries/runtimes/ios/native/sakura-audio.xcframework
 ```
+
+See `.github/workflows/build-sakura-audio.yml` for how we build it.
 
 The matching P/Invoke binding is `SakuraAudioNative.cs`. When a signature changes here, that file and
 `SAKURA_AUDIO_ABI_VERSION` change with it — managed checks the version before anything else, so a
