@@ -1,0 +1,122 @@
+// This code is part of the Sakura framework project. Licensed under the MIT License.
+// See the LICENSE file for full license text.
+
+#ifndef SAKURA_ATOMIC_H
+#define SAKURA_ATOMIC_H
+
+// The handful of atomic operations sakura-audio needs, wrapped so that the choice is made here
+// rather than discovered on whichever platform happens to get built first.
+//
+// Two branches:
+//
+//   * C11 <stdatomic.h>, used by clang and gcc everywhere, and by MSVC when it is available
+//     (VS 2022 17.5+ with /std:c11 or /std:c17 exposes _Atomic for C).
+//   * MSVC _Interlocked* intrinsics, for older toolchains and for /std:c11 builds where
+//     <stdatomic.h> is not offered.
+//
+// Every operation here is sequentially consistent. That is stronger than most of the call sites
+// need, and it is deliberate: the alternative is a per-site memory-order argument that has to be
+// right on x86 (where almost anything works) *and* on arm64 (where it does not), for the sake of a
+// few dozen operations per audio callback. The MSVC branch cannot express anything weaker than a
+// full barrier through _Interlocked* anyway, so a relaxed variant would only be relaxed on half the
+// platforms we ship — which is worse than not having one.
+//
+// Nothing in here allocates, locks, or calls out, so all of it is safe on the audio callback.
+
+#include <stdint.h>
+#include <string.h>
+
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L && !defined(__STDC_NO_ATOMICS__)
+#define SAKURA_ATOMIC_C11 1
+#elif defined(_MSC_VER)
+#define SAKURA_ATOMIC_MSVC 1
+#else
+#error "sakura-audio needs either C11 atomics or MSVC _Interlocked intrinsics."
+#endif
+
+#ifdef SAKURA_ATOMIC_C11
+
+#include <stdatomic.h>
+
+typedef struct { _Atomic uint32_t v; } sakura_atomic_u32;
+typedef struct { _Atomic uint64_t v; } sakura_atomic_u64;
+
+static inline uint32_t sakura_atomic_load_u32(const sakura_atomic_u32 *slot) { return atomic_load(&((sakura_atomic_u32 *)slot)->v); }
+static inline void sakura_atomic_store_u32(sakura_atomic_u32 *slot, uint32_t value) { atomic_store(&slot->v, value); }
+static inline uint32_t sakura_atomic_exchange_u32(sakura_atomic_u32 *slot, uint32_t value) { return atomic_exchange(&slot->v, value); }
+
+// Returns the value the slot held, so a caller can tell success (previous == expected) from the
+// value that beat it. Matches the shape of _InterlockedCompareExchange rather than C11's bool.
+static inline uint32_t sakura_atomic_compare_exchange_u32(sakura_atomic_u32 *slot, uint32_t expected, uint32_t desired)
+{
+    uint32_t observed = expected;
+    return atomic_compare_exchange_strong(&slot->v, &observed, desired) ? expected : observed;
+}
+
+static inline uint64_t sakura_atomic_load_u64(const sakura_atomic_u64 *slot) { return atomic_load(&((sakura_atomic_u64 *)slot)->v); }
+static inline void sakura_atomic_store_u64(sakura_atomic_u64 *slot, uint64_t value) { atomic_store(&slot->v, value); }
+static inline uint64_t sakura_atomic_fetch_add_u64(sakura_atomic_u64 *slot, uint64_t delta) { return atomic_fetch_add(&slot->v, delta); }
+
+#else // SAKURA_ATOMIC_MSVC
+
+#include <intrin.h>
+
+typedef struct { volatile long v; } sakura_atomic_u32;
+typedef struct { volatile long long v; } sakura_atomic_u64;
+
+// _InterlockedOr with 0 is the portable MSVC spelling of a full-barrier load: unlike a volatile
+// read it is ordered on arm64 as well as on x86.
+static inline uint32_t sakura_atomic_load_u32(const sakura_atomic_u32 *slot) { return (uint32_t)_InterlockedOr((volatile long *)&slot->v, 0); }
+static inline void sakura_atomic_store_u32(sakura_atomic_u32 *slot, uint32_t value) { _InterlockedExchange(&slot->v, (long)value); }
+static inline uint32_t sakura_atomic_exchange_u32(sakura_atomic_u32 *slot, uint32_t value) { return (uint32_t)_InterlockedExchange(&slot->v, (long)value); }
+
+static inline uint32_t sakura_atomic_compare_exchange_u32(sakura_atomic_u32 *slot, uint32_t expected, uint32_t desired)
+{
+    return (uint32_t)_InterlockedCompareExchange(&slot->v, (long)desired, (long)expected);
+}
+
+static inline uint64_t sakura_atomic_load_u64(const sakura_atomic_u64 *slot) { return (uint64_t)_InterlockedOr64((volatile long long *)&slot->v, 0); }
+static inline void sakura_atomic_store_u64(sakura_atomic_u64 *slot, uint64_t value) { _InterlockedExchange64(&slot->v, (long long)value); }
+static inline uint64_t sakura_atomic_fetch_add_u64(sakura_atomic_u64 *slot, uint64_t delta) { return (uint64_t)_InterlockedExchangeAdd64(&slot->v, (long long)delta); }
+
+#endif
+
+// Signed and floating-point accessors over the same storage. Audio state is naturally int64 frame
+// counts and float levels, and bit-punning them through the integer primitives keeps the number of
+// distinct atomic types at two.
+
+static inline int64_t sakura_atomic_load_i64(const sakura_atomic_u64 *slot) { return (int64_t)sakura_atomic_load_u64(slot); }
+static inline void sakura_atomic_store_i64(sakura_atomic_u64 *slot, int64_t value) { sakura_atomic_store_u64(slot, (uint64_t)value); }
+static inline int64_t sakura_atomic_add_i64(sakura_atomic_u64 *slot, int64_t delta) { return (int64_t)sakura_atomic_fetch_add_u64(slot, (uint64_t)delta) + delta; }
+
+static inline float sakura_atomic_load_f32(const sakura_atomic_u32 *slot)
+{
+    uint32_t bits = sakura_atomic_load_u32(slot);
+    float value;
+    memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+static inline void sakura_atomic_store_f32(sakura_atomic_u32 *slot, float value)
+{
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    sakura_atomic_store_u32(slot, bits);
+}
+
+static inline double sakura_atomic_load_f64(const sakura_atomic_u64 *slot)
+{
+    uint64_t bits = sakura_atomic_load_u64(slot);
+    double value;
+    memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+static inline void sakura_atomic_store_f64(sakura_atomic_u64 *slot, double value)
+{
+    uint64_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    sakura_atomic_store_u64(slot, bits);
+}
+
+#endif // SAKURA_ATOMIC_H
