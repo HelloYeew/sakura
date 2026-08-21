@@ -37,7 +37,7 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="Sakura.Framework.SPIRV" Version="2026.617.0" />
+    <PackageReference Include="Sakura.Framework.SPIRV" Version="2026.820.0" />
     <PackageReference Include="ppy.SDL3-CS" Version="2026.722.0" />
     <PackageReference Include="Silk.NET.OpenGL" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Maths" Version="2.23.0" />
