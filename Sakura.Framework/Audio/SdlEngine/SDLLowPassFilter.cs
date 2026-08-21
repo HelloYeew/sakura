@@ -21,7 +21,7 @@ internal sealed class SDLLowPassFilter : ILowPassFilter
     /// <summary>
     /// One coherent set of normalised biquad coefficients, published to the mix thread as a unit.
     /// </summary>
-    private sealed record Coefficients(float B0, float B1, float B2, float A1, float A2)
+    internal sealed record Coefficients(float B0, float B1, float B2, float A1, float A2)
     {
         /// <summary>
         /// A pass-through, used when the cutoff is at or above what the sample rate can express.
@@ -41,6 +41,29 @@ internal sealed class SDLLowPassFilter : ILowPassFilter
     private readonly double[] state;
 
     private volatile Coefficients coefficients = Coefficients.Bypass;
+
+    /// <summary>
+    /// The coefficients in force, and whether they do anything at all.
+    /// </summary>
+    /// <remarks>
+    /// Exposed so the native mix engine can be given the same numbers this class would apply itself:
+    /// the cutoff-to-coefficient maths stays here, with one implementation and one set of tests, and
+    /// <c>libsakura-audio</c> only applies what it is handed.
+    /// </remarks>
+    internal (bool Enabled, Coefficients Coefficients) CurrentCoefficients
+    {
+        get
+        {
+            var current = coefficients;
+            return (!ReferenceEquals(current, Coefficients.Bypass), current);
+        }
+    }
+
+    /// <summary>
+    /// Raised on the update thread whenever <see cref="CurrentCoefficients"/> changes, so a native
+    /// voice can republish them. A bypass is reported as a change like any other.
+    /// </summary>
+    internal event Action<bool, Coefficients>? CoefficientsChanged;
 
     /// <inheritdoc cref="ILowPassFilter.CutoffFrequency"/>
     public Reactive<double> CutoffFrequency { get; } = new Reactive<double>(ILowPassFilter.DefaultCutoffFrequency);
@@ -79,6 +102,7 @@ internal sealed class SDLLowPassFilter : ILowPassFilter
         if (cutoff >= maxCutoff)
         {
             coefficients = Coefficients.Bypass;
+            CoefficientsChanged?.Invoke(false, Coefficients.Bypass);
             return;
         }
 
@@ -93,12 +117,15 @@ internal sealed class SDLLowPassFilter : ILowPassFilter
         double a1 = -2.0 * cosW0;
         double a2 = 1.0 - alpha;
 
-        coefficients = new Coefficients(
+        var updated = new Coefficients(
             (float)(b0 / a0),
             (float)(b1 / a0),
             (float)(b2 / a0),
             (float)(a1 / a0),
             (float)(a2 / a0));
+
+        coefficients = updated;
+        CoefficientsChanged?.Invoke(true, updated);
     }
 
     /// <summary>
@@ -152,6 +179,7 @@ internal sealed class SDLLowPassFilter : ILowPassFilter
 
         IsDisposed = true;
         CutoffFrequency.UnbindAll();
+        CoefficientsChanged = null;
         onDisposed?.Invoke();
     }
 }

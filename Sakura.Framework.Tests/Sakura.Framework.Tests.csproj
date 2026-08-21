@@ -33,4 +33,15 @@
   <ItemGroup>
     <ProjectReference Include="..\Sakura.Framework\Sakura.Framework.csproj" />
   </ItemGroup>
+  <!--
+    libsakura-audio is not in the published Sakura.Framework.NativeLibraries package yet (shipping it
+    per RID is the packaging phase's job), so copy whatever native/sakura-audio/build holds next to the
+    test binary. Wildcards, so a machine that has not built it is silently skipped and the native mix
+    engine's tests report inconclusive instead of failing. Delete this once the package ships it.
+  -->
+  <ItemGroup>
+    <None Include="..\native\sakura-audio\build\libsakura-audio*.dylib" CopyToOutputDirectory="PreserveNewest" Link="%(Filename)%(Extension)" Visible="false" />
+    <None Include="..\native\sakura-audio\build\libsakura-audio*.so" CopyToOutputDirectory="PreserveNewest" Link="%(Filename)%(Extension)" Visible="false" />
+    <None Include="..\native\sakura-audio\build\sakura-audio*.dll" CopyToOutputDirectory="PreserveNewest" Link="%(Filename)%(Extension)" Visible="false" />
+  </ItemGroup>
 </Project>

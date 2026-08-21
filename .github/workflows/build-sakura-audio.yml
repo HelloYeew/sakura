@@ -1,0 +1,557 @@
+name: Build Sakura Audio Native
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  BUILD_DIR: build-ci
+  ANDROID_API_LEVEL: 21
+
+jobs:
+  build-apple:
+    name: ${{ matrix.rid }} Native Build
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: osx
+            artifact_name: libsakura-audio.dylib
+          - rid: ios
+            artifact_name: sakura-audio.xcframework.zip
+    defaults:
+      run:
+        working-directory: native/sakura-audio
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Select Xcode
+        run: sudo xcode-select -switch /Applications/Xcode.app
+
+      - name: Build macOS universal dylib
+        if: ${{ matrix.rid == 'osx' }}
+        run: |
+          set -euo pipefail
+
+          cmake -S . -B "$BUILD_DIR" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          cmake --build "$BUILD_DIR" --config Release
+
+          # The universal build makes a universal test binary too, so the runner can execute it.
+          ctest --test-dir "$BUILD_DIR" --output-on-failure
+
+          mkdir -p out
+          cp "$BUILD_DIR/libsakura-audio.dylib" out/libsakura-audio.dylib
+
+          # `lipo -info` prints the slices but exits 0 either way, including for a thin binary, so it
+          # reads as a check while being incapable of failing. Assert each slice explicitly: a
+          # silently single-arch dylib fails no build step and only surfaces as a load error on the
+          # architecture that was dropped, by which point it has shipped.
+          lipo -info out/libsakura-audio.dylib
+          for arch in arm64 x86_64; do
+            if ! lipo out/libsakura-audio.dylib -verify_arch "$arch"; then
+              echo "::error::libsakura-audio.dylib has no $arch slice (got: $(lipo -archs out/libsakura-audio.dylib))."
+              exit 1
+            fi
+          done
+
+      - name: Assert macOS deployment target
+        if: ${{ matrix.rid == 'osx' }}
+        run: |
+          set -euo pipefail
+
+          # With no deployment target the dylib takes the build machine's SDK version as its minimum
+          # and then refuses to load on anything older than whatever Xcode the runner happened to
+          # have. That is a load-time failure, so no build step catches it -- hence checking the
+          # binary rather than trusting the CMakeLists that asked for it. 11.0 is the ceiling because
+          # arm64 macOS cannot go below it; x86_64 should come out at the 10.15 CMake asks for.
+          for arch in arm64 x86_64; do
+            minos=$(vtool -arch "$arch" -show-build out/libsakura-audio.dylib | awk '/minos/ { print $2 }')
+
+            if [ -z "$minos" ]; then
+              echo "::error::Could not read the minimum OS version of the $arch slice."
+              exit 1
+            fi
+
+            echo "$arch minos $minos"
+
+            if [ "$(printf '%s\n11.0\n' "$minos" | sort -V | head -1)" != "$minos" ]; then
+              echo "::error::The $arch slice requires macOS $minos, which is newer than the 11.0 ceiling."
+              exit 1
+            fi
+          done
+
+      - name: Build iOS framework slices
+        if: ${{ matrix.rid == 'ios' }}
+        run: |
+          set -euo pipefail
+
+          # Device (arm64). Tests are off on every cross-compiled leg: the binary cannot run here.
+          cmake -S . -B "$BUILD_DIR-device" -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSAKURA_AUDIO_BUILD_TESTS=OFF
+          cmake --build "$BUILD_DIR-device" --config Release
+
+          # Simulator (arm64 + x86_64)
+          cmake -S . -B "$BUILD_DIR-sim" -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DCMAKE_OSX_SYSROOT=iphonesimulator \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSAKURA_AUDIO_BUILD_TESTS=OFF
+          cmake --build "$BUILD_DIR-sim" --config Release
+
+          DEVICE_FW=$(find "$BUILD_DIR-device" -name 'sakura-audio.framework' -type d | head -1)
+          SIM_FW=$(find "$BUILD_DIR-sim" -name 'sakura-audio.framework' -type d | head -1)
+          echo "Device framework: $DEVICE_FW"
+          echo "Simulator framework: $SIM_FW"
+          if [ -z "$DEVICE_FW" ] || [ -z "$SIM_FW" ]; then
+            echo "::error::Could not locate built sakura-audio.framework slices"
+            exit 1
+          fi
+
+          mkdir -p out
+          xcodebuild -create-xcframework \
+            -framework "$DEVICE_FW" \
+            -framework "$SIM_FW" \
+            -output out/sakura-audio.xcframework
+
+          # Same reasoning as the macOS arch assertion: verify the bundle that was produced rather
+          # than trusting that two -framework arguments became two slices.
+          slices=$(find out/sakura-audio.xcframework -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
+          if [ "$slices" -ne 2 ]; then
+            echo "::error::sakura-audio.xcframework has $slices slice(s), expected 2 (device + simulator)."
+            exit 1
+          fi
+
+          SIM_BINARY=$(find out/sakura-audio.xcframework -path '*-simulator/*' -name sakura-audio -type f | head -1)
+          # Anything that is not the simulator slice: the device directory is named for the arch it
+          # holds (ios-arm64), so matching it by name would break the day a second device arch exists.
+          DEVICE_BINARY=$(find out/sakura-audio.xcframework -name sakura-audio -type f ! -path '*simulator*' | head -1)
+          if [ -z "$SIM_BINARY" ] || [ -z "$DEVICE_BINARY" ]; then
+            echo "::error::sakura-audio.xcframework is missing a slice binary."
+            exit 1
+          fi
+
+          for arch in arm64 x86_64; do
+            if ! lipo "$SIM_BINARY" -verify_arch "$arch"; then
+              echo "::error::The simulator slice has no $arch slice (got: $(lipo -archs "$SIM_BINARY"))."
+              exit 1
+            fi
+          done
+
+          # 12.0 is what the CMakeLists asks for; anything higher means the SDK's default won.
+          minos=$(vtool -show-build "$DEVICE_BINARY" | awk '/minos/ { print $2 }' | head -1)
+          echo "device minos $minos"
+          if [ -z "$minos" ] || [ "$(printf '%s\n12.0\n' "$minos" | sort -V | head -1)" != "$minos" ]; then
+            echo "::error::The device slice requires iOS ${minos:-unknown}, which is newer than the 12.0 ceiling."
+            exit 1
+          fi
+
+          # Zip the bundle for a clean single-file artifact upload (directories don't round-trip well).
+          (cd out && zip -r sakura-audio.xcframework.zip sakura-audio.xcframework)
+
+      - name: Assert no new link dependency
+        run: |
+          set -euo pipefail
+
+          # The library links libm and nothing else, which is what keeps CI to "compile one C file per
+          # RID" -- no SDL3 SDK per target, no version skew between the SDL3 this linked against and
+          # the SDL3 the managed side loaded. A new dependency here is a design regression, not a
+          # build detail, so it fails the build rather than showing up in a review diff.
+          if [ "${{ matrix.rid }}" = "osx" ]; then
+            target=out/libsakura-audio.dylib
+          else
+            target=$(find out/sakura-audio.xcframework -name sakura-audio -type f | head -1)
+          fi
+
+          otool -L "$target"
+
+          if otool -L "$target" | tail -n +2 | grep -Eiq 'sdl|avcodec|avformat|avutil|swresample|swscale|bass|c\+\+'; then
+            echo "::error::libsakura-audio has grown a link dependency it is not allowed to have."
+            exit 1
+          fi
+
+      - name: Upload ${{ matrix.rid }} artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.rid }}
+          path: native/sakura-audio/out/${{ matrix.artifact_name }}
+          if-no-files-found: error
+
+  build-windows:
+    name: ${{ matrix.rid }} Native Build
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-x64
+            platform: x64
+            machine: '0x8664'
+            can_run_tests: true
+          - rid: win-x86
+            platform: Win32
+            machine: '0x14c'
+            can_run_tests: true
+          - rid: win-arm64
+            platform: ARM64
+            machine: '0xaa64'
+            can_run_tests: false
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: native/sakura-audio
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $tests = if ('${{ matrix.can_run_tests }}' -eq 'true') { 'ON' } else { 'OFF' }
+
+          cmake -S . -B $env:BUILD_DIR -A ${{ matrix.platform }} -DSAKURA_AUDIO_BUILD_TESTS=$tests
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+          cmake --build $env:BUILD_DIR --config Release
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          Copy-Item "$env:BUILD_DIR/Release/sakura-audio.dll" out/sakura-audio.dll
+
+      - name: Test
+        if: ${{ matrix.can_run_tests }}
+        run: |
+          ctest --test-dir $env:BUILD_DIR -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Verify architecture
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          # Read the COFF machine field straight out of the PE header. dumpbin would do this too, but
+          # it is not on the runner's PATH without the VS developer environment, and the header is
+          # four bytes past the PE signature -- cheaper than provisioning a toolchain to read it.
+          $bytes = [System.IO.File]::ReadAllBytes("$PWD/out/sakura-audio.dll")
+          $peOffset = [System.BitConverter]::ToInt32($bytes, 0x3C)
+
+          if ([System.Text.Encoding]::ASCII.GetString($bytes, $peOffset, 4) -ne "PE`0`0") {
+            Write-Host "::error::sakura-audio.dll is not a PE image."
+            exit 1
+          }
+
+          $machine = [System.BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          $expected = [System.Convert]::ToUInt16('${{ matrix.machine }}', 16)
+
+          Write-Host ("machine 0x{0:x} (expected 0x{1:x})" -f $machine, $expected)
+
+          if ($machine -ne $expected) {
+            Write-Host "::error::sakura-audio.dll was built for machine 0x$('{0:x}' -f $machine), expected 0x$('{0:x}' -f $expected)."
+            exit 1
+          }
+
+      - name: Assert no new link dependency
+        run: |
+          # Same guard as the other legs. dumpbin lives inside the VS install rather than on PATH, so
+          # it is located through vswhere; a runner image that moves it should warn rather than fail
+          # the build, since the check is a backstop and not the thing being built.
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+
+          if (-not (Test-Path $vswhere)) {
+            Write-Host "::warning::vswhere not found; skipping the dependency check."
+            exit 0
+          }
+
+          $vs = & $vswhere -latest -property installationPath
+          $dumpbin = Get-ChildItem -Path "$vs\VC\Tools\MSVC" -Recurse -Filter dumpbin.exe -ErrorAction SilentlyContinue |
+                     Select-Object -First 1
+
+          if (-not $dumpbin) {
+            Write-Host "::warning::dumpbin not found; skipping the dependency check."
+            exit 0
+          }
+
+          $dependents = & $dumpbin.FullName /dependents "$PWD/out/sakura-audio.dll"
+          $dependents | Write-Host
+
+          if ($dependents | Select-String -Pattern 'SDL|avcodec|avformat|avutil|swresample|swscale|bass' -Quiet) {
+            Write-Host "::error::sakura-audio.dll has grown a link dependency it is not allowed to have."
+            exit 1
+          }
+
+      - name: Upload ${{ matrix.rid }} artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.rid }}
+          path: native/sakura-audio/out/sakura-audio.dll
+          if-no-files-found: error
+
+  build-linux:
+    name: ${{ matrix.rid }} Native Build
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: linux-x64
+            elf_machine: X86-64
+            can_run_tests: true
+          - rid: linux-x86
+            elf_machine: 'Intel 80386'
+            can_run_tests: true
+          - rid: linux-arm64
+            elf_machine: AArch64
+            can_run_tests: false
+    defaults:
+      run:
+        working-directory: native/sakura-audio
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          case "${{ matrix.rid }}" in
+            linux-x86)   sudo apt-get install -y gcc-multilib ;;
+            linux-arm64) sudo apt-get install -y gcc-aarch64-linux-gnu ;;
+          esac
+
+      - name: Build
+        run: |
+          set -euo pipefail
+
+          tests=$([ "${{ matrix.can_run_tests }}" = "true" ] && echo ON || echo OFF)
+
+          case "${{ matrix.rid }}" in
+            linux-x64)
+              cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release -DSAKURA_AUDIO_BUILD_TESTS=$tests
+              ;;
+            linux-x86)
+              # A 32-bit build is worth more than RID completeness here: the 64-bit atomics this
+              # library leans on compile to cmpxchg8b rather than a plain instruction on x86, and the
+              # test suite runs on the x64 host, so that path is actually exercised.
+              cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release \
+                -DSAKURA_AUDIO_BUILD_TESTS=$tests \
+                -DCMAKE_C_FLAGS=-m32 \
+                -DCMAKE_SHARED_LINKER_FLAGS=-m32 \
+                -DCMAKE_EXE_LINKER_FLAGS=-m32
+              ;;
+            linux-arm64)
+              cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release \
+                -DSAKURA_AUDIO_BUILD_TESTS=$tests \
+                -DCMAKE_SYSTEM_NAME=Linux \
+                -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+                -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc
+              ;;
+          esac
+
+          cmake --build "$BUILD_DIR" --parallel
+
+          mkdir -p out
+          cp "$BUILD_DIR/libsakura-audio.so" out/libsakura-audio.so
+
+      - name: Test
+        if: ${{ matrix.can_run_tests }}
+        run: ctest --test-dir "$BUILD_DIR" --output-on-failure
+
+      - name: Verify architecture and dependencies
+        run: |
+          set -euo pipefail
+
+          readelf -h out/libsakura-audio.so | grep -E 'Class|Machine'
+
+          if ! readelf -h out/libsakura-audio.so | grep -q 'Machine:.*${{ matrix.elf_machine }}'; then
+            echo "::error::libsakura-audio.so is not ${{ matrix.elf_machine }} (got: $(readelf -h out/libsakura-audio.so | awk -F: '/Machine/ { print $2 }'))."
+            exit 1
+          fi
+
+          needed=$(readelf -d out/libsakura-audio.so | sed -n 's/.*NEEDED.*\[\(.*\)\]/\1/p')
+          echo "NEEDED: $needed"
+
+          # libc and libm only. pthread is on the list because this library must not create threads:
+          # everything it does runs on a thread somebody else already owns.
+          if echo "$needed" | grep -Eiq 'sdl|avcodec|avformat|avutil|swresample|swscale|bass|pthread|stdc\+\+|libc\+\+'; then
+            echo "::error::libsakura-audio.so has grown a link dependency it is not allowed to have."
+            exit 1
+          fi
+
+      - name: Upload ${{ matrix.rid }} artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.rid }}
+          path: native/sakura-audio/out/libsakura-audio.so
+          if-no-files-found: error
+
+  build-android:
+    name: ${{ matrix.rid }} Native Build
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: android-arm
+            abi: armeabi-v7a
+            elf_machine: ARM
+          - rid: android-arm64
+            abi: arm64-v8a
+            elf_machine: AArch64
+          - rid: android-x86
+            abi: x86
+            elf_machine: 'Intel 80386'
+          - rid: android-x64
+            abi: x86_64
+            elf_machine: X86-64
+    defaults:
+      run:
+        working-directory: native/sakura-audio
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set ANDROID_NDK_ROOT
+        run: |
+          NDK_PATH=$(ls -d ${ANDROID_SDK_ROOT}/ndk/* 2>/dev/null | sort -V | tail -1)
+          echo "ANDROID_NDK_ROOT=$NDK_PATH" >> $GITHUB_ENV
+
+      - name: Build
+        run: |
+          set -euo pipefail
+
+          # API 21 to match the shipped FFmpeg build, which is what the audio backend decodes with.
+          # bionic only declares timespec_get from API 29, so the callback-duration statistic is
+          # compiled out here -- CMake feature-checks it rather than the C branching on the platform.
+          cmake -S . -B "$BUILD_DIR" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSAKURA_AUDIO_BUILD_TESTS=OFF \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=${{ matrix.abi }} \
+            -DANDROID_PLATFORM=android-$ANDROID_API_LEVEL
+          cmake --build "$BUILD_DIR" --parallel
+
+          mkdir -p out
+          cp "$BUILD_DIR/libsakura-audio.so" out/libsakura-audio.so
+
+      - name: Verify architecture and dependencies
+        run: |
+          set -euo pipefail
+
+          readelf -h out/libsakura-audio.so | grep -E 'Class|Machine'
+
+          if ! readelf -h out/libsakura-audio.so | grep -q 'Machine:.*${{ matrix.elf_machine }}'; then
+            echo "::error::libsakura-audio.so is not ${{ matrix.elf_machine }} (got: $(readelf -h out/libsakura-audio.so | awk -F: '/Machine/ { print $2 }'))."
+            exit 1
+          fi
+
+          needed=$(readelf -d out/libsakura-audio.so | sed -n 's/.*NEEDED.*\[\(.*\)\]/\1/p')
+          echo "NEEDED: $needed"
+
+          if echo "$needed" | grep -Eiq 'sdl|avcodec|avformat|avutil|swresample|swscale|bass|stdc\+\+|libc\+\+'; then
+            echo "::error::libsakura-audio.so has grown a link dependency it is not allowed to have."
+            exit 1
+          fi
+
+      - name: Upload ${{ matrix.rid }} artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.rid }}
+          path: native/sakura-audio/out/libsakura-audio.so
+          if-no-files-found: error
+
+  create_pr:
+    name: Combine and Create PR
+    runs-on: macos-latest
+    needs: [build-apple, build-windows, build-linux, build-android]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Distribute binaries into NativeLibraries/runtimes
+        run: |
+          set -euo pipefail
+          NL_RUNTIMES="Sakura.Framework.NativeLibraries/runtimes"
+
+          place() {
+            local rid=$1
+            local file=$2
+            mkdir -p "$NL_RUNTIMES/$rid/native"
+            cp "artifacts/$rid/$file" "$NL_RUNTIMES/$rid/native/$file"
+          }
+
+          place osx libsakura-audio.dylib
+
+          for rid in win-x64 win-x86 win-arm64; do
+            place "$rid" sakura-audio.dll
+          done
+
+          for rid in linux-x64 linux-x86 linux-arm64 android-arm android-arm64 android-x64 android-x86; do
+            place "$rid" libsakura-audio.so
+          done
+
+          # iOS xcframework → runtimes/ios/native/ (a top-level *.xcframework, matching the FFmpeg and
+          # metal ones). The csproj glob was widened to runtimes/**/native/** so these directory
+          # bundles are packed at all; before that the whole iOS RID was silently dropped.
+          mkdir -p "$NL_RUNTIMES/ios/native"
+          rm -rf "$NL_RUNTIMES/ios/native/sakura-audio.xcframework"
+          unzip -qq artifacts/ios/sakura-audio.xcframework.zip -d "$NL_RUNTIMES/ios/native"
+
+      - name: Assert every RID landed
+        run: |
+          set -euo pipefail
+          NL_RUNTIMES="Sakura.Framework.NativeLibraries/runtimes"
+
+          # A leg that fails is loud, but a leg that never ran is not: fail-fast is off so the others
+          # still produce artifacts, and this job would happily commit eleven of twelve. Check the
+          # tree that is about to be committed instead of trusting that four jobs all did their work.
+          missing=0
+
+          check() {
+            if [ ! -e "$NL_RUNTIMES/$1" ]; then
+              echo "::error::Missing $1"
+              missing=1
+            fi
+          }
+
+          check osx/native/libsakura-audio.dylib
+          check ios/native/sakura-audio.xcframework
+
+          for rid in win-x64 win-x86 win-arm64; do
+            check "$rid/native/sakura-audio.dll"
+          done
+
+          for rid in linux-x64 linux-x86 linux-arm64 android-arm android-arm64 android-x64 android-x86; do
+            check "$rid/native/libsakura-audio.so"
+          done
+
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::Not every RID produced a library; refusing to commit a partial set."
+            exit 1
+          fi
+
+          echo "All 12 RIDs present."
+
+      - name: Commit and push PR branch
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout -b update-sakura-audio-binaries
+
+          git add Sakura.Framework.NativeLibraries/runtimes/
+
+          if git diff --staged --quiet; then
+            echo "No changes detected. Skipping."
+          else
+            git commit -m "Update sakura-audio native binaries" \
+              -m "Co-authored-by: HelloYeew <68165621+HelloYeew@users.noreply.github.com>"
+            git push --force origin update-sakura-audio-binaries
+          fi
