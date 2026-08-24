@@ -24,7 +24,7 @@ public class FrameworkConfigManager : ConfigManager<FrameworkSetting>
         Get(FrameworkSetting.MasterVolume, 1.0);
         Get(FrameworkSetting.TrackVolume, 1.0);
         Get(FrameworkSetting.SampleVolume, 1.0);
-        Get(FrameworkSetting.AudioBackend, AudioBackend.BASS);
+        Get(FrameworkSetting.AudioBackend, AudioBackend.Automatic);
         Get(FrameworkSetting.AudioDeviceBufferFrames, SDLAudioManager.DEFAULT_DEVICE_BUFFER_FRAMES);
         Get(FrameworkSetting.WindowMode, WindowMode.Windowed);
         Get(FrameworkSetting.HardwareAcceleration, true);
