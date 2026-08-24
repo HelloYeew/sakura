@@ -34,9 +34,56 @@ internal class BassAudioManager : IAudioManager, IDisposable
     public Reactive<double> TrackVolume { get; } = new Reactive<double>(1.0);
     public Reactive<double> SampleVolume { get; } = new Reactive<double>(1.0);
 
-    public BassAudioManager()
+    /// <summary>
+    /// Output latency in milliseconds, as BASS measured it at initialisation.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The counterpart to <see cref="SdlEngine.SDLAudioManager.OutputLatencyMs"/>, published so the two
+    /// backends can be compared on the number this framework's second audio backend exists to improve.
+    /// Comparing them needs one caveat kept in mind, because they are not measuring quite the same
+    /// thing.
+    /// </para>
+    /// <para>
+    /// BASS keeps a playback buffer — 100 ms here, see <see cref="Configuration.PlaybackBufferLength"/>
+    /// — but already accounts for it when reporting a channel's position, so it does not appear in this
+    /// figure and does not desync anything. What this figure is, is the part below that: the delay
+    /// between BASS handing audio to the device and the listener hearing it. The SDL backend's number
+    /// is the same quantity arrived at differently — its stream queue plus its device buffer — and it
+    /// is likewise subtracted from reported positions, by <c>OutputLatencyCompensator</c>.
+    /// </para>
+    /// <para>
+    /// Zero means BASS would not say. It only measures this when asked at init, which is why
+    /// <see cref="DeviceInitFlags.Latency"/> is passed below, and it cannot measure it at all when
+    /// attaching to a device someone else already initialised.
+    /// </para>
+    /// </remarks>
+    internal double OutputLatencyMs { get; private set; }
+
+    /// <summary>
+    /// The playback buffer BASS is keeping, in milliseconds.
+    /// </summary>
+    /// <remarks>
+    /// Not output latency — BASS compensates for this in its position reporting — but the closest
+    /// BASS analogue to the SDL backend's device buffer setting, and the knob that would be turned to
+    /// trade robustness for responsiveness here.
+    /// </remarks>
+    internal int PlaybackBufferMs { get; private set; }
+
+    /// <param name="device">
+    /// The BASS device index to open, or -1 for the system default. <see cref="Bass.NoSoundDevice"/>
+    /// initialises BASS without an output device: channels still decode and their positions still
+    /// advance in real time, but nothing is heard. That is what the cross-backend conformance suite
+    /// runs on — the alternative is a test run that plays music out loud — and it is also the right
+    /// mode for a headless host that only needs decoding.
+    /// </param>
+    public BassAudioManager(int device = -1)
     {
-        bool initSuccess = Bass.Init(-1, 44100, DeviceInitFlags.Default);
+        // DeviceInitFlags.Latency asks BASS to measure the device's output latency during Init, which is
+        // the only time it can be measured and the only way BassInfo.Latency is ever populated. It costs
+        // a little startup time — BASS plays a short test buffer to time it — and buys the one figure
+        // that makes this backend comparable with the SDL one.
+        bool initSuccess = Bass.Init(device, 44100, DeviceInitFlags.Latency);
         bool alreadyInitialised = !initSuccess && Bass.LastError == Errors.Already;
 
         if (!initSuccess && !alreadyInitialised)
@@ -106,6 +153,21 @@ internal class BassAudioManager : IAudioManager, IDisposable
             Logger.Verbose($"Update period: {updatePeriod} ms");
             Logger.Verbose($"Device buffer length: {deviceBuffer} ms");
             Logger.Verbose($"Playback buffer length: {playbackBuffer} ms");
+
+            PlaybackBufferMs = playbackBuffer;
+
+            if (Bass.GetInfo(out var info))
+            {
+                OutputLatencyMs = info.Latency;
+
+                // Said the same way round as the SDL backend's line, so a bug report from either one can
+                // be read against the other without converting anything.
+                Logger.Verbose(info.Latency > 0
+                    ? $"Output latency: {info.Latency} ms (device), plus a {playbackBuffer} ms playback buffer BASS compensates for"
+                    : $"Output latency: not measured by BASS{(alreadyInitialised ? " (attached to a device someone else initialised)" : string.Empty)}");
+
+                Logger.Verbose($"Minimum buffer: {info.MinBufferLength} ms");
+            }
         }
         channelEndSync = OnChannelEnded;
     }
@@ -219,6 +281,12 @@ internal class BassAudioManager : IAudioManager, IDisposable
         }
 
         GlobalStatistics.Get<double>("Audio", "BASS CPU Usage (%)").Value = Bass.CPUUsage;
+
+        // Named to line up with "SDL Output Latency (ms)" so the two backends can be read against each
+        // other in the same overlay. Constant for the life of the device, published every frame anyway
+        // because a statistic that only appears once is a statistic nobody sees.
+        GlobalStatistics.Get<double>("Audio", "BASS Output Latency (ms)").Value = OutputLatencyMs;
+        GlobalStatistics.Get<int>("Audio", "BASS Playback Buffer (ms)").Value = PlaybackBufferMs;
     }
 
     public void Dispose()

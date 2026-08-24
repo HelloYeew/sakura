@@ -34,8 +34,8 @@ internal sealed class SDLNativeAudioMixer : SDLNativeAudioChannel, ISDLMixer
     /// </remarks>
     private volatile IAudioChannel[] snapshot = Array.Empty<IAudioChannel>();
 
-    public SDLNativeAudioMixer(SakuraAudioEngine engine, uint node)
-        : base(engine, node, 0)
+    public SDLNativeAudioMixer(ISDLAudioContext context, SakuraAudioEngine engine, uint node)
+        : base(context, engine, node, 0)
     {
     }
 

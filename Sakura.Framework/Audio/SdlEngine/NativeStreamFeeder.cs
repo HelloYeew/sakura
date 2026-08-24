@@ -143,6 +143,33 @@ internal sealed class NativeStreamFeeder : IDecodeSource, IDisposable
             converter = null;
             throw new InvalidOperationException("The native voice would not take a ring buffer.");
         }
+
+        // Prime the ring on the calling thread, before anything can play out of it.
+        //
+        // Doing it here rather than in Play is what makes it a guarantee rather than a smaller race
+        // constructing a track already opens and decodes a file on this thread, so one more decode pass
+        // is in keeping, and by the time a caller has a channel to press Play on, the ring is not empty.
+        primeRing();
+    }
+
+    /// <summary>
+    /// Decodes until the ring is reasonably full or the source runs out, whichever comes first.
+    /// </summary>
+    /// <remarks>
+    /// Bounded by passes rather than run to completion since the decode thread is perfectly capable of
+    /// filling the remaining 500 ms, and a track whose whole buffer had to be decoded before its
+    /// constructor returned would make loading a beatmap slower to no purpose. This only has to cover
+    /// the handful of milliseconds before the decode thread gets its first turn.
+    /// </remarks>
+    private void primeRing()
+    {
+        const int max_passes = 8;
+
+        for (int i = 0; i < max_passes && WantsDecode; i++)
+        {
+            if (!PumpDecode())
+                break;
+        }
     }
 
     /// <summary>

@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using Sakura.Framework.Audio;
+using Sakura.Framework.Audio.SdlEngine;
 using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Threading;
@@ -24,6 +25,7 @@ public class FrameworkConfigManager : ConfigManager<FrameworkSetting>
         Get(FrameworkSetting.TrackVolume, 1.0);
         Get(FrameworkSetting.SampleVolume, 1.0);
         Get(FrameworkSetting.AudioBackend, AudioBackend.BASS);
+        Get(FrameworkSetting.AudioDeviceBufferFrames, SDLAudioManager.DEFAULT_DEVICE_BUFFER_FRAMES);
         Get(FrameworkSetting.WindowMode, WindowMode.Windowed);
         Get(FrameworkSetting.HardwareAcceleration, true);
         Get(FrameworkSetting.RendererType, RendererType.Automatic);

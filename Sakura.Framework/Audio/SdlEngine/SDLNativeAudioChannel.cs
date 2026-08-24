@@ -75,6 +75,14 @@ internal class SDLNativeAudioChannel : ISDLChannel
     protected readonly SakuraAudioEngine Engine;
 
     /// <summary>
+    /// The manager, for the one thing a voice cannot know on its own: how far behind the mix the
+    /// device is.
+    /// </summary>
+    protected readonly ISDLAudioContext Context;
+
+    private readonly OutputLatencyCompensator latency = new OutputLatencyCompensator();
+
+    /// <summary>
     /// The native node this channel drives.
     /// </summary>
     internal uint Node { get; }
@@ -118,8 +126,9 @@ internal class SDLNativeAudioChannel : ISDLChannel
 
     public double Length { get; }
 
-    public SDLNativeAudioChannel(SakuraAudioEngine engine, uint node, double lengthMs, NativeStreamFeeder? feeder = null)
+    public SDLNativeAudioChannel(ISDLAudioContext context, SakuraAudioEngine engine, uint node, double lengthMs, NativeStreamFeeder? feeder = null)
     {
+        Context = context;
         Engine = engine;
         Node = node;
         Length = lengthMs;
@@ -259,6 +268,7 @@ internal class SDLNativeAudioChannel : ISDLChannel
     /// </summary>
     private void armSeekReport(double milliseconds)
     {
+        latency.Reset();
         baseMs = feeder != null ? Math.Max(0, milliseconds) : 0;
         seekTargetMs = Math.Max(0, milliseconds);
         seekPostedAtEpoch = Engine.TryGetState(Node, out var state) ? state.SeekEpoch : 0;
@@ -272,11 +282,15 @@ internal class SDLNativeAudioChannel : ISDLChannel
                 return 0;
 
             // Still waiting on the audio thread: the cursor it is reporting belongs to the position we
-            // are leaving, so answer with the one we are going to.
+            // are leaving, so answer with the one we are going to. Uncompensated on purpose — nothing
+            // of the new position has been mixed yet, let alone queued, so there is no latency to
+            // subtract and subtracting one would report a seek as landing short.
             if (state.SeekEpoch == seekPostedAtEpoch)
                 return seekTargetMs;
 
-            return baseMs + state.SourceFrames / (double)Engine.SampleRate * 1000.0;
+            double raw = baseMs + state.SourceFrames / (double)Engine.SampleRate * 1000.0;
+
+            return latency.Compensate(raw, Context.OutputLatencyMs, Frequency.Value);
         }
         set
         {
@@ -316,6 +330,10 @@ internal class SDLNativeAudioChannel : ISDLChannel
             return;
 
         lastEndEpoch = state.EndEpoch;
+
+        // A voice over a shared buffer wraps inside the engine without anything here seeking it, so
+        // this is the only notice the compensator gets that the position jumped.
+        latency.Reset();
 
         OnEnd?.Invoke();
 

@@ -29,6 +29,17 @@ internal interface ISDLAudioContext
     int Channels { get; }
 
     /// <summary>
+    /// How far ahead of the listener the audio already handed to the device is, in milliseconds.
+    /// </summary>
+    /// <remarks>
+    /// Sampled once a frame by the manager and read by every channel, so a channel subtracting it
+    /// from its own cursor reports what is audible rather than what has been mixed, and every
+    /// channel in a frame agrees. Zero is a valid answer and is what a stub or a drained device
+    /// gives.
+    /// </remarks>
+    double OutputLatencyMs { get; }
+
+    /// <summary>
     /// Queues work for the audio thread. Channel state changes and user-facing events go through
     /// here rather than firing on the mix thread, matching the BASS backend.
     /// </summary>

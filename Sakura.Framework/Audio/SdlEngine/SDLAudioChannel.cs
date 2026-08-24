@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Threading;
 using System.Diagnostics.CodeAnalysis;
 using Sakura.Framework.Reactive;
 
@@ -97,6 +98,19 @@ internal class SDLAudioChannel : ISDLChannel
     /// thread rather than repeatedly from inside the mix loop.
     /// </summary>
     private bool endHandled;
+
+    private readonly OutputLatencyCompensator latency = new OutputLatencyCompensator();
+
+    /// <summary>
+    /// Where a "posted but not yet applied" seek was sent, in microseconds, or -1 when none is outstanding.
+    /// </summary>
+    /// <remarks>
+    /// The managed mixer applies a seek on the audio thread, so without this the position reported in
+    /// between is the one being left — a jump backwards and then forwards as far as <c>TrackClock</c> is
+    /// concerned. The native engine solves the same problem with its seek epoch; this is the managed
+    /// half, and the cross-backend conformance suite is what noticed only one of the two had it.
+    /// </remarks>
+    private long pendingSeekMicroseconds = -1;
 
     public SDLAudioChannel(ISDLAudioContext context, IPcmSource? source)
     {
@@ -323,16 +337,43 @@ internal class SDLAudioChannel : ISDLChannel
         resampler?.Reset();
         filter?.ClearState();
         Tap.Reset();
+        latency.Reset();
         Context.WakeDecoder();
     }
 
+    /// <summary>
+    /// The audible position, which on this backend lags the mix cursor by a great deal more than it
+    /// does on the native engine.
+    /// </summary>
+    /// <remarks>
+    /// The managed mixer keeps a queue of tens of milliseconds ahead of the device by design. That
+    /// queue is what a GC pause hides behind so <see cref="IPcmSource.PositionMs"/> runs that far
+    /// ahead of the music. It is the same correction as the native path, and it matters more here.
+    /// </remarks>
     public double CurrentTime
     {
-        get => isDisposed ? 0 : source?.PositionMs ?? 0;
+        get
+        {
+            if (isDisposed || source == null)
+                return 0;
+
+            long pending = Interlocked.Read(ref pendingSeekMicroseconds);
+
+            // Reported uncompensated, as the native engine does for the same case: nothing of the new
+            // position has been mixed yet, let alone queued, so there is no output latency to subtract
+            // and subtracting one would report the seek as landing short of where it was sent.
+            if (pending >= 0)
+                return pending / 1000.0;
+
+            return latency.Compensate(source.PositionMs, Context.OutputLatencyMs, Frequency.Value);
+        }
         set
         {
             if (isDisposed)
                 return;
+
+            long target = (long)(Math.Max(0, value) * 1000.0);
+            Interlocked.Exchange(ref pendingSeekMicroseconds, target);
 
             Context.EnqueueAction(() =>
             {
@@ -341,6 +382,8 @@ internal class SDLAudioChannel : ISDLChannel
 
                 seekInternal(value);
                 endHandled = false;
+
+                Interlocked.CompareExchange(ref pendingSeekMicroseconds, -1, target);
             });
         }
     }

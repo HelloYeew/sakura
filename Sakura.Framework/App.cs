@@ -285,13 +285,14 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
 
         switch (backend)
         {
-            // TODO: The "managed" and "unmanaged" should be hide from the user
-            // it's for dev so should do the way like we done in graphic backend (have extension method for setting)
             case AudioBackend.SDL:
             case AudioBackend.SDLManaged:
                 try
                 {
-                    return new SDLAudioManager(backend == AudioBackend.SDL);
+                    var deviceBufferFrames = Host.FrameworkConfigManager.Get<int>(FrameworkSetting.AudioDeviceBufferFrames);
+
+                    return new SDLAudioManager(backend == AudioBackend.SDL, deviceBufferFrames.Value,
+                        next => deviceBufferFrames.Value = next);
                 }
                 catch (Exception e)
                 {
