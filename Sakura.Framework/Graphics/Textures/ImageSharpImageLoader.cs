@@ -142,8 +142,16 @@ public class ImageSharpImageLoader : IImageLoader
     /// The size hint passed to the decoder, or <c>null</c> to decode at full resolution. Only ever
     /// downscales (a source already at or below the target is never enlarged), and keeps enough
     /// resolution for the region that will ultimately be displayed so <see cref="reduce"/> is a clean
-    /// final shrink
+    /// final shrink.
     /// </summary>
+    /// <remarks>
+    /// Deliberately <em>not</em> the display size. A JPEG decoder can only skip work at the scales its
+    /// IDCT supports; ask for anything else, and it decodes at the nearest supported scale and resizes
+    /// down to what was asked for, so the loader pays two resamples instead of one. Measured on a
+    /// 3840x2160 source, hinting a size the decoder cannot produce natively costs more than passing no
+    /// hint at all — 109/114/122 ms at 5/8, 6/8 and 7/8 against 55 ms for a full decode. So the hint is
+    /// snapped down to a scale that is free, and <see cref="reduce"/> takes it the rest of the way.
+    /// </remarks>
     private static Size? decodeSizeFor(int sw, int sh, Vector2 target, bool cropToFill)
     {
         int tw = Math.Max(1, (int)MathF.Ceiling(target.X));
@@ -164,10 +172,24 @@ public class ImageSharpImageLoader : IImageLoader
         if (scale >= 1f)
             return null;
 
-        return new Size(
-            Math.Max(1, (int)MathF.Ceiling(sw * scale)),
-            Math.Max(1, (int)MathF.Ceiling(sh * scale))
-        );
+        // the smallest decode that still covers everything reduce() will keep. Going below this would
+        // blur the result, since the missing detail cannot be recovered by the final resize.
+        int wantedWidth = Math.Max(1, (int)MathF.Ceiling(sw * scale));
+        int wantedHeight = Math.Max(1, (int)MathF.Ceiling(sh * scale));
+
+        // measured against a full decode, 1/8, 1/4 and 1/2 all pay for themselves, while 3/8, 5/8, 6/8 and 7/8 are slower
+        // than not hinting. Falling out of the loop means no fraction covers the target (the reduction
+        // wanted is less than half), so null decodes at full resolution and reduce() does all the work.
+        for (int denominator = 8; denominator > 1; denominator /= 2)
+        {
+            int width = (sw + denominator - 1) / denominator;
+            int height = (sh + denominator - 1) / denominator;
+
+            if (width >= wantedWidth && height >= wantedHeight)
+                return new Size(width, height);
+        }
+
+        return null;
     }
 
     private static void reduce(Image<Rgba32> image, Vector2 target, bool cropToFill)
