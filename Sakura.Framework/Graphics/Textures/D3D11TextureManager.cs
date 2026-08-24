@@ -53,7 +53,7 @@ public class D3D11TextureManager : ITextureManager
     {
         if (string.IsNullOrEmpty(path))
             return WhitePixel;
-        
+
         string cacheKey = decode.HasTarget
             ? TextureCreationOptions.ShareKeyFor(path, decode.TargetSize, decode.FillMode)
             : path;
