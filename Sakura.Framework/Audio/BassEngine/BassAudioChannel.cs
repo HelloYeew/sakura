@@ -225,6 +225,48 @@ internal class BassAudioChannel : IAudioChannel
     /// </remarks>
     private long pendingSeekMicroseconds = -1;
 
+    /// <summary>
+    /// This channel's position as the listener is hearing it, in bytes.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>Bass.ChannelGetPosition</c> on a channel plugged into a BASSmix mixer is the <em>decoding</em>
+    /// position: how far the mixer has pulled the source, which runs ahead of what is audible by
+    /// however much of the mixer's playback buffer is filled — 100 ms, set in
+    /// <see cref="BassAudioManager"/>. Reporting that as <see cref="CurrentTime"/> puts everything
+    /// synced to the music a tenth of a second ahead of the music, which for a rhythm game is the
+    /// difference between a chart that lines up and one that does not.
+    /// </para>
+    /// <para>
+    /// <c>BassMix.ChannelGetPosition</c> is BASS's own answer to the same question with the mixer's
+    /// buffering taken off, and it is available because <see cref="BassAudioMixer"/> adds every channel
+    /// with <c>MixerChanBuffer</c>. Measured on real hardware at ~115 ms behind the decoding position,
+    /// which is the 100 ms playback buffer plus the device's own 17 ms
+    /// </para>
+    /// </remarks>
+    private long audiblePosition()
+    {
+        // Only while it is actually playing. BASSmix answers from a record of where the source was in
+        // the mixer's output going back one buffer, so a channel that has just been stopped and rewound
+        // is still described by that record as being where it was before — Stop would stop rewinding as
+        // far as any caller could tell. It is also the right answer for a paused channel: the mixer's
+        // buffer plays its tail out rather than dropping it, so once that tail has drained the audible
+        // position has caught up with the decoding cursor, and the cursor is where playback resumes.
+        if (Mixer != null && IsRunning.Value)
+        {
+            long audible = BassMix.ChannelGetPosition(ChannelHandle);
+
+            // -1 is a channel BASSmix has no record of at this position: a source not (or no longer)
+            // plugged into a mixer, or one asked before the mixer has pulled it at all. The decoding
+            // position is the only answer available then, and it is the right one for a channel with no
+            // mixer buffer in front of it.
+            if (audible >= 0)
+                return audible;
+        }
+
+        return Bass.ChannelGetPosition(ChannelHandle);
+    }
+
     public double CurrentTime
     {
         get
@@ -237,8 +279,7 @@ internal class BassAudioChannel : IAudioChannel
             if (pending >= 0)
                 return pending / 1000.0;
 
-            long pos = Bass.ChannelGetPosition(ChannelHandle);
-            return Bass.ChannelBytes2Seconds(ChannelHandle, pos) * 1000.0;
+            return Bass.ChannelBytes2Seconds(ChannelHandle, audiblePosition()) * 1000.0;
         }
         set
         {
