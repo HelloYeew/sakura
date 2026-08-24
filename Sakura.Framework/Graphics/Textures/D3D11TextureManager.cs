@@ -47,12 +47,18 @@ public class D3D11TextureManager : ITextureManager
         atlas = new TextureAtlas(renderer, usage: AtlasUsage.Textures);
     }
 
-    public Texture Get(string path)
+    public Texture Get(string path) => Get(path, ImageLoadOptions.FullSize);
+
+    public Texture Get(string path, ImageLoadOptions decode)
     {
         if (string.IsNullOrEmpty(path))
             return WhitePixel;
+        
+        string cacheKey = decode.HasTarget
+            ? TextureCreationOptions.ShareKeyFor(path, decode.TargetSize, decode.FillMode)
+            : path;
 
-        if (textureCache.TryGetValue(path, out var cachedTexture))
+        if (textureCache.TryGetValue(cacheKey, out var cachedTexture))
             return cachedTexture;
 
         try
@@ -61,7 +67,7 @@ public class D3D11TextureManager : ITextureManager
             if (stream == null)
                 throw new FileNotFoundException($"Texture not found: {path}");
 
-            var rawImage = imageLoader.Load(stream);
+            var rawImage = imageLoader.Load(stream, decode);
             int imageWidth = rawImage.Width;
             int imageHeight = rawImage.Height;
 
@@ -87,7 +93,7 @@ public class D3D11TextureManager : ITextureManager
             }
 
             texture.Name = path;
-            textureCache[path] = texture;
+            textureCache[cacheKey] = texture;
             GlobalStatistics.Get<int>("Textures", "Loaded Textures").Value = textureCache.Count;
             return texture;
         }

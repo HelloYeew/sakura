@@ -6,6 +6,7 @@ using System.IO;
 using Sakura.Framework.Maths;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats;
+using SixLabors.ImageSharp.Memory;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 
@@ -16,6 +17,28 @@ namespace Sakura.Framework.Graphics.Textures;
 /// </summary>
 public class ImageSharpImageLoader : IImageLoader
 {
+    /// <summary>
+    /// How much unmanaged memory ImageSharp's allocator is allowed to keep pooled.
+    /// </summary>
+    private const int max_pool_size_megabytes = 128;
+
+    /// <summary>
+    /// Configures ImageSharp process-wide.
+    /// </summary>
+    static ImageSharpImageLoader()
+    {
+        Configuration.Default.MemoryAllocator = MemoryAllocator.Create(new MemoryAllocatorOptions
+        {
+            MaximumPoolSizeMegabytes = max_pool_size_megabytes
+        });
+        Configuration.Default.MaxDegreeOfParallelism = Math.Min(4, Environment.ProcessorCount);
+    }
+
+    /// <summary>
+    /// Drops every buffer ImageSharp is holding pooled but not using.
+    /// </summary>
+    public static void ReleaseRetainedMemory() => Configuration.Default.MemoryAllocator.ReleaseRetainedResources();
+
     public ImageRawData Load(Stream stream) => Load(stream, ImageLoadOptions.FullSize);
 
     public ImageRawData Load(Stream stream, int maxDimension) => Load(stream, ImageLoadOptions.MaxDimension(maxDimension));
@@ -154,30 +177,19 @@ public class ImageSharpImageLoader : IImageLoader
 
         if (cropToFill)
         {
-            // keep only the center region a Fill would actually display, the rest is clipped off
-            // screen, so carrying it wastes decode time, memory and upload bandwidth.
-            float targetAspect = (float)tw / th;
-            float srcAspect = (float)image.Width / image.Height;
+            var size = fillSize(image.Width, image.Height, tw, th);
 
-            int cropW, cropH;
-
-            if (srcAspect > targetAspect)
+            if (size.Width < image.Width || size.Height < image.Height)
             {
-                cropH = image.Height;
-                cropW = Math.Max(1, (int)MathF.Round(cropH * targetAspect));
-            }
-            else
-            {
-                cropW = image.Width;
-                cropH = Math.Max(1, (int)MathF.Round(cropW / targetAspect));
+                image.Mutate(i => i.Resize(new ResizeOptions
+                {
+                    Size = size,
+                    Mode = ResizeMode.Crop,
+                    Position = AnchorPositionMode.Center
+                }));
             }
 
-            if (cropW < image.Width || cropH < image.Height)
-            {
-                int x = (image.Width - cropW) / 2;
-                int y = (image.Height - cropH) / 2;
-                image.Mutate(i => i.Crop(new Rectangle(x, y, cropW, cropH)));
-            }
+            return;
         }
 
         // only ever downscale, upscaling a small source just wastes memory.
@@ -186,11 +198,45 @@ public class ImageSharpImageLoader : IImageLoader
             image.Mutate(i => i.Resize(new ResizeOptions
             {
                 Size = new Size(tw, th),
-                // after a crop the aspect already matches, so Max is exact
-                // without one it fits the image inside the box preserving aspect
                 Mode = ResizeMode.Max
             }));
         }
+    }
+
+    /// <summary>
+    /// The exact output size for a Fill: the center region of a
+    /// <paramref name="sw"/> x <paramref name="sh"/> source that a
+    /// <paramref name="tw"/> x <paramref name="th"/> box would display, scaled down to that box if it is
+    /// larger. Never larger than the region itself, so passing this to
+    /// <see cref="ResizeMode.Crop"/> which would otherwise happily enlarge a small source only ever
+    /// downscales.
+    /// </summary>
+    private static Size fillSize(int sw, int sh, int tw, int th)
+    {
+        float targetAspect = (float)tw / th;
+        float srcAspect = (float)sw / sh;
+
+        // the region a Fill actually displays: one axis kept whole, the other cut to the target aspect.
+        // The rest is clipped off screen, so carrying it wastes decode time, memory and upload bandwidth.
+        int cropW, cropH;
+
+        if (srcAspect > targetAspect)
+        {
+            cropH = sh;
+            cropW = Math.Max(1, (int)MathF.Round(cropH * targetAspect));
+        }
+        else
+        {
+            cropW = sw;
+            cropH = Math.Max(1, (int)MathF.Round(cropW / targetAspect));
+        }
+
+        float scale = MathF.Min(1f, MathF.Min((float)tw / cropW, (float)th / cropH));
+
+        return new Size(
+            Math.Max(1, (int)MathF.Round(cropW * scale)),
+            Math.Max(1, (int)MathF.Round(cropH * scale))
+        );
     }
 
     /// <summary>

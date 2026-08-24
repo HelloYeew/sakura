@@ -26,6 +26,19 @@ public interface ITextureManager : IDisposable
     Texture Get(string path);
 
     /// <summary>
+    /// Retrieves a texture from the specified path, decoded at (at most) the size in
+    /// <paramref name="decode"/>. Loads it from storage if not already cached.
+    /// </summary>
+    /// <remarks>
+    /// Prefer this over <see cref="Get(string)"/> for anything whose display size is known and smaller
+    /// than the source.
+    /// </remarks>
+    /// <param name="path">The path to the texture in storage.</param>
+    /// <param name="decode">How far to reduce the image while decoding it.</param>
+    /// <returns>A <see cref="Texture"/> object. Returns <see cref="WhitePixel"/> if the path is null or empty, or a fallback texture on load failure.</returns>
+    Texture Get(string path, ImageLoadOptions decode);
+
+    /// <summary>
     /// Creates a texture from raw pixel data.
     /// </summary>
     /// <param name="width">Width of the texture in pixels.</param>

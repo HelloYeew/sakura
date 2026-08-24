@@ -52,12 +52,18 @@ public class GLTextureManager : ITextureManager
     /// Retrieves a texture from the specified path.
     /// Loads it from storage if not already cached.
     /// </summary>
-    public Texture Get(string path)
+    public Texture Get(string path) => Get(path, ImageLoadOptions.FullSize);
+
+    public Texture Get(string path, ImageLoadOptions decode)
     {
         if (string.IsNullOrEmpty(path))
             return WhitePixel;
 
-        if (textureCache.TryGetValue(path, out var cachedTexture))
+        string cacheKey = decode.HasTarget
+            ? TextureCreationOptions.ShareKeyFor(path, decode.TargetSize, decode.FillMode)
+            : path;
+
+        if (textureCache.TryGetValue(cacheKey, out var cachedTexture))
             return cachedTexture;
 
         try
@@ -65,7 +71,7 @@ public class GLTextureManager : ITextureManager
             using var stream = storage.GetStream(path);
             if (stream == null) throw new FileNotFoundException($"Texture not found: {path}");
 
-            var rawImage = imageLoader.Load(stream);
+            var rawImage = imageLoader.Load(stream, decode);
             int imageWidth = rawImage.Width;
             int imageHeight = rawImage.Height;
 
@@ -91,7 +97,7 @@ public class GLTextureManager : ITextureManager
             }
 
             texture.Name = path;
-            textureCache[path] = texture;
+            textureCache[cacheKey] = texture;
             GlobalStatistics.Get<int>("Textures", "Loaded Textures").Value = textureCache.Count;
             return texture;
         }
