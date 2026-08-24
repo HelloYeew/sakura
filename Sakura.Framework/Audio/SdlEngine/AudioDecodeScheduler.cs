@@ -24,13 +24,13 @@ internal sealed class AudioDecodeScheduler : IDisposable
     /// </summary>
     private const int max_pumps_per_source = 8;
 
-    private readonly List<StreamingPcmSource> sources = new List<StreamingPcmSource>();
+    private readonly List<IDecodeSource> sources = new List<IDecodeSource>();
     private readonly Lock sync = new Lock();
     private readonly AutoResetEvent wakeup = new AutoResetEvent(false);
     private readonly CancellationTokenSource cancellation = new CancellationTokenSource();
     private readonly Thread thread;
 
-    private StreamingPcmSource[] snapshot = Array.Empty<StreamingPcmSource>();
+    private IDecodeSource[] snapshot = Array.Empty<IDecodeSource>();
 
     public AudioDecodeScheduler()
     {
@@ -47,7 +47,7 @@ internal sealed class AudioDecodeScheduler : IDisposable
         thread.Start();
     }
 
-    public void Register(StreamingPcmSource source)
+    public void Register(IDecodeSource source)
     {
         lock (sync)
         {
@@ -59,7 +59,7 @@ internal sealed class AudioDecodeScheduler : IDisposable
         wakeup.Set();
     }
 
-    public void Unregister(StreamingPcmSource source)
+    public void Unregister(IDecodeSource source)
     {
         lock (sync)
         {
@@ -124,7 +124,7 @@ internal sealed class AudioDecodeScheduler : IDisposable
         lock (sync)
         {
             sources.Clear();
-            snapshot = Array.Empty<StreamingPcmSource>();
+            snapshot = Array.Empty<IDecodeSource>();
         }
 
         wakeup.Dispose();

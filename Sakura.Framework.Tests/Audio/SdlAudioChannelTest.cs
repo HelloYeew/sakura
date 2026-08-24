@@ -27,17 +27,22 @@ public class SdlAudioChannelTest
         public int SampleRate => rate;
         public int Channels => channels;
 
-        public readonly Queue<Action> Pending = new Queue<Action>();
+        /// <summary>
+        /// Output latency to report, so a test can pin position compensation.
+        /// </summary>
+        public double OutputLatencyMs { get; set; }
+
+        private readonly Queue<Action> pending = new Queue<Action>();
         public int WakeCount;
 
-        public void EnqueueAction(Action action) => Pending.Enqueue(action);
+        public void EnqueueAction(Action action) => pending.Enqueue(action);
         public void WakeDecoder() => WakeCount++;
 
         /// <summary>Runs everything queued, including anything queued while draining.</summary>
         public void Drain()
         {
-            while (Pending.Count > 0)
-                Pending.Dequeue().Invoke();
+            while (pending.Count > 0)
+                pending.Dequeue().Invoke();
         }
     }
 
@@ -172,6 +177,50 @@ public class SdlAudioChannelTest
         context.Drain();
 
         Assert.That(channel.CurrentTime, Is.EqualTo(500).Within(1));
+    }
+
+    [Test]
+    public void CurrentTime_SubtractsWhatIsStillQueuedForTheDevice()
+    {
+        var context = new StubContext { OutputLatencyMs = 20 };
+        var channel = playing(context, constant(0.5f, 44100));
+
+        // 100 ms of source consumed, 20 ms of it still sitting in the device queue unheard.
+        channel.Fill(new float[4410 * channels]);
+
+        Assert.That(channel.CurrentTime, Is.EqualTo(80).Within(1),
+            "CurrentTime feeds TrackClock, so it has to mean what the listener is hearing rather than what the mixer has reached.");
+    }
+
+    [Test]
+    public void CurrentTime_KeepsAdvancingWhileTheQueueDrainsAfterAPause()
+    {
+        var context = new StubContext { OutputLatencyMs = 20 };
+        var channel = playing(context, constant(0.5f, 44100));
+
+        channel.Fill(new float[4410 * channels]);
+        channel.Pause();
+        context.Drain();
+
+        double whilePaused = channel.CurrentTime;
+
+        // The mixer has stopped producing, but the device is still playing what it was given.
+        context.OutputLatencyMs = 0;
+
+        Assert.That(channel.CurrentTime, Is.GreaterThan(whilePaused),
+            "Audio already handed to the device is still heard after a pause, so the audible position is still moving.");
+    }
+
+    [Test]
+    public void CurrentTime_IsUncompensatedWhereThereIsNothingQueued()
+    {
+        var context = new StubContext();
+        var channel = playing(context, constant(0.5f, 44100));
+
+        channel.Fill(new float[4410 * channels]);
+
+        Assert.That(channel.CurrentTime, Is.EqualTo(100).Within(1),
+            "With an empty queue the mix cursor and the audible position are the same thing.");
     }
 
     [Test]

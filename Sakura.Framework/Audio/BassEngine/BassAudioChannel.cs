@@ -4,6 +4,7 @@
 #nullable disable
 
 using System;
+using System.Threading;
 using ManagedBass;
 using ManagedBass.Mix;
 using Sakura.Framework.Reactive;
@@ -200,23 +201,104 @@ internal class BassAudioChannel : IAudioChannel
     public Reactive<double> Tempo { get; } = new Reactive<double>(1.0);
     private double restartPoint;
 
+    /// <summary>
+    /// Where a posted-but-not-yet-applied seek was sent, in microseconds, or -1 when none is outstanding.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A seek is queued onto the audio thread rather than applied inline, so for up to one frame
+    /// <c>Bass.ChannelGetPosition</c> still reports the position being left. Pairing the old cursor with
+    /// a caller that believes it has already seeked reads as the track jumping backwards and then
+    /// forwards, which <c>TrackClock</c> turns into audible desync — and this backend is the default, so
+    /// it is the one where that mattered most.
+    /// </para>
+    /// <para>
+    /// So the target is reported until the seek lands, which is the same thing the SDL backend's native
+    /// engine does with its seek epoch. Found by the cross-backend conformance suite, which asked all
+    /// three backends whether a read straight after a seek sees the new position; only the native SDL
+    /// engine said yes.
+    /// </para>
+    /// <para>
+    /// Microseconds in a <c>long</c> so that the field can be published and cleared atomically without a
+    /// lock, since the getter is called from whichever thread wants a position.
+    /// </para>
+    /// </remarks>
+    private long pendingSeekMicroseconds = -1;
+
+    /// <summary>
+    /// This channel's position as the listener is hearing it, in bytes.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>Bass.ChannelGetPosition</c> on a channel plugged into a BASSmix mixer is the <em>decoding</em>
+    /// position: how far the mixer has pulled the source, which runs ahead of what is audible by
+    /// however much of the mixer's playback buffer is filled — 100 ms, set in
+    /// <see cref="BassAudioManager"/>. Reporting that as <see cref="CurrentTime"/> puts everything
+    /// synced to the music a tenth of a second ahead of the music, which for a rhythm game is the
+    /// difference between a chart that lines up and one that does not.
+    /// </para>
+    /// <para>
+    /// <c>BassMix.ChannelGetPosition</c> is BASS's own answer to the same question with the mixer's
+    /// buffering taken off, and it is available because <see cref="BassAudioMixer"/> adds every channel
+    /// with <c>MixerChanBuffer</c>. Measured on real hardware at ~115 ms behind the decoding position,
+    /// which is the 100 ms playback buffer plus the device's own 17 ms
+    /// </para>
+    /// </remarks>
+    private long audiblePosition()
+    {
+        // Only while it is actually playing. BASSmix answers from a record of where the source was in
+        // the mixer's output going back one buffer, so a channel that has just been stopped and rewound
+        // is still described by that record as being where it was before — Stop would stop rewinding as
+        // far as any caller could tell. It is also the right answer for a paused channel: the mixer's
+        // buffer plays its tail out rather than dropping it, so once that tail has drained the audible
+        // position has caught up with the decoding cursor, and the cursor is where playback resumes.
+        if (Mixer != null && IsRunning.Value)
+        {
+            long audible = BassMix.ChannelGetPosition(ChannelHandle);
+
+            // -1 is a channel BASSmix has no record of at this position: a source not (or no longer)
+            // plugged into a mixer, or one asked before the mixer has pulled it at all. The decoding
+            // position is the only answer available then, and it is the right one for a channel with no
+            // mixer buffer in front of it.
+            if (audible >= 0)
+                return audible;
+        }
+
+        return Bass.ChannelGetPosition(ChannelHandle);
+    }
+
     public double CurrentTime
     {
         get
         {
             if (isDisposed)
                 return 0;
-            long pos = Bass.ChannelGetPosition(ChannelHandle);
-            return Bass.ChannelBytes2Seconds(ChannelHandle, pos) * 1000.0;
+
+            long pending = Interlocked.Read(ref pendingSeekMicroseconds);
+
+            if (pending >= 0)
+                return pending / 1000.0;
+
+            return Bass.ChannelBytes2Seconds(ChannelHandle, audiblePosition()) * 1000.0;
         }
         set
         {
             if (isDisposed) return;
+
+            long target = (long)(Math.Max(0, value) * 1000.0);
+            Interlocked.Exchange(ref pendingSeekMicroseconds, target);
+
             manager.EnqueueAction(() =>
             {
                 if (isDisposed) return;
+
                 long pos = Bass.ChannelSeconds2Bytes(ChannelHandle, value / 1000.0);
                 Bass.ChannelSetPosition(ChannelHandle, pos);
+
+                // Only if this is still the outstanding seek: a second one posted in the meantime owns
+                // the reported position now, and clearing it here would briefly report the position this
+                // seek landed on rather than the one the caller last asked for.
+                Interlocked.CompareExchange(ref pendingSeekMicroseconds, -1, target);
             });
         }
     }

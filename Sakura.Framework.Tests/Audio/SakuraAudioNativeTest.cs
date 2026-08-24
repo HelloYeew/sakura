@@ -37,6 +37,12 @@ public class SakuraAudioNativeTest
     {
         public int SampleRate => rate;
         public int Channels => channels;
+
+        /// <summary>
+        /// Output latency to report, so a test can pin position compensation.
+        /// </summary>
+        public double OutputLatencyMs { get; set; }
+
         public void EnqueueAction(Action action) => action();
         public void WakeDecoder() { }
     }

@@ -274,7 +274,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
 
     /// <summary>
     /// Create the audio manager used for this app, selected by
-    /// <see cref="FrameworkSetting.AudioBackend"/> and default to <see cref="BassAudioManager"/>.
+    /// <see cref="FrameworkSetting.AudioBackend"/> and default to <see cref="SDLAudioManager"/>
     /// </summary>
     protected virtual IAudioManager CreateAudioManager()
     {
@@ -285,10 +285,15 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
 
         switch (backend)
         {
+            case AudioBackend.Automatic:
             case AudioBackend.SDL:
+            case AudioBackend.SDLManaged:
                 try
                 {
-                    return new SDLAudioManager();
+                    var deviceBufferFrames = Host.FrameworkConfigManager.Get<int>(FrameworkSetting.AudioDeviceBufferFrames);
+
+                    return new SDLAudioManager(backend != AudioBackend.SDLManaged, deviceBufferFrames.Value,
+                        next => deviceBufferFrames.Value = next);
                 }
                 catch (Exception e)
                 {

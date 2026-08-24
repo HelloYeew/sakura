@@ -22,8 +22,14 @@ public enum AudioBackend
     BASS,
 
     /// <summary>
-    /// The SDL3 audio backend
+    /// The SDL3 audio backend, mixing in libsakura-audio where it is available.
     /// </summary>
     [SuppressMessage("ReSharper", "InconsistentNaming")]
-    SDL
+    SDL,
+
+    /// <summary>
+    /// The SDL3 audio backend with its managed reference mixer, never the native one.
+    /// </summary>
+    [SuppressMessage("ReSharper", "InconsistentNaming")]
+    SDLManaged
 }

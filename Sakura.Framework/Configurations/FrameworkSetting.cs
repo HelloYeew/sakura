@@ -3,6 +3,9 @@
 
 namespace Sakura.Framework.Configurations;
 
+/// <summary>
+/// Every setting the framework persists to <c>framework.ini</c>.
+/// </summary>
 [SettingSource("framework.ini")]
 public enum FrameworkSetting
 {
@@ -21,5 +24,6 @@ public enum FrameworkSetting
     WindowWidth,
     WindowHeight,
     RelativeMouseMode,
-    CursorSensitivity
+    CursorSensitivity,
+    AudioDeviceBufferFrames
 }

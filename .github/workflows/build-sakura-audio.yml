@@ -287,6 +287,20 @@ jobs:
             exit 1
           }
 
+          # And that it has an ABI at all. PE exports nothing unless asked, so a missing export
+          # directive produces a DLL that builds, links, packages and passes every other check here
+          # while exporting nothing -- the managed side then loads it and throws
+          # EntryPointNotFoundException on the first call, which reads as "this platform has no native
+          # library" rather than as a broken build. That shipped on all three Windows RIDs undetected,
+          # because this step only ever asked what the library links against.
+          $exports = & $dumpbin.FullName /exports "$PWD/out/sakura-audio.dll"
+
+          if (-not ($exports | Select-String -Pattern 'sakura_audio_abi_version' -Quiet)) {
+            $exports | Write-Host
+            Write-Host "::error::sakura-audio.dll does not export sakura_audio_abi_version, so the managed side cannot use it."
+            exit 1
+          }
+
       - name: Upload ${{ matrix.rid }} artifact
         uses: actions/upload-artifact@v7
         with:

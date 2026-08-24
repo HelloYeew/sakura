@@ -19,14 +19,14 @@ internal sealed class AmplitudeTap
     /// Minimum interval between recomputing. Matches the BASS backend and means several visualizers
     /// reading the same tap in one frame share a single transform.
     /// </summary>
-    private const long cache_interval_ms = 15;
+    internal const long CACHE_INTERVAL_MS = 15;
 
     // Per-frame temporal damping of the spectrum so visualizers receive a smooth signal rather than
     // the raw, jittery FFT. Each refresh eases the stored value toward the new reading, retaining
     // this fraction of the old value per ~60fps frame. Copied from BassAudioChannel, including the
     // framerate-independence: the retained fraction shrinks as more time passes.
-    private const double amplitude_retain_per_frame = 0.4;
-    private const double amplitude_reference_frame_ms = 1000.0 / 60.0;
+    internal const double AMPLITUDE_RETAIN_PER_FRAME = 0.4;
+    internal const double AMPLITUDE_REFERENCE_FRAME_MS = 1000.0 / 60.0;
 
     /// <summary>
     /// Frames folded into one peak-hold segment, and how many segments the peak window spans.
@@ -150,7 +150,7 @@ internal sealed class AmplitudeTap
 
     /// <summary>
     /// Returns the current amplitude snapshot, recomputing at most once per
-    /// <see cref="cache_interval_ms"/>.
+    /// <see cref="CACHE_INTERVAL_MS"/>.
     /// </summary>
     /// <remarks>
     /// The returned <see cref="ChannelAmplitudes"/> wraps a buffer this tap reuses, matching the BASS
@@ -161,7 +161,7 @@ internal sealed class AmplitudeTap
         long now = Environment.TickCount64;
         long elapsed = now - lastReadTick;
 
-        if (elapsed < cache_interval_ms)
+        if (elapsed < CACHE_INTERVAL_MS)
             return cached;
 
         lastReadTick = now;
@@ -205,7 +205,7 @@ internal sealed class AmplitudeTap
 
         // Ease each bin toward its new reading instead of snapping, retaining less of the old value
         // the more time has passed since the previous read.
-        float retain = (float)Math.Pow(amplitude_retain_per_frame, elapsed / amplitude_reference_frame_ms);
+        float retain = (float)Math.Pow(AMPLITUDE_RETAIN_PER_FRAME, elapsed / AMPLITUDE_REFERENCE_FRAME_MS);
 
         for (int i = 0; i < dampedBins.Length; i++)
             dampedBins[i] = rawBins[i] + (dampedBins[i] - rawBins[i]) * retain;

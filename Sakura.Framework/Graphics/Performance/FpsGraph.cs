@@ -4,6 +4,7 @@
 using System;
 using Sakura.Framework.Allocation;
 using Sakura.Framework.Audio;
+using Sakura.Framework.Audio.SdlEngine;
 using Sakura.Framework.Configurations;
 using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Extensions.DrawableExtensions;
@@ -304,6 +305,25 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
 
         if (actual.EndsWith("AudioManager"))
             actual = actual[..^"AudioManager".Length];
+
+        if (host.AudioManager is SDLAudioManager sdl)
+        {
+            if (sdl.UsesNativeMixEngine)
+            {
+                actual += " (native)";
+            }
+            else if (configured == AudioBackend.SDLManaged)
+            {
+                actual += " (managed)";
+            }
+            else
+            {
+                // The native mixer was asked for and did not happen, so this is a degraded backend
+                // rather than a chosen one. Called out, and coloured, because everything still works
+                // and nothing else on screen would say so.
+                actual += " (managed fallback)";
+            }
+        }
 
         return configured == AudioBackend.Automatic ? $"Automatic ({actual})" : actual;
     }

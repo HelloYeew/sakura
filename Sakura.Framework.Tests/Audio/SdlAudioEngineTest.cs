@@ -39,6 +39,12 @@ public class SdlAudioEngineTest
     {
         public int SampleRate => rate;
         public int Channels => channels;
+
+        /// <summary>
+        /// Output latency to report, so a test can pin position compensation.
+        /// </summary>
+        public double OutputLatencyMs { get; set; }
+
         public void EnqueueAction(Action action) => action();
         public void WakeDecoder() { }
     }
@@ -171,10 +177,28 @@ public class SdlAudioEngineTest
     [OneTimeSetUp]
     public void UseDummyAudioDriver() => SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy");
 
-    [Test]
-    public void Manager_OpensADeviceAndReportsItsFormat()
+    /// <summary>
+    /// Opens a manager on one of the two mix engines. Every test below that is not specific to one of
+    /// them runs against both.
+    /// </summary>
+    private static SDLAudioManager createManager(bool native, int deviceBufferFrames = SDLAudioManager.DEFAULT_DEVICE_BUFFER_FRAMES)
     {
-        using var manager = new SDLAudioManager();
+        if (native && !SakuraAudioEngine.IsAvailable)
+            Assert.Ignore("libsakura-audio is not available for this platform, so the native mix engine cannot be tested here.");
+
+        var manager = new SDLAudioManager(useNativeMixEngine: native, deviceBufferFrames);
+
+        Assert.That(manager.UsesNativeMixEngine, Is.EqualTo(native),
+            native ? "Expected the native mix engine, got the managed one." : "Expected the managed mix engine, got the native one.");
+
+        return manager;
+    }
+
+    [TestCase(true)]
+    [TestCase(false)]
+    public void Manager_OpensADeviceAndReportsItsFormat(bool native)
+    {
+        using var manager = createManager(native);
 
         // If the hint did not take, these tests would be silently relying on real hardware and
         // would not survive CI.
@@ -189,10 +213,207 @@ public class SdlAudioEngineTest
         }
     }
 
-    [Test]
-    public void Manager_KeepsTheDeviceQueueFed()
+    #region Output latency
+
+    /// <summary>
+    /// The device buffer is a setting, and asking for a smaller one gets a
+    /// smaller one.
+    /// </summary>
+    /// <remarks>
+    /// Native only, because the hint is only applied there — the managed mixer's latency is its own
+    /// push queue and shrinking the device buffer underneath it would buy nothing.
+    /// </remarks>
+    [TestCase(128)]
+    [TestCase(256)]
+    [TestCase(512)]
+    public void Manager_AsksSdlForTheConfiguredDeviceBuffer(int frames)
     {
-        using var manager = new SDLAudioManager();
+        using var manager = createManager(native: true, frames);
+
+        Assert.That(manager.DeviceBufferFrames, Is.EqualTo(frames),
+            "SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES did not take. On real hardware a driver may round this; the dummy driver has no excuse.");
+    }
+
+    /// <summary>
+    /// A nonsense buffer size is clamped rather than passed to a driver.
+    /// </summary>
+    [TestCase(1)]
+    [TestCase(1_000_000)]
+    public void Manager_ClampsAnOutOfRangeDeviceBuffer(int frames)
+    {
+        using var manager = createManager(native: true, frames);
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(manager.DeviceBufferFrames, Is.GreaterThanOrEqualTo(32));
+            Assert.That(manager.DeviceBufferFrames, Is.LessThanOrEqualTo(8192));
+        }
+    }
+
+    /// <summary>
+    /// The shipped default is the low-latency one, and it is honoured.
+    /// </summary>
+    /// <remarks>
+    /// Pinned as its own test because the default is a decision with evidence behind it — see
+    /// AUDIO_SDL.md — rather than an arbitrary constant, and because changing it silently is exactly
+    /// the failure mode the risk table warns about in both directions.
+    /// </remarks>
+    [Test]
+    public void Manager_DefaultsToALowLatencyDeviceBuffer()
+    {
+        using var manager = createManager(native: true);
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(SDLAudioManager.DEFAULT_DEVICE_BUFFER_FRAMES, Is.EqualTo(128));
+            Assert.That(manager.DeviceBufferFrames, Is.EqualTo(128));
+        }
+    }
+
+    /// <summary>
+    /// Zero means "whatever SDL was going to do", which is the escape hatch for a platform where the
+    /// hint makes things worse.
+    /// </summary>
+    [TestCase(true)]
+    [TestCase(false)]
+    public void Manager_LeavesTheDeviceBufferAloneWhenNotConfigured(bool native)
+    {
+        using var manager = createManager(native, deviceBufferFrames: 0);
+
+        Assert.That(manager.DeviceBufferFrames, Is.GreaterThan(0),
+            "The device still has a buffer; the setting only decides who chose its size.");
+    }
+
+    /// <summary>
+    /// The reported latency includes the device buffer, not just SDL's queue.
+    /// </summary>
+    /// <remarks>
+    /// This is the assertion that would have caught the first version of this code. In the callback
+    /// model SDL asks the callback for exactly what it needs and takes it immediately, so the stream
+    /// queue is empty whenever anything looks at it — a latency read from the queue alone is zero on
+    /// the native engine, and the compensation it feeds does nothing at all. On real CoreAudio the
+    /// numbers are 5.33 ms native at a 256-frame buffer against 106.67 ms managed; see AUDIO_SDL.md.
+    /// </remarks>
+    [TestCase(true)]
+    [TestCase(false)]
+    public void Manager_ReportsOutputLatencyIncludingTheDeviceBuffer(bool native)
+    {
+        using var manager = createManager(native);
+
+        Thread.Sleep(200);
+        manager.Update(0);
+
+        double bufferMs = manager.DeviceBufferFrames / (double)manager.SampleRate * 1000.0;
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(manager.OutputLatencyMs, Is.GreaterThanOrEqualTo(bufferMs).Within(0.01),
+                "Audio the device has been given but has not finished playing is still ahead of the listener.");
+            Assert.That(manager.OutputLatencyMs, Is.LessThan(1000),
+                "An output latency of a second is not a latency, it is a bug.");
+        }
+    }
+
+    /// <summary>
+    /// The managed mixer's latency is its push queue on top of the device buffer, and it is much
+    /// larger — which is the whole reason the native engine exists.
+    /// </summary>
+    [Test]
+    public void Manager_ManagedMixerCostsMuchMoreLatencyThanTheNativeOne()
+    {
+        using var managed = createManager(native: false);
+
+        Thread.Sleep(300);
+        managed.Update(0);
+
+        double bufferMs = managed.DeviceBufferFrames / (double)managed.SampleRate * 1000.0;
+
+        Assert.That(managed.OutputLatencyMs, Is.GreaterThan(bufferMs * 2),
+            "The push model keeps target_queue_ms ahead of the device on purpose; if that is not showing up in the "
+            + "reported latency then the queue term is not being counted.");
+    }
+
+    /// <summary>
+    /// A device that is keeping up never has its buffer raised behind the user's back.
+    /// </summary>
+    /// <remarks>
+    /// The failure this guards is the expensive one. A watchdog that fires spuriously does not crash
+    /// or log anything alarming — it quietly writes a larger buffer into every user's config and
+    /// gives back the latency this whole backend exists to win, and the only symptom is that the
+    /// numbers in AUDIO_SDL.md stop matching reality. The threshold logic is covered in
+    /// <see cref="UnderrunWatchdogTest"/>; this covers the wiring being pointed at a real counter.
+    /// </remarks>
+    [TestCase(true)]
+    [TestCase(false)]
+    public void Manager_DoesNotRaiseTheBufferOnAHealthyDevice(bool native)
+    {
+        int persisted = 0;
+
+        using var manager = new SDLAudioManager(useNativeMixEngine: native,
+            SDLAudioManager.DEFAULT_DEVICE_BUFFER_FRAMES, next => persisted = next);
+
+        if (native && !manager.UsesNativeMixEngine)
+            Assert.Ignore("libsakura-audio is not available for this platform.");
+
+        // Well past several watchdog windows, on a device with nothing to complain about.
+        for (int i = 0; i < 10; i++)
+        {
+            Thread.Sleep(20);
+            manager.Update(UnderrunWatchdog.CHECK_INTERVAL_MS);
+        }
+
+        Assert.That(persisted, Is.Zero,
+            "The device was keeping up, so nothing should have been written to the user's configuration.");
+    }
+
+    /// <summary>
+    /// The backoff is optional wiring, not a requirement for the manager to run.
+    /// </summary>
+    [TestCase(true)]
+    [TestCase(false)]
+    public void Manager_RunsWithoutSomewhereToPersistABackoff(bool native)
+    {
+        using var manager = createManager(native);
+
+        for (int i = 0; i < 3; i++)
+            manager.Update(UnderrunWatchdog.CHECK_INTERVAL_MS);
+
+        Assert.That(manager.DeviceBufferFrames, Is.GreaterThan(0));
+    }
+
+    /// <summary>
+    /// The device-change poll runs and finds nothing to report on a device that has not changed.
+    /// </summary>
+    /// <remarks>
+    /// A weak assertion on purpose: swapping the output device out from under a running stream is not
+    /// something a test can stage, so what is covered here is that the poll executes, that it does not
+    /// mistake the first reading for a change, and that it leaves the recorded buffer size intact.
+    /// The behaviour on an actual device change is verified by hand — see AUDIO_SDL.md.
+    /// </remarks>
+    [TestCase(true)]
+    [TestCase(false)]
+    public void Manager_DeviceChangePollIsQuietWhenNothingChanged(bool native)
+    {
+        using var manager = createManager(native);
+
+        int before = manager.DeviceBufferFrames;
+
+        // Long enough a frame that the once-a-second poll fires, several times over.
+        manager.Update(2000);
+        manager.Update(2000);
+
+        Assert.That(manager.DeviceBufferFrames, Is.EqualTo(before));
+    }
+
+    #endregion
+
+    /// <summary>
+    /// The managed mixer's own property: it pushes, so there is a queue to keep full.
+    /// </summary>
+    [Test]
+    public void Manager_ManagedMixerKeepsTheDeviceQueueFed()
+    {
+        using var manager = createManager(native: false);
 
         // The mix thread should have pushed audio without anything playing at all — silence still
         // has to reach the device or the queue starves.
@@ -204,10 +425,11 @@ public class SdlAudioEngineTest
         Assert.That(queued, Is.GreaterThan(0), "The mix thread is not filling the device queue.");
     }
 
-    [Test]
-    public void Manager_PlaysASampleThroughToCompletion()
+    [TestCase(true)]
+    [TestCase(false)]
+    public void Manager_PlaysASampleThroughToCompletion(bool native)
     {
-        using var manager = new SDLAudioManager();
+        using var manager = createManager(native);
 
         var sample = manager.CreateSample(open("Samples.test.wav"));
         Assert.That(sample.Length, Is.EqualTo(424.6).Within(5).Percent);
@@ -229,10 +451,11 @@ public class SdlAudioEngineTest
         Assert.That(ended, Is.True, "Sample never reported reaching its end.");
     }
 
-    [Test]
-    public void Manager_PlaysAStreamingTrackAndAdvancesItsPosition()
+    [TestCase(true)]
+    [TestCase(false)]
+    public void Manager_PlaysAStreamingTrackAndAdvancesItsPosition(bool native)
     {
-        using var manager = new SDLAudioManager();
+        using var manager = createManager(native);
 
         var track = manager.CreateTrackFromFile(writeTempCopy("Tracks.test.mp3"));
         Assert.That(track.Length, Is.GreaterThan(1000));
@@ -254,10 +477,11 @@ public class SdlAudioEngineTest
         manager.Update(0);
     }
 
-    [Test]
-    public void Manager_PublishesItsStatistics()
+    [TestCase(true)]
+    [TestCase(false)]
+    public void Manager_PublishesItsStatistics(bool native)
     {
-        using var manager = new SDLAudioManager();
+        using var manager = createManager(native);
 
         var sample = manager.CreateSample(open("Samples.long.mp3"));
         sample.Play();
@@ -273,20 +497,30 @@ public class SdlAudioEngineTest
         Assert.Multiple(() =>
         {
             Assert.That(GlobalStatistics.Get<int>("Audio", "SDL Active Voices").Value, Is.GreaterThan(0));
-            Assert.That(GlobalStatistics.Get<long>("Audio", "SDL Mix Block (µs)").Value, Is.GreaterThan(0));
-            Assert.That(GlobalStatistics.Get<double>("Audio", "SDL Queued (ms)").Value, Is.GreaterThan(0));
+
+            if (native)
+            {
+                // Renamed rather than reused: there is a real device callback to time now, where the
+                // managed mixer could only time a block it chose to push.
+                Assert.That(GlobalStatistics.Get<long>("Audio", "SDL Callback (µs)").Value, Is.GreaterThan(0));
+                Assert.That(GlobalStatistics.Get<long>("Audio", "SDL Put Failures").Value, Is.Zero);
+            }
+            else
+            {
+                Assert.That(GlobalStatistics.Get<long>("Audio", "SDL Mix Block (µs)").Value, Is.GreaterThan(0));
+                Assert.That(GlobalStatistics.Get<double>("Audio", "SDL Queued (ms)").Value, Is.GreaterThan(0));
+            }
         });
     }
 
     /// <summary>
     /// A steady multi-second play with no underrunning is the whole point of the decode-ahead design.
     /// </summary>
-    [Test]
-    public void Manager_PlaysWithoutUnderrunning()
+    [TestCase(true)]
+    [TestCase(false)]
+    public void Manager_PlaysWithoutUnderrunning(bool native)
     {
-        using var manager = new SDLAudioManager();
-
-        long before = GlobalStatistics.Get<long>("Audio", "SDL Underruns").Value;
+        using var manager = createManager(native);
 
         var track = manager.CreateTrackFromFile(writeTempCopy("Tracks.test.mp3"));
         var channel = track.GetChannel();
@@ -301,9 +535,11 @@ public class SdlAudioEngineTest
         }
 
         manager.Update(0);
-        long after = GlobalStatistics.Get<long>("Audio", "SDL Underruns").Value;
 
-        Assert.That(after - before, Is.Zero, "The device queue ran dry during steady playback.");
+        // This manager's own count, not the "SDL Underruns" statistic. That statistic is process-global
+        // and holds whatever manager updated last, so a delta taken across it is really a delta across
+        // whichever test ran before this one — which made this assertion flaky rather than wrong.
+        Assert.That(manager.Underruns, Is.Zero, "The device queue ran dry during steady playback.");
 
         channel.Dispose();
         manager.Update(0);
@@ -313,10 +549,11 @@ public class SdlAudioEngineTest
     /// <see cref="AudioChannelExtensions.AddLowPassFilter"/> has to recognise this backend's channels
     /// too, or filtering silently becomes a no-op the moment the backend is switched.
     /// </summary>
-    [Test]
-    public void AddLowPassFilter_AttachesToAnSdlChannel()
+    [TestCase(true)]
+    [TestCase(false)]
+    public void AddLowPassFilter_AttachesToAnSdlChannel(bool native)
     {
-        using var manager = new SDLAudioManager();
+        using var manager = createManager(native);
 
         var sample = manager.CreateSample(open("Samples.long.mp3"));
         var channel = sample.GetChannel();
@@ -338,10 +575,11 @@ public class SdlAudioEngineTest
         manager.Update(0);
     }
 
-    [Test]
-    public void Manager_MasterVolumeScalesBothMixers()
+    [TestCase(true)]
+    [TestCase(false)]
+    public void Manager_MasterVolumeScalesBothMixers(bool native)
     {
-        using var manager = new SDLAudioManager();
+        using var manager = createManager(native);
 
         manager.TrackVolume.Value = 0.5;
         manager.SampleVolume.Value = 0.25;
@@ -354,10 +592,11 @@ public class SdlAudioEngineTest
         }
     }
 
-    [Test]
-    public void Manager_StopAllStopsEveryChannel()
+    [TestCase(true)]
+    [TestCase(false)]
+    public void Manager_StopAllStopsEveryChannel(bool native)
     {
-        using var manager = new SDLAudioManager();
+        using var manager = createManager(native);
 
         var sample = manager.CreateSample(open("Samples.long.mp3"));
         var first = sample.Play();
@@ -375,10 +614,11 @@ public class SdlAudioEngineTest
         }
     }
 
-    [Test]
-    public void Manager_DisposeIsCleanWhileAudioIsPlaying()
+    [TestCase(true)]
+    [TestCase(false)]
+    public void Manager_DisposeIsCleanWhileAudioIsPlaying(bool native)
     {
-        var manager = new SDLAudioManager();
+        var manager = createManager(native);
 
         var sample = manager.CreateSample(open("Samples.long.mp3"));
         sample.Play();
@@ -391,6 +631,137 @@ public class SdlAudioEngineTest
         Assert.DoesNotThrow(() => manager.Dispose());
         Assert.DoesNotThrow(() => manager.Dispose());
     }
+
+    #region Native mix engine only
+
+    /// <summary>
+    /// A seek on a streaming voice is the only place all three threads have to cooperate: this side
+    /// moves the decoder, the audio thread performs the ring discard, and neither may write until the
+    /// other has finished.
+    /// </summary>
+    [Test]
+    public void NativeEngine_SeekLandsAndPlaybackResumesFromTheNewPosition()
+    {
+        using var manager = createManager(native: true);
+
+        var track = manager.CreateTrackFromFile(writeTempCopy("Tracks.test.mp3"));
+        var channel = track.GetChannel();
+        channel.Play();
+
+        var timeout = Stopwatch.StartNew();
+
+        while (channel.CurrentTime < 200 && timeout.Elapsed < TimeSpan.FromSeconds(10))
+        {
+            manager.Update(0);
+            Thread.Sleep(10);
+        }
+
+        Assert.That(channel.CurrentTime, Is.GreaterThanOrEqualTo(200));
+
+        channel.CurrentTime = 1000;
+
+        // Immediately, with no pumping at all. The audio thread has not applied the seek yet, and
+        // reporting the old cursor against the new base here is what would read as a jump backwards.
+        Assert.That(channel.CurrentTime, Is.EqualTo(1000).Within(1), "The seek was not reported until it had been applied.");
+
+        timeout.Restart();
+
+        while (channel.CurrentTime < 1200 && timeout.Elapsed < TimeSpan.FromSeconds(10))
+        {
+            manager.Update(0);
+            Thread.Sleep(10);
+        }
+
+        // Past the target rather than merely at it: the ring was discarded, the decoder moved, and the
+        // device is being fed from the new position.
+        Assert.That(channel.CurrentTime, Is.GreaterThanOrEqualTo(1200), "Playback did not resume after the seek.");
+
+        channel.Dispose();
+        manager.Update(0);
+    }
+
+    /// <summary>
+    /// A looping stream cannot wrap itself inside the engine — only this side can move a decoder — so
+    /// the voice publishes the end and waits to be told where to go.
+    /// </summary>
+    [Test]
+    public void NativeEngine_LoopingTrackWrapsAndKeepsPlaying()
+    {
+        using var manager = createManager(native: true);
+
+        var track = manager.CreateTrackFromFile(writeTempCopy("Tracks.test.mp3"));
+        var channel = track.GetChannel();
+
+        // Tracks loop by default on both backends.
+        Assert.That(channel.Looping, Is.True);
+
+        int ends = 0;
+        channel.OnEnd += () => ends++;
+
+        channel.Play();
+        channel.CurrentTime = Math.Max(0, track.Length - 300);
+
+        var timeout = Stopwatch.StartNew();
+
+        while (ends == 0 && timeout.Elapsed < TimeSpan.FromSeconds(15))
+        {
+            manager.Update(0);
+            Thread.Sleep(10);
+        }
+
+        Assert.That(ends, Is.GreaterThan(0), "A looping track never reported reaching its end.");
+        Assert.That(channel.IsRunning.Value, Is.True, "A looping track stopped at the loop point.");
+
+        timeout.Restart();
+
+        while (channel.CurrentTime > 1000 && timeout.Elapsed < TimeSpan.FromSeconds(10))
+        {
+            manager.Update(0);
+            Thread.Sleep(10);
+        }
+
+        Assert.That(channel.CurrentTime, Is.LessThan(1000), "A looping track did not wrap back to its restart point.");
+
+        channel.Dispose();
+        manager.Update(0);
+    }
+
+    /// <summary>
+    /// The engine holds the decoded PCM, and every voice playing it holds a reference — so evicting a
+    /// sample from a store mid-hitsound must not cut the hitsound off.
+    /// </summary>
+    [Test]
+    public void NativeEngine_SampleDisposedWhilePlayingKeepsItsVoiceAlive()
+    {
+        using var manager = createManager(native: true);
+
+        var sample = manager.CreateSample(open("Samples.test.wav"));
+        var channel = sample.Play();
+
+        Assert.That(channel, Is.Not.Null);
+
+        bool ended = false;
+        channel.OnEnd += () => ended = true;
+
+        manager.Update(0);
+
+        // The loader is done with it; the voice is not. (ISample does not carry IDisposable — a store
+        // evicting an entry is what does this in the real app.)
+        (sample as IDisposable)?.Dispose();
+        manager.Update(0);
+
+        var timeout = Stopwatch.StartNew();
+
+        while (!ended && timeout.Elapsed < TimeSpan.FromSeconds(10))
+        {
+            manager.Update(0);
+            Thread.Sleep(10);
+        }
+
+        Assert.That(ended, Is.True, "A voice was cut off when the sample it shares was disposed.");
+    }
+
+    #endregion
 
     private static string writeTempCopy(string resource)
     {

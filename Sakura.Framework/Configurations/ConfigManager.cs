@@ -98,6 +98,15 @@ public abstract class ConfigManager<TLookup> where TLookup : struct, Enum
     }
 
     /// <summary>
+    /// Whether <paramref name="lookup"/> has had a default registered via <see cref="Get{TValue}"/>.
+    /// </summary>
+    public bool IsRegistered(TLookup lookup)
+    {
+        lock (mutex)
+            return settings.ContainsKey(lookup);
+    }
+
+    /// <summary>
     /// Load settings from the backing file.
     /// </summary>
     public virtual void Load()
@@ -112,6 +121,8 @@ public abstract class ConfigManager<TLookup> where TLookup : struct, Enum
         }
 
         bool needsRewrite = false;
+
+        var present = new HashSet<TLookup>();
 
         lock (mutex)
         {
@@ -155,6 +166,8 @@ public abstract class ConfigManager<TLookup> where TLookup : struct, Enum
                         continue;
                     }
 
+                    present.Add(lookup);
+
                     if (settings.TryGetValue(lookup, out object? reactive))
                     {
                         if (!parseInto(lookup, reactive, value))
@@ -166,6 +179,9 @@ public abstract class ConfigManager<TLookup> where TLookup : struct, Enum
                         unclaimedValues[lookup] = value;
                     }
                 }
+
+                if (settings.Keys.Any(setting => !present.Contains(setting)))
+                    needsRewrite = true;
             }
             finally
             {

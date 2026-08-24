@@ -52,6 +52,19 @@ check_symbol_exists(timespec_get "time.h" SAKURA_AUDIO_HAVE_TIMESPEC_GET)
 
 add_library(sakura-audio SHARED sakura_audio.c)
 
+# PE exports nothing unless asked, where ELF and Mach-O export everything unless asked not to. Without
+# this the Windows legs build, link and package a DLL with no export directory at all, so the managed
+# side loads it and then throws EntryPointNotFoundException on the very first call -- which
+# SakuraAudioNative.IsAvailable catches and reports as "not available", falling back to the managed
+# mixer. It looks exactly like a platform where the library was never shipped, on all three Windows
+# RIDs, silently. See AUDIO_SDL.md.
+#
+# Exporting everything is safe here rather than lazy: every function in sakura_audio.c that is not part
+# of the header's ABI is static, so "all symbols" and "the public API" are already the same set. A
+# __declspec(dllexport) macro on each of the header's declarations would be the more precise spelling
+# and is a fine later change; it is not a different outcome.
+set_target_properties(sakura-audio PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+
 target_include_directories(sakura-audio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 if(SAKURA_AUDIO_HAVE_TIMESPEC_GET)
