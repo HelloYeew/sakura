@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using System.IO;
 using NUnit.Framework;
 using Sakura.Framework.Configurations;
@@ -156,6 +157,72 @@ public class ConfigManagerTest
         Mode,
         Enabled,
         Amount
+    }
+
+    /// <summary>
+    /// A setting the file never mentioned is written back with its default, rather than staying absent
+    /// until something unrelated happens to change.
+    /// </summary>
+    [Test]
+    public void MissingSettingIsWrittenBackOnLoad()
+    {
+        writeFile("Mode = Slow\nAmount = 5\n");
+
+        var manager = new TestConfigManager(storage);
+
+        // No Flush: Load must repair the file by itself. Flushing would write the file unconditionally
+        // and the assertion would hold whether the repair exists — which is exactly how the
+        // first version of this test passed against the unfixed code.
+        manager.Load();
+
+        string written = readFile();
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(written, Does.Contain("Enabled = True"), "The absent setting should have been written back.");
+            Assert.That(written, Does.Contain("Mode = Slow"), "A value the file did have must survive the rewrite.");
+            Assert.That(written, Does.Contain("Amount = 5"));
+        }
+    }
+
+    /// <summary>
+    /// The value written back is the default, since that is what a missing line means.
+    /// </summary>
+    [Test]
+    public void MissingSettingComesBackAtItsDefault()
+    {
+        writeFile("Enabled = False\n");
+
+        var manager = new TestConfigManager(storage);
+        manager.Load();
+
+        Assert.That(manager.Get<TestMode>(TestSetting.Mode).Value, Is.EqualTo(TestMode.Fast));
+        Assert.That(readFile(), Does.Contain("Mode = Fast"));
+    }
+
+    /// <summary>
+    /// A complete file is not rewritten just for being read.
+    /// </summary>
+    [Test]
+    public void CompleteFileIsNotRewrittenOnLoad()
+    {
+        var manager = new TestConfigManager(storage);
+        manager.Load();
+        manager.Flush();
+
+        string canonical = readFile();
+
+        File.SetLastWriteTimeUtc(Path.Combine(tempDir, "test.ini"), new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+
+        var second = new TestConfigManager(storage);
+        second.Load();
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(readFile(), Is.EqualTo(canonical));
+            Assert.That(File.GetLastWriteTimeUtc(Path.Combine(tempDir, "test.ini")), Is.EqualTo(new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc)),
+                "Loading a file that needs no repair should not write to disk at all.");
+        }
     }
 
     private class TestConfigManager : ConfigManager<TestSetting>
