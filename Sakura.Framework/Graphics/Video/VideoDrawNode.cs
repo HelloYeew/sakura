@@ -5,6 +5,7 @@ using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Rendering.Metal;
 using Sakura.Framework.Graphics.Rendering.Uniforms;
 using Sakura.Framework.Graphics.Textures;
+using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Graphics.Video;
 
@@ -16,6 +17,11 @@ namespace Sakura.Framework.Graphics.Video;
 /// </summary>
 internal class VideoDrawNode : DrawNode
 {
+    /// <summary>
+    /// Draws that produced nothing because the texture handed to this node was not uploaded yet.
+    /// </summary>
+    private static readonly GlobalStatistic<long> stat_skipped_draws = GlobalStatistics.Get<long>("Video", "Draws Skipped (Upload Incomplete)");
+
     private IVideoTexture? videoTexture;
     private float[]? yuvMatrix;
     private IShader? videoShader;
@@ -36,7 +42,10 @@ internal class VideoDrawNode : DrawNode
             return;
 
         if (!videoTexture.UploadComplete)
+        {
+            stat_skipped_draws.Value++;
             return;
+        }
 
         // The texture may have been disposed since this node's state was applied (a pool torn down
         // while the texture viewer still shows a preview of it). Its planes are destroyed on this

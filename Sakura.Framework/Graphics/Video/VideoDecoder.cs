@@ -67,7 +67,7 @@ public unsafe class VideoDecoder : IDisposable
     private bool texturePoolWarmed;
 
     private const int io_buffer_size = 4096;
-    private const int max_pending_frames = 4;
+    private const int max_pending_frames = 6;
 
     private readonly ConcurrentQueue<DecodedFrame> decodedFrames = new ConcurrentQueue<DecodedFrame>();
     private readonly ConcurrentQueue<VideoTexture> availableTextures = new ConcurrentQueue<VideoTexture>();

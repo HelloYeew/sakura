@@ -159,6 +159,12 @@ public partial class VideoSprite : Drawable
     {
         var node = base.GenerateDrawNodeSubtree(frameIndex) as VideoDrawNode;
         node?.ApplyVideoState(currentVideoTexture, currentMatrix, videoShader);
+
+        // Record what this node is now holding, so a retired frame's texture is only returned to the
+        // pool once no node still points at it
+        if (frameIndex >= 0 && frameIndex < stampedTextures.Length)
+            stampedTextures[frameIndex] = currentVideoTexture;
+
         return node!;
     }
 
@@ -302,7 +308,7 @@ public partial class VideoSprite : Drawable
             while (availableFrames.Count > 0 && availableFrames.Peek().Time <= targetPts)
             {
                 if (lastFrame != null)
-                    decoder.ReturnFrames(new[] { lastFrame });
+                    retire(lastFrame);
 
                 lastFrame = availableFrames.Dequeue();
                 GlobalStatistics.Get<int>("Video", "Frames Displayed").Value++;
@@ -329,6 +335,10 @@ public partial class VideoSprite : Drawable
             // Otherwise fall back to the last confirmed-uploaded texture — no black frames.
             if (vt.UploadComplete)
                 lastUploadedTexture = vt;
+            else
+                // The frame due for display has not reached the draw thread yet, so this update draws
+                // the previous texture again.
+                GlobalStatistics.Get<long>("Video", "Fallback To Previous Texture").Value++;
 
             currentVideoTexture = lastUploadedTexture ?? vt;
 
@@ -341,12 +351,78 @@ public partial class VideoSprite : Drawable
                 Alpha = 1f;
         }
 
+        releaseRetiredFrames();
+
         Buffering = decoder.IsRunning && availableFrames.Count == 0 && lastFrame == null;
 
         GlobalStatistics.Get<bool>("Video", "Buffering").Value = Buffering;
         GlobalStatistics.Get<double>("Video", "Playback Position (ms)").Value = Math.Round(CurrentTime, 1);
         GlobalStatistics.Get<int>("Video", "Queue Depth").Value = availableFrames.Count;
+        GlobalStatistics.Get<int>("Video", "Frames Retiring").Value = retiringFrames.Count;
     }
+
+    /// <summary>
+    /// Frames that have left the display but whose textures may still be read by a draw node.
+    /// </summary>
+    private readonly List<DecodedFrame> retiringFrames = new List<DecodedFrame>();
+
+    /// <summary>
+    /// The texture handed to each of <c>Drawable</c>'s three buffered draw nodes, indexed the same way.
+    /// </summary>
+    private readonly IVideoTexture?[] stampedTextures = new IVideoTexture?[3];
+
+    /// <summary>
+    /// Takes a frame off the display without releasing its texture yet.
+    /// </summary>
+    private void retire(DecodedFrame frame) => retiringFrames.Add(frame);
+
+    /// <summary>
+    /// Returns every retired frame whose texture nothing can still be reading.
+    /// </summary>
+    /// <param name="force">
+    /// Release regardless, for disposal, the draw nodes go with the sprite, so nothing survives to
+    /// read the texture.
+    /// </param>
+    private void releaseRetiredFrames(bool force = false)
+    {
+        for (int i = retiringFrames.Count - 1; i >= 0; i--)
+        {
+            var frame = retiringFrames[i];
+
+            if (!force && stillReferenced(frame.NativeTexture))
+                continue;
+
+            singleFrame[0] = frame;
+            decoder.ReturnFrames(singleFrame);
+            retiringFrames.RemoveAt(i);
+        }
+
+        singleFrame[0] = null!;
+    }
+
+    /// <summary>
+    /// Whether anything can still read <paramref name="texture"/> like the display path, the fallback
+    /// behind it, or a draw node it was stamped onto.
+    /// </summary>
+    private bool stillReferenced(IVideoTexture texture)
+    {
+        if (ReferenceEquals(texture, currentVideoTexture) || ReferenceEquals(texture, lastUploadedTexture))
+            return true;
+
+        foreach (var stamped in stampedTextures)
+        {
+            if (ReferenceEquals(texture, stamped))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Reused so the per-frame release path does not allocate an array every time a frame is returned.
+    /// Update thread only.
+    /// </summary>
+    private readonly DecodedFrame[] singleFrame = new DecodedFrame[1];
 
     /// <summary>
     /// Releases the decoder, its FFmpeg contexts and the video texture pool. Runs automatically when this
@@ -361,11 +437,19 @@ public partial class VideoSprite : Drawable
             decoder.ReturnFrames(availableFrames);
             availableFrames.Clear();
 
+            // Nothing outlives this sprite to read them, so the draw-node hold does not apply.
+            Array.Clear(stampedTextures);
+            releaseRetiredFrames(force: true);
+            retiringFrames.Clear();
+
             if (lastFrame != null)
             {
                 decoder.ReturnFrames(new[] { lastFrame });
                 lastFrame = null;
             }
+
+            currentVideoTexture = null;
+            lastUploadedTexture = null;
 
             decoder.Dispose(); // internally schedules GL texture disposal on draw thread
         }
