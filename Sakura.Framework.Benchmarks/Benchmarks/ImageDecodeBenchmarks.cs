@@ -4,6 +4,7 @@
 using System.IO;
 using BenchmarkDotNet.Attributes;
 using Sakura.Framework.Graphics.Textures;
+using Sakura.Framework.Graphics.Textures.ImageSharp;
 using Sakura.Framework.Maths;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
