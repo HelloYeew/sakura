@@ -7,6 +7,7 @@ using NUnit.Framework;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Maths;
 using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Metadata.Profiles.Exif;
 using SixLabors.ImageSharp.PixelFormats;
 
 namespace Sakura.Framework.Tests.Graphics;
@@ -26,6 +27,75 @@ public class ImageSharpImageLoaderTest
             image.SaveAsJpeg(stream);
         stream.Position = 0;
         return stream;
+    }
+
+    private static MemoryStream jpegWithOrientation(int width, int height, ushort orientation)
+    {
+        var stream = new MemoryStream();
+
+        using (var image = new Image<Rgba32>(width, height))
+        {
+            image.Metadata.ExifProfile = new ExifProfile();
+            image.Metadata.ExifProfile.SetValue(ExifTag.Orientation, orientation);
+            image.SaveAsJpeg(stream);
+        }
+
+        stream.Position = 0;
+        return stream;
+    }
+
+    /// <remarks>
+    /// Orientation 6 (RightTop) means the stored pixels sit a quarter turn from how they should be
+    /// displayed, so decoding one upright swaps the axes. Pinned because it is the one decoding
+    /// behaviour a different loader cannot be assumed to share — stb_image does not parse EXIF at all —
+    /// so anything routing between loaders has to keep these on a loader that honours them.
+    /// </remarks>
+    [Test]
+    public void ExifOrientationIsApplied()
+    {
+        using var stream = jpegWithOrientation(400, 200, 6);
+        using var raw = loader.Load(stream);
+
+        Assert.That(raw.Width, Is.EqualTo(200));
+        Assert.That(raw.Height, Is.EqualTo(400));
+    }
+
+    [Test]
+    public void UprightImageIsNotReoriented()
+    {
+        using var stream = jpegWithOrientation(400, 200, 1);
+        using var raw = loader.Load(stream);
+
+        Assert.That(raw.Width, Is.EqualTo(400));
+        Assert.That(raw.Height, Is.EqualTo(200));
+    }
+
+    /// <remarks>
+    /// The ordering that matters: the axes have to swap before the Fill decides which band of the
+    /// source to keep. Planning the crop against the stored dimensions instead would keep the wrong
+    /// band and hand back the wrong shape.
+    /// </remarks>
+    [Test]
+    public void ExifOrientationIsAppliedBeforeReduction()
+    {
+        using var stream = jpegWithOrientation(400, 200, 6);
+        using var raw = loader.Load(stream, ImageLoadOptions.FillTarget(new Vector2(100, 100)));
+
+        Assert.That(raw.Width, Is.EqualTo(100));
+        Assert.That(raw.Height, Is.EqualTo(100));
+    }
+
+    [Test]
+    public void NeedsOrientationOnlyForNonUprightImages()
+    {
+        using (var none = jpeg(64, 64))
+            Assert.That(ImageSharpImageLoader.NeedsOrientation(Image.Identify(none).Metadata), Is.False);
+
+        using (var upright = jpegWithOrientation(64, 64, 1))
+            Assert.That(ImageSharpImageLoader.NeedsOrientation(Image.Identify(upright).Metadata), Is.False);
+
+        using (var rotated = jpegWithOrientation(64, 64, 6))
+            Assert.That(ImageSharpImageLoader.NeedsOrientation(Image.Identify(rotated).Metadata), Is.True);
     }
 
     [Test]

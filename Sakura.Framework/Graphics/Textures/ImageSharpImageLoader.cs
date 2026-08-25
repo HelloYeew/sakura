@@ -6,7 +6,9 @@ using System.IO;
 using Sakura.Framework.Maths;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats;
-using SixLabors.ImageSharp.Memory;
+using SixLabors.ImageSharp.Formats.Jpeg;
+using SixLabors.ImageSharp.Metadata;
+using SixLabors.ImageSharp.Metadata.Profiles.Exif;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 
@@ -18,26 +20,12 @@ namespace Sakura.Framework.Graphics.Textures;
 public class ImageSharpImageLoader : IImageLoader
 {
     /// <summary>
-    /// How much unmanaged memory ImageSharp's allocator is allowed to keep pooled.
-    /// </summary>
-    private const int max_pool_size_megabytes = 128;
-
-    /// <summary>
     /// Configures ImageSharp process-wide.
     /// </summary>
     static ImageSharpImageLoader()
     {
-        Configuration.Default.MemoryAllocator = MemoryAllocator.Create(new MemoryAllocatorOptions
-        {
-            MaximumPoolSizeMegabytes = max_pool_size_megabytes
-        });
         Configuration.Default.MaxDegreeOfParallelism = Math.Min(4, Environment.ProcessorCount);
     }
-
-    /// <summary>
-    /// Drops every buffer ImageSharp is holding pooled but not using.
-    /// </summary>
-    public static void ReleaseRetainedMemory() => Configuration.Default.MemoryAllocator.ReleaseRetainedResources();
 
     public ImageRawData Load(Stream stream) => Load(stream, ImageLoadOptions.FullSize);
 
@@ -82,7 +70,8 @@ public class ImageSharpImageLoader : IImageLoader
 
     private static ImageRawData finish(Image<Rgba32> image, Vector2? target, bool cropToFill)
     {
-        image.Mutate(x => x.AutoOrient());
+        if (NeedsOrientation(image.Metadata))
+            image.Mutate(x => x.AutoOrient());
 
         if (target is { } size)
             reduce(image, size, cropToFill);
@@ -106,14 +95,29 @@ public class ImageSharpImageLoader : IImageLoader
     }
 
     /// <summary>
+    /// Whether <paramref name="metadata"/> carries an EXIF orientation that would rotate or flip the
+    /// image, i.e. whether <c>AutoOrient</c> would actually do anything.
+    /// </summary>
+    internal static bool NeedsOrientation(ImageMetadata metadata)
+    {
+        var exif = metadata.ExifProfile;
+
+        if (exif == null || !exif.TryGetValue(ExifTag.Orientation, out var orientation))
+            return false;
+
+        // 1 is TopLeft, i.e. already upright. 0 is not a legal value but does occur in the wild, and
+        // treating it as upright matches what AutoOrient does with it.
+        return orientation.Value is not (0 or 1);
+    }
+
+    /// <summary>
     /// <see cref="decodeSizeFor(int,int,Vector2,bool)"/> for an already-buffered image.
     /// </summary>
     private static Size? decodeSizeFor(ReadOnlySpan<byte> encoded, Vector2 target, bool cropToFill)
     {
         try
         {
-            var info = Image.Identify(encoded);
-            return decodeSizeFor(info.Width, info.Height, target, cropToFill);
+            return decodeSizeFor(Image.Identify(encoded), target, cropToFill);
         }
         catch
         {
@@ -129,14 +133,29 @@ public class ImageSharpImageLoader : IImageLoader
     {
         try
         {
-            var info = Image.Identify(stream);
-            return decodeSizeFor(info.Width, info.Height, target, cropToFill);
+            return decodeSizeFor(Image.Identify(stream), target, cropToFill);
         }
         catch
         {
             return null; // header unreadable, fall back to a full decode, reduce() still caps it
         }
     }
+
+    /// <summary>
+    /// <see cref="decodeSizeFor(int,int,Vector2,bool)"/> gated on the format being able to act on the
+    /// hint at all.
+    /// </summary>
+    /// <remarks>
+    /// Only JPEG can genuinely decode at a reduced scale. Every other decoder produces the full image
+    /// and then ImageSharp resizes it internally to whatever was asked for — so the hint buys nothing
+    /// and costs a resample, because <see cref="reduce"/> still has to take it to the final size
+    /// afterwards. The internal pass also uses a box resampler, so hinting a PNG downgrades
+    /// the result as well as slowing it.
+    /// </remarks>
+    private static Size? decodeSizeFor(ImageInfo info, Vector2 target, bool cropToFill)
+        => info.Metadata.DecodedImageFormat is JpegFormat
+            ? decodeSizeFor(info.Width, info.Height, target, cropToFill)
+            : null;
 
     /// <summary>
     /// The size hint passed to the decoder, or <c>null</c> to decode at full resolution. Only ever
@@ -177,6 +196,7 @@ public class ImageSharpImageLoader : IImageLoader
         int wantedWidth = Math.Max(1, (int)MathF.Ceiling(sw * scale));
         int wantedHeight = Math.Max(1, (int)MathF.Ceiling(sh * scale));
 
+        // Note : Why power of two
         // measured against a full decode, 1/8, 1/4 and 1/2 all pay for themselves, while 3/8, 5/8, 6/8 and 7/8 are slower
         // than not hinting. Falling out of the loop means no fraction covers the target (the reduction
         // wanted is less than half), so null decodes at full resolution and reduce() does all the work.
