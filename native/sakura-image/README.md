@@ -11,6 +11,9 @@ Three exports, declared in `sakura_image.h`:
 | function | does |
 |---|---|
 | `sakura_image_abi_version()` | the ABI the library was built with; the managed side refuses a mismatch |
+| `sakura_image_stb_version()` | the vendored stb_image version, e.g. `2.30` |
+| `sakura_image_stb_resize_version()` | the vendored stb_image_resize2 version, e.g. `2.18` |
+| `sakura_image_formats()` | the formats this build decodes, e.g. `JPEG, PNG, BMP, GIF` |
 | `sakura_image_info()` | width and height from the header alone, no pixels decoded |
 | `sakura_image_load()` | decode, crop to a region, scale into the caller's buffer |
 

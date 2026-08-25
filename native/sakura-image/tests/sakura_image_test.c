@@ -43,6 +43,38 @@ static void test_abi_version(void)
           "abi version %d, expected %d", sakura_image_abi_version(), SAKURA_IMAGE_ABI_VERSION);
 }
 
+static void test_reported_versions(void)
+{
+    const char *stb = sakura_image_stb_version();
+    const char *resize = sakura_image_stb_resize_version();
+
+    CHECK(stb != NULL && stb[0] != '\0', "stb version is empty");
+    CHECK(resize != NULL && resize[0] != '\0', "stb_image_resize2 version is empty");
+    printf("  stb_image %s, stb_image_resize2 %s\n", stb, resize);
+}
+
+static void test_reported_formats(void)
+{
+    const char *formats = sakura_image_formats();
+
+    CHECK(formats != NULL && formats[0] != '\0', "format list is empty");
+    printf("  formats: %s\n", formats);
+
+    // The list is derived from the STBI_ONLY_* defines, so it has to name what is compiled in and omit
+    // what is not. Getting this wrong is silent -- an earlier version keyed on STBI_NO_*, which stb only
+    // defines inside its implementation guard, and cheerfully reported all nine formats.
+    CHECK(strstr(formats, "JPEG") != NULL, "JPEG missing from the format list");
+    CHECK(strstr(formats, "PNG") != NULL, "PNG missing from the format list");
+    CHECK(strstr(formats, "BMP") != NULL, "BMP missing from the format list");
+    CHECK(strstr(formats, "GIF") != NULL, "GIF missing from the format list");
+    CHECK(strstr(formats, "PSD") == NULL, "PSD is reported but not compiled in");
+    CHECK(strstr(formats, "TGA") == NULL, "TGA is reported but not compiled in");
+    CHECK(strstr(formats, "HDR") == NULL, "HDR is reported but not compiled in");
+
+    // The leading-separator trick: a stray ", " at the front would be visible in every log line.
+    CHECK(formats[0] != ',' && formats[0] != ' ', "the format list starts with a separator");
+}
+
 static void test_info(void)
 {
     int w = 0, h = 0;
@@ -137,6 +169,8 @@ static void test_load_rejects_garbage(void)
 int main(void)
 {
     test_abi_version();
+    test_reported_versions();
+    test_reported_formats();
     test_info();
     test_info_rejects_garbage();
     test_load_full_size_is_a_copy();

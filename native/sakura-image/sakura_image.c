@@ -16,6 +16,65 @@ int sakura_image_abi_version(void)
     return SAKURA_IMAGE_ABI_VERSION;
 }
 
+const char *sakura_image_stb_version(void)
+{
+    return SAKURA_IMAGE_STB_IMAGE_VERSION;
+}
+
+const char *sakura_image_stb_resize_version(void)
+{
+    return SAKURA_IMAGE_STB_RESIZE_VERSION;
+}
+
+const char *sakura_image_formats(void)
+{
+    // Keyed on the STBI_ONLY_* defines from stb_config.h, which both translation units see, rather than
+    // on STBI_NO_*: stb derives those from the ONLY_ set inside its STB_IMAGE_IMPLEMENTATION guard, so
+    // they do not exist in this file and testing them here silently reported every format stb has.
+    //
+    // Each entry carries a leading separator and the first two characters are skipped, which is the
+    // only way to build a comma-separated list in the preprocessor without knowing which entry is
+    // first.
+#if defined(STBI_ONLY_JPEG) || defined(STBI_ONLY_PNG) || defined(STBI_ONLY_BMP) || defined(STBI_ONLY_GIF) \
+ || defined(STBI_ONLY_TGA) || defined(STBI_ONLY_PSD) || defined(STBI_ONLY_HDR) || defined(STBI_ONLY_PIC) \
+ || defined(STBI_ONLY_PNM)
+    static const char *const list = ""
+#ifdef STBI_ONLY_JPEG
+        ", JPEG"
+#endif
+#ifdef STBI_ONLY_PNG
+        ", PNG"
+#endif
+#ifdef STBI_ONLY_BMP
+        ", BMP"
+#endif
+#ifdef STBI_ONLY_GIF
+        ", GIF"
+#endif
+#ifdef STBI_ONLY_TGA
+        ", TGA"
+#endif
+#ifdef STBI_ONLY_PSD
+        ", PSD"
+#endif
+#ifdef STBI_ONLY_HDR
+        ", HDR"
+#endif
+#ifdef STBI_ONLY_PIC
+        ", PIC"
+#endif
+#ifdef STBI_ONLY_PNM
+        ", PNM"
+#endif
+        ;
+
+    return list[0] == '\0' ? "none" : list + 2;
+#else
+    // No ONLY_ restriction, so stb compiled in everything it has.
+    return "JPEG, PNG, BMP, GIF, TGA, PSD, HDR, PIC, PNM";
+#endif
+}
+
 int sakura_image_info(const unsigned char *encoded, int length, int *width, int *height)
 {
     if (encoded == NULL || length <= 0 || width == NULL || height == NULL)

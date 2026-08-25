@@ -10,7 +10,14 @@ extern "C" {
 
 // Bumped whenever the signatures or the meaning of the codes below change. The managed side refuses a
 // library that disagrees rather than trusting it to have the same contract.
-#define SAKURA_IMAGE_ABI_VERSION 1
+#define SAKURA_IMAGE_ABI_VERSION 2
+
+// The versions of the vendored headers, as declared in their own leading comments. Exported so the
+// managed side can report which stb is actually loaded rather than which one the repo's README says was
+// vendored -- those answers differ the moment a stale native is on the machine. Update both when
+// vendor/ is synced.
+#define SAKURA_IMAGE_STB_IMAGE_VERSION "2.30"
+#define SAKURA_IMAGE_STB_RESIZE_VERSION "2.18"
 
 #define SAKURA_IMAGE_OK        0
 #define SAKURA_IMAGE_ERROR    -1  // the decoder rejected the data: unsupported format, or corrupt
@@ -30,6 +37,17 @@ extern "C" {
 #endif
 
 SAKURA_IMAGE_API int sakura_image_abi_version(void);
+
+/// The vendored stb_image version, e.g. "2.30". Statically allocated; the caller must not free it.
+SAKURA_IMAGE_API const char *sakura_image_stb_version(void);
+
+/// The vendored stb_image_resize2 version, e.g. "2.18". Statically allocated; must not be freed.
+SAKURA_IMAGE_API const char *sakura_image_stb_resize_version(void);
+
+/// The formats this build can decode, e.g. "JPEG, PNG, BMP, GIF". Derived from the STBI_ONLY_* defines
+/// rather than written by hand, so it cannot drift from what was actually compiled in. Statically
+/// allocated; must not be freed.
+SAKURA_IMAGE_API const char *sakura_image_formats(void);
 
 /// Reads dimensions from the header alone, without decoding any pixels.
 /// Returns SAKURA_IMAGE_OK, or a negative code.
