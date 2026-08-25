@@ -63,4 +63,21 @@ public class StbImageLoaderTest : ImageLoaderTest
 
         Assert.That(() => loader.Load(stream), Throws.InstanceOf<System.IO.InvalidDataException>());
     }
+
+    /// <remarks>
+    /// The format boundary, asserted from this side so <c>RoutingImageLoaderTest.WebpIsServedByTheFallback</c>
+    /// is proof of the fallback rather than a coincidence: stb_image contains no WebP decoder at all.
+    /// </remarks>
+    [Test]
+    public void WebpIsRejected()
+    {
+        using var stream = new System.IO.MemoryStream();
+
+        using (var image = new SixLabors.ImageSharp.Image<SixLabors.ImageSharp.PixelFormats.Rgba32>(64, 64))
+            SixLabors.ImageSharp.ImageExtensions.SaveAsWebp(image, stream);
+
+        stream.Position = 0;
+
+        Assert.That(() => loader.Load(stream), Throws.InstanceOf<System.IO.InvalidDataException>());
+    }
 }
