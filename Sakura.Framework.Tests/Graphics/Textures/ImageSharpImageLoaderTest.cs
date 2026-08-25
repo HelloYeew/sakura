@@ -9,10 +9,10 @@ using Sakura.Framework.Graphics.Textures.ImageSharp;
 using Sakura.Framework.Maths;
 using SixLabors.ImageSharp;
 
-namespace Sakura.Framework.Tests.Graphics;
+namespace Sakura.Framework.Tests.Graphics.Textures;
 
 /// <summary>
-/// Test for <see cref="ImageSharpImageLoader"/>. The size and crop behaviour it shares with every other
+/// Test for <see cref="ImageSharpImageLoader"/>. The size and crop behavior it shares with every other
 /// loader is in <see cref="ImageLoaderTest"/>; what is left here is ImageSharp's alone.
 /// </summary>
 [TestFixture]

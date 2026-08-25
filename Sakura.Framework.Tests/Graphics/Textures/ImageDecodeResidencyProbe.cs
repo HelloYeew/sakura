@@ -16,23 +16,10 @@ using Sakura.Framework.Maths;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 
-namespace Sakura.Framework.Tests.Graphics;
+namespace Sakura.Framework.Tests.Graphics.Textures;
 
-/// <summary>
-/// A measurement, not an assertion: what it costs to read an encoded image's header before decoding it.
-/// <para>
-/// Both halves of the decode need the bytes — the header, to pick a decode size, and then the decoder
-/// itself. A seekable source can serve both by rewinding; anything else has to be held in memory. This
-/// probe prices the three ways of doing that, and then shows what the choice is worth end to end.
-/// </para>
-/// <para>
-/// Totals come from <see cref="GC.GetTotalAllocatedBytes"/> rather than BenchmarkDotNet's
-/// <c>MemoryDiagnoser</c>, which counts only the benchmark thread and reads near zero here — ImageSharp
-/// decodes with parallel workers, and the rental only misses under concurrency.
-/// </para>
-/// </summary>
 [TestFixture]
-[Explicit("measurement probe, run by name")]
+[Explicit("measurement probe, run by name, will remove")]
 public class ImageDecodeResidencyProbe
 {
     private const int iterations = 20;

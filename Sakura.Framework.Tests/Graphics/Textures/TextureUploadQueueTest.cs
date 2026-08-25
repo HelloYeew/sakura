@@ -5,7 +5,7 @@ using System.Collections.Generic;
 using NUnit.Framework;
 using Sakura.Framework.Graphics.Textures;
 
-namespace Sakura.Framework.Tests.Graphics;
+namespace Sakura.Framework.Tests.Graphics.Textures;
 
 /// <summary>
 /// Test for <see cref="TextureUploadQueue"/>

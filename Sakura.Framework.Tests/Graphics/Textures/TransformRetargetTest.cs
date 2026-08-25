@@ -15,7 +15,7 @@ using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Timing;
 
-namespace Sakura.Framework.Tests.Graphics;
+namespace Sakura.Framework.Tests.Graphics.Textures;
 
 /// <summary>
 /// Covers retarget-in-place: an immediate transform on a property that is already animating redirects

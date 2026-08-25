@@ -10,7 +10,7 @@ using Sakura.Framework.Maths;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 
-namespace Sakura.Framework.Tests.Graphics;
+namespace Sakura.Framework.Tests.Graphics.Textures;
 
 /// <summary>
 /// Tests for the backend-independent implementation behind <see cref="ITextureManager.CreateFromStream"/>
