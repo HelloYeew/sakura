@@ -3,6 +3,7 @@
 
 using System;
 using System.IO;
+using Sakura.Framework.Logging;
 
 namespace Sakura.Framework.Graphics.Textures;
 
@@ -53,4 +54,9 @@ public interface IImageLoader
         // Default implementation so existing implementors keep compiling: honours the target size but
         // not the Fill crop. Override to support cropping.
         => Load(stream, options.TargetSize is { } size ? (int)MathF.Ceiling(MathF.Max(size.X, size.Y)) : 0);
+
+    /// <summary>
+    /// Logs which decoder this is and what it can do, once at startup.
+    /// </summary>
+    void LogInfo() => Logger.Verbose($"🖼️ {GetType().Name} initialized");
 }

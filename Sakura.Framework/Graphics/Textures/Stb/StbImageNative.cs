@@ -21,7 +21,7 @@ internal static class StbImageNative
     /// The ABI this assembly was built against. Must match <c>SAKURA_IMAGE_ABI_VERSION</c> in
     /// <c>sakura_image.h</c>; a shipped library that disagrees is refused rather than trusted.
     /// </summary>
-    public const int ABI_VERSION = 1;
+    public const int ABI_VERSION = 2;
 
     public const int OK = 0;
     public const int ERROR = -1;
@@ -73,6 +73,44 @@ internal static class StbImageNative
 
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern int sakura_image_abi_version();
+
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr sakura_image_stb_version();
+
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr sakura_image_stb_resize_version();
+
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr sakura_image_formats();
+
+    /// <summary>
+    /// The vendored stb_image version the loaded library reports, e.g. 2.30.
+    /// </summary>
+    public static string StbVersion => read(sakura_image_stb_version);
+
+    /// <summary>
+    /// The vendored stb_image_resize2 version, e.g. <c>2.18</c>.
+    /// </summary>
+    public static string StbResizeVersion => read(sakura_image_stb_resize_version);
+
+    /// <summary>
+    /// The formats this build of the native can decode, e.g. JPEG, PNG, BMP, GIF. Derived in the
+    /// shim from the defines the decoders are compiled behind, so it reports the build rather than
+    /// repeating a claim about it.
+    /// </summary>
+    public static string Formats => read(sakura_image_formats);
+
+    private static string read(Func<IntPtr> entryPoint)
+    {
+        try
+        {
+            return Marshal.PtrToStringUTF8(entryPoint()) ?? "unknown";
+        }
+        catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
+        {
+            return "unavailable";
+        }
+    }
 
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern unsafe int sakura_image_info(byte* encoded, int length, out int width, out int height);

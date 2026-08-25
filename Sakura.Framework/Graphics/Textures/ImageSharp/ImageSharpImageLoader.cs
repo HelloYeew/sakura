@@ -3,6 +3,9 @@
 
 using System;
 using System.IO;
+using System.Linq;
+using System.Reflection;
+using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats;
@@ -21,6 +24,39 @@ public class ImageSharpImageLoader : IImageLoader
     static ImageSharpImageLoader()
     {
         Configuration.Default.MaxDegreeOfParallelism = Math.Min(4, Environment.ProcessorCount);
+    }
+
+    public void LogInfo()
+    {
+        Logger.Verbose("🖼️ ImageSharp image loader initialized");
+        Logger.Verbose($"ImageSharp Version: {imageSharpVersion()}");
+        Logger.Verbose($"ImageSharp Formats: {string.Join(", ", Configuration.Default.ImageFormats.Select(f => f.Name))}");
+        Logger.Verbose($"ImageSharp Max Parallelism: {Configuration.Default.MaxDegreeOfParallelism}");
+        // Only JPEG can decode at a reduced scale, which is why the hint is gated on it and why this is
+        // worth stating next to the format list rather than left implied.
+        Logger.Verbose("ImageSharp Scaled Decode: JPEG only");
+    }
+
+    /// <summary>
+    /// The package version, e.g. 3.1.12.
+    /// </summary>
+    /// <remarks>
+    /// From the informational version, not <c>AssemblyName.Version</c> — Six Labors pins the assembly
+    /// version at <c>3.0.0.0</c> across the whole 3.x line, so reporting that would name a version
+    /// nobody can look up. Any build metadata after a <c>+</c> is dropped.
+    /// </remarks>
+    private static string imageSharpVersion()
+    {
+        string? informational = typeof(Image).Assembly
+                                            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+                                            ?.InformationalVersion;
+
+        if (string.IsNullOrEmpty(informational))
+            return typeof(Image).Assembly.GetName().Version?.ToString() ?? "unknown";
+
+        int metadata = informational.IndexOf('+');
+
+        return metadata < 0 ? informational : informational[..metadata];
     }
 
     public ImageRawData Load(Stream stream) => Load(stream, ImageLoadOptions.FullSize);

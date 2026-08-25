@@ -2,8 +2,8 @@
 // See the LICENSE file for full license text.
 
 using System;
-using System.Buffers;
 using System.IO;
+using Sakura.Framework.Logging;
 
 namespace Sakura.Framework.Graphics.Textures.Stb;
 
@@ -19,6 +19,27 @@ public class StbImageLoader : IImageLoader
     /// </summary>
     public static bool IsAvailable => StbImageNative.IsAvailable;
 
+    public void LogInfo()
+    {
+        if (!IsAvailable)
+        {
+            Logger.Verbose("🖼️ stb image loader initialized, but libsakura-image is not available on this platform");
+            return;
+        }
+
+        Logger.Verbose("🖼️ stb image loader initialized");
+        Logger.Verbose($"stb ABI: {StbImageNative.sakura_image_abi_version()} (expected {StbImageNative.ABI_VERSION})");
+        Logger.Verbose($"stb_image Version: {StbImageNative.StbVersion}");
+        Logger.Verbose($"stb_image_resize2 Version: {StbImageNative.StbResizeVersion}");
+        Logger.Verbose($"stb Formats: {StbImageNative.Formats}");
+        // Both are behavioral differences from ImageSharp rather than trivia, and both are invisible in
+        // output that happens to look fine, so they are stated every run.
+        // TODO: Maybe remove it if not informative???
+        Logger.Verbose("stb Resampling: Catmull-Rom, gamma-correct (linear light)");
+        Logger.Verbose("stb EXIF Orientation: not supported (stb ignores it)");
+        Logger.Verbose("stb Scaled Decode: none (always decodes full resolution)");
+    }
+
     public ImageRawData Load(Stream stream) => Load(stream, ImageLoadOptions.FullSize);
 
     public ImageRawData Load(Stream stream, int maxDimension) => Load(stream, ImageLoadOptions.MaxDimension(maxDimension));
@@ -28,11 +49,11 @@ public class StbImageLoader : IImageLoader
         // stb has no streaming entry point: every decoder in it works from one contiguous buffer, so
         // the encoded bytes are read in full regardless of whether the stream could be seeked. This is
         // the one place ImageSharp is structurally cheaper -- it identifies in place and rewinds.
-        var encoded = EncodedBuffer.Read(stream);
+        var encoded = EncodedImage.Read(stream);
 
         try
         {
-            return load(encoded.Span, options);
+            return Load(encoded.Span, options);
         }
         finally
         {
@@ -40,7 +61,11 @@ public class StbImageLoader : IImageLoader
         }
     }
 
-    private static unsafe ImageRawData load(ReadOnlySpan<byte> encoded, ImageLoadOptions options)
+    /// <summary>
+    /// Decodes bytes the caller already holds. Internal so a router that has read the header can hand
+    /// the same buffer straight over rather than making this read and rent a second copy of it.
+    /// </summary>
+    internal static unsafe ImageRawData Load(ReadOnlySpan<byte> encoded, ImageLoadOptions options)
     {
         int sourceWidth, sourceHeight;
 
@@ -102,47 +127,4 @@ public class StbImageLoader : IImageLoader
         return (0, 0, sw, sh, width, height);
     }
 
-    /// <summary>
-    /// An encoded image's bytes in one contiguous, pooled buffer. stb needs the whole file at once
-    /// </summary>
-    private readonly struct EncodedBuffer : IDisposable
-    {
-        private readonly byte[] array;
-        private readonly int length;
-
-        private EncodedBuffer(byte[] array, int length)
-        {
-            this.array = array;
-            this.length = length;
-        }
-
-        public ReadOnlySpan<byte> Span => array.AsSpan(0, length);
-
-        public static EncodedBuffer Read(Stream stream)
-        {
-            // A seekable stream reports its remaining length, so the buffer is rented once at the right
-            // size. Everything else grows, and only then is copied into a rental.
-            if (stream.CanSeek)
-            {
-                int remaining = checked((int)(stream.Length - stream.Position));
-                byte[] exact = ArrayPool<byte>.Shared.Rent(remaining);
-                stream.ReadExactly(exact.AsSpan(0, remaining));
-                return new EncodedBuffer(exact, remaining);
-            }
-
-            using var buffer = new MemoryStream();
-            stream.CopyTo(buffer);
-
-            int grown = (int)buffer.Length;
-            byte[] rented = ArrayPool<byte>.Shared.Rent(grown);
-            buffer.GetBuffer().AsSpan(0, grown).CopyTo(rented);
-            return new EncodedBuffer(rented, grown);
-        }
-
-        public void Dispose()
-        {
-            if (array != null)
-                ArrayPool<byte>.Shared.Return(array);
-        }
-    }
 }
