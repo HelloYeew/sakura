@@ -54,7 +54,7 @@ public readonly struct ImageLoadOptions
     /// <summary>
     /// Whether a usable target size is set (at least one pixel on both axes).
     /// </summary>
-    internal bool HasTarget => TargetSize is
+    public bool HasTarget => TargetSize is
     {
         X: >= 1,
         Y: >= 1
@@ -63,5 +63,5 @@ public readonly struct ImageLoadOptions
     /// <summary>
     /// Whether the centre band should be cropped to the target aspect before scaling.
     /// </summary>
-    internal bool CropToFill => FillMode == TextureFillMode.Fill;
+    public bool CropToFill => FillMode == TextureFillMode.Fill;
 }

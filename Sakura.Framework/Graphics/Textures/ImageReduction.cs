@@ -9,12 +9,12 @@ namespace Sakura.Framework.Graphics.Textures;
 /// <summary>
 /// The sizing arithmetic shared by every <see cref="IImageLoader"/>
 /// </summary>
-internal static class ImageReduction
+public static class ImageReduction
 {
     /// <summary>
     /// The target rounded out to whole pixels, at least 1 on each axis.
     /// </summary>
-    internal static (int Width, int Height) TargetPixels(Vector2 target)
+    public static (int Width, int Height) TargetPixels(Vector2 target)
         => (Math.Max(1, (int)MathF.Ceiling(target.X)), Math.Max(1, (int)MathF.Ceiling(target.Y)));
 
     /// <summary>
@@ -23,7 +23,7 @@ internal static class ImageReduction
     /// enough resolution for the region that will ultimately be displayed so the final reduction is a
     /// clean single shrink.
     /// </summary>
-    internal static (int Width, int Height)? DecodeFraction(int sw, int sh, Vector2 target, bool cropToFill)
+    public static (int Width, int Height)? DecodeFraction(int sw, int sh, Vector2 target, bool cropToFill)
     {
         (int tw, int th) = TargetPixels(target);
 
@@ -77,7 +77,7 @@ internal static class ImageReduction
     /// aspect comparison below. But it is not exposed until something calls it, so that it is not
     /// carrying rounding behavior no test pins.
     /// </remarks>
-    internal static (int Width, int Height) FillSize(int sw, int sh, int tw, int th)
+    public static (int Width, int Height) FillSize(int sw, int sh, int tw, int th)
     {
         float targetAspect = (float)tw / th;
         float srcAspect = (float)sw / sh;
