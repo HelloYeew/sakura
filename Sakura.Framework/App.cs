@@ -157,6 +157,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
         SampleStore = new SampleStore(embeddedResourceStorage.GetStorageForDirectory("Samples"), AudioManager);
 
         IImageLoader imageLoader = CreateImageLoader();
+        imageLoader.LogInfo();
 
         switch (Host.Renderer)
         {
@@ -268,9 +269,9 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
     protected internal virtual Storage CreateStorage(AppHost host, Storage defaultStorage) => defaultStorage;
 
     /// <summary>
-    /// Create the image loader used for loading textures, defaults to <see cref="ImageSharpImageLoader"/>.
+    /// Create the image loader used for loading textures, defaults to <see cref="RoutingImageLoader"/>
     /// </summary>
-    protected virtual IImageLoader CreateImageLoader() => new ImageSharpImageLoader();
+    protected virtual IImageLoader CreateImageLoader() => new RoutingImageLoader();
 
     /// <summary>
     /// Create the audio manager used for this app, selected by
