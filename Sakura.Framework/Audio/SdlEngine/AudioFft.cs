@@ -78,7 +78,7 @@ internal sealed class AudioFft
     /// Magnitudes are scaled so a bin-centred full-scale sine reads back at its own peak amplitude —
     /// the <c>2 / (N * coherentGain)</c> correction, which for Hann is <c>4 / N</c>. Values are not
     /// clipped to 1.0: input above unity is normal (see <c>FFmpegAudioDecoderTest</c>) and clamping
-    /// here would hide it from a visualiser. Exact scale parity with BASS is a Phase 5 A/B item.
+    /// here would hide it from a visualizer.
     /// </remarks>
     public void Compute(ReadOnlySpan<float> samples, Span<float> destination)
     {

@@ -5,7 +5,7 @@ using NUnit.Framework;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Statistic;
 
-namespace Sakura.Framework.Tests.Graphics;
+namespace Sakura.Framework.Tests.Graphics.Textures;
 
 /// <summary>
 /// <see cref="TextureBindCounter"/> reports the last <em>completed</em> frame, from counters that roll

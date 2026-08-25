@@ -6,7 +6,7 @@ using NUnit.Framework;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Maths;
 
-namespace Sakura.Framework.Tests.Graphics;
+namespace Sakura.Framework.Tests.Graphics.Textures;
 
 /// <summary>
 /// Tests for <see cref="TextureOwnership"/> and the guarantee it exists to provide: releasing a texture

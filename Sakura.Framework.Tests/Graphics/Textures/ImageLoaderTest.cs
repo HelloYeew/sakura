@@ -7,19 +7,27 @@ using NUnit.Framework;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Maths;
 using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Metadata.Profiles.Exif;
 using SixLabors.ImageSharp.PixelFormats;
 
-namespace Sakura.Framework.Tests.Graphics;
+namespace Sakura.Framework.Tests.Graphics.Textures;
 
 /// <summary>
-/// Test for <see cref="ImageSharpImageLoader"/>
+/// Behavior test for <see cref="IImageLoader"/>
 /// </summary>
-[TestFixture]
-public class ImageSharpImageLoaderTest
+public abstract class ImageLoaderTest
 {
-    private readonly ImageSharpImageLoader loader = new ImageSharpImageLoader();
+    private IImageLoader loader = null!;
 
-    private static MemoryStream jpeg(int width, int height)
+    /// <summary>
+    /// The implementation under test.
+    /// </summary>
+    protected abstract IImageLoader CreateLoader();
+
+    [SetUp]
+    public void SetUp() => loader = CreateLoader();
+
+    protected static MemoryStream Jpeg(int width, int height)
     {
         var stream = new MemoryStream();
         using (var image = new Image<Rgba32>(width, height))
@@ -28,10 +36,25 @@ public class ImageSharpImageLoaderTest
         return stream;
     }
 
+    protected static MemoryStream JpegWithOrientation(int width, int height, ushort orientation)
+    {
+        var stream = new MemoryStream();
+
+        using (var image = new Image<Rgba32>(width, height))
+        {
+            image.Metadata.ExifProfile = new ExifProfile();
+            image.Metadata.ExifProfile.SetValue(ExifTag.Orientation, orientation);
+            image.SaveAsJpeg(stream);
+        }
+
+        stream.Position = 0;
+        return stream;
+    }
+
     [Test]
     public void CapsLongestEdgePreservingAspect()
     {
-        using var stream = jpeg(4000, 2000); // 2:1
+        using var stream = Jpeg(4000, 2000); // 2:1
 
         var raw = loader.Load(stream, 512);
 
@@ -46,7 +69,7 @@ public class ImageSharpImageLoaderTest
     [Test]
     public void DoesNotUpscaleSmallSource()
     {
-        using var stream = jpeg(100, 80);
+        using var stream = Jpeg(100, 80);
 
         var raw = loader.Load(stream, 512);
 
@@ -60,7 +83,7 @@ public class ImageSharpImageLoaderTest
     [Test]
     public void NoLimitDecodesFullResolution()
     {
-        using var stream = jpeg(1024, 768);
+        using var stream = Jpeg(1024, 768);
 
         var raw = loader.Load(stream);
 
@@ -74,7 +97,7 @@ public class ImageSharpImageLoaderTest
     [Test]
     public void FillCropsCentreBandToTargetAspect()
     {
-        using var stream = jpeg(3840, 2160); // a 4K background bound for a small bar
+        using var stream = Jpeg(3840, 2160); // a 4K background bound for a small bar
 
         var raw = loader.Load(stream, ImageLoadOptions.FillTarget(new Vector2(768, 128)));
 
@@ -93,8 +116,8 @@ public class ImageSharpImageLoaderTest
     {
         // for a Fill, capping the longest edge alone still keeps
         // pixels that are clipped off-screen.
-        using var cropped = jpeg(1920, 1080);
-        using var capped = jpeg(1920, 1080);
+        using var cropped = Jpeg(1920, 1080);
+        using var capped = Jpeg(1920, 1080);
 
         var withCrop = loader.Load(cropped, ImageLoadOptions.FillTarget(new Vector2(768, 128)));
         var withoutCrop = loader.Load(capped, 768);
@@ -105,7 +128,7 @@ public class ImageSharpImageLoaderTest
     [Test]
     public void FitTargetKeepsAspectWithinBox()
     {
-        using var stream = jpeg(2000, 1000); // 2:1
+        using var stream = Jpeg(2000, 1000); // 2:1
 
         var raw = loader.Load(stream, new ImageLoadOptions(new Vector2(256, 256), TextureFillMode.Fit));
 
@@ -121,7 +144,7 @@ public class ImageSharpImageLoaderTest
     [Test]
     public void FillDoesNotUpscaleSmallSource()
     {
-        using var stream = jpeg(120, 120);
+        using var stream = Jpeg(120, 120);
 
         var raw = loader.Load(stream, ImageLoadOptions.FillTarget(new Vector2(256, 256)));
 
@@ -135,7 +158,7 @@ public class ImageSharpImageLoaderTest
     [Test]
     public void FullSizeOptionsDecodeAtFullResolution()
     {
-        using var stream = jpeg(1600, 900);
+        using var stream = Jpeg(1600, 900);
 
         var raw = loader.Load(stream, ImageLoadOptions.FullSize);
 
@@ -149,8 +172,9 @@ public class ImageSharpImageLoaderTest
     [Test]
     public void DecodesFromNonSeekableStream()
     {
-        // Exercises the grow-and-hand-over path in EncodedBuffer (embedded/compressed sources).
-        using var seekable = jpeg(1200, 800);
+        // an embedded resource or an archive entry: the header read cannot be undone, so the loader has
+        // to buffer the encoded bytes before it can size the decode.
+        using var seekable = Jpeg(1200, 800);
         using var stream = new NonSeekableStream(seekable);
 
         var raw = loader.Load(stream, ImageLoadOptions.FillTarget(new Vector2(300, 300)));
@@ -164,24 +188,6 @@ public class ImageSharpImageLoaderTest
     }
 
     [Test]
-    public void DecodesFromSeekableStreamWithoutBufferingIt()
-    {
-        using var seekable = jpeg(1200, 800);
-        using var stream = new RewindCountingStream(seekable);
-
-        var raw = loader.Load(stream, ImageLoadOptions.FillTarget(new Vector2(300, 300)));
-
-        using (Assert.EnterMultipleScope())
-        {
-            Assert.That(raw.Width, Is.EqualTo(300));
-            Assert.That(raw.Height, Is.EqualTo(300));
-            // the header is identified in place and the stream rewound for the decode, rather than the
-            // whole encoded file being copied into a buffer that can be read twice.
-            Assert.That(stream.Rewinds, Is.GreaterThan(0));
-        }
-    }
-
-    [Test]
     public void DecodesFromSeekableStreamAtNonZeroPosition()
     {
         // an image that does not begin at byte 0, so the rewind after the header read has to return to
@@ -189,7 +195,7 @@ public class ImageSharpImageLoaderTest
         using var seekable = new MemoryStream();
         seekable.Write(new byte[64]);
 
-        using (var source = jpeg(1200, 800))
+        using (var source = Jpeg(1200, 800))
             source.CopyTo(seekable);
 
         seekable.Position = 64;
@@ -204,55 +210,7 @@ public class ImageSharpImageLoaderTest
         }
     }
 
-    /// <summary>
-    /// A seekable pass-through that counts how often it is asked to move backwards.
-    /// </summary>
-    private class RewindCountingStream : Stream
-    {
-        private readonly Stream inner;
-
-        public RewindCountingStream(Stream inner)
-        {
-            this.inner = inner;
-        }
-
-        public int Rewinds { get; private set; }
-
-        public override bool CanRead => true;
-        public override bool CanSeek => true;
-        public override bool CanWrite => false;
-        public override long Length => inner.Length;
-
-        public override long Position
-        {
-            get => inner.Position;
-            set
-            {
-                if (value < inner.Position)
-                    Rewinds++;
-
-                inner.Position = value;
-            }
-        }
-
-        public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
-        public override void Flush() => inner.Flush();
-        public override void SetLength(long value) => throw new NotSupportedException();
-        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-
-        public override long Seek(long offset, SeekOrigin origin)
-        {
-            long from = inner.Position;
-            long to = inner.Seek(offset, origin);
-
-            if (to < from)
-                Rewinds++;
-
-            return to;
-        }
-    }
-
-    private class NonSeekableStream : Stream
+    protected class NonSeekableStream : Stream
     {
         private readonly Stream inner;
 

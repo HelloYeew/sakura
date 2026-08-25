@@ -5,7 +5,7 @@ using System;
 using NUnit.Framework;
 using Sakura.Framework.Graphics.Textures;
 
-namespace Sakura.Framework.Tests.Graphics;
+namespace Sakura.Framework.Tests.Graphics.Textures;
 
 /// <summary>
 /// Tests for <see cref="ImageRawData"/>'s ownership of pooled pixel memory.

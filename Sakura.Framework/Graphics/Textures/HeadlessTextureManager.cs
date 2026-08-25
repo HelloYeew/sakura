@@ -23,6 +23,8 @@ public class HeadlessTextureManager : ITextureManager
 
     public Texture Get(string path) => WhitePixel;
 
+    public Texture Get(string path, ImageLoadOptions decode) => WhitePixel;
+
     public Texture FromPixelData(int width, int height, ReadOnlySpan<byte> pixelData, string cacheKey = null) => createDummyTexture(width, height);
 
     public Texture? CreateFromStream(Stream stream, TextureCreationOptions options)
