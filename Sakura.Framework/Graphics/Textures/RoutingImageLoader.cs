@@ -54,9 +54,6 @@ public class RoutingImageLoader : IImageLoader
 
         stb.LogInfo();
 
-        // Deliberately not imageSharp.Value.LogInfo(): touching it would load the assembly and run its
-        // static configuration at startup, which is the cost the Lazy exists to avoid. It reports itself
-        // the first time it is actually needed.
         if (imageSharp.IsValueCreated)
             imageSharp.Value.LogInfo();
     }
