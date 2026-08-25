@@ -9,7 +9,7 @@ using SixLabors.ImageSharp.Metadata.Profiles.Exif;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 
-namespace Sakura.Framework.Graphics.Textures;
+namespace Sakura.Framework.Graphics.Textures.ImageSharp;
 
 /// <summary>
 /// Everything an <see cref="IImageLoader"/> does to a decoded <see cref="Image{TPixel}"/> once it has
@@ -48,7 +48,7 @@ internal static class ImageSharpPipeline
 
     /// <summary>
     /// Scales <paramref name="image"/> down to <paramref name="target"/> in a single pass, cropping the
-    /// centre band to the target aspect first when <paramref name="cropToFill"/> is set. Only ever
+    /// center band to the target aspect first when <paramref name="cropToFill"/> is set. Only ever
     /// downscales.
     /// </summary>
     internal static void Reduce(Image<Rgba32> image, Vector2 target, bool cropToFill)

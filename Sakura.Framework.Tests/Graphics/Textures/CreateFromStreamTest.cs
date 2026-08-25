@@ -5,6 +5,7 @@ using System.IO;
 using NUnit.Framework;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Textures;
+using Sakura.Framework.Graphics.Textures.ImageSharp;
 using Sakura.Framework.Maths;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;

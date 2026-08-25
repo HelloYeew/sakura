@@ -8,7 +8,7 @@ using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats;
 using SixLabors.ImageSharp.PixelFormats;
 
-namespace Sakura.Framework.Graphics.Textures;
+namespace Sakura.Framework.Graphics.Textures.ImageSharp;
 
 /// <summary>
 /// The basic image loader using ImageSharp.

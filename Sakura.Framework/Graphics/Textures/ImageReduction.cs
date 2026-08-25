@@ -47,7 +47,7 @@ public static class ImageReduction
         int wantedWidth = Math.Max(1, (int)MathF.Ceiling(sw * scale));
         int wantedHeight = Math.Max(1, (int)MathF.Ceiling(sh * scale));
 
-        // Note : Why power of two
+        // Note : Why power of two tl;dr IDCT scale
         // measured against a full decode, 1/8, 1/4 and 1/2 all pay for themselves, while 3/8, 5/8, 6/8 and 7/8 are slower
         // than not hinting. Falling out of the loop means no fraction covers the target (the reduction
         // wanted is less than half), so null decodes at full resolution and the reduction does all the work.
@@ -79,6 +79,22 @@ public static class ImageReduction
     /// </remarks>
     public static (int Width, int Height) FillSize(int sw, int sh, int tw, int th)
     {
+        var region = FillRegion(sw, sh, tw, th);
+
+        return (region.Width, region.Height);
+    }
+
+    /// <summary>
+    /// The center region of the source a Fill displays, and the size that region is scaled to.
+    /// </summary>
+    /// <remarks>
+    /// ImageSharp picks the region itself through <c>ResizeMode.Crop</c> and needs only the size, but a
+    /// decoder that crops for itself needs the origin too. <c>stb_image_resize2</c> takes a
+    /// sub-rectangle as a pointer offset plus the source stride. Both loaders read it from here so the
+    /// band they keep cannot drift apart.
+    /// </remarks>
+    public static FillPlan FillRegion(int sw, int sh, int tw, int th)
+    {
         float targetAspect = (float)tw / th;
         float srcAspect = (float)sw / sh;
 
@@ -97,11 +113,40 @@ public static class ImageReduction
             cropH = Math.Max(1, (int)MathF.Round(cropW / targetAspect));
         }
 
+        // Rounding can put the region a pixel past the source. Harmless where it only feeds the scale
+        // below, but an out-of-bounds read for a caller that treats it as a rectangle, so it is clamped
+        // before either use.
+        cropW = Math.Min(cropW, sw);
+        cropH = Math.Min(cropH, sh);
+
         float scale = MathF.Min(1f, MathF.Min((float)tw / cropW, (float)th / cropH));
 
-        return (
+        return new FillPlan(
+            (sw - cropW) / 2,
+            (sh - cropH) / 2,
+            cropW,
+            cropH,
             Math.Max(1, (int)MathF.Round(cropW * scale)),
             Math.Max(1, (int)MathF.Round(cropH * scale))
         );
     }
+
+    /// <summary>
+    /// The size a source scales to when fitted inside <paramref name="tw"/> x <paramref name="th"/>
+    /// with its aspect preserved. Never enlarge, a source already inside the box is returned unchanged.
+    /// </summary>
+    public static (int Width, int Height) FitSize(int sw, int sh, int tw, int th)
+    {
+        if (sw <= tw && sh <= th)
+            return (sw, sh);
+
+        float scale = MathF.Min((float)tw / sw, (float)th / sh);
+
+        return (Math.Max(1, (int)MathF.Round(sw * scale)), Math.Max(1, (int)MathF.Round(sh * scale)));
+    }
+
+    /// <summary>
+    /// A Fill's source region and the size it resolves to. See <see cref="FillRegion"/>.
+    /// </summary>
+    public readonly record struct FillPlan(int SourceX, int SourceY, int SourceWidth, int SourceHeight, int Width, int Height);
 }
