@@ -480,17 +480,25 @@ public unsafe class VideoDecoder : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// Decode threads to give the software codec.
+    /// </summary>
+    private static int softwareDecodeThreads() => Math.Clamp(Environment.ProcessorCount / 2, 1, 4);
+
     private void openCodecSoftware(AVCodec* codec)
     {
         codecContext = ffmpeg.avcodec_alloc_context3(codec);
         codecContext->pkt_timebase = avStream->time_base;
         ffmpeg.avcodec_parameters_to_context(codecContext, avStream->codecpar);
+        
+        int threads = softwareDecodeThreads();
+        codecContext->thread_count = threads;
 
         if (ffmpeg.avcodec_open2(codecContext, codec, null) < 0)
             throw new Exception("Could not open software codec.");
 
         ActiveHardwareDevice = AVHWDeviceType.AV_HWDEVICE_TYPE_NONE;
-        Logger.Verbose("[VideoDecoder] Software decoding active.");
+        Logger.Verbose($"[VideoDecoder] Software decoding active, {threads} decode threads.");
         GlobalStatistics.Get<string>("Video", "HW Decoder").Value = "Software";
     }
 
