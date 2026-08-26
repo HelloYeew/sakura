@@ -223,6 +223,8 @@ internal class SDLNativeAudioChannel : ISDLChannel
 
         Engine.Play(Node);
         IsRunning.Value = true;
+
+        Context.WakeDecoder();
     }
 
     public virtual void Stop()
@@ -260,6 +262,11 @@ internal class SDLNativeAudioChannel : ISDLChannel
 
         feeder?.Seek(milliseconds);
         amplitudes.Reset();
+
+        // A seek empties the ring, so every block until the decode thread refills it is silence out
+        // of a running voice. Without this the seek waits out the scheduler's idle delay before it is
+        // even noticed, and a second one before the flush the first pass posted has been acknowledged.
+        Context.WakeDecoder();
     }
 
     /// <summary>

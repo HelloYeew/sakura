@@ -11,7 +11,7 @@ namespace Sakura.Framework.Tests.Audio;
 /// </summary>
 /// <remarks>
 /// The policy that lets the framework ship an aggressive device buffer. It is tested apart from the
-/// manager because provoking real underruns on demand is not something a test can do, while the
+/// manager. Provoking real underruns on demand is not something a test can do, while the
 /// decisions — ignore a burst, act on sustained starvation, act only once, know when doubling is not
 /// the answer — are pure counting and timing.
 /// </remarks>
@@ -20,13 +20,37 @@ public class UnderrunWatchdogTest
 {
     private const double interval = UnderrunWatchdog.CHECK_INTERVAL_MS;
 
+    private static readonly int window = UnderrunWatchdog.MINIMUM_OBSERVATIONS * 4;
+
+    /// <summary>
+    /// Runs one full window of <paramref name="misses"/> misses, <paramref name="met"/> deadlines met
+    /// and <paramref name="idle"/> silent frames, and returns whatever the window decided.
+    /// </summary>
+    private static UnderrunWatchdog.Verdict? runWindow(UnderrunWatchdog watchdog, int misses, int met, int idle = 0)
+    {
+        UnderrunWatchdog.Verdict? last = null;
+
+        for (int i = 0; i < misses + met + idle; i++)
+        {
+            var observation = i < misses ? UnderrunWatchdog.Observation.Missed
+                : i < misses + met ? UnderrunWatchdog.Observation.Met
+                : UnderrunWatchdog.Observation.Idle;
+
+            bool isLast = i == misses + met + idle - 1;
+
+            last = watchdog.Poll(observation, isLast ? interval : 0);
+        }
+
+        return last;
+    }
+
     [Test]
     public void SaysNothingOnAHealthyDevice()
     {
         var watchdog = new UnderrunWatchdog();
 
         for (int i = 0; i < 10; i++)
-            Assert.That(watchdog.Poll(0, interval), Is.Null);
+            Assert.That(runWindow(watchdog, 0, window), Is.Null);
     }
 
     [Test]
@@ -34,19 +58,24 @@ public class UnderrunWatchdogTest
     {
         var watchdog = new UnderrunWatchdog();
 
-        Assert.That(watchdog.Poll(1000, interval - 1), Is.Null,
-            "A thousand underruns is plainly wrong, but reporting it before a full window means reporting a rate "
-            + "measured over an unknown amount of time.");
+        for (int i = 0; i < window; i++)
+        {
+            Assert.That(watchdog.Poll(UnderrunWatchdog.Observation.Missed, 0), Is.Null,
+                "A device missing every deadline is plainly wrong, but reporting it before a full window means "
+                + "reporting a rate measured over an unknown amount of time.");
+        }
     }
 
     [Test]
-    public void IgnoresABurstBelowTheThreshold()
+    public void IgnoresABurstBelowTheFraction()
     {
         var watchdog = new UnderrunWatchdog();
 
-        Assert.That(watchdog.Poll(UnderrunWatchdog.THRESHOLD - 1, interval), Is.Null,
-            "Startup, a device change and a hitch elsewhere in the app all produce a few underruns and all recover "
-            + "on their own. Acting on those would make the warning meaningless.");
+        int misses = (int)(window * UnderrunWatchdog.TRIP_FRACTION) - 1;
+
+        Assert.That(runWindow(watchdog, misses, window - misses), Is.Null,
+            "Startup, a device change and a hitch elsewhere in the app all make the callback late for a moment and "
+            + "all recover on their own. Acting on those would make the warning meaningless.");
     }
 
     [Test]
@@ -54,7 +83,14 @@ public class UnderrunWatchdogTest
     {
         var watchdog = new UnderrunWatchdog();
 
-        Assert.That(watchdog.Poll(UnderrunWatchdog.THRESHOLD, interval), Is.EqualTo(UnderrunWatchdog.THRESHOLD));
+        int misses = (int)(window * UnderrunWatchdog.TRIP_FRACTION) + 1;
+
+        var verdict = runWindow(watchdog, misses, window - misses);
+
+        Assert.That(verdict, Is.Not.Null);
+        Assert.That(verdict!.Value.Misses, Is.EqualTo(misses));
+        Assert.That(verdict.Value.Observations, Is.EqualTo(window));
+        Assert.That(verdict.Value.Fraction, Is.GreaterThan(UnderrunWatchdog.TRIP_FRACTION));
     }
 
     [Test]
@@ -62,33 +98,67 @@ public class UnderrunWatchdogTest
     {
         var watchdog = new UnderrunWatchdog();
 
-        Assert.That(watchdog.Poll(100, interval), Is.Not.Null);
+        Assert.That(runWindow(watchdog, window, 0), Is.Not.Null);
 
         for (int i = 0; i < 10; i++)
         {
-            Assert.That(watchdog.Poll(100 + (i + 1) * 100, interval), Is.Null,
+            Assert.That(runWindow(watchdog, window, 0), Is.Null,
                 "A device that is underrunning keeps underrunning. Reporting every window buries the log, and backing "
                 + "off every window would take a machine from 128 frames to 1024 in twenty seconds on one bad patch.");
         }
     }
 
     [Test]
-    public void MeasuresARateRatherThanATotal()
+    public void MeasuresAShareRatherThanACount()
     {
         var watchdog = new UnderrunWatchdog();
 
-        // A long-running session that accumulated underruns slowly: well past the threshold in total,
-        // never near it in any one window.
-        long total = 0;
-
+        // The regression of this whole type was rewritten for. A handful of misses per window is what a
+        // seek, a loop point or a track starting produces, and a session does that all day. Counted,
+        // it walks the buffer to the cap; as a share of a busy window it is nothing.
         for (int i = 0; i < 50; i++)
         {
-            total += UnderrunWatchdog.THRESHOLD - 1;
-
-            Assert.That(watchdog.Poll(total, interval), Is.Null,
-                "Occasional underruns over an hour are not the same failure as steady crackling, and only the second "
-                + "one means the buffer is the wrong size.");
+            Assert.That(runWindow(watchdog, 5, window - 5), Is.Null,
+                "A few late callbacks in a window full of prompt ones is not steady crackling, and only steady "
+                + "crackling means the buffer is the wrong size.");
         }
+    }
+
+    [Test]
+    public void DoesNotTripOnAWindowWithTooLittleToGoOn()
+    {
+        var watchdog = new UnderrunWatchdog();
+
+        Assert.That(runWindow(watchdog, UnderrunWatchdog.MINIMUM_OBSERVATIONS - 1, 0), Is.Null,
+            "A window in which audio played for a handful of frames reads 100% on no evidence at all, and startup is "
+            + "full of windows like that.");
+    }
+
+    [Test]
+    public void IdleFramesAreNotEvidenceOfHealth()
+    {
+        var watchdog = new UnderrunWatchdog();
+
+        // A device that missed every deadline it was actually asked to meet, in a session that was
+        // mostly silent. Counting the silence as healthy would dilute this below the trip fraction.
+        Assert.That(runWindow(watchdog, UnderrunWatchdog.MINIMUM_OBSERVATIONS, 0, idle: window), Is.Not.Null);
+    }
+
+    [Test]
+    public void WindowsDoNotCarryOver()
+    {
+        var watchdog = new UnderrunWatchdog();
+
+        Assert.That(runWindow(watchdog, window, 0, idle: 0), Is.Not.Null);
+
+        var fresh = new UnderrunWatchdog();
+
+        // A bad window followed by good ones must not leave a residue that trips a later one.
+        Assert.That(runWindow(fresh, (int)(window * UnderrunWatchdog.TRIP_FRACTION) - 1, window), Is.Null);
+        Assert.That(runWindow(fresh, 0, window), Is.Null);
+        Assert.That(runWindow(fresh, (int)(window * UnderrunWatchdog.TRIP_FRACTION) - 1, window), Is.Null,
+            "Misses carried between windows would turn a session that misbehaved once an hour ago into a session "
+            + "that is misbehaving now.");
     }
 
     [Test]
@@ -98,9 +168,10 @@ public class UnderrunWatchdogTest
 
         // A realistic frame time rather than one poll per window.
         for (double elapsed = 0; elapsed < interval - 16; elapsed += 16)
-            Assert.That(watchdog.Poll(100, 16), Is.Null);
+            Assert.That(watchdog.Poll(UnderrunWatchdog.Observation.Missed, 16), Is.Null);
 
-        Assert.That(watchdog.Poll(100, 16), Is.Not.Null, "The window should close on accumulated frame time.");
+        Assert.That(watchdog.Poll(UnderrunWatchdog.Observation.Missed, 16), Is.Not.Null,
+            "The window should close on accumulated frame time.");
     }
 
     [TestCase(128, 256)]
