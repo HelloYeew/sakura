@@ -20,6 +20,14 @@ internal sealed class AudioDecodeScheduler : IDisposable
     private static readonly TimeSpan idle_delay = TimeSpan.FromMilliseconds(5);
 
     /// <summary>
+    /// How long to wait when a source wanted work but could not do it yet.
+    /// </summary>
+    /// <remarks>
+    /// A source in that state is not idle, it is blocked on the audio thread
+    /// </remarks>
+    private static readonly TimeSpan blocked_delay = TimeSpan.FromMilliseconds(1);
+
+    /// <summary>
     /// Maximum consecutive pumps for one source before moving on.
     /// </summary>
     private const int max_pumps_per_source = 8;
@@ -79,6 +87,7 @@ internal sealed class AudioDecodeScheduler : IDisposable
         while (!cancellation.IsCancellationRequested)
         {
             bool didWork = false;
+            bool blocked = false;
 
             // registration during a pass is picked up next time
             // around, which is soon enough and keeps the lock off the decode path.
@@ -94,14 +103,22 @@ internal sealed class AudioDecodeScheduler : IDisposable
                     for (int i = 0; i < max_pumps_per_source && source.WantsDecode; i++)
                     {
                         if (!source.PumpDecode())
+                        {
+                            // A pass that did nothing but still wants to decode is waiting on something
+                            // other than this thread, which in practice is the audio thread applying a
+                            // seek's discard. Asked again after a short wait rather than a full idle
+                            // one, a source that has simply finished stops wanting decoding and does
+                            // not land here.
+                            blocked |= source.WantsDecode;
                             break;
+                        }
 
                         didWork = true;
                     }
                 }
                 catch (Exception e)
                 {
-                    // One bad file must not take the decode thread down with it and silence
+                    // One bad file must not take the decoded thread down with it and silence
                     // everything else that is playing.
                     Logger.Error($"[AudioDecodeScheduler] Decoding failed for a source; dropping it.", e);
                     Unregister(source);
@@ -109,7 +126,7 @@ internal sealed class AudioDecodeScheduler : IDisposable
             }
 
             if (!didWork)
-                wakeup.WaitOne(idle_delay);
+                wakeup.WaitOne(blocked ? blocked_delay : idle_delay);
         }
     }
 

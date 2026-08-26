@@ -67,6 +67,11 @@ internal sealed class NativeStreamFeeder : IDecodeSource, IDisposable
     private double? pendingSeekMs;
 
     /// <summary>
+    /// Floats sitting in <see cref="convertScratch"/> that are decoded but not yet written, or 0.
+    /// </summary>
+    private int staged;
+
+    /// <summary>
     /// Set once the decoder has no more audio, and mirrored into the native voice, which is only
     /// ended once it is drained <em>and</em> its ring is empty.
     /// </summary>
@@ -217,6 +222,9 @@ internal sealed class NativeStreamFeeder : IDecodeSource, IDisposable
                 decoder.Seek(seek.Value);
                 converter.Clear();
 
+                // Whatever was held back belongs to the position we are leaving.
+                staged = 0;
+
                 lock (sync)
                     decoderDrained = false;
 
@@ -225,15 +233,43 @@ internal sealed class NativeStreamFeeder : IDecodeSource, IDisposable
                 engine.StreamFlushBegin(voice);
             }
 
-            // Nothing may be written while a discard is outstanding: it would be thrown away with the
-            // audio it is replacing. Come back on the next pass, by which point a running device has
-            // acknowledged it.
-            if (engine.StreamFlushPending(voice))
-                return false;
+            // Nothing may be written while a discard is outstanding: the ring still holds the audio it
+            // is replacing, so its free space is not ours yet, and ring_write refuses outright.
+            bool flushPending = engine.StreamFlushPending(voice);
+
+            // A block held back from an earlier pass goes first, or the stream plays out of order.
+            // This is the pass right after a seek: the wait is over and the ring is filled with a copy
+            // rather than a decoding.
+            if (!flushPending && staged > 0)
+            {
+                if (engine.StreamSpace(voice) * deviceChannels < staged)
+                    return false;
+
+                lock (sync)
+                {
+                    if (isDisposed)
+                        return false;
+
+                    engine.StreamWrite(voice, convertScratch.AsSpan(0, staged));
+                    staged = 0;
+                }
+
+                return true;
+            }
 
             lock (sync)
             {
-                if (decoderDrained || engine.StreamSpace(voice) * deviceChannels < convertScratch.Length)
+                if (decoderDrained)
+                    return false;
+
+                // While the discard is outstanding, the ring's free space says nothing, so decode
+                // anyway and hold the result — the thread would otherwise spend the wait asleep and
+                // then still owe a decoding once it woke, and every millisecond of that is a running
+                // voice playing silence. convertScratch is where it is held.
+                if (!flushPending && engine.StreamSpace(voice) * deviceChannels < convertScratch.Length)
+                    return false;
+
+                if (staged > 0)
                     return false;
             }
 
@@ -265,7 +301,12 @@ internal sealed class NativeStreamFeeder : IDecodeSource, IDisposable
                     return true;
 
                 if (converted > 0)
-                    engine.StreamWrite(voice, convertScratch.AsSpan(0, converted));
+                {
+                    if (flushPending)
+                        staged = converted;
+                    else
+                        engine.StreamWrite(voice, convertScratch.AsSpan(0, converted));
+                }
 
                 if (read == 0 && converted == 0)
                 {
@@ -275,7 +316,9 @@ internal sealed class NativeStreamFeeder : IDecodeSource, IDisposable
                 }
             }
 
-            return true;
+            // A pass that only staged has nothing further to do until the audio thread releases the
+            // ring and says so rather than being asked seven more times.
+            return !flushPending;
         }
     }
 
