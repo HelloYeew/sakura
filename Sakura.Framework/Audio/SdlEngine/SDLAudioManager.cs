@@ -191,12 +191,29 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     private readonly UnderrunWatchdog underrunWatchdog = new UnderrunWatchdog();
 
     /// <summary>
+    /// Device callbacks the native engine had served as of the previous <see cref="Update"/>.
+    /// </summary>
+    /// <remarks>
+    /// The engine publishes the duration of the "most recent" callback, so a frame that saw no
+    /// new callback would otherwise re-read the last one's figure and count it again. Comparing the
+    /// count is what makes each frame's reading a fresh observation, and what tells an idle or stopped
+    /// device apart from a device being served promptly.
+    /// </remarks>
+    private long lastObservedCallbacks;
+
+    /// <summary>
+    /// Milliseconds the device queue had spent dry as of the previous <see cref="Update"/>. The
+    /// managed mixer's half of the same question.
+    /// </summary>
+    private double lastObservedStarvedMs;
+
+    /// <summary>
     /// This manager's own underrun count, as of the last <see cref="Update"/>.
     /// </summary>
     /// <remarks>
-    /// The <c>SDL Underruns</c> statistic is process-global and is overwritten by whichever manager
-    /// updated most recently, which makes it useless for asking "did <em>this</em> device starve" —
-    /// a question both the watchdog and the tests need answered. This is the per-manager figure.
+    /// The published statistics are process-global and are overwritten by whichever manager updated
+    /// most recently, which makes them useless for asking "did this device starve" See <see cref="UnderrunWatchdog"/>
+    /// for more measurement info.
     /// </remarks>
     private long lastPublishedUnderruns;
 
@@ -437,6 +454,65 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         deviceBufferMicroseconds = rate > 0 ? (int)Math.Round(frames / (double)rate * 1_000_000.0) : 0;
 
     /// <summary>
+    /// This frame's answer, on the native engine, to whether the device is being served in time.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The callback mixes on demand into the device's own buffer, so the deadline it is racing is that
+    /// buffer's duration: take longer than <see cref="deviceBufferMicroseconds"/> to produce
+    /// <see cref="deviceBufferFrames"/> and the device has run out before the audio arrived. That is
+    /// the failure a larger buffer actually fixes, and the only one; it doubles the deadline while
+    /// the per-callback fixed cost (draining the command queue, the stream sync, both of which walk
+    /// every node whatever the block size) stays where it was.
+    /// </para>
+    /// <para>
+    /// Sampled a frame once out of the several hundred callbacks a second rather than counted on the
+    /// audio thread, which would mean a new native stat and a library round-trip. The phase is
+    /// arbitrary, so it is a fair sample of callbacks, and the watchdog reads a share rather than a
+    /// total precisely so a sampled figure is enough to act on.
+    /// </para>
+    /// <para>
+    /// A callback duration of zero means the platform has no <c>timespec_get</c> (Android below API
+    /// 29) and the engine could not time itself, so there is nothing to judge and every frame reads as
+    /// idle. The backoff simply never fires there, which is the right way round.
+    /// </para>
+    /// </remarks>
+    private UnderrunWatchdog.Observation observeNativeCallback(SakuraAudioStats stats)
+    {
+        if (stats.Callbacks == lastObservedCallbacks || stats.CallbackMicroseconds <= 0 || deviceBufferMicroseconds <= 0)
+            return UnderrunWatchdog.Observation.Idle;
+
+        lastObservedCallbacks = stats.Callbacks;
+
+        return stats.CallbackMicroseconds > deviceBufferMicroseconds
+            ? UnderrunWatchdog.Observation.Missed
+            : UnderrunWatchdog.Observation.Met;
+    }
+
+    /// <summary>
+    /// The same answer on the managed mixer, where the device is pushed to rather than pulled from.
+    /// </summary>
+    /// <remarks>
+    /// There is no callback to time, so the failure is measured after the fact: the queue this mixer
+    /// keeps ahead of the device ran dry, which <see cref="DeviceStarvationTracker"/> already records
+    /// in milliseconds. Any increase since the last frame is a miss. Unlike the native engine's voice
+    /// starvation this is genuinely device-level — a decoder falling behind pushes silence into a
+    /// queue that stays full and does not show up here.
+    /// </remarks>
+    private UnderrunWatchdog.Observation observeManagedQueue()
+    {
+        double starved = starvation.StarvedMilliseconds;
+
+        if (starved > lastObservedStarvedMs)
+        {
+            lastObservedStarvedMs = starved;
+            return UnderrunWatchdog.Observation.Missed;
+        }
+
+        return runningVoices() > 0 ? UnderrunWatchdog.Observation.Met : UnderrunWatchdog.Observation.Idle;
+    }
+
+    /// <summary>
     /// Acts, once, when the device is starving steadily rather than occasionally.
     /// </summary>
     /// <remarks>
@@ -450,28 +526,38 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     /// The retreat is persisted and takes effect next launch rather than being applied here. Growing
     /// the buffer live would mean tearing down and reopening the device underneath a callback that is
     /// very likely running, for an audible gap, on a code path that exists for nothing else — and the
-    /// session it would rescue is one the listener has already heard crackle. Writing the number down
-    /// costs one line of config and fixes the machine permanently.
+    /// session it would rescue is one that has already been missing its deadlines for five seconds.
+    /// Writing the number down costs one line of config and fixes the machine permanently.
     /// </para>
     /// </remarks>
-    private void handleSustainedUnderruns(long total, double frameTime)
+    private void handleSustainedUnderruns(UnderrunWatchdog.Observation observation, double frameTime)
     {
-        long? since = underrunWatchdog.Poll(total, frameTime);
+        var verdict = underrunWatchdog.Poll(observation, frameTime);
 
-        if (since == null)
+        if (verdict == null)
             return;
 
-        string observed = $"The audio device underran {since} times in the last {UnderrunWatchdog.CHECK_INTERVAL_MS / 1000:F0} seconds, "
-                          + $"which is audible as crackling. The device buffer is {deviceBufferFrames} frames "
-                          + $"({deviceBufferMicroseconds / 1000.0:F1} ms).";
+        // Says what was measured, and stops there. Telling someone they heard crackling when they did
+        // not is how a warning gets learned as noise — and a miss is a deadline the output path did not
+        // make, which a driver with slack in its own buffering can still absorb without a click.
+        string observed = $"The audio device went unfed on {verdict.Value.Misses} of the {verdict.Value.Observations} frames "
+                          + $"sampled in the last {UnderrunWatchdog.CHECK_INTERVAL_MS / 1000:F0} seconds "
+                          + $"({verdict.Value.Fraction:P0}). The device buffer is {deviceBufferFrames} frames "
+                          + $"({deviceBufferMicroseconds / 1000.0:F1} ms). This is measured, not heard: at this rate it "
+                          + "usually clicks, but not hearing anything does not mean nothing was missed.";
 
-        int? next = UnderrunWatchdog.NextBufferSize(requestedDeviceBufferFrames);
+        // Only the native engine's latency is the device buffer; the managed mixer's is its own queue
+        // and applyDeviceBufferHint does not even set the hint for it. Doubling a number that is never
+        // read would be a silent no-op dressed up as a fix, so that path gets the warning and nothing
+        // else.
+        int? next = nativeEngine == null ? null : UnderrunWatchdog.NextBufferSize(requestedDeviceBufferFrames);
 
         if (next == null || persistDeviceBufferFrames == null)
         {
             // Nothing to do but say so. Either the buffer was SDL's own choice and is already the
             // driver's preference, or it is large enough that "too small" has stopped explaining
-            // anything, or nobody gave this manager somewhere to write the answer down.
+            // anything, or this is the managed mixer whose latency the buffer does not set, or nobody
+            // gave this manager somewhere to write the answer down.
             Logger.Warning($"{observed} Raising AudioDeviceBufferFrames in framework.ini may help, but this buffer is "
                            + "already at or past the point where a larger one is the likely fix — something else is "
                            + "competing for the audio device. Reported once per run.");
@@ -1006,10 +1092,14 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
             // "Callback", not "Mix Block": there is a real device callback to time now.
             GlobalStatistics.Get<long>("Audio", "SDL Callback (µs)").Value = stats.CallbackMicroseconds;
-            GlobalStatistics.Get<long>("Audio", "SDL Underruns").Value = stats.Starvations;
+
+            // Named for what it is. This counts blocks in which a voice had less audio than the mixer
+            // asked for — a decoder that fell behind, most often a seek — and not the device failing
+            // to be served, which is what "underrun" reads as and what the watchdog acts on.
+            GlobalStatistics.Get<long>("Audio", "SDL Voice Starvations").Value = stats.Starvations;
 
             Interlocked.Exchange(ref lastPublishedUnderruns, stats.Starvations);
-            handleSustainedUnderruns(stats.Starvations, frameTime);
+            handleSustainedUnderruns(observeNativeCallback(stats), frameTime);
             GlobalStatistics.Get<long>("Audio", "SDL Put Failures").Value = stats.PutFailures;
             GlobalStatistics.Get<int>("Audio", "SDL Active Voices").Value = stats.ActiveVoices;
             GlobalStatistics.Get<int>("Audio", "SDL Device Buffer (frames)").Value = deviceBufferFrames;
@@ -1029,7 +1119,7 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         GlobalStatistics.Get<double>("Audio", "SDL Longest Mix Gap (ms)").Value = Math.Round(starvation.LongestGapMilliseconds, 1);
         GlobalStatistics.Get<long>("Audio", "SDL Mix Block (µs)").Value = mixMicroseconds;
 
-        handleSustainedUnderruns(managedUnderruns, frameTime);
+        handleSustainedUnderruns(observeManagedQueue(), frameTime);
         GlobalStatistics.Get<int>("Audio", "SDL Active Voices").Value = runningVoices();
         GlobalStatistics.Get<double>("Audio", "SDL Queued (ms)").Value = Math.Round(queuedMilliseconds, 1);
         GlobalStatistics.Get<int>("Audio", "SDL Device Buffer (frames)").Value = deviceBufferFrames;
