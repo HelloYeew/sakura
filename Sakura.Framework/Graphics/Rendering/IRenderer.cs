@@ -34,6 +34,18 @@ public interface IRenderer
     void Draw(IClock clock);
 
     /// <summary>
+    /// How long the most recent <see cref="StartFrame"/>/<see cref="Draw"/> pair spent blocked waiting
+    /// on the display or GPU by acquiring a drawable and presenting it rather than issuing work.
+    /// </summary>
+    /// <remarks>
+    /// Reported by the backend because only it knows where its device wait lives: Metal blocks
+    /// acquiring the next drawable and again on commit, Direct3D11 on its frame-latency handle and
+    /// again on present. OpenGL returns 0 since it presents at the window layer, where the host times the
+    /// buffer swap directly.
+    /// </remarks>
+    double LastBlockedMilliseconds { get; }
+
+    /// <summary>
     /// Sets whether presentation is synced to the display refresh. Called by the host when the frame
     /// limiter changes (VSync vs any capped/unlimited mode). Backends that present at the window layer
     /// (OpenGL, via the SDL swap interval) or rely on a compositor/layer default (Metal) handle VSync

@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Sakura.Framework.Graphics.Rendering.Batches;
 using Sakura.Framework.Graphics.Rendering.Uniforms;
@@ -506,16 +507,32 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         // Folded into StartFrame (the RTV is cleared there once it's bound).
     }
 
+    /// <inheritdoc/>
+    public double LastBlockedMilliseconds => blockedMilliseconds;
+
+    private double blockedMilliseconds;
+
     public void StartFrame()
     {
+        blockedMilliseconds = 0;
+
         if (device == null || swapChain == null)
             return;
 
         // Low-latency pacing: block until the swapchain is ready for a new frame (max latency 1), so
         // the CPU doesn't run ahead of the display. Timeout-guarded so a lost/uninitialised handle can
         // never hang the draw thread. Initial state is signalled, so the first wait returns at once.
+        //
+        // Timed as a device wait: this is the display refusing another frame yet, which is not work
+        // the frame can be optimised out of.
         if (frameLatencyWaitableObject != nint.Zero)
-            WaitForSingleObjectEx(frameLatencyWaitableObject, 1000, true);
+        {
+            long blockStart = Stopwatch.GetTimestamp();
+            uint waitResult = WaitForSingleObjectEx(frameLatencyWaitableObject, frame_latency_timeout_ms, true);
+            blockedMilliseconds += Stopwatch.GetElapsedTime(blockStart).TotalMilliseconds;
+
+            reportFrameLatencyWait(waitResult);
+        }
 
         // Release native resources orphaned by the GC (a missed Dispose) before anything else this
         // frame. D3D11's own resources are COM objects that SharpGen already finalizes, so in practice
@@ -640,10 +657,14 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
         // VSync -> sync interval 1, no flags. Uncapped -> interval 0, tear (if the output supports it)
         // rather than stall on a flip-model swapchain. AllowTearing is illegal with interval > 0.
+        long blockStart = Stopwatch.GetTimestamp();
+
         if (presentSyncInterval == 0)
             swapChain.Present(0, allowTearing ? PresentFlags.AllowTearing : PresentFlags.None);
         else
             swapChain.Present(1, PresentFlags.None);
+
+        blockedMilliseconds += Stopwatch.GetElapsedTime(blockStart).TotalMilliseconds;
     }
 
     /// <summary>
@@ -1111,4 +1132,47 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     // wait on it via the kernel32 primitive. Alertable so the draw thread stays responsive to APCs.
     [DllImport("kernel32", SetLastError = true)]
     private static extern uint WaitForSingleObjectEx(nint handle, uint milliseconds, bool alertable);
+
+    private const uint wait_object_0 = 0x00000000;
+    private const uint wait_io_completion = 0x000000C0;
+    private const uint wait_timeout = 0x00000102;
+    private const uint wait_failed = 0xFFFFFFFF;
+
+    /// <summary>
+    /// How long <see cref="StartFrame"/> will wait on the frame-latency handle before giving up on it
+    /// for that frame.
+    /// </summary>
+    private const uint frame_latency_timeout_ms = 1000;
+
+    /// <summary>
+    /// Whether the frame-latency wait is currently failing, so a persistent fault is reported once
+    /// rather than once per frame.
+    /// </summary>
+    private bool frameLatencyWaitDegraded;
+
+    /// <summary>
+    /// Reports a frame-latency wait that did not end with the swapchain signaling.
+    /// </summary>
+    private void reportFrameLatencyWait(uint waitResult)
+    {
+        // An alertable wait returns early whenever an APC runs, without the swapchain being ready.
+        // That is the flag doing its job, not a fault, so it is left alone here.
+        if (waitResult == wait_object_0 || waitResult == wait_io_completion)
+        {
+            frameLatencyWaitDegraded = false;
+            return;
+        }
+
+        if (frameLatencyWaitDegraded)
+            return;
+
+        frameLatencyWaitDegraded = true;
+
+        Logger.Warning(waitResult switch
+        {
+            wait_timeout => $"Direct3D11 frame-latency wait timed out after {frame_latency_timeout_ms}ms; draw pacing is no longer synced to the display.",
+            wait_failed => $"Direct3D11 frame-latency wait failed (error {Marshal.GetLastPInvokeError()}); draw pacing is no longer synced to the display.",
+            _ => $"Direct3D11 frame-latency wait returned an unexpected result (0x{waitResult:X8}); draw pacing is no longer synced to the display."
+        });
+    }
 }
