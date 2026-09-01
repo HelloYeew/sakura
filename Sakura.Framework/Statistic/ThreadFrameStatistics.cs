@@ -46,14 +46,33 @@ public struct ThreadFrameSample
     public double ElapsedMilliseconds;
 
     /// <summary>
-    /// The frame budget in effect for this frame, or 0 when the thread was unthrottled.
+    /// The frame budget in effect for this frame, or 0 when the thread was unthrottled. This is the
+    /// thread's own pacing target, the denominator for "how much of its slice did the frame use".
     /// </summary>
     public double BudgetMilliseconds;
 
     /// <summary>
-    /// Whether the frame's work overran its budget. Always false for an unthrottled thread.
+    /// The longest the frame's work could have taken before something visible was lost, or 0 when
+    /// nothing was at stake.
     /// </summary>
-    public readonly bool MissedDeadline => BudgetMilliseconds > 0 && BusyMilliseconds > BudgetMilliseconds;
+    /// <remarks>
+    /// Not the same figure as <see cref="BudgetMilliseconds"/>. A thread's target rate is
+    /// mostly a latency choice: the update thread is asked to run at twice the draw rate so input is
+    /// sampled closer to the frame that shows it, not because a frame is due every 1/480s. Scoring a
+    /// miss against that budget makes the count a readout of the frame limiter setting raise the
+    /// limiter and the same app "misses" four times as often, because the budget shrank.
+    ///
+    /// What is actually lost is a presented frame, so the deadline is the presentation period for
+    /// every thread. It is invariant to the frame limiter above vsync, and it makes the count mean the
+    /// same thing on each row, never which a per-thread budget could.
+    /// </remarks>
+    public double DeadlineMilliseconds;
+
+    /// <summary>
+    /// Whether the frame's work overran its deadline and so cost a presented frame.
+    /// Always false when there was no deadline.
+    /// </summary>
+    public readonly bool MissedDeadline => DeadlineMilliseconds > 0 && BusyMilliseconds > DeadlineMilliseconds;
 }
 
 /// <summary>

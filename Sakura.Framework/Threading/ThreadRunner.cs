@@ -45,13 +45,17 @@ public class ThreadRunner : IDisposable
     /// The main loop's frame budget, or 0 if unbounded. All three threads run once per
     /// iteration here, so they share it rather than each is having their own.
     /// </param>
-    public void RunSingleThreadedFrame(double budgetMilliseconds = 0)
+    /// <param name="deadlineMilliseconds">
+    /// The presentation deadline in effect, or 0 if there is none. Shared for the same reason, and
+    /// the same figure the threads use in multi-threaded mode.
+    /// </param>
+    public void RunSingleThreadedFrame(double budgetMilliseconds = 0, double deadlineMilliseconds = 0)
     {
         if (CurrentMode != ExecutionMode.SingleThread) return;
 
-        audioThread.RunSingleFrame(budgetMilliseconds);
-        updateThread.RunSingleFrame(budgetMilliseconds);
-        drawThread.RunSingleFrame(budgetMilliseconds);
+        audioThread.RunSingleFrame(budgetMilliseconds, deadlineMilliseconds);
+        updateThread.RunSingleFrame(budgetMilliseconds, deadlineMilliseconds);
+        drawThread.RunSingleFrame(budgetMilliseconds, deadlineMilliseconds);
     }
 
     public void Stop()

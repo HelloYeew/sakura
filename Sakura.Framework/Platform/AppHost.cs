@@ -85,7 +85,6 @@ public abstract class AppHost : IDisposable
     /// </summary>
     public ThreadFrameStatistics AudioFrameStatistics => audioThread?.FrameStatistics;
 
-    private readonly ThrottledFrameClock soundClock = new ThrottledFrameClock(1000);
     private readonly Stopwatch appLoopStopwatch = new Stopwatch();
     private readonly ConcurrentQueue<PendingInput> inputQueue = new ConcurrentQueue<PendingInput>();
     private readonly ConcurrentQueue<Action> mainThreadActions = new ConcurrentQueue<Action>();
@@ -505,7 +504,7 @@ public abstract class AppHost : IDisposable
                 // make renderer still resize itself in single thread mode
                 if (executionState == ExecutionState.Running && ExecutionMode.Value == Threading.ExecutionMode.SingleThread)
                 {
-                    threadRunner.RunSingleThreadedFrame(targetUpdateHz > 0 ? 1000.0 / targetUpdateHz : 0);
+                    threadRunner.RunSingleThreadedFrame(targetUpdateHz > 0 ? 1000.0 / targetUpdateHz : 0, GetPresentationDeadlineMs());
                 }
             };
 
@@ -529,6 +528,7 @@ public abstract class AppHost : IDisposable
 
             updateThread = new AppThread("UpdateThread", PerformUpdate, getUpdateTargetHz)
             {
+                GetDeadlineMilliseconds = GetPresentationDeadlineMs,
                 Priority = ThreadPriority.AboveNormal,
                 UsePreciseTiming = usePreciseTiming
             };
@@ -536,12 +536,14 @@ public abstract class AppHost : IDisposable
             {
                 Priority = ThreadPriority.Normal,
                 UsePreciseTiming = usePreciseTiming,
-                GetBlockedMilliseconds = () => lastPresentMilliseconds
+                GetBlockedMilliseconds = () => lastPresentMilliseconds,
+                GetDeadlineMilliseconds = GetPresentationDeadlineMs
             };
             audioThread = new AppThread("AudioThread", PerformSoundUpdate, getAudioTargetHz)
             {
+                GetDeadlineMilliseconds = GetPresentationDeadlineMs,
                 Priority = ThreadPriority.Highest,
-                UsePreciseTiming = usePreciseTiming
+                UsePreciseTiming = static () => false
             };
 
             drawThread.OnInitialize = () => Window.MakeCurrent();
@@ -633,15 +635,19 @@ public abstract class AppHost : IDisposable
 
                     double mainBudgetMs = currentHz > 0 ? 1000.0 / currentHz : 0;
 
-                    long nowTicks = Stopwatch.GetTimestamp();
-                    double pauseBefore = GC.GetTotalPauseDuration().TotalMilliseconds;
+                    double deadlineMs = GetPresentationDeadlineMs();
 
-                    if ((nowTicks - lastGCStatisticsTicks) * ms_per_tick >= gc_statistics_interval_ms)
+                    long housekeepingTicks = Stopwatch.GetTimestamp();
+
+                    if ((housekeepingTicks - lastGCStatisticsTicks) * ms_per_tick >= gc_statistics_interval_ms)
                     {
-                        lastGCStatisticsTicks = nowTicks;
+                        lastGCStatisticsTicks = housekeepingTicks;
                         GCStatistics.Update();
                         Graphics.Textures.TextureRegistry.Prune();
                     }
+
+                    long nowTicks = Stopwatch.GetTimestamp();
+                    double pauseBefore = GC.GetTotalPauseDuration().TotalMilliseconds;
 
                     while (mainThreadActions.TryDequeue(out var action))
                     {
@@ -665,12 +671,13 @@ public abstract class AppHost : IDisposable
                         BusyMilliseconds = Math.Max(0, inputFrameMs - inputGcMs),
                         GCMilliseconds = inputGcMs,
                         ElapsedMilliseconds = InputClock.ElapsedFrameTime,
-                        BudgetMilliseconds = mainBudgetMs
+                        BudgetMilliseconds = mainBudgetMs,
+                        DeadlineMilliseconds = deadlineMs
                     });
 
                     if (ExecutionMode.Value == Threading.ExecutionMode.SingleThread)
                     {
-                        threadRunner.RunSingleThreadedFrame(mainBudgetMs);
+                        threadRunner.RunSingleThreadedFrame(mainBudgetMs, deadlineMs);
                     }
 
                     if (currentHz > 0)
@@ -1084,6 +1091,21 @@ public abstract class AppHost : IDisposable
     internal double GetAudioTargetHz() => isMultiThread ? getAudioTargetHz() : targetUpdateHz;
     internal double GetUpdateTargetHz() => isMultiThread ? getUpdateTargetHz() : targetUpdateHz;
     internal double GetDrawTargetHz() => isMultiThread ? getDrawTargetHz() : targetUpdateHz;
+
+    /// <summary>
+    /// How long a frame's work may take before a presented frame is lost, or 0 if that is not knowable.
+    /// Recorded on every thread's frames as <see cref="ThreadFrameSample.DeadlineMilliseconds"/>.
+    /// </summary>
+    internal double GetPresentationDeadlineMs()
+    {
+        double displayHz = Window?.DisplayHz > 0 ? Window.DisplayHz : 60;
+        double drawHz = getDrawTargetHz();
+
+        // Unlimited (0) has no ceiling of its own, so the panel is the only thing left pacing us.
+        double presentationHz = drawHz > 0 ? Math.Min(drawHz, displayHz) : displayHz;
+
+        return presentationHz > 0 ? 1000.0 / presentationHz : 0;
+    }
 
     private double getInputTargetHz() => Window != null && !Window.IsActive ? 60.0 : 1000.0;
     private double getAudioTargetHz() => Window != null && !Window.IsActive ? 60.0 : 1000.0;

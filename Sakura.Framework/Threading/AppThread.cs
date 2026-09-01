@@ -38,6 +38,17 @@ public class AppThread
     public Func<double>? GetBlockedMilliseconds { get; set; }
 
     /// <summary>
+    /// Optional. Asked, at the top of each frame, how long that frame's work may take before something
+    /// visible is lost. Recorded as <see cref="ThreadFrameSample.DeadlineMilliseconds"/> and used for
+    /// <see cref="ThreadFrameSample.MissedDeadline"/>. Frames record no deadline when this is unset.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="GetTargetHz"/> because a thread's target rate is a pacing choice rather
+    /// than a due date - see <see cref="ThreadFrameSample.DeadlineMilliseconds"/>.
+    /// </remarks>
+    public Func<double>? GetDeadlineMilliseconds { get; set; }
+
+    /// <summary>
     /// Whether the final ~0.5ms of each frame wait may busy-spin for precise pacing.
     /// When it returns false the thread sleeps for the full remaining time instead,
     /// trading sub-millisecond timing jitter for CPU/battery savings.
@@ -116,10 +127,14 @@ public class AppThread
     /// derived from <see cref="GetTargetHz"/> because in single-threaded execution every thread runs
     /// once per main-loop iteration and so shares that loop's budget, not its own target rate.
     /// </param>
-    public void RunSingleFrame(double budgetMilliseconds = 0)
+    /// <param name="deadlineMilliseconds">
+    /// The deadline to record against this frame, or 0 if there is none. Falls back to
+    /// <see cref="GetDeadlineMilliseconds"/> when not given.
+    /// </param>
+    public void RunSingleFrame(double budgetMilliseconds = 0, double deadlineMilliseconds = 0)
     {
         Clock.Update();
-        invokeFrameAction(budgetMilliseconds);
+        invokeFrameAction(budgetMilliseconds, deadlineMilliseconds > 0 ? deadlineMilliseconds : GetDeadlineMilliseconds?.Invoke() ?? 0);
     }
 
     private static readonly double ms_per_tick = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
@@ -132,7 +147,7 @@ public class AppThread
     /// The timestamp taken immediately after the frame's work, so the pacing code can reuse it
     /// instead of reading the clock again.
     /// </returns>
-    private long invokeFrameAction(double budgetMilliseconds)
+    private long invokeFrameAction(double budgetMilliseconds, double deadlineMilliseconds)
     {
         long startTicks = Stopwatch.GetTimestamp();
         double pauseBefore = GC.GetTotalPauseDuration().TotalMilliseconds;
@@ -157,7 +172,8 @@ public class AppThread
             GCMilliseconds = gcMilliseconds,
             BlockedMilliseconds = blockedMilliseconds,
             ElapsedMilliseconds = Clock.ElapsedFrameTime,
-            BudgetMilliseconds = budgetMilliseconds
+            BudgetMilliseconds = budgetMilliseconds,
+            DeadlineMilliseconds = deadlineMilliseconds
         });
 
         return endTicks;
@@ -187,7 +203,7 @@ public class AppThread
             double currentHz = GetTargetHz();
             double targetFrameTimeMs = currentHz > 0 ? 1000.0 / currentHz : 0;
 
-            long now = invokeFrameAction(targetFrameTimeMs);
+            long now = invokeFrameAction(targetFrameTimeMs, GetDeadlineMilliseconds?.Invoke() ?? 0);
 
             if (currentHz > 0)
             {
