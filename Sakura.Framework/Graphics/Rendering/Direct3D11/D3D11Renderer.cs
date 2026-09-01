@@ -283,7 +283,13 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
             using var dxgiDevice = device.QueryInterface<IDXGIDevice>();
             using IDXGIAdapter adapter = dxgiDevice.GetAdapter();
             AdapterDescription desc = adapter.Description;
-            Logger.Verbose($"🖥️ Direct3D11 adapter: {desc.Description?.Trim()} (feature level {device.FeatureLevel})");
+            long dedicatedVramMb = desc.DedicatedVideoMemory / (1024 * 1024);
+            long sharedRamMb = desc.SharedSystemMemory / (1024 * 1024);
+            Logger.Verbose($"🖥️ Direct3D11 renderer initialized");
+            Logger.Verbose($"️Direct3D11 adapter: {desc.Description?.Trim()}");
+            Logger.Verbose($"Feature Level: {device.FeatureLevel}");
+            Logger.Verbose($"Dedicated VRAM: {dedicatedVramMb} MB, Shared: {sharedRamMb} MB");
+            Logger.Verbose($"Hardware IDs: Vendor 0x{desc.VendorId:X4}, Device 0x{desc.DeviceId:X4}");
         }
         catch (Exception e)
         {
