@@ -260,6 +260,8 @@ public class ContainerMaskScaleTest
         public void StartFrame() { }
         public void SetRoot(DrawNode rootDrawNode) { }
         public void Resize(int physicalWidth, int physicalHeight, int logicalWidth, int logicalHeight) { }
+        public double LastBlockedMilliseconds => 0;
+
         public void Draw(IClock clock) { }
         public void DrawVertices(ReadOnlySpan<VertexData> vertices, Texture textureGl) { }
         public void DrawQuads(ReadOnlySpan<VertexData> vertices, Texture textureGl) { }
