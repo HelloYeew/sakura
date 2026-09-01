@@ -38,6 +38,15 @@ public interface IAudioManager
     IAudioMixer SampleMixer { get; }
 
     /// <summary>
+    /// Delay between audio being mixed and reached the speakers, in milliseconds.
+    /// </summary>
+    /// <remarks>
+    /// Defaults to 0 for backends that do not measure it. It is a real device figure where a backend
+    /// does report one, so treat 0 as "unknown" rather than "instant".
+    /// </remarks>
+    double OutputLatencyMs => 0;
+
+    /// <summary>
     /// Loads a track from a <see cref="Stream"/>
     /// </summary>
     /// <param name="stream">The stream to load from</param>
