@@ -41,13 +41,17 @@ public class ThreadRunner : IDisposable
         CurrentMode = mode;
     }
 
-    public void RunSingleThreadedFrame()
+    /// <param name="budgetMilliseconds">
+    /// The main loop's frame budget, or 0 if unbounded. All three threads run once per
+    /// iteration here, so they share it rather than each is having their own.
+    /// </param>
+    public void RunSingleThreadedFrame(double budgetMilliseconds = 0)
     {
         if (CurrentMode != ExecutionMode.SingleThread) return;
 
-        audioThread.RunSingleFrame();
-        updateThread.RunSingleFrame();
-        drawThread.RunSingleFrame();
+        audioThread.RunSingleFrame(budgetMilliseconds);
+        updateThread.RunSingleFrame(budgetMilliseconds);
+        drawThread.RunSingleFrame(budgetMilliseconds);
     }
 
     public void Stop()
