@@ -37,6 +37,8 @@ public abstract class AppHost : IDisposable
 {
     private static readonly int frame_sync_value_count = Enum.GetValues<FrameSync>().Length;
 
+    private static readonly double ms_per_tick = 1000.0 / Stopwatch.Frequency;
+
     private static readonly GlobalStatistic<double> stat_uptime = GlobalStatistics.Get<double>("Host", "Uptime (ms)");
 
     /// <summary>
@@ -533,7 +535,8 @@ public abstract class AppHost : IDisposable
             drawThread = new AppThread("DrawThread", PerformDraw, getDrawTargetHz)
             {
                 Priority = ThreadPriority.Normal,
-                UsePreciseTiming = usePreciseTiming
+                UsePreciseTiming = usePreciseTiming,
+                GetBlockedMilliseconds = () => lastPresentMilliseconds
             };
             audioThread = new AppThread("AudioThread", PerformSoundUpdate, getAudioTargetHz)
             {
@@ -606,9 +609,6 @@ public abstract class AppHost : IDisposable
             };
 
             appLoopStopwatch.Start();
-
-            long timestampFrequency = Stopwatch.Frequency;
-            double msPerTick = 1000.0 / timestampFrequency;
             long nextMainFrameTime = Stopwatch.GetTimestamp();
             const double main_spin_guard_ms = 0.5;
 
@@ -636,7 +636,7 @@ public abstract class AppHost : IDisposable
                     long nowTicks = Stopwatch.GetTimestamp();
                     double pauseBefore = GC.GetTotalPauseDuration().TotalMilliseconds;
 
-                    if ((nowTicks - lastGCStatisticsTicks) * msPerTick >= gc_statistics_interval_ms)
+                    if ((nowTicks - lastGCStatisticsTicks) * ms_per_tick >= gc_statistics_interval_ms)
                     {
                         lastGCStatisticsTicks = nowTicks;
                         GCStatistics.Update();
@@ -658,7 +658,7 @@ public abstract class AppHost : IDisposable
                     // Measured here, before any single-threaded frame, so the update/draw/audio work
                     // that runs below is not also booked against the input row.
                     double inputGcMs = GC.GetTotalPauseDuration().TotalMilliseconds - pauseBefore;
-                    double inputFrameMs = (Stopwatch.GetTimestamp() - nowTicks) * msPerTick;
+                    double inputFrameMs = (Stopwatch.GetTimestamp() - nowTicks) * ms_per_tick;
 
                     InputFrameStatistics.Record(new ThreadFrameSample
                     {
@@ -675,7 +675,7 @@ public abstract class AppHost : IDisposable
 
                     if (currentHz > 0)
                     {
-                        long targetMainTicks = (long)(mainBudgetMs / msPerTick);
+                        long targetMainTicks = (long)(mainBudgetMs / ms_per_tick);
 
                         nextMainFrameTime += targetMainTicks;
 
@@ -684,7 +684,7 @@ public abstract class AppHost : IDisposable
                         if (now > nextMainFrameTime)
                             nextMainFrameTime = now;
 
-                        double remainingMs = (nextMainFrameTime - now) * msPerTick;
+                        double remainingMs = (nextMainFrameTime - now) * ms_per_tick;
 
                         // Same spin policy as the app threads: skip precision spinning when
                         // disabled or while the window is inactive (battery savings).
@@ -1063,8 +1063,21 @@ public abstract class AppHost : IDisposable
         }
 
         Renderer?.Draw(DrawClock);
+
+        long swapStart = Stopwatch.GetTimestamp();
         Window?.SwapBuffers();
+
+        // Where the display pushes back depends on the backend, so both places are counted: OpenGL
+        // blocks in the window-layer swap above, while Metal and Direct3D11 present from inside the
+        // renderer and report their own wait. Only one of the two is ever non-zero.
+        lastPresentMilliseconds = (Stopwatch.GetTimestamp() - swapStart) * ms_per_tick
+                                  + (Renderer?.LastBlockedMilliseconds ?? 0);
     }
+
+    /// <summary>
+    /// How long the last <see cref="PerformDraw"/> spent waiting on the display rather than drawing.
+    /// </summary>
+    private double lastPresentMilliseconds;
 
     private bool isMultiThread => ExecutionMode?.Value == Threading.ExecutionMode.MultiThread;
     internal double GetInputTargetHz() => isMultiThread ? getInputTargetHz() : targetUpdateHz;

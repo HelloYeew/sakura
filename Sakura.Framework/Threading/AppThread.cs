@@ -27,6 +27,17 @@ public class AppThread
     public ThreadFrameStatistics FrameStatistics { get; } = new ThreadFrameStatistics();
 
     /// <summary>
+    /// Optional. Asked, after each frame, how much of it the <see cref="FrameAction"/> spent blocked
+    /// on an external device rather than doing work. Reported as
+    /// <see cref="ThreadFrameSample.BlockedMilliseconds"/> and excluded from the busy figure.
+    /// </summary>
+    /// <remarks>
+    /// Called on this thread immediately after the frame action returns, so an implementation can
+    /// simply hand back a value the action just stored.
+    /// </remarks>
+    public Func<double>? GetBlockedMilliseconds { get; set; }
+
+    /// <summary>
     /// Whether the final ~0.5ms of each frame wait may busy-spin for precise pacing.
     /// When it returns false the thread sleeps for the full remaining time instead,
     /// trading sub-millisecond timing jitter for CPU/battery savings.
@@ -134,14 +145,17 @@ public class AppThread
         // this frame. Attributing it here and subtracting it keeps the busy figure to work we chose
         // to do, while leaving the stall visible in its own field.
         double gcMilliseconds = GC.GetTotalPauseDuration().TotalMilliseconds - pauseBefore;
+        double blockedMilliseconds = GetBlockedMilliseconds?.Invoke() ?? 0;
         double frameMilliseconds = (endTicks - startTicks) * ms_per_tick;
 
         FrameStatistics.Record(new ThreadFrameSample
         {
-            // Clamped because a pause straddling either boundary is measured against a slightly
-            // different window than the frame itself.
-            BusyMilliseconds = Math.Max(0, frameMilliseconds - gcMilliseconds),
+            // Clamped because neither the GC pause nor the blocked span is measured against exactly
+            // this window since a pause can straddle either boundary, and one landing inside the blocked
+            // span would otherwise be subtracted twice.
+            BusyMilliseconds = Math.Max(0, frameMilliseconds - gcMilliseconds - blockedMilliseconds),
             GCMilliseconds = gcMilliseconds,
+            BlockedMilliseconds = blockedMilliseconds,
             ElapsedMilliseconds = Clock.ElapsedFrameTime,
             BudgetMilliseconds = budgetMilliseconds
         });

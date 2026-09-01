@@ -27,6 +27,18 @@ public struct ThreadFrameSample
     public double GCMilliseconds;
 
     /// <summary>
+    /// Time within the frame spent blocked on an external device rather than doing work, already
+    /// subtracted from <see cref="BusyMilliseconds"/>. For the draw thread this is the buffer swap,
+    /// where the display applies its own back-pressure; every other thread reports 0.
+    /// </summary>
+    /// <remarks>
+    /// Kept out of the busy figure because it is not headroom the frame can win back by doing less:
+    /// under VSync a healthy frame blocks here for most of its budget, and counting that as a load
+    /// would report an idle app as saturated.
+    /// </remarks>
+    public double BlockedMilliseconds;
+
+    /// <summary>
     /// Wall-clock period between the start of this frame and the start of the previous one,
     /// sleep and spin included. While the throttle is holding, this sits at
     /// <see cref="BudgetMilliseconds"/> regardless of how much work the frame did.
