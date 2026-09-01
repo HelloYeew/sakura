@@ -2,8 +2,10 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using Sakura.Framework.Allocation;
 using Sakura.Framework.Audio;
+using Sakura.Framework.Audio.Headless;
 using Sakura.Framework.Audio.SdlEngine;
 using Sakura.Framework.Configurations;
 using Sakura.Framework.Extensions.ColorExtensions;
@@ -20,6 +22,7 @@ using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Reactive;
+using Sakura.Framework.Statistic;
 using Sakura.Framework.Timing;
 
 namespace Sakura.Framework.Graphics.Performance;
@@ -33,22 +36,34 @@ public enum PerformanceOverlayState
 
 public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
 {
+    private const float overlay_width = 360;
+
+    private const float header_height = 40;
+
+    private const float column_name = 56;
+    private const float column_fps = 54;
+    private const float column_time = 104;
+    private const float column_budget = 54;
+    private const float column_load = 58;
+
+    private const float column_spacing = 3;
+
+    private const float row_height_compact = 19;
+    private const float row_height_expanded = 54;
+
+    private const double text_refresh_ms = 100;
+
     private Reactive<PerformanceOverlayState> state;
 
     private FlowContainer displaysFlow;
-    private Container currentContextFlow;
+    private Container header;
+    private SpriteText contextText;
+    private SpriteText backendText;
+    private ThreadStatisticsDisplay[] displays;
 
-    private SpriteText limiterText;
-    private SpriteText windowModeText;
-    private SpriteText executionModeText;
-    private SpriteText rendererText;
-    private SpriteText audioText;
+    private double lastBackendRefresh;
 
-    private readonly FontUsage graphFontUsage = FontUsage.Default.With(size: 14);
-    private readonly FontUsage boldGraphFontUsage = FontUsage.Default.With(size: 14, weight: "Bold");
-
-    private const float extended_width = 400;
-    private const float compact_width = 340;
+    private static readonly FontUsage header_font = FontUsage.Default.With(size: 13);
 
     [Resolved]
     private AppHost host { get; set; }
@@ -77,195 +92,125 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
             Spacing = new Vector2(0, 2)
         });
 
-        currentContextFlow = new Container()
+        displaysFlow.Add(header = new Container
         {
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
-            Size = new Vector2(extended_width, 120),
+            Size = new Vector2(overlay_width, header_height),
             Children = new Drawable[]
             {
-                new Box()
+                new Box
                 {
                     RelativeSizeAxes = Axes.Both,
                     Color = Color.Black,
                     Alpha = 0.75f
                 },
-                new FlowContainer()
+                new FlowContainer
                 {
                     Anchor = Anchor.TopLeft,
                     Origin = Anchor.TopLeft,
                     Direction = FlowDirection.Vertical,
                     RelativeSizeAxes = Axes.Both,
-                    Spacing = new Vector2(0, 2),
+                    Padding = new MarginPadding { Left = 5, Right = 5, Top = 2 },
+                    Spacing = new Vector2(0, 1),
                     Children = new Drawable[]
                     {
-                        new FlowContainer()
+                        contextText = new SpriteText
                         {
                             Anchor = Anchor.TopLeft,
                             Origin = Anchor.TopLeft,
-                            Direction = FlowDirection.Horizontal,
-                            Size = new Vector2(1, 20),
-                            RelativeSizeAxes = Axes.X,
-                            Spacing = new Vector2(10, 0),
-                            Children = new Drawable[]
-                            {
-                                new SpriteText()
-                                {
-                                    Anchor = Anchor.TopLeft,
-                                    Origin = Anchor.TopLeft,
-                                    Size = new Vector2(200, 10),
-                                    Color = Color.White,
-                                    Font = boldGraphFontUsage,
-                                    Text = "FrameLimiter"
-                                },
-                                limiterText = new SpriteText()
-                                {
-                                    Anchor = Anchor.TopLeft,
-                                    Origin = Anchor.TopLeft,
-                                    Size = new Vector2(200, 10),
-                                    Color = Color.White,
-                                    Font = graphFontUsage,
-                                    Text = "N/A"
-                                }
-                            }
+                            Font = header_font,
+                            Color = Color.White,
+                            Text = "..."
                         },
-                        new FlowContainer()
+                        backendText = new SpriteText
                         {
                             Anchor = Anchor.TopLeft,
                             Origin = Anchor.TopLeft,
-                            Direction = FlowDirection.Horizontal,
-                            Size = new Vector2(1, 20),
-                            RelativeSizeAxes = Axes.X,
-                            Spacing = new Vector2(10, 0),
-                            Children = new Drawable[]
-                            {
-                                new SpriteText()
-                                {
-                                    Anchor = Anchor.TopLeft,
-                                    Origin = Anchor.TopLeft,
-                                    Size = new Vector2(200, 10),
-                                    Color = Color.White,
-                                    Font = boldGraphFontUsage,
-                                    Text = "WindowMode"
-                                },
-                                windowModeText = new SpriteText()
-                                {
-                                    Anchor = Anchor.TopLeft,
-                                    Origin = Anchor.TopLeft,
-                                    Size = new Vector2(200, 10),
-                                    Color = Color.White,
-                                    Font = graphFontUsage,
-                                    Text = "N/A"
-                                }
-                            }
-                        },
-                        new FlowContainer()
-                        {
-                            Anchor = Anchor.TopLeft,
-                            Origin = Anchor.TopLeft,
-                            Direction = FlowDirection.Horizontal,
-                            Size = new Vector2(1, 20),
-                            RelativeSizeAxes = Axes.X,
-                            Spacing = new Vector2(10, 0),
-                            Children = new Drawable[]
-                            {
-                                new SpriteText()
-                                {
-                                    Anchor = Anchor.TopLeft,
-                                    Origin = Anchor.TopLeft,
-                                    Size = new Vector2(200, 10),
-                                    Color = Color.White,
-                                    Font = boldGraphFontUsage,
-                                    Text = "ExecutionMode"
-                                },
-                                executionModeText = new SpriteText()
-                                {
-                                    Anchor = Anchor.TopLeft,
-                                    Origin = Anchor.TopLeft,
-                                    Size = new Vector2(200, 10),
-                                    Color = Color.White,
-                                    Font = graphFontUsage,
-                                    Text = "N/A"
-                                }
-                            }
-                        },
-                        new FlowContainer()
-                        {
-                            Anchor = Anchor.TopLeft,
-                            Origin = Anchor.TopLeft,
-                            Direction = FlowDirection.Horizontal,
-                            Size = new Vector2(1, 20),
-                            RelativeSizeAxes = Axes.X,
-                            Spacing = new Vector2(10, 0),
-                            Children = new Drawable[]
-                            {
-                                new SpriteText()
-                                {
-                                    Anchor = Anchor.TopLeft,
-                                    Origin = Anchor.TopLeft,
-                                    Size = new Vector2(200, 10),
-                                    Color = Color.White,
-                                    Font = boldGraphFontUsage,
-                                    Text = "Renderer"
-                                },
-                                rendererText = new SpriteText()
-                                {
-                                    Anchor = Anchor.TopLeft,
-                                    Origin = Anchor.TopLeft,
-                                    Size = new Vector2(200, 10),
-                                    Color = Color.White,
-                                    Font = graphFontUsage,
-                                    Text = "N/A"
-                                }
-                            }
-                        },
-                        new FlowContainer()
-                        {
-                            Anchor = Anchor.TopLeft,
-                            Origin = Anchor.TopLeft,
-                            Direction = FlowDirection.Horizontal,
-                            Size = new Vector2(1, 20),
-                            RelativeSizeAxes = Axes.X,
-                            Spacing = new Vector2(10, 0),
-                            Children = new Drawable[]
-                            {
-                                new SpriteText()
-                                {
-                                    Anchor = Anchor.TopLeft,
-                                    Origin = Anchor.TopLeft,
-                                    Size = new Vector2(200, 10),
-                                    Color = Color.White,
-                                    Font = boldGraphFontUsage,
-                                    Text = "AudioBackend"
-                                },
-                                audioText = new SpriteText()
-                                {
-                                    Anchor = Anchor.TopLeft,
-                                    Origin = Anchor.TopLeft,
-                                    Size = new Vector2(200, 10),
-                                    Color = Color.White,
-                                    Font = graphFontUsage,
-                                    Text = "N/A"
-                                }
-                            }
+                            Font = header_font,
+                            Color = Color.LightGray,
+                            Text = "..."
                         }
                     }
                 }
             }
+        });
+
+        displays = new[]
+        {
+            new ThreadStatisticsDisplay("Input", host.InputClock, Color.LimeGreen, host, () => host.InputFrameStatistics),
+            new ThreadStatisticsDisplay("Audio", host.AudioClock, Color.Yellow, host, () => host.AudioFrameStatistics),
+            new ThreadStatisticsDisplay("Update", host.UpdateClock, Color.Violet, host, () => host.UpdateFrameStatistics),
+            new ThreadStatisticsDisplay("Draw", host.DrawClock, Color.Cyan, host, () => host.DrawFrameStatistics),
         };
 
-        displaysFlow.Add(currentContextFlow);
-
-        displaysFlow.Add(new ThreadStatisticsDisplay("Input", host.InputClock, Color.LimeGreen, host, host.GetInputTargetHz));
-        displaysFlow.Add(new ThreadStatisticsDisplay("Audio", host.AudioClock, Color.Yellow, host, host.GetAudioTargetHz));
-        displaysFlow.Add(new ThreadStatisticsDisplay("Update", host.UpdateClock, Color.Purple, host, host.GetUpdateTargetHz));
-        displaysFlow.Add(new ThreadStatisticsDisplay("Draw", host.DrawClock, Color.Cyan, host, host.GetDrawTargetHz));
+        foreach (var display in displays)
+            displaysFlow.Add(display);
 
         state = host.FrameworkConfigManager.Get(FrameworkSetting.ShowFpsGraph, PerformanceOverlayState.Hidden);
         state.ValueChanged += e => updateState(e.NewValue);
+
         if (state.Value == PerformanceOverlayState.Hidden)
             Hide();
+
         updateState(state.Value);
+    }
+
+    protected override void LoadComplete()
+    {
+        base.LoadComplete();
+
+        updateContextText();
+        updateBackendText();
+
+        host.FrameLimiter.ValueChanged += _ => updateContextText();
+        host.ExecutionMode.ValueChanged += _ => updateContextText();
+        host.Window.WindowModeReactive.ValueChanged += _ => updateContextText();
+        host.Window.Resized += (_, _) => updateContextText();
+        host.Window.DisplayChanged += _ => updateContextText();
+    }
+
+    public override void Update()
+    {
+        base.Update();
+
+        if (state?.Value == PerformanceOverlayState.Hidden)
+            return;
+
+        // The audio backend's output latency is a live device figure, unlike everything else on this
+        // line, so it needs re-reading. Twice a second is plenty for a number that moves when the
+        // device buffer is renegotiated.
+        if (Clock.CurrentTime - lastBackendRefresh >= 500)
+        {
+            updateBackendText();
+            lastBackendRefresh = Clock.CurrentTime;
+        }
+    }
+
+    private void updateContextText()
+    {
+        if (contextText.IsNull())
+            return;
+
+        int displayHz = host.Window?.DisplayHz ?? 0;
+        string hz = displayHz > 0 ? $" @{displayHz}Hz" : string.Empty;
+
+        string execution = host.ExecutionMode.Value.ToString();
+        string windowMode = host.Window?.WindowModeReactive.Value.ToString() ?? "None";
+
+        contextText.Text = $"{host.FrameLimiter.Value} · {execution} · "
+                           + $"{windowMode} {host.Window?.Width}x{host.Window?.Height}{hz}";
+    }
+
+    private void updateBackendText()
+    {
+        if (backendText.IsNull())
+            return;
+
+        double latency = host.AudioManager?.OutputLatencyMs ?? 0;
+        string latencyText = latency > 0 ? $" {latency:F1}ms out" : string.Empty;
+
+        backendText.Text = $"{getRendererText()} · {getAudioText()}{latencyText}";
     }
 
     private string getRendererText()
@@ -276,13 +221,15 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
         if (actual.EndsWith("Renderer"))
             actual = actual[..^"Renderer".Length];
 
-        return configured == RendererType.Automatic ? $"{getWindowType()} + Automatic ({actual})" : getWindowType() + actual;
+        string text = $"{getWindowType()}+{actual}";
+        return configured == RendererType.Automatic ? $"{text} (auto)" : text;
     }
 
     private string getWindowType()
     {
         var type = host.Window?.GetType();
         string windowType;
+
         if (type.IsNotNull() && type.BaseType.IsNotNull())
         {
             windowType = type.BaseType.Name;
@@ -306,54 +253,26 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
         if (actual.EndsWith("AudioManager"))
             actual = actual[..^"AudioManager".Length];
 
+        if (host.AudioManager is HeadlessAudioManager)
+            return "Headless";
+
         if (host.AudioManager is SDLAudioManager sdl)
         {
             if (sdl.UsesNativeMixEngine)
             {
-                actual += " (native)";
+                actual += " native";
             }
             else if (configured == AudioBackend.SDLManaged)
             {
-                actual += " (managed)";
+                actual += " managed";
             }
             else
             {
-                // The native mixer was asked for and did not happen, so this is a degraded backend
-                // rather than a chosen one. Called out, and coloured, because everything still works
-                // and nothing else on screen would say so.
-                actual += " (managed fallback)";
+                actual += " fallback";
             }
         }
 
-        return configured == AudioBackend.Automatic ? $"Automatic ({actual})" : actual;
-    }
-
-    protected override void LoadComplete()
-    {
-        base.LoadComplete();
-
-        windowModeText.Text = $"{host.Window?.WindowModeReactive.Value} ({host.Window?.Width}x{host.Window?.Height})";
-        executionModeText.Text = $"{host.ExecutionMode.Value}";
-        limiterText.Text = $"{host.FrameLimiter.Value}";
-        rendererText.Text = getRendererText();
-        audioText.Text = getAudioText();
-
-        host.FrameLimiter.ValueChanged += value =>
-        {
-            limiterText.Text = $"{value.NewValue}";
-        };
-        host.Window.WindowModeReactive.ValueChanged += value =>
-        {
-            windowModeText.Text = $"{value.NewValue} ({host.Window.Width}x{host.Window.Height})";
-        };
-        host.Window.Resized += (w, h) =>
-        {
-            windowModeText.Text = $"{host.Window.WindowModeReactive.Value} ({w}x{h})";
-        };
-        host.ExecutionMode.ValueChanged += value =>
-        {
-            executionModeText.Text = $"{value.NewValue}";
-        };
+        return configured == AudioBackend.Automatic ? $"{actual} (auto)" : actual;
     }
 
     private void updateState(PerformanceOverlayState newState)
@@ -363,82 +282,105 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
         else
             this.FadeIn(200, Easing.OutQuint);
 
-        if (newState == PerformanceOverlayState.Compact)
-        {
-            displaysFlow.Width = compact_width;
-            currentContextFlow.Width = compact_width;
-        }
-        else
-        {
-            displaysFlow.Width = extended_width;
-            currentContextFlow.Width = extended_width;
-        }
-
-        foreach (var child in displaysFlow.Children)
-        {
-            if (child is ThreadStatisticsDisplay display)
-                display.SetState(newState);
-        }
+        foreach (var display in displays)
+            display.SetState(newState);
     }
 
-    private partial class ThreadStatisticsDisplay : Container
+    private sealed partial class ThreadStatisticsDisplay : Container
     {
-        private const int max_history = 240;
-        private readonly FrameData[] frameHistory = new FrameData[max_history];
-        private readonly int[] lastGcCounts = new int[3];
-        private int currentIndex;
-        private int currentCount;
-        private readonly IWindow window;
+        /// <summary>
+        /// Bars in the graph, each covers <see cref="bucket_ms"/> of wall time
+        /// </summary>
+        private const int max_history = 120;
+
+        private const double graph_span_ms = 2000;
+        private const double bucket_ms = graph_span_ms / max_history;
+
+        /// <summary>
+        /// Slices the missed-deadline count is kept in, one rotated out per text refresh. Ten at
+        /// 100ms each means the figure shown covers the last second.
+        /// </summary>
+        private const int miss_slice_count = 10;
+
+        /// <summary>
+        /// Frames the device wait's spread is taken over. At display rate this is roughly a second,
+        /// long enough that a single late frame moves it without a steady stream of them hiding.
+        /// </summary>
+        private const int blocked_spread_window = 128;
 
         private readonly string name;
         private readonly IFrameBasedClock clock;
         private readonly Color baseColor;
-        private readonly Func<double> getTargetHz;
-
         private readonly AppHost host;
-        private double lastRecordedTime;
-        private double lastVisualUpdateTime;
+        private readonly Func<ThreadFrameStatistics> getStatistics;
+
+        private readonly ThreadFrameSample[] drainBuffer = new ThreadFrameSample[ThreadFrameStatistics.CAPACITY];
+
+        /// <summary>
+        /// Read the position in the thread's ring. Negative until the first drain seeds it, so the overlay
+        /// starts from the present rather than replaying half a second of history it was not shown for.
+        /// </summary>
+        private long cursor = -1;
+
+        private readonly GraphBucket[] history = new GraphBucket[max_history];
+        private int historyIndex;
+        private int historyCount;
+
+        private GraphBucket pendingBucket;
+        private double pendingBucketElapsed;
+
         private long dataVersion;
         private long lastGraphVersion;
-        private double bucketMaxTime;
-        private double bucketSumTime;
-        private int bucketFrameCount;
-        private int bucketHighestGc = -1;
 
-        private const int jitter_ring_size = 128;
-        private readonly double[] jitterRing = new double[jitter_ring_size];
-        private int jitterRingIndex;
-        private double jitterRingSum;
-        private double jitterRingSumOfSquares;
-        private int jitterRingCount;
+        private double windowBusySum;
+        private double windowBlockedSum;
+        private int windowFrames;
+        private double latestBudget;
 
-        private SpriteText statsText;
-        private ThreadBarGraph barGraph;
-        private Box textBackground;
+        private readonly int[] missSlices = new int[miss_slice_count];
+        private int missSliceIndex;
+
+        /// <summary>
+        /// The last <see cref="blocked_spread_window"/> frames' device waits, for their spread.
+        /// </summary>
+        private readonly double[] blockedRing = new double[blocked_spread_window];
+        private int blockedRingIndex;
+        private int blockedRingCount;
+
+        private double displayBusy;
+        private double displayBlocked;
+
+        private double lastTextRefresh;
+
+        private readonly SpriteText fpsText;
+        private readonly SpriteText busyText;
+        private readonly SpriteText blockedText;
+        private readonly SpriteText blockedSpreadText;
+        private readonly FlowContainer timeFlow;
+        private readonly SpriteText budgetText;
+        private readonly SpriteText loadText;
+        private readonly ThreadBarGraph barGraph;
 
         private PerformanceOverlayState currentState;
 
-        public ThreadStatisticsDisplay(string name, IFrameBasedClock clock, Color baseColor, AppHost host, Func<double> getTargetHz)
+        /// <summary>
+        /// Budget to measure against when the thread is unthrottled
+        /// </summary>
+        private double fallbackBudgetMs => host.Window?.DisplayHz > 0 ? 1000.0 / host.Window.DisplayHz : 1000.0 / 60;
+
+        public ThreadStatisticsDisplay(string name, IFrameBasedClock clock, Color baseColor, AppHost host, Func<ThreadFrameStatistics> getStatistics)
         {
             this.name = name;
             this.clock = clock;
             this.baseColor = baseColor;
             this.host = host;
-            this.getTargetHz = getTargetHz;
-
-            for (int i = 0; i < max_history; i++)
-            {
-                frameHistory[i] = new FrameData { GcGeneration = -1 };
-            }
-
-            for (int i = 0; i < 3; i++)
-                lastGcCounts[i] = GC.CollectionCount(i);
+            this.getStatistics = getStatistics;
 
             Anchor = Anchor.TopRight;
             Origin = Anchor.TopRight;
-            Size = new Vector2(extended_width - 5, 20);
+            Size = new Vector2(overlay_width, row_height_compact);
 
-            Add(textBackground = new Box
+            Add(new Box
             {
                 RelativeSizeAxes = Axes.Both,
                 Color = Color.Black,
@@ -448,75 +390,113 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
             Add(barGraph = new ThreadBarGraph(this)
             {
                 RelativeSizeAxes = Axes.Both,
-                Alpha = 0.8f
+                Alpha = 0.5f
             });
 
-            Add(new Container
+            // separator
+            Add(new Box
             {
                 RelativeSizeAxes = Axes.X,
+                Height = 1,
+                Anchor = Anchor.TopLeft,
+                Origin = Anchor.TopLeft,
+                Color = Color.White,
+                Alpha = 0.25f
+            });
+
+            var font = FontUsage.Default.With(size: 14);
+
+            Add(new FlowContainer
+            {
+                Direction = FlowDirection.Horizontal,
                 AutoSizeAxes = Axes.Y,
-                Anchor = Anchor.TopRight,
-                Origin = Anchor.TopRight,
-                Padding = new MarginPadding
-                {
-                    Left = 5,
-                    Right = 5,
-                },
+                RelativeSizeAxes = Axes.X,
+                Anchor = Anchor.TopLeft,
+                Origin = Anchor.TopLeft,
+                Padding = new MarginPadding { Left = 5, Right = 5, Top = 1 },
+                Spacing = new Vector2(column_spacing, 0),
                 Children = new Drawable[]
                 {
-                    new FlowContainer
+                    column(column_name, new SpriteText
                     {
-                        Direction = FlowDirection.Horizontal,
-                        AutoSizeAxes = Axes.Both,
                         Anchor = Anchor.TopRight,
                         Origin = Anchor.TopRight,
-                        Spacing = new Vector2(10, 0),
+                        Text = name,
+                        Font = FontUsage.Default.With(size: 14, weight: "Bold"),
+                        Color = baseColor
+                    }),
+                    column(column_fps, fpsText = rightAligned(font, Color.White)),
+                    column(column_time, timeFlow = new FlowContainer
+                    {
+                        Anchor = Anchor.TopRight,
+                        Origin = Anchor.TopRight,
+                        Direction = FlowDirection.Horizontal,
+                        AutoSizeAxes = Axes.Both,
                         Children = new Drawable[]
                         {
-                            new SpriteText
+                            busyText = new SpriteText
                             {
-                                Text = name,
-                                Font = FontUsage.Default.With(size: 16, weight: "Bold"),
-                                Color = baseColor,
-                                Margin = new MarginPadding { Top = 2 }
-                            },
-                            statsText = new SpriteText
-                            {
-                                Text = "Waiting...",
-                                Font = FontUsage.Default.With(size: 16),
+                                Anchor = Anchor.TopLeft,
+                                Origin = Anchor.TopLeft,
+                                Font = font,
                                 Color = Color.White,
-                                Margin = new MarginPadding { Top = 2 }
+                                Text = string.Empty
+                            },
+
+                            blockedText = new SpriteText
+                            {
+                                Anchor = Anchor.TopLeft,
+                                Origin = Anchor.TopLeft,
+                                Font = font,
+                                Color = Color.FromArgb(170, baseColor),
+                                Text = string.Empty
+                            },
+                            blockedSpreadText = new SpriteText
+                            {
+                                Anchor = Anchor.TopLeft,
+                                Origin = Anchor.TopLeft,
+                                Font = font,
+                                Color = Color.FromArgb(120, baseColor),
+                                Text = string.Empty
                             }
                         }
-                    }
+                    }),
+                    column(column_budget, budgetText = rightAligned(font, Color.LightGray)),
+                    column(column_load, loadText = rightAligned(font, Color.White)),
                 }
             });
+
+            static SpriteText rightAligned(FontUsage font, Color color) => new SpriteText
+            {
+                Anchor = Anchor.TopRight,
+                Origin = Anchor.TopRight,
+                Font = font,
+                Color = color,
+                Text = string.Empty
+            };
+
+            static Container column(float width, Drawable content) => new Container
+            {
+                Anchor = Anchor.TopLeft,
+                Origin = Anchor.TopLeft,
+                Size = new Vector2(width, 17),
+                Child = content
+            };
         }
 
         public void SetState(PerformanceOverlayState state)
         {
-            bool wasHidden = currentState == PerformanceOverlayState.Hidden;
             currentState = state;
 
-            if (wasHidden && state != PerformanceOverlayState.Hidden)
+            if (state == PerformanceOverlayState.Expanded)
             {
-                for (int i = 0; i < 3; i++)
-                    lastGcCounts[i] = GC.CollectionCount(i);
-
-                lastRecordedTime = Clock?.CurrentTime ?? 0;
-            }
-
-            if (state == PerformanceOverlayState.Compact)
-            {
-                barGraph.Hide();
-                AutoSizeAxes = Axes.Y;
-                Width = compact_width - 5;
+                barGraph.Show();
+                Size = new Vector2(overlay_width, row_height_expanded);
             }
             else
             {
-                barGraph.Show();
-                AutoSizeAxes = Axes.None;
-                Size = new Vector2(extended_width - 5, 100);
+                barGraph.Hide();
+                Size = new Vector2(overlay_width, row_height_compact);
             }
         }
 
@@ -527,130 +507,162 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
             if (currentState == PerformanceOverlayState.Hidden)
                 return;
 
-            if (clock != null && clock.IsRunning)
+            var statistics = getStatistics();
+
+            if (statistics == null)
+                return;
+
+            if (cursor < 0)
+                cursor = statistics.TotalFrames;
+
+            int count = statistics.Drain(drainBuffer, ref cursor, out _);
+
+            for (int i = 0; i < count; i++)
+                record(in drainBuffer[i]);
+
+            // Rebuilt only when a bar has actually been committed. propagateToParent is false because
+            // the graph's bounds never change with its data; only its own vertices need regenerating.
+            if (currentState == PerformanceOverlayState.Expanded && dataVersion != lastGraphVersion)
             {
-                if (clock.CurrentTime > lastRecordedTime)
-                {
-                    int highestGcGen = -1;
-                    for (int i = 0; i < 3; i++)
-                    {
-                        int currentCount = GC.CollectionCount(i);
-                        if (currentCount > lastGcCounts[i])
-                        {
-                            highestGcGen = i;
-                            lastGcCounts[i] = currentCount;
-                        }
-                    }
+                barGraph.Invalidate(InvalidationFlags.DrawInfo, false);
+                lastGraphVersion = dataVersion;
+            }
 
-                    double rawFrame = clock.ElapsedFrameTime;
-                    double evicted = jitterRing[jitterRingIndex];
-                    jitterRingSum += rawFrame - evicted;
-                    jitterRingSumOfSquares += rawFrame * rawFrame - evicted * evicted;
-                    jitterRing[jitterRingIndex] = rawFrame;
-                    jitterRingIndex = (jitterRingIndex + 1) % jitter_ring_size;
-                    if (jitterRingCount < jitter_ring_size)
-                        jitterRingCount++;
-
-                    bucketHighestGc = Math.Max(bucketHighestGc, highestGcGen);
-                    bucketMaxTime = Math.Max(bucketMaxTime, rawFrame);
-                    bucketSumTime += rawFrame;
-                    bucketFrameCount++;
-
-                    lastRecordedTime = clock.CurrentTime;
-
-                    double bucketThreshold = 0;
-                    switch (host.FrameLimiter.Value)
-                    {
-                        case FrameSync.VSync:
-                        case FrameSync.Limit2x:
-                            bucketThreshold = 0;
-                            break;
-                        case FrameSync.Limit4x:
-                            bucketThreshold = 0.5;
-                            break;
-                        case FrameSync.Limit8x:
-                        case FrameSync.Unlimited:
-                            bucketThreshold = 1.0;
-                            break;
-                    }
-
-                    if (bucketSumTime >= bucketThreshold && bucketFrameCount > 0)
-                    {
-                        frameHistory[currentIndex] = new FrameData
-                        {
-                            ElapsedTime = bucketSumTime / bucketFrameCount,
-                            MaxElapsedTime = bucketMaxTime,
-                            IsActive = host.Window?.IsActive ?? true,
-                            GcGeneration = bucketHighestGc
-                        };
-
-                        currentIndex = (currentIndex + 1) % max_history;
-                        if (currentCount < max_history) currentCount++;
-                        dataVersion++;
-
-                        bucketMaxTime = 0;
-                        bucketSumTime = 0;
-                        bucketFrameCount = 0;
-                        bucketHighestGc = -1;
-                    }
-                }
-
-                // Rebuild the graph whenever new data has been committed so it scrolls smoothly.
-                // propagateToParent is false because the graph's bounds never change with its data;
-                // only this drawable's vertices need regenerating.
-                if (currentState == PerformanceOverlayState.Expanded && dataVersion != lastGraphVersion)
-                {
-                    barGraph.Invalidate(InvalidationFlags.DrawInfo, false);
-                    lastGraphVersion = dataVersion;
-                }
-
-                // throttle stats text to 10Hz (unreadable faster)
-                if (Clock.CurrentTime - lastVisualUpdateTime >= 100.0)
-                {
-                    updateStats();
-                    lastVisualUpdateTime = Clock.CurrentTime;
-                }
+            if (Clock.CurrentTime - lastTextRefresh >= text_refresh_ms)
+            {
+                updateText();
+                lastTextRefresh = Clock.CurrentTime;
             }
         }
 
-        private void updateStats()
+        private void record(in ThreadFrameSample sample)
         {
-            if (currentCount == 0) return;
+            windowBusySum += sample.BusyMilliseconds;
+            windowBlockedSum += sample.BlockedMilliseconds;
+            windowFrames++;
+            latestBudget = sample.BudgetMilliseconds;
 
-            // FPS
+            if (sample.MissedDeadline)
+                missSlices[missSliceIndex]++;
+
+            blockedRing[blockedRingIndex] = sample.BlockedMilliseconds;
+            blockedRingIndex = (blockedRingIndex + 1) % blocked_spread_window;
+
+            if (blockedRingCount < blocked_spread_window)
+                blockedRingCount++;
+
+            pendingBucket.Busy = Math.Max(pendingBucket.Busy, sample.BusyMilliseconds);
+            pendingBucket.Blocked = Math.Max(pendingBucket.Blocked, sample.BlockedMilliseconds);
+            pendingBucket.GCMilliseconds = Math.Max(pendingBucket.GCMilliseconds, sample.GCMilliseconds);
+            pendingBucket.Budget = sample.BudgetMilliseconds;
+            pendingBucket.Missed |= sample.MissedDeadline;
+
+            pendingBucketElapsed += sample.ElapsedMilliseconds;
+
+            if (pendingBucketElapsed < bucket_ms)
+                return;
+
+            history[historyIndex] = pendingBucket;
+            historyIndex = (historyIndex + 1) % max_history;
+
+            if (historyCount < max_history)
+                historyCount++;
+
+            dataVersion++;
+
+            pendingBucket = default;
+            pendingBucketElapsed = 0;
+        }
+
+        private void updateText()
+        {
+            if (windowFrames > 0)
+            {
+                displayBusy = windowBusySum / windowFrames;
+                displayBlocked = windowBlockedSum / windowFrames;
+
+                windowBusySum = 0;
+                windowBlockedSum = 0;
+                windowFrames = 0;
+            }
+
+            int misses = 0;
+
+            foreach (int slice in missSlices)
+                misses += slice;
+
+            missSliceIndex = (missSliceIndex + 1) % miss_slice_count;
+            missSlices[missSliceIndex] = 0;
+
+            bool throttled = latestBudget > 0;
+            double budget = throttled ? latestBudget : fallbackBudgetMs;
+
+            double fps = clock?.FramesPerSecond ?? 0;
+
+            fpsText.Text = fps > 0 ? $"{fps:F0}fps" : "--fps";
+
+            busyText.Text = $"{displayBusy:F2}";
+
+            bool blocking = displayBlocked >= 0.05;
+            blockedText.Text = blocking ? $"+{displayBlocked:F2}" : string.Empty;
+            blockedSpreadText.Text = blocking ? $"±{blockedSpread():F2}" : string.Empty;
+
+            budgetText.Text = $"/{(throttled ? string.Empty : "~")}{budget:F1}ms";
+
+            loadText.Text = (budget > 0 ? $"{displayBusy / budget * 100:F0}%" : "-")
+                            + (misses > 0 ? $" ({misses})" : string.Empty);
+            loadText.Color = misses > 0 ? Color.Red : Color.White;
+        }
+
+        /// <summary>
+        /// Standard deviation of the device wait over <see cref="blockedRing"/>.
+        /// </summary>
+        private double blockedSpread()
+        {
+            if (blockedRingCount == 0)
+                return 0;
+
             double sum = 0;
-            for (int i = 0; i < currentCount; i++)
-                sum += frameHistory[i].ElapsedTime;
-            double meanFrameTime = sum / currentCount;
-            double fps = meanFrameTime > 0.0001 ? 1000.0 / meanFrameTime : 0;
 
-            // Jitter from the raw ring using the one-pass computational variance formula:
-            // Var(x) = E[x²] - E[x]²
-            // This operates on raw (pre-bucket) frame times, so spikes are never averaged away.
-            double jitter = 0;
-            if (jitterRingCount > 0)
+            for (int i = 0; i < blockedRingCount; i++)
+                sum += blockedRing[i];
+
+            double mean = sum / blockedRingCount;
+            double sumOfSquaredDeviations = 0;
+
+            for (int i = 0; i < blockedRingCount; i++)
             {
-                int n = jitterRingCount < jitter_ring_size ? jitterRingCount : jitter_ring_size;
-                double mean = jitterRingSum / n;
-                double variance = jitterRingSumOfSquares / n - mean * mean;
-                // Clamp to 0 to guard against tiny floating-point negatives.
-                jitter = Math.Sqrt(Math.Max(0, variance));
+                double deviation = blockedRing[i] - mean;
+                sumOfSquaredDeviations += deviation * deviation;
             }
 
-            double targetHz = getTargetHz();
-            string hzText = targetHz is > 0 and < 10_000 ? $"{targetHz:0}hz" : "∞hz";
-            statsText.Text = $"{fps,4:F0}fps ({meanFrameTime,4:F2}ms ±{jitter,4:F2}ms) {hzText,5}";
+            return Math.Sqrt(sumOfSquaredDeviations / blockedRingCount);
         }
 
-        private partial class ThreadBarGraph : Drawable
+        private struct GraphBucket
         {
+            public double Busy;
+            public double Blocked;
+            [SuppressMessage("ReSharper", "InconsistentNaming")]
+            public double GCMilliseconds;
+            public double Budget;
+            public bool Missed;
+        }
+
+        private sealed partial class ThreadBarGraph : Drawable
+        {
+            /// <summary>
+            /// Six each for the busy segment, the blocked segment stacked on it, and the GC marker.
+            /// </summary>
+            private const int vertices_per_bucket = 18;
+
             private readonly ThreadStatisticsDisplay display;
 
             public ThreadBarGraph(ThreadStatisticsDisplay display)
             {
                 this.display = display;
                 Blending = BlendingMode.Additive;
-                Vertices = new Vertex[max_history * 18];
+                Vertices = new Vertex[max_history * vertices_per_bucket];
             }
 
             protected internal override VertexTopology Topology => VertexTopology.Triangles;
@@ -661,17 +673,17 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
 
             protected override void GenerateVertices()
             {
-                var finalMatrix = ModelMatrix;
                 float w = DrawSize.X > 0 ? DrawSize.X : 1;
                 float h = DrawSize.Y > 0 ? DrawSize.Y : 1;
 
-                // rebuild runs once per committed data point (i.e. at update rate when expanded),
-                // so it must stay cheap. The model matrix is affine, so decompose it once:
-                // p' = origin + x * basisX + y * basisY — two multiply-adds per vertex instead of
-                // a full 4x4 matrix transform.
-                Vector2 origin = Vector2.Transform(new Vector2(0, 0), finalMatrix);
-                Vector2 unitX = Vector2.Transform(new Vector2(1, 0), finalMatrix);
-                Vector2 unitY = Vector2.Transform(new Vector2(0, 1), finalMatrix);
+                // Runs once per committed bar, so it must stay cheap. The model matrix is affine, so
+                // decompose it once: p' = origin + x * basisX + y * basisY, two multiply-adds per vertex
+                // instead of a full 4x4 transform.
+                var matrix = ModelMatrix;
+                Vector2 origin = Vector2.Transform(new Vector2(0, 0), matrix);
+                Vector2 unitX = Vector2.Transform(new Vector2(1, 0), matrix);
+                Vector2 unitY = Vector2.Transform(new Vector2(0, 1), matrix);
+
                 float bxX = unitX.X - origin.X, bxY = unitX.Y - origin.Y;
                 float byX = unitY.X - origin.X, byY = unitY.Y - origin.Y;
 
@@ -679,131 +691,100 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
                     origin.X + x * bxX + y * byX,
                     origin.Y + x * bxY + y * byY);
 
+                var busyColor = toLinear(display.baseColor, DrawAlpha);
+
+                var missColor = toLinear(Color.Red, DrawAlpha);
+                var gcColor = toLinear(Color.Orange, DrawAlpha);
+                var gcHeavyColor = toLinear(Color.Red, DrawAlpha);
+
                 float barWidth = w / max_history;
-                int startIndex = display.currentCount == max_history ? display.currentIndex : 0;
-
-                // per-rebuild constants, hoisted out of the bar loop
-                var blueBgColor = new Vector4(0, 0, 0.5f, DrawAlpha * 0.4f);
-
-                Color color = display.baseColor;
-                var calculatedColor = new Vector4(
-                    ColorExtensions.SrgbToLinear(color.R),
-                    ColorExtensions.SrgbToLinear(color.G),
-                    ColorExtensions.SrgbToLinear(color.B),
-                    DrawAlpha * (color.A / 255f)
-                );
-
-                var gcYellow = new Vector4(
-                    ColorExtensions.SrgbToLinear(Color.Yellow.R),
-                    ColorExtensions.SrgbToLinear(Color.Yellow.G),
-                    ColorExtensions.SrgbToLinear(Color.Yellow.B),
-                    DrawAlpha);
-
-                var gcRed = new Vector4(
-                    ColorExtensions.SrgbToLinear(Color.Red.R),
-                    ColorExtensions.SrgbToLinear(Color.Red.G),
-                    ColorExtensions.SrgbToLinear(Color.Red.B),
-                    DrawAlpha);
-
-                float dotHeight = 3f / h;
+                float markerHeight = 3f / h;
+                int start = display.historyCount == max_history ? display.historyIndex : 0;
+                double fallbackBudget = display.fallbackBudgetMs;
 
                 float minX = float.MaxValue, minY = float.MaxValue;
                 float maxX = float.MinValue, maxY = float.MinValue;
 
                 for (int i = 0; i < max_history; i++)
                 {
-                    int offset = i * 18; // 18 vertices per frame (background: 6, bar: 6, GC: 6)
+                    int offset = i * vertices_per_bucket;
 
-                    if (i >= display.currentCount)
+                    if (i >= display.historyCount)
                     {
-                        for (int v = 0; v < 18; v++) Vertices[offset + v] = default;
+                        for (int v = 0; v < vertices_per_bucket; v++)
+                            Vertices[offset + v] = default;
+
                         continue;
                     }
 
-                    int bufferIndex = (startIndex + i) % max_history;
-                    FrameData frame = display.frameHistory[bufferIndex];
+                    var bucket = display.history[(start + i) % max_history];
 
-                    float left = i * barWidth;
-                    float right = left + barWidth;
+                    double budget = bucket.Budget > 0 ? bucket.Budget : fallbackBudget;
 
-                    // inactive background
-                    if (!frame.IsActive)
-                    {
-                        var bgTopLeft = map(left / w, 0);
-                        var bgTopRight = map(right / w, 0);
-                        var bgBottomLeft = map(left / w, 1);
-                        var bgBottomRight = map(right / w, 1);
+                    if (budget <= 0)
+                        budget = 1000.0 / 60;
 
-                        Vertices[offset + 0] = new Vertex { Position = bgTopLeft, Color = blueBgColor };
-                        Vertices[offset + 1] = new Vertex { Position = bgTopRight, Color = blueBgColor };
-                        Vertices[offset + 2] = new Vertex { Position = bgBottomRight, Color = blueBgColor };
-                        Vertices[offset + 3] = new Vertex { Position = bgBottomRight, Color = blueBgColor };
-                        Vertices[offset + 4] = new Vertex { Position = bgBottomLeft, Color = blueBgColor };
-                        Vertices[offset + 5] = new Vertex { Position = bgTopLeft, Color = blueBgColor };
-                    }
+                    float left = i * barWidth / w;
+                    float right = (i + 1) * barWidth / w;
+
+                    // Scaled so the top of the graph is the budget
+                    float busyRatio = (float)Math.Clamp(bucket.Busy / budget, 0, 1);
+
+                    quad(offset, left, right, 1 - busyRatio, 1, bucket.Missed ? missColor : busyColor);
+
+                    // The device wait is deliberately not stacked here. It routinely runs longer than
+                    // the budget (Metal paces the drawable acquire to the display whatever the frame
+                    // limiter asks for), so stacking it turned the draw graph into a solid block that
+                    // hid the only thing the graph is for: the shape of our own work over time. The
+                    // figure itself is on the row, where it does not crowd anything out.
+                    for (int v = 0; v < 6; v++)
+                        Vertices[offset + 6 + v] = default;
+
+                    if (bucket.GCMilliseconds > 0)
+                        quad(offset + 12, left, right, 0, markerHeight, bucket.GCMilliseconds >= 1 ? gcHeavyColor : gcColor);
                     else
-                    {
-                        for (int v = 0; v < 6; v++) Vertices[offset + v] = default;
-                    }
-
-                    // performance bar
-                    float barHeightRatio = (float)(frame.MaxElapsedTime / 33.3);
-                    barHeightRatio = Math.Clamp(barHeightRatio, 0.02f, 1f);
-                    float barHeight = barHeightRatio * h;
-                    float top = h - barHeight;
-
-                    var pTopLeft = map(left / w, top / h);
-                    var pTopRight = map(right / w, top / h);
-                    var pBottomLeft = map(left / w, 1);
-                    var pBottomRight = map(right / w, 1);
-
-                    minX = Math.Min(minX, Math.Min(pTopLeft.X, pBottomRight.X));
-                    minY = Math.Min(minY, Math.Min(pTopLeft.Y, pBottomRight.Y));
-                    maxX = Math.Max(maxX, Math.Max(pTopLeft.X, pBottomRight.X));
-                    maxY = Math.Max(maxY, Math.Max(pTopLeft.Y, pBottomRight.Y));
-
-                    Vertices[offset + 6] = new Vertex { Position = pTopLeft, TexCoords = new Vector2(0, 0), Color = calculatedColor };
-                    Vertices[offset + 7] = new Vertex { Position = pTopRight, TexCoords = new Vector2(1, 0), Color = calculatedColor };
-                    Vertices[offset + 8] = new Vertex { Position = pBottomRight, TexCoords = new Vector2(1, 1), Color = calculatedColor };
-                    Vertices[offset + 9] = new Vertex { Position = pBottomRight, TexCoords = new Vector2(1, 1), Color = calculatedColor };
-                    Vertices[offset + 10] = new Vertex { Position = pBottomLeft, TexCoords = new Vector2(0, 1), Color = calculatedColor };
-                    Vertices[offset + 11] = new Vertex { Position = pTopLeft, TexCoords = new Vector2(0, 0), Color = calculatedColor };
-
-                    // GC event dt
-                    if (frame.GcGeneration >= 0)
-                    {
-                        var calcGcColor = frame.GcGeneration == 2 ? gcRed : gcYellow;
-
-                        var gcTopLeft = map(left / w, 0);
-                        var gcTopRight = map(right / w, 0);
-                        var gcBottomLeft = map(left / w, dotHeight);
-                        var gcBottomRight = map(right / w, dotHeight);
-
-                        Vertices[offset + 12] = new Vertex { Position = gcTopLeft, Color = calcGcColor };
-                        Vertices[offset + 13] = new Vertex { Position = gcTopRight, Color = calcGcColor };
-                        Vertices[offset + 14] = new Vertex { Position = gcBottomRight, Color = calcGcColor };
-                        Vertices[offset + 15] = new Vertex { Position = gcBottomRight, Color = calcGcColor };
-                        Vertices[offset + 16] = new Vertex { Position = gcBottomLeft, Color = calcGcColor };
-                        Vertices[offset + 17] = new Vertex { Position = gcTopLeft, Color = calcGcColor };
-                    }
-                    else
-                    {
                         for (int v = 0; v < 6; v++) Vertices[offset + 12 + v] = default;
-                    }
                 }
 
-                DrawRectangle = (minX <= maxX && minY <= maxY)
+                DrawRectangle = minX <= maxX && minY <= maxY
                     ? new RectangleF(minX, minY, maxX - minX, maxY - minY)
                     : new RectangleF();
-            }
-        }
-    }
+                return;
 
-    private struct FrameData
-    {
-        public double ElapsedTime;
-        public double MaxElapsedTime;
-        public bool IsActive;
-        public int GcGeneration;
+                void quad(int offset, float left, float right, float top, float bottom, Vector4 color)
+                {
+                    if (bottom - top <= 0)
+                    {
+                        for (int v = 0; v < 6; v++)
+                            Vertices[offset + v] = default;
+
+                        return;
+                    }
+
+                    var topLeft = map(left, top);
+                    var topRight = map(right, top);
+                    var bottomLeft = map(left, bottom);
+                    var bottomRight = map(right, bottom);
+
+                    minX = Math.Min(minX, Math.Min(topLeft.X, bottomRight.X));
+                    minY = Math.Min(minY, Math.Min(topLeft.Y, bottomRight.Y));
+                    maxX = Math.Max(maxX, Math.Max(topLeft.X, bottomRight.X));
+                    maxY = Math.Max(maxY, Math.Max(topLeft.Y, bottomRight.Y));
+
+                    Vertices[offset + 0] = new Vertex { Position = topLeft, Color = color };
+                    Vertices[offset + 1] = new Vertex { Position = topRight, Color = color };
+                    Vertices[offset + 2] = new Vertex { Position = bottomRight, Color = color };
+                    Vertices[offset + 3] = new Vertex { Position = bottomRight, Color = color };
+                    Vertices[offset + 4] = new Vertex { Position = bottomLeft, Color = color };
+                    Vertices[offset + 5] = new Vertex { Position = topLeft, Color = color };
+                }
+            }
+
+            private static Vector4 toLinear(Color color, float alpha) => new Vector4(
+                ColorExtensions.SrgbToLinear(color.R),
+                ColorExtensions.SrgbToLinear(color.G),
+                ColorExtensions.SrgbToLinear(color.B),
+                alpha * (color.A / 255f));
+        }
     }
 }
