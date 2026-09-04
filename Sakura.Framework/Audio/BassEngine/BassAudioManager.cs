@@ -13,6 +13,7 @@ using ManagedBass.Mix;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Reactive;
 using Sakura.Framework.Statistic;
+using Sakura.Framework.Timing;
 
 namespace Sakura.Framework.Audio.BassEngine;
 
@@ -261,6 +262,17 @@ internal class BassAudioManager : IAudioManager, IDisposable
             }
         });
     }
+
+    public Scheduler? EventScheduler { get; set; }
+
+    public void RaiseEvent(Action action)
+    {
+        if (EventScheduler != null)
+            EventScheduler.Add(action);
+        else
+            action();
+    }
+
 
     /// <summary>
     /// Enqueues an action to be executed safely on audio thread

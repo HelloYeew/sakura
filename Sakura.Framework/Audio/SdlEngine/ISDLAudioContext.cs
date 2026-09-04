@@ -46,6 +46,18 @@ internal interface ISDLAudioContext
     void EnqueueAction(Action action);
 
     /// <summary>
+    /// Raises a user-facing channel event (<see cref="IAudioChannel.OnStart"/>,
+    /// <see cref="IAudioChannel.OnStop"/>, <see cref="IAudioChannel.OnEnd"/>) where the caller can act
+    /// on it, which is the update thread in a hosted app.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="EnqueueAction"/>, which gets work onto the audio thread. This gets
+    /// work back off it by <see cref="IAudioManager.Update"/> runs there, so a channel that fired its
+    /// own delegates inline would hand a subscriber the audio thread.
+    /// </remarks>
+    void RaiseEvent(Action action);
+
+    /// <summary>
     /// Nudges the decode thread, for when a channel suddenly needs audio it does not have — after a
     /// seek, or on starting playback.
     /// </summary>

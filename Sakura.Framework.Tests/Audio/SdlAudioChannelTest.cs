@@ -36,6 +36,9 @@ public class SdlAudioChannelTest
         public int WakeCount;
 
         public void EnqueueAction(Action action) => pending.Enqueue(action);
+
+        public void RaiseEvent(Action action) => action();
+
         public void WakeDecoder() => WakeCount++;
 
         /// <summary>Runs everything queued, including anything queued while draining.</summary>

@@ -135,6 +135,11 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
         Cache(Host.Window);
 
         AudioManager = CreateAudioManager();
+
+        // The audio manager updates on the audio thread, so its user-facing events need a way back to
+        // the update thread. This scheduler is drained in Update() below, which is that thread.
+        AudioManager.EventScheduler = Scheduler;
+
         Host.AudioManager = AudioManager;
         var masterVolume = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.MasterVolume);
         var trackVolume = Host.FrameworkConfigManager.Get<double>(FrameworkSetting.TrackVolume);
@@ -320,7 +325,6 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
     public override void Update()
     {
         base.Update();
-        AudioManager?.Update(Clock.ElapsedFrameTime);
         Scheduler?.Update();
     }
 

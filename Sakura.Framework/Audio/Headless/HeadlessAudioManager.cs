@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.IO;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Reactive;
+using Sakura.Framework.Timing;
 
 namespace Sakura.Framework.Audio.Headless;
 
@@ -40,6 +41,17 @@ public class HeadlessAudioManager : IAudioManager, IDisposable
         };
         Logger.Verbose("🔈 Headless audio manager initialized");
     }
+
+    public Scheduler? EventScheduler { get; set; }
+
+    public void RaiseEvent(Action action)
+    {
+        if (EventScheduler != null)
+            EventScheduler.Add(action);
+        else
+            action();
+    }
+
 
     public void EnqueueAction(Action action)
     {

@@ -58,19 +58,23 @@ internal abstract class AudioChannel : IAudioChannel
 
     private void isRunningChanged(ValueChangedEvent<bool> e)
     {
+        Action? handler;
+
         if (e.NewValue)
         {
             // IsRunning changed to true
             isPaused = false;
             Manager.AddChannel(this);
-            OnStart?.Invoke();
+            handler = OnStart;
         }
         else
         {
             // IsRunning changed to false
             Manager.RemoveChannel(this);
-            OnStop?.Invoke();
+            handler = OnStop;
         }
+
+        Manager.RaiseEvent(() => handler?.Invoke());
     }
 
     public virtual void Play()
@@ -114,7 +118,9 @@ internal abstract class AudioChannel : IAudioChannel
 
         if (CurrentTime >= Length)
         {
-            OnEnd?.Invoke();
+            var ended = OnEnd;
+            Manager.RaiseEvent(() => ended?.Invoke());
+
             HandleLoop();
         }
     }

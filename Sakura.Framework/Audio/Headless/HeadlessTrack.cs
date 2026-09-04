@@ -23,7 +23,7 @@ public class HeadlessTrack : ITrack
 
     public IAudioChannel GetChannel()
     {
-        var channel = new HeadlessAudioChannel(Length)
+        var channel = new HeadlessAudioChannel(Length, manager)
         {
             Looping = true,
             RestartPoint = RestartPoint

@@ -23,6 +23,13 @@ public class AppThreadFrameStatisticsTest
     private const double work_ms = 2;
 
     /// <summary>
+    /// Stands in for the presentation period. Deliberately looser than <see cref="budget_ms"/>, the
+    /// way the real one is: a thread paced at twice the draw rate has half the budget but the same
+    /// deadline, because the panel is what is actually waiting.
+    /// </summary>
+    private const double deadline_ms = budget_ms * 2;
+
+    /// <summary>
     /// Burns CPU for a fixed duration. A sleep would be at the mercy of the OS timer; the overlay's
     /// whole point is measuring work, so the test should do actual work.
     /// </summary>
@@ -58,7 +65,10 @@ public class AppThreadFrameStatisticsTest
     [Test]
     public void TestBusyTimeExcludesTheThrottleWait()
     {
-        var thread = new AppThread("TestThread", () => spin(work_ms), () => target_hz);
+        var thread = new AppThread("TestThread", () => spin(work_ms), () => target_hz)
+        {
+            GetDeadlineMilliseconds = () => deadline_ms
+        };
 
         ThreadFrameSample[] samples;
 
@@ -86,6 +96,7 @@ public class AppThreadFrameStatisticsTest
         using (Assert.EnterMultipleScope())
         {
             Assert.That(settled.Select(s => s.BudgetMilliseconds), Is.All.EqualTo(budget_ms));
+            Assert.That(settled.Select(s => s.DeadlineMilliseconds), Is.All.EqualTo(deadline_ms));
 
             // The point of the whole exercise: busy reflects the ~2ms of work, not the ~10ms period the
             // throttle produces. Before this existed, the only number available was the period.
@@ -101,9 +112,12 @@ public class AppThreadFrameStatisticsTest
     [Test]
     public void TestOverrunningWorkIsReportedAsAMissedDeadline()
     {
-        // Twice the budget: the throttle cannot hold this thread to its target rate, and every frame
-        // should say so.
-        var thread = new AppThread("TestOverrunThread", () => spin(budget_ms * 2), () => target_hz);
+        // Twice the deadline: this frame is long enough that the presented frame behind it is gone,
+        // and every frame should say so.
+        var thread = new AppThread("TestOverrunThread", () => spin(deadline_ms * 2), () => target_hz)
+        {
+            GetDeadlineMilliseconds = () => deadline_ms
+        };
 
         ThreadFrameSample[] samples;
 
@@ -122,6 +136,47 @@ public class AppThreadFrameStatisticsTest
         Assert.That(settled, Is.Not.Empty);
 
         Assert.That(settled.Count(s => s.MissedDeadline), Is.GreaterThan(settled.Length / 2));
+    }
+
+    /// <summary>
+    /// The whole point of separating the two figures. A frame that runs past its pacing slice but
+    /// still inside the presentation period has cost nothing visible, and must not be counted.
+    /// </summary>
+    [Test]
+    public void TestOverrunningTheBudgetWithinTheDeadlineIsNotAMiss()
+    {
+        // Between the two: over the 10ms the thread is paced at, comfortably under the 20ms deadline.
+        const double over_budget_ms = budget_ms * 1.5;
+
+        var thread = new AppThread("TestOverBudgetThread", () => spin(over_budget_ms), () => target_hz)
+        {
+            GetDeadlineMilliseconds = () => deadline_ms
+        };
+
+        ThreadFrameSample[] samples;
+
+        thread.StartMultiThreaded();
+
+        try
+        {
+            samples = collect(thread, 20);
+        }
+        finally
+        {
+            thread.StopMultiThreaded();
+        }
+
+        var settled = samples.Skip(5).ToArray();
+        Assert.That(settled, Is.Not.Empty);
+
+        double medianBusy = median(settled.Select(s => s.BusyMilliseconds));
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(medianBusy, Is.GreaterThan(budget_ms), $"the test thread should be over its budget, was {medianBusy:F2}ms");
+            Assert.That(medianBusy, Is.LessThan(deadline_ms), $"the test thread should be under its deadline, was {medianBusy:F2}ms");
+            Assert.That(settled.Count(s => s.MissedDeadline), Is.Zero, "overrunning a pacing budget is not losing a frame");
+        }
     }
 
     [Test]
@@ -146,7 +201,8 @@ public class AppThreadFrameStatisticsTest
         using (Assert.EnterMultipleScope())
         {
             Assert.That(samples.Select(s => s.BudgetMilliseconds), Is.All.Zero);
-            Assert.That(samples.Any(s => s.MissedDeadline), Is.False, "a thread with no target rate has no deadline to miss");
+            Assert.That(samples.Select(s => s.DeadlineMilliseconds), Is.All.Zero, "a thread given no deadline provider records none");
+            Assert.That(samples.Any(s => s.MissedDeadline), Is.False, "a thread with nothing at stake has no deadline to miss");
         }
     }
 
@@ -172,7 +228,8 @@ public class AppThreadFrameStatisticsTest
             lastBlocked = (Stopwatch.GetTimestamp() - start) * 1000.0 / Stopwatch.Frequency;
         }, () => target_hz)
         {
-            GetBlockedMilliseconds = () => lastBlocked
+            GetBlockedMilliseconds = () => lastBlocked,
+            GetDeadlineMilliseconds = () => deadline_ms
         };
 
         ThreadFrameSample[] samples;
@@ -205,7 +262,7 @@ public class AppThreadFrameStatisticsTest
             // The frame occupied ~5ms of its 10ms budget, but only ~2ms of that was work. Charging the
             // wait to busy would have put it at half its budget instead of a fifth.
             Assert.That(medianBusy + medianBlocked, Is.EqualTo(work_ms + blocked_ms).Within(2));
-            Assert.That(settled.Count(s => s.MissedDeadline), Is.Zero, "blocking on a device is not overrunning the budget");
+            Assert.That(settled.Count(s => s.MissedDeadline), Is.Zero, "blocking on a device is not overrunning the deadline");
         }
     }
 
@@ -232,15 +289,16 @@ public class AppThreadFrameStatisticsTest
     }
 
     [Test]
-    public void TestRunSingleFrameRecordsTheBudgetItIsGiven()
+    public void TestRunSingleFrameRecordsTheBudgetAndDeadlineItIsGiven()
     {
         var thread = new AppThread("TestSingleFrameThread", () => spin(work_ms), () => target_hz);
 
         // Single-threaded execution runs every thread once per main-loop iteration, so the budget is
-        // the caller's, not the one this thread's own target rate would imply.
+        // the caller's, not the one this thread's own target rate would imply. Deadline also shared
         const double shared_budget_ms = 4;
+        const double shared_deadline_ms = 8;
 
-        thread.RunSingleFrame(shared_budget_ms);
+        thread.RunSingleFrame(shared_budget_ms, shared_deadline_ms);
 
         var destination = new ThreadFrameSample[4];
         long cursor = 0;
@@ -249,7 +307,32 @@ public class AppThreadFrameStatisticsTest
         {
             Assert.That(thread.FrameStatistics.Drain(destination, ref cursor, out _), Is.EqualTo(1));
             Assert.That(destination[0].BudgetMilliseconds, Is.EqualTo(shared_budget_ms));
+            Assert.That(destination[0].DeadlineMilliseconds, Is.EqualTo(shared_deadline_ms));
             Assert.That(destination[0].BusyMilliseconds, Is.GreaterThan(0));
+        }
+    }
+
+    /// <summary>
+    /// A caller that does not pass a deadline falls back to the thread's own provider, so the two
+    /// execution modes cannot disagree about what a miss is.
+    /// </summary>
+    [Test]
+    public void TestRunSingleFrameFallsBackToTheThreadDeadline()
+    {
+        var thread = new AppThread("TestSingleFrameFallbackThread", () => spin(work_ms), () => target_hz)
+        {
+            GetDeadlineMilliseconds = () => deadline_ms
+        };
+
+        thread.RunSingleFrame();
+
+        var destination = new ThreadFrameSample[4];
+        long cursor = 0;
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(thread.FrameStatistics.Drain(destination, ref cursor, out _), Is.EqualTo(1));
+            Assert.That(destination[0].DeadlineMilliseconds, Is.EqualTo(deadline_ms));
         }
     }
 
