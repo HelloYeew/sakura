@@ -36,13 +36,13 @@ public enum PerformanceOverlayState
 
 public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
 {
-    private const float overlay_width = 360;
+    private const float overlay_width = 420;
 
     private const float header_height = 40;
 
     private const float column_name = 56;
     private const float column_fps = 54;
-    private const float column_time = 104;
+    private const float column_time = 160;
     private const float column_budget = 54;
     private const float column_load = 58;
 
@@ -52,6 +52,11 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
     private const float row_height_expanded = 54;
 
     private const double text_refresh_ms = 100;
+
+    /// <summary>
+    /// Color of the device wait's spread (+- one, amber)
+    /// </summary>
+    private static readonly Color spread_color = Color.FromArgb(230, 240, 190, 100);
 
     private Reactive<PerformanceOverlayState> state;
 
@@ -448,7 +453,7 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
                                 Anchor = Anchor.TopLeft,
                                 Origin = Anchor.TopLeft,
                                 Font = font,
-                                Color = Color.FromArgb(170, baseColor),
+                                Color = baseColor,
                                 Text = string.Empty
                             },
                             blockedSpreadText = new SpriteText
@@ -456,8 +461,16 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
                                 Anchor = Anchor.TopLeft,
                                 Origin = Anchor.TopLeft,
                                 Font = font,
-                                Color = Color.FromArgb(120, baseColor),
+                                Color = spread_color,
                                 Text = string.Empty
+                            },
+                            new SpriteText
+                            {
+                                Anchor = Anchor.TopLeft,
+                                Origin = Anchor.TopLeft,
+                                Font = font,
+                                Color = Color.LightGray,
+                                Text = "ms"
                             }
                         }
                     }),
@@ -465,6 +478,8 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
                     column(column_load, loadText = rightAligned(font, Color.White)),
                 }
             });
+
+            return;
 
             static SpriteText rightAligned(FontUsage font, Color color) => new SpriteText
             {
@@ -562,6 +577,8 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
             if (pendingBucketElapsed < bucket_ms)
                 return;
 
+            pendingBucket.Inactive = host.Window?.IsActive == false;
+
             history[historyIndex] = pendingBucket;
             historyIndex = (historyIndex + 1) % max_history;
 
@@ -601,18 +618,29 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
 
             fpsText.Text = fps > 0 ? $"{fps:F0}fps" : "--fps";
 
-            busyText.Text = $"{displayBusy:F2}";
-
             bool blocking = displayBlocked >= 0.05;
-            blockedText.Text = blocking ? $"+{displayBlocked:F2}" : string.Empty;
-            blockedSpreadText.Text = blocking ? $"±{blockedSpread():F2}" : string.Empty;
+            double spread = blocking ? blockedSpread() : 0;
+
+            busyText.Text = formatTime(displayBusy);
+
+            blockedText.Text = blocking ? $"+({formatTime(displayBlocked)}" : string.Empty;
+            blockedSpreadText.Text = blocking ? $"±{formatTime(spread)})" : string.Empty;
 
             budgetText.Text = $"/{(throttled ? string.Empty : "~")}{budget:F1}ms";
 
-            loadText.Text = (budget > 0 ? $"{displayBusy / budget * 100:F0}%" : "-")
+            double load = budget > 0 ? displayBusy / budget * 100 : 0;
+
+            loadText.Text = (budget > 0 ? (load < 1 ? $"{load:F2}%" : $"{load:F0}%") : "-")
                             + (misses > 0 ? $" ({misses})" : string.Empty);
             loadText.Color = misses > 0 ? Color.Red : Color.White;
         }
+
+        private static string formatTime(double milliseconds) => milliseconds switch
+        {
+            >= 100 => $"{milliseconds:F1}",
+            >= 1 => $"{milliseconds:F2}",
+            _ => $"{milliseconds:F3}"
+        };
 
         /// <summary>
         /// Standard deviation of the device wait over <see cref="blockedRing"/>.
@@ -647,12 +675,13 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
             public double GCMilliseconds;
             public double Budget;
             public bool Missed;
+            public bool Inactive;
         }
 
         private sealed partial class ThreadBarGraph : Drawable
         {
             /// <summary>
-            /// Six each for the busy segment, the blocked segment stacked on it, and the GC marker.
+            /// Six each for the inactive-window wash, the busy segment, and the GC marker.
             /// </summary>
             private const int vertices_per_bucket = 18;
 
@@ -692,6 +721,7 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
                     origin.Y + x * bxY + y * byY);
 
                 var busyColor = toLinear(display.baseColor, DrawAlpha);
+                var inactiveColor = new Vector4(0, 0, 0.5f, DrawAlpha * 0.4f);
 
                 var missColor = toLinear(Color.Red, DrawAlpha);
                 var gcColor = toLinear(Color.Orange, DrawAlpha);
@@ -727,19 +757,22 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
                     float left = i * barWidth / w;
                     float right = (i + 1) * barWidth / w;
 
+                    if (bucket.Inactive)
+                        quad(offset, left, right, 0, 1, inactiveColor);
+                    else
+                        for (int v = 0; v < 6; v++)
+                            Vertices[offset + v] = default;
+
                     // Scaled so the top of the graph is the budget
                     float busyRatio = (float)Math.Clamp(bucket.Busy / budget, 0, 1);
 
-                    quad(offset, left, right, 1 - busyRatio, 1, bucket.Missed ? missColor : busyColor);
+                    quad(offset + 6, left, right, 1 - busyRatio, 1, bucket.Missed ? missColor : busyColor);
 
                     // The device wait is deliberately not stacked here. It routinely runs longer than
                     // the budget (Metal paces the drawable acquire to the display whatever the frame
                     // limiter asks for), so stacking it turned the draw graph into a solid block that
                     // hid the only thing the graph is for: the shape of our own work over time. The
                     // figure itself is on the row, where it does not crowd anything out.
-                    for (int v = 0; v < 6; v++)
-                        Vertices[offset + 6 + v] = default;
-
                     if (bucket.GCMilliseconds > 0)
                         quad(offset + 12, left, right, 0, markerHeight, bucket.GCMilliseconds >= 1 ? gcHeavyColor : gcColor);
                     else
