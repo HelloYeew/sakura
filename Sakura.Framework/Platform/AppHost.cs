@@ -37,6 +37,8 @@ public abstract class AppHost : IDisposable
 {
     private static readonly int frame_sync_value_count = Enum.GetValues<FrameSync>().Length;
 
+    private static readonly double ms_per_tick = 1000.0 / Stopwatch.Frequency;
+
     private static readonly GlobalStatistic<double> stat_uptime = GlobalStatistics.Get<double>("Host", "Uptime (ms)");
 
     /// <summary>
@@ -62,7 +64,27 @@ public abstract class AppHost : IDisposable
     protected internal Clock DrawClock { get; private set; }
     protected internal Clock AudioClock { get; private set; }
     public Clock InputClock { get; private set; }
-    private readonly ThrottledFrameClock soundClock = new ThrottledFrameClock(1000);
+
+    /// <summary>
+    /// Per-frame timings for the main loop (performance overlay labels "Input")
+    /// </summary>
+    public ThreadFrameStatistics InputFrameStatistics { get; } = new ThreadFrameStatistics();
+
+    /// <summary>
+    /// Per-frame timings for the update thread, or null before the host has started
+    /// </summary>
+    public ThreadFrameStatistics UpdateFrameStatistics => updateThread?.FrameStatistics;
+
+    /// <summary>
+    /// Per-frame timings for the draw thread, or null before the host has started
+    /// </summary>
+    public ThreadFrameStatistics DrawFrameStatistics => drawThread?.FrameStatistics;
+
+    /// <summary>
+    /// Per-frame timings for the audio thread, or null before the host has started
+    /// </summary>
+    public ThreadFrameStatistics AudioFrameStatistics => audioThread?.FrameStatistics;
+
     private readonly Stopwatch appLoopStopwatch = new Stopwatch();
     private readonly ConcurrentQueue<PendingInput> inputQueue = new ConcurrentQueue<PendingInput>();
     private readonly ConcurrentQueue<Action> mainThreadActions = new ConcurrentQueue<Action>();
@@ -482,7 +504,7 @@ public abstract class AppHost : IDisposable
                 // make renderer still resize itself in single thread mode
                 if (executionState == ExecutionState.Running && ExecutionMode.Value == Threading.ExecutionMode.SingleThread)
                 {
-                    threadRunner.RunSingleThreadedFrame();
+                    threadRunner.RunSingleThreadedFrame(targetUpdateHz > 0 ? 1000.0 / targetUpdateHz : 0, GetPresentationDeadlineMs());
                 }
             };
 
@@ -506,18 +528,22 @@ public abstract class AppHost : IDisposable
 
             updateThread = new AppThread("UpdateThread", PerformUpdate, getUpdateTargetHz)
             {
+                GetDeadlineMilliseconds = GetPresentationDeadlineMs,
                 Priority = ThreadPriority.AboveNormal,
                 UsePreciseTiming = usePreciseTiming
             };
             drawThread = new AppThread("DrawThread", PerformDraw, getDrawTargetHz)
             {
                 Priority = ThreadPriority.Normal,
-                UsePreciseTiming = usePreciseTiming
+                UsePreciseTiming = usePreciseTiming,
+                GetBlockedMilliseconds = () => lastPresentMilliseconds,
+                GetDeadlineMilliseconds = GetPresentationDeadlineMs
             };
             audioThread = new AppThread("AudioThread", PerformSoundUpdate, getAudioTargetHz)
             {
+                GetDeadlineMilliseconds = GetPresentationDeadlineMs,
                 Priority = ThreadPriority.Highest,
-                UsePreciseTiming = usePreciseTiming
+                UsePreciseTiming = static () => false
             };
 
             drawThread.OnInitialize = () => Window.MakeCurrent();
@@ -585,9 +611,6 @@ public abstract class AppHost : IDisposable
             };
 
             appLoopStopwatch.Start();
-
-            long timestampFrequency = Stopwatch.Frequency;
-            double msPerTick = 1000.0 / timestampFrequency;
             long nextMainFrameTime = Stopwatch.GetTimestamp();
             const double main_spin_guard_ms = 0.5;
 
@@ -599,13 +622,32 @@ public abstract class AppHost : IDisposable
             {
                 while (executionState == ExecutionState.Running)
                 {
-                    long nowTicks = Stopwatch.GetTimestamp();
-                    if ((nowTicks - lastGCStatisticsTicks) * msPerTick >= gc_statistics_interval_ms)
+                    // In single-threaded mode the main loop drives everything at the update rate.
+                    // In multi-threaded mode it only drives input, so it follows the input target Hz
+                    // (which throttles to 60 when the window is inactive, like the other threads).
+                    //
+                    // Read before the body rather than after it because the single-threaded frame needs
+                    // the budget to record against. A focus change arriving in this iteration's
+                    // PollEvents is therefore acted on one frame later, which at these rates is noise.
+                    double currentHz = ExecutionMode.Value == Threading.ExecutionMode.SingleThread
+                        ? targetUpdateHz
+                        : GetInputTargetHz();
+
+                    double mainBudgetMs = currentHz > 0 ? 1000.0 / currentHz : 0;
+
+                    double deadlineMs = GetPresentationDeadlineMs();
+
+                    long housekeepingTicks = Stopwatch.GetTimestamp();
+
+                    if ((housekeepingTicks - lastGCStatisticsTicks) * ms_per_tick >= gc_statistics_interval_ms)
                     {
-                        lastGCStatisticsTicks = nowTicks;
+                        lastGCStatisticsTicks = housekeepingTicks;
                         GCStatistics.Update();
                         Graphics.Textures.TextureRegistry.Prune();
                     }
+
+                    long nowTicks = Stopwatch.GetTimestamp();
+                    double pauseBefore = GC.GetTotalPauseDuration().TotalMilliseconds;
 
                     while (mainThreadActions.TryDequeue(out var action))
                     {
@@ -619,22 +661,28 @@ public abstract class AppHost : IDisposable
 
                     PerformInput();
 
+                    // Measured here, before any single-threaded frame, so the update/draw/audio work
+                    // that runs below is not also booked against the input row.
+                    double inputGcMs = GC.GetTotalPauseDuration().TotalMilliseconds - pauseBefore;
+                    double inputFrameMs = (Stopwatch.GetTimestamp() - nowTicks) * ms_per_tick;
+
+                    InputFrameStatistics.Record(new ThreadFrameSample
+                    {
+                        BusyMilliseconds = Math.Max(0, inputFrameMs - inputGcMs),
+                        GCMilliseconds = inputGcMs,
+                        ElapsedMilliseconds = InputClock.ElapsedFrameTime,
+                        BudgetMilliseconds = mainBudgetMs,
+                        DeadlineMilliseconds = deadlineMs
+                    });
+
                     if (ExecutionMode.Value == Threading.ExecutionMode.SingleThread)
                     {
-                        threadRunner.RunSingleThreadedFrame();
+                        threadRunner.RunSingleThreadedFrame(mainBudgetMs, deadlineMs);
                     }
-
-                    // In single-threaded mode the main loop drives everything at the update rate.
-                    // In multi-threaded mode it only drives input, so it follows the input target Hz
-                    // (which throttles to 60 when the window is inactive, like the other threads).
-                    double currentHz = ExecutionMode.Value == Threading.ExecutionMode.SingleThread
-                        ? targetUpdateHz
-                        : GetInputTargetHz();
 
                     if (currentHz > 0)
                     {
-                        double targetMainFrameTimeMs = 1000.0 / currentHz;
-                        long targetMainTicks = (long)(targetMainFrameTimeMs / msPerTick);
+                        long targetMainTicks = (long)(mainBudgetMs / ms_per_tick);
 
                         nextMainFrameTime += targetMainTicks;
 
@@ -643,7 +691,7 @@ public abstract class AppHost : IDisposable
                         if (now > nextMainFrameTime)
                             nextMainFrameTime = now;
 
-                        double remainingMs = (nextMainFrameTime - now) * msPerTick;
+                        double remainingMs = (nextMainFrameTime - now) * ms_per_tick;
 
                         // Same spin policy as the app threads: skip precision spinning when
                         // disabled or while the window is inactive (battery savings).
@@ -1022,14 +1070,42 @@ public abstract class AppHost : IDisposable
         }
 
         Renderer?.Draw(DrawClock);
+
+        long swapStart = Stopwatch.GetTimestamp();
         Window?.SwapBuffers();
+
+        // Where the display pushes back depends on the backend, so both places are counted: OpenGL
+        // blocks in the window-layer swap above, while Metal and Direct3D11 present from inside the
+        // renderer and report their own wait. Only one of the two is ever non-zero.
+        lastPresentMilliseconds = (Stopwatch.GetTimestamp() - swapStart) * ms_per_tick
+                                  + (Renderer?.LastBlockedMilliseconds ?? 0);
     }
+
+    /// <summary>
+    /// How long the last <see cref="PerformDraw"/> spent waiting on the display rather than drawing.
+    /// </summary>
+    private double lastPresentMilliseconds;
 
     private bool isMultiThread => ExecutionMode?.Value == Threading.ExecutionMode.MultiThread;
     internal double GetInputTargetHz() => isMultiThread ? getInputTargetHz() : targetUpdateHz;
     internal double GetAudioTargetHz() => isMultiThread ? getAudioTargetHz() : targetUpdateHz;
     internal double GetUpdateTargetHz() => isMultiThread ? getUpdateTargetHz() : targetUpdateHz;
     internal double GetDrawTargetHz() => isMultiThread ? getDrawTargetHz() : targetUpdateHz;
+
+    /// <summary>
+    /// How long a frame's work may take before a presented frame is lost, or 0 if that is not knowable.
+    /// Recorded on every thread's frames as <see cref="ThreadFrameSample.DeadlineMilliseconds"/>.
+    /// </summary>
+    internal double GetPresentationDeadlineMs()
+    {
+        double displayHz = Window?.DisplayHz > 0 ? Window.DisplayHz : 60;
+        double drawHz = getDrawTargetHz();
+
+        // Unlimited (0) has no ceiling of its own, so the panel is the only thing left pacing us.
+        double presentationHz = drawHz > 0 ? Math.Min(drawHz, displayHz) : displayHz;
+
+        return presentationHz > 0 ? 1000.0 / presentationHz : 0;
+    }
 
     private double getInputTargetHz() => Window != null && !Window.IsActive ? 60.0 : 1000.0;
     private double getAudioTargetHz() => Window != null && !Window.IsActive ? 60.0 : 1000.0;
@@ -1133,7 +1209,7 @@ public abstract class AppHost : IDisposable
             Console.CancelKeyPress -= cancelKeyPressHandler;
             cancelKeyPressHandler = null;
         }
-        
+
         FrameworkConfigManager?.Flush();
 
         Logger.Shutdown();

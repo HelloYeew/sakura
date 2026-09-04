@@ -118,6 +118,10 @@ public class HeadlessRenderer : IRenderer
     /// Walks the draw node tree, as the real backends do, but only when pixel capture is on. With capture
     /// off these stays the no-op it has always been, so no existing test starts rasterize behind its back.
     /// </summary>
+    /// <inheritdoc/>
+    /// <remarks>Always 0: there is no device to wait on.</remarks>
+    public double LastBlockedMilliseconds => 0;
+
     public void Draw(IClock clock)
     {
         if (rasterizer == null || rootNode == null)

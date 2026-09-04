@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using Sakura.Framework.Graphics.Colors;
@@ -296,8 +297,15 @@ public sealed class MetalRenderer : IMetalRenderer
         // Folded into begin_frame (load action = clear).
     }
 
+    /// <inheritdoc/>
+    public double LastBlockedMilliseconds => blockedMilliseconds;
+
+    private double blockedMilliseconds;
+
     public void StartFrame()
     {
+        blockedMilliseconds = 0;
+
         if (device == nint.Zero)
             return;
 
@@ -312,7 +320,12 @@ public sealed class MetalRenderer : IMetalRenderer
         // Budgeted texture uploads spread a burst across frames (see TextureUploadQueue).
         textureUploadQueue.Process();
 
+        // Timed because this acquires the layer's next drawable, and the layer hands one back only
+        // when the display has released it, so a frame waiting here is waiting on the display, not
+        // on anything the scene graph could do less of.
+        long blockStart = Stopwatch.GetTimestamp();
         SakuraMetalNative.sakura_metal_begin_frame(device, clear_color.r, clear_color.g, clear_color.b, clear_color.a);
+        blockedMilliseconds += Stopwatch.GetElapsedTime(blockStart).TotalMilliseconds;
 
         frameBufferStack.Clear();
 
@@ -437,7 +450,10 @@ public sealed class MetalRenderer : IMetalRenderer
         // next one's.
         TextureBindTracker.EndFrame();
 
+        // The other half of the device waits: committing the command buffer and scheduling the present.
+        long blockStart = Stopwatch.GetTimestamp();
         SakuraMetalNative.sakura_metal_end_frame(device);
+        blockedMilliseconds += Stopwatch.GetElapsedTime(blockStart).TotalMilliseconds;
     }
 
     /// <summary>

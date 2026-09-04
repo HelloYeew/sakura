@@ -58,7 +58,7 @@ internal class BassAudioManager : IAudioManager, IDisposable
     /// attaching to a device someone else already initialised.
     /// </para>
     /// </remarks>
-    internal double OutputLatencyMs { get; private set; }
+    public double OutputLatencyMs { get; private set; }
 
     /// <summary>
     /// The playback buffer BASS is keeping, in milliseconds.

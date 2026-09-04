@@ -345,6 +345,10 @@ public class GLRenderer : IGLRenderer, IDisposable
         triangleBatch.DrawRaw(vertices);
     }
 
+    /// <inheritdoc/>
+    /// <remarks>Always 0: OpenGL presents at the window layer, so the host times the swap itself.</remarks>
+    public double LastBlockedMilliseconds => 0;
+
     public void Draw(IClock clock)
     {
         if (rootNode == null) return;
