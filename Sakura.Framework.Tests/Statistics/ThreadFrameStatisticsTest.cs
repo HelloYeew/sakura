@@ -170,15 +170,22 @@ public class ThreadFrameStatisticsTest
     }
 
     [Test]
-    public void TestMissedDeadlineNeedsABudget()
+    public void TestMissedDeadlineIsScoredAgainstTheDeadlineNotTheBudget()
     {
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(new ThreadFrameSample { BusyMilliseconds = 5, BudgetMilliseconds = 4 }.MissedDeadline, Is.True);
-            Assert.That(new ThreadFrameSample { BusyMilliseconds = 3, BudgetMilliseconds = 4 }.MissedDeadline, Is.False);
+            Assert.That(new ThreadFrameSample { BusyMilliseconds = 9, DeadlineMilliseconds = 8 }.MissedDeadline, Is.True);
+            Assert.That(new ThreadFrameSample { BusyMilliseconds = 7, DeadlineMilliseconds = 8 }.MissedDeadline, Is.False);
 
-            // An unthrottled thread has no deadline to miss.
-            Assert.That(new ThreadFrameSample { BusyMilliseconds = 5, BudgetMilliseconds = 0 }.MissedDeadline, Is.False);
+            // an update frame at 480 Hz overruns its 2ms slice without
+            // coming anywhere near costing the 8.3ms frame the display was going to show.
+            Assert.That(new ThreadFrameSample { BusyMilliseconds = 5, BudgetMilliseconds = 2, DeadlineMilliseconds = 8 }.MissedDeadline, Is.False);
+
+            // a tight budget does not create a miss on its own
+            Assert.That(new ThreadFrameSample { BusyMilliseconds = 5, BudgetMilliseconds = 2 }.MissedDeadline, Is.False);
+
+            // nothing at stake, nothing to miss
+            Assert.That(new ThreadFrameSample { BusyMilliseconds = 5, DeadlineMilliseconds = 0 }.MissedDeadline, Is.False);
         }
     }
 

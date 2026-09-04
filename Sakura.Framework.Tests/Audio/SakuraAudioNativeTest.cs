@@ -44,6 +44,9 @@ public class SakuraAudioNativeTest
         public double OutputLatencyMs { get; set; }
 
         public void EnqueueAction(Action action) => action();
+
+        public void RaiseEvent(Action action) => action();
+
         public void WakeDecoder() { }
     }
 
