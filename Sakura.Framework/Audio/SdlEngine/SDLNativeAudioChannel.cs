@@ -136,8 +136,8 @@ internal class SDLNativeAudioChannel : ISDLChannel
 
         IsRunning.ValueChanged += e =>
         {
-            if (e.NewValue) OnStart?.Invoke();
-            else OnStop?.Invoke();
+            var handler = e.NewValue ? OnStart : OnStop;
+            Context.RaiseEvent(() => handler?.Invoke());
         };
 
         Volume.ValueChanged += _ => publishGain();
@@ -342,7 +342,8 @@ internal class SDLNativeAudioChannel : ISDLChannel
         // this is the only notice the compensator gets that the position jumped.
         latency.Reset();
 
-        OnEnd?.Invoke();
+        var ended = OnEnd;
+        Context.RaiseEvent(() => ended?.Invoke());
 
         if (Looping)
         {

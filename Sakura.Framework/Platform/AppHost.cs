@@ -543,7 +543,11 @@ public abstract class AppHost : IDisposable
             {
                 GetDeadlineMilliseconds = GetPresentationDeadlineMs,
                 Priority = ThreadPriority.Highest,
-                UsePreciseTiming = static () => false
+
+                // Back to precise timing now that PerformSoundUpdate has work. It was dropped while the
+                // thread ran an empty method, where spinning half of every millisecond at the highest
+                // priority in the process bought nothing.
+                UsePreciseTiming = usePreciseTiming
             };
 
             drawThread.OnInitialize = () => Window.MakeCurrent();
@@ -998,7 +1002,10 @@ public abstract class AppHost : IDisposable
     /// <summary>
     /// This method is called at a fixed 1000Hz for precise audio processing.
     /// </summary>
-    protected virtual void PerformSoundUpdate() { }
+    protected virtual void PerformSoundUpdate()
+    {
+        AudioManager?.Update(AudioClock.ElapsedFrameTime);
+    }
 
     /// <summary>
     /// Runs a single synchronous update + draw + present pass on the calling (main) thread.

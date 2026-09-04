@@ -122,8 +122,8 @@ internal class SDLAudioChannel : ISDLChannel
 
         IsRunning.ValueChanged += e =>
         {
-            if (e.NewValue) OnStart?.Invoke();
-            else OnStop?.Invoke();
+            var handler = e.NewValue ? OnStart : OnStop;
+            Context.RaiseEvent(() => handler?.Invoke());
         };
 
         Volume.ValueChanged += e => volume = (float)Math.Max(0, e.NewValue);
@@ -262,7 +262,8 @@ internal class SDLAudioChannel : ISDLChannel
 
         Context.EnqueueAction(() =>
         {
-            OnEnd?.Invoke();
+            var ended = OnEnd;
+            Context.RaiseEvent(() => ended?.Invoke());
 
             if (looping)
                 return;

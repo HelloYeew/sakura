@@ -4,6 +4,7 @@
 using System;
 using System.IO;
 using Sakura.Framework.Reactive;
+using Sakura.Framework.Timing;
 
 namespace Sakura.Framework.Audio;
 
@@ -74,6 +75,22 @@ public interface IAudioManager
     void EnqueueAction(Action action);
 
     /// <summary>
+    /// The scheduler used for invoking publicly exposed delegate events.
+    /// </summary>
+    Scheduler? EventScheduler { get; set; }
+
+    /// <summary>
+    /// Raises a user-facing event through <see cref="EventScheduler"/>, or inline if there is none.
+    /// </summary>
+    void RaiseEvent(Action action)
+    {
+        if (EventScheduler != null)
+            EventScheduler.Add(action);
+        else
+            action();
+    }
+
+    /// <summary>
     /// Load a sample from a precised file path
     /// </summary>
     /// <param name="path">The full path to the audio file</param>
@@ -81,10 +98,15 @@ public interface IAudioManager
     ISample CreateSampleFromFile(string path);
 
     /// <summary>
-    /// Updates the state of all playing audio channels.
-    /// The host should call this once per frame.
+    /// Updates the state of all playing audio channels. Called once per audio-thread frame by
+    /// <see cref="Platform.AppHost.PerformSoundUpdate"/>, and never from the update thread.
     /// </summary>
-    /// <param name="frameTime"></param>
+    /// <remarks>
+    /// This is where every queued audio action runs, so it is the thread every backend call is
+    /// serialized onto. User-facing events raised from here are marshaled by
+    /// <see cref="EventScheduler"/> rather than fired inline.
+    /// </remarks>
+    /// <param name="frameTime">Elapsed time since the previous audio frame, in milliseconds.</param>
     void Update(double frameTime);
 
     /// <summary>

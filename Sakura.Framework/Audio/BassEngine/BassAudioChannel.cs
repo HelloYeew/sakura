@@ -75,8 +75,8 @@ internal class BassAudioChannel : IAudioChannel
         // Set up reactive property bindings
         IsRunning.ValueChanged += e =>
         {
-            if (e.NewValue) OnStart?.Invoke();
-            else OnStop?.Invoke();
+            var handler = e.NewValue ? OnStart : OnStop;
+            manager.RaiseEvent(() => handler?.Invoke());
         };
 
         Volume.ValueChanged += e => manager.EnqueueAction(() =>
@@ -132,7 +132,9 @@ internal class BassAudioChannel : IAudioChannel
         // Schedule the event to run on the main audio thread (via manager update).
         manager.EnqueueAction(() =>
         {
-            OnEnd?.Invoke();
+            var ended = OnEnd;
+            manager.RaiseEvent(() => ended?.Invoke());
+
             if (!isLooping)
             {
                 IsRunning.Value = false;

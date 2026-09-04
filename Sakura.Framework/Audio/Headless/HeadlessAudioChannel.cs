@@ -8,14 +8,26 @@ namespace Sakura.Framework.Audio.Headless;
 
 public class HeadlessAudioChannel : IAudioChannel
 {
-    public HeadlessAudioChannel(double length)
+    private readonly HeadlessAudioManager? manager;
+
+    public HeadlessAudioChannel(double length, HeadlessAudioManager? manager = null)
     {
         Length = length;
+        this.manager = manager;
+
         IsRunning.ValueChanged += e =>
         {
-            if (e.NewValue) OnStart?.Invoke();
-            else OnStop?.Invoke();
+            var handler = e.NewValue ? OnStart : OnStop;
+            raiseEvent(() => handler?.Invoke());
         };
+    }
+
+    private void raiseEvent(Action action)
+    {
+        if (manager != null)
+            manager.RaiseEvent(action);
+        else
+            action();
     }
 
     public void Play()
@@ -88,7 +100,9 @@ public class HeadlessAudioChannel : IAudioChannel
             {
                 CurrentTime = Length;
                 IsRunning.Value = false;
-                OnEnd?.Invoke();
+
+                var ended = OnEnd;
+                raiseEvent(() => ended?.Invoke());
             }
         }
     }

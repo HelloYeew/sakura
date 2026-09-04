@@ -22,7 +22,7 @@ public class HeadlessSample : ISample
 
     public IAudioChannel GetChannel()
     {
-        var channel = new HeadlessAudioChannel(Length)
+        var channel = new HeadlessAudioChannel(Length, manager)
         {
             Looping = false // Samples usually don't loop
         };

@@ -14,6 +14,7 @@ using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Reactive;
 using Sakura.Framework.Statistic;
+using Sakura.Framework.Timing;
 using SDL;
 using static SDL.SDL3;
 
@@ -1055,6 +1056,17 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         if (action.IsNotNull())
             audioThreadActions.Enqueue(action);
     }
+
+    public Scheduler? EventScheduler { get; set; }
+
+    public void RaiseEvent(Action action)
+    {
+        if (EventScheduler != null)
+            EventScheduler.Add(action);
+        else
+            action();
+    }
+
 
     public void WakeDecoder() => decodeScheduler.Wake();
 
