@@ -92,6 +92,8 @@ public partial class DebugWindowLayer : Container, IRemoveFromDrawVisualiser
                 window.SetBounds(bounds.Position, bounds.Size);
             else
                 window.SetBounds(nextCascadePosition(), window.CurrentSize);
+
+            window.OnOpened();
         }
 
         raise(window);
@@ -137,12 +139,39 @@ public partial class DebugWindowLayer : Container, IRemoveFromDrawVisualiser
         return true;
     }
 
+    /// <summary>
+    /// Adds a screen-space companion to a window: something that has to draw over the app instead of
+    /// being clipped into a window's body, and to reach drawables anywhere on screen.
+    /// Mainly for <see cref="DrawVisualiser"/>'s highlight boxes and its inspected picker.
+    /// </summary>
+    /// <remarks>
+    /// An overlay keeps depth 0 while windows are raised to increasing depths, so it always sits
+    /// behind every window — a highlight drawn over the app must not cover the window describing it.
+    /// Overlays are not <see cref="DebugWindow"/>s, so they are invisible to <see cref="OpenWindows"/>
+    /// and to everything that iterates it.
+    /// </remarks>
+    public void AttachOverlay(Drawable overlay)
+    {
+        if (overlay.Parent == this)
+            return;
+
+        Add(overlay);
+    }
+
+    public void DetachOverlay(Drawable overlay)
+    {
+        if (overlay.Parent == this)
+            Remove(overlay, dispose: false);
+    }
+
     private void close(DebugWindow window)
     {
         if (window.Parent == null)
             return;
 
         storedBounds[window.GetType()] = (window.Position, window.CurrentSize);
+
+        window.OnClosed();
 
         bool dispose = window.DisposeOnClose;
 

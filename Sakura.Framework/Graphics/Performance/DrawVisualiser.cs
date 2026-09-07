@@ -5,7 +5,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using Sakura.Framework.Development;
 using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
@@ -16,531 +15,473 @@ using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Graphics.UserInterface;
 using Sakura.Framework.Input;
-using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
+using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Graphics.Performance;
 
-public partial class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisualiser
+public partial class DrawVisualiser : DebugWindow
 {
-    private Drawable targetRoot;
-    private readonly Drawable absoluteRoot;
-    private readonly Box backgroundBox;
-    private readonly FlowContainer treeFlow;
-    private readonly ScrollableContainer parentTreeFlow;
-    private readonly ScrollableContainer parentPropertyFlow;
-    private readonly FlowContainer propertyFlow;
-    private readonly Container leftContainer;
-    private readonly Container rightContainer;
-    private readonly Box highlightBox;
-    private Drawable? selectedDrawable;
-    private readonly SpriteText currentTimeText;
-    private readonly SpriteText runningTimeText;
-
-    private bool isInspecting;
-    private Drawable? hoveredDrawable;
-    private readonly Box inspectHighlightBox;
-    private readonly FlowContainer headerButtonsFlow;
-    private Drawable lastHoveredDrawable;
-
-    private Drawable lastSelectedDrawable;
-    private PropertyInfo[] cachedProperties;
-    private FieldInfo[] cachedFields;
-    private SpriteText loadStateText;
-    private readonly List<PropertyTracker> propertyTextMap = new();
-    private readonly List<(Drawable drawable, int depth)> cachedTreeStructure = new();
-    private readonly List<(Drawable drawable, int depth)> currentTreeStructure = new();
-
+    /// <summary>
+    /// Fraction of the window's width given to the tree pane.
+    /// </summary>
     private const float width_split = 0.4f;
+
     private const float entry_height = 20;
+
+    private const float toolbar_height = 34;
+
+    /// <summary>
+    /// How often the property pane re-reads the selected drawable.
+    /// </summary>
+    private const double property_interval = 100;
+
+    /// <summary>
+    /// How often the app's tree is walked to see whether it changed shape.
+    /// </summary>
+    private const double tree_interval = 500;
+
+    protected override string Title => "Draw Visualiser (Ctrl + F1)";
+    protected override Vector2 DefaultSize => new Vector2(940, 620);
+    protected override Vector2 MinSize => new Vector2(520, 280);
+    protected override Color Accent => Color.Pink;
+
+    /// <summary>
+    /// The app root: what inspect mode picks against, whatever the tree is rooted at.
+    /// </summary>
+    private readonly Drawable absoluteRoot;
+
+    /// <summary>
+    /// What the tree pane is rooted at, or null for the empty state it opens in. Moved by the
+    /// toolbar buttons and by choosing a drawable.
+    /// </summary>
+    /// <remarks>
+    /// It deliberately does not start at the app root. Nobody reads a whole app's tree — the way this
+    /// tool is actually used is "what is that thing on screen", so it opens empty and asks you to
+    /// choose a drawable; walking up from there reaches the root for anyone who does want all of it.
+    /// It is also the cheapest possible first open, since an empty tree walks nothing.
+    /// </remarks>
+    private Drawable? targetRoot;
+
+    private readonly ScrollableContainer treeScroll;
+    private readonly Container treeContent;
+
+    /// <summary>
+    /// Shown instead of the tree while nothing has been chosen, and says how to choose.
+    /// </summary>
+    private readonly SpriteText emptyHint;
+    private readonly ScrollableContainer propertyScroll;
+    private readonly FlowContainer propertyFlow;
+
+    /// <summary>
+    /// The rows currently in the tree pane. One per visible line, reused as the pane scrolls — not
+    /// one per drawable in the app.
+    /// </summary>
+    private readonly List<VisualiserTreeItem> rowPool = new List<VisualiserTreeItem>();
+
+    private readonly List<(Drawable Drawable, int Depth)> cachedTreeStructure = new List<(Drawable, int)>();
+    private readonly List<(Drawable Drawable, int Depth)> currentTreeStructure = new List<(Drawable, int)>();
+
+    private Drawable? selectedDrawable;
+    private Drawable? lastSelectedDrawable;
+
+    private PropertyInfo[]? cachedProperties;
+    private FieldInfo[]? cachedFields;
+    private SpriteText? loadStateText;
+    private readonly List<PropertyTracker> propertyTextMap = new List<PropertyTracker>();
+
+    /// <summary>
+    /// The highlight boxes and the inspected picker, in screen space, hosted by the layer beside this
+    /// window rather than inside it. Built with the window and attached for as long as it is open.
+    /// </summary>
+    private readonly DrawVisualiserInspectLayer inspectLayer;
+
+    private double nextPropertyRefresh = double.MinValue;
+    private double nextTreeRefresh = double.MinValue;
+
+    /// <summary>
+    /// Height <see cref="treeContent"/> was last given, so a steady frame does not invalidate it.
+    /// </summary>
+    private float lastTreeContentHeight = -1;
 
     public DrawVisualiser(Drawable root)
     {
         absoluteRoot = root;
-        targetRoot = root;
-        RelativeSizeAxes = Axes.Both;
-        Size = new Vector2(1);
-        Anchor = Anchor.TopLeft;
-        Origin = Anchor.TopLeft;
 
-        Add(highlightBox = new Box
+        inspectLayer = new DrawVisualiserInspectLayer(root)
         {
-            Anchor = Anchor.TopLeft,
-            Origin = Anchor.TopLeft,
-            Color = Color.Red,
-            Alpha = 0,
-            Blending = BlendingMode.Additive
-        });
+            Picked = picked =>
+            {
+                SetTreeRoot(picked);
+                selectDrawable(picked);
+                SetInspecting(false);
+            }
+        };
 
-        // Background
-        Add(backgroundBox = new Box
+        Add(buildToolbar());
+
+        var panes = new Container
         {
             RelativeSizeAxes = Axes.Both,
-            Color = Color.Black,
-            Anchor = Anchor.TopLeft,
-            Origin = Anchor.TopLeft,
             Size = new Vector2(1),
-            Alpha = 0.75f
-        });
+            Padding = new MarginPadding { Top = toolbar_height }
+        };
 
-        Add(inspectHighlightBox = new Box
+        var treePane = new Container
         {
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
-            Color = Color.LimeGreen,
-            Alpha = 0,
-            Blending = BlendingMode.Additive,
-            Depth = float.MinValue
+            RelativeSizeAxes = Axes.Both,
+            Size = new Vector2(width_split, 1),
+            Name = "Tree Pane"
+        };
+
+        treePane.Add(new Box
+        {
+            RelativeSizeAxes = Axes.Both,
+            Size = new Vector2(1),
+            Color = Color.Black,
+            Alpha = 0.2f
         });
 
-        // Header
-        Add(new SpriteText
+        treePane.Add(emptyHint = new SpriteText
         {
-            Text = "Draw Visualiser (Ctrl + F1)",
-            Font = FontUsage.Default.With(size: 30, weight: "Bold"),
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
-            Position = new Vector2(10, 5),
-            Color = Color.Pink,
-            RelativeSizeAxes = Axes.X,
-            Height = 50
+            Position = new Vector2(8, 8),
+            Font = FontUsage.Default.With(size: 12),
+            Color = Color.LightPink,
+            Text = "Nothing chosen"
         });
 
-        Add(currentTimeText = new SpriteText
+        treePane.Add(treeScroll = new ScrollableContainer
         {
-            Text = "",
-            Font = FontUsage.Default.With(size: 16),
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
-            Position = new Vector2(10, 50),
-            Color = Color.LightPink,
-            RelativeSizeAxes = Axes.X,
-            Height = 30
+            RelativeSizeAxes = Axes.Both,
+            Size = new Vector2(1),
+            Name = "Tree View",
+            Child = treeContent = new Container
+            {
+                Anchor = Anchor.TopLeft,
+                Origin = Anchor.TopLeft,
+                RelativeSizeAxes = Axes.X,
+                Width = 1,
+                Name = "Tree Content"
+            }
         });
 
-        Add(runningTimeText = new SpriteText
+        var propertyPane = new Container
         {
-            Text = "",
-            Font = FontUsage.Default.With(size: 16),
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
-            Position = new Vector2(10, 70),
-            Color = Color.LightPink,
-            RelativeSizeAxes = Axes.X,
-            Height = 30
+            RelativeSizeAxes = Axes.Both,
+            RelativePositionAxes = Axes.X,
+            Position = new Vector2(width_split, 0),
+            Size = new Vector2(1 - width_split, 1),
+            Name = "Property Pane"
+        };
+
+        propertyPane.Add(new Box
+        {
+            RelativeSizeAxes = Axes.Both,
+            Size = new Vector2(1),
+            Color = Color.Black,
+            Alpha = 0.2f
         });
 
-        Add(new SpriteText()
+        propertyPane.Add(propertyScroll = new ScrollableContainer
         {
-            Text =
-                $"Sakura Framework v{DebugUtils.GetFrameworkVersion()}",
-            Font = FontUsage.Default.With(size: 16),
-            Anchor = Anchor.TopRight,
-            Origin = Anchor.TopRight,
-            Position = new Vector2(-10, 50),
-            Color = Color.LightPink,
-            RelativeSizeAxes = Axes.X,
-            Height = 30
+            Anchor = Anchor.TopLeft,
+            Origin = Anchor.TopLeft,
+            RelativeSizeAxes = Axes.Both,
+            Size = new Vector2(1),
+            Name = "Property View",
+            Child = propertyFlow = new FlowContainer
+            {
+                Anchor = Anchor.TopLeft,
+                Origin = Anchor.TopLeft,
+                Direction = FlowDirection.Vertical,
+                RelativeSizeAxes = Axes.X,
+                AutoSizeAxes = Axes.Y,
+                Width = 1,
+                Spacing = new Vector2(0, 5),
+                Name = "Property Flow"
+            }
         });
 
-        Add(new SpriteText()
-        {
-            Text = $"Running {Logger.AppIdentifier} v{Logger.VersionIdentifier} {(DebugUtils.IsDebugBuild ? "(Debug Build)" : "")}",
-            Font = FontUsage.Default.With(size: 16),
-            Anchor = Anchor.TopRight,
-            Origin = Anchor.TopRight,
-            Position = new Vector2(-10, 70),
-            Color = Color.LightPink,
-            RelativeSizeAxes = Axes.X,
-            Height = 30
-        });
+        panes.Add(treePane);
+        panes.Add(propertyPane);
 
-        Add(headerButtonsFlow = new FlowContainer
+        Add(panes);
+    }
+
+    private Drawable buildToolbar()
+    {
+        var toolbar = new FlowContainer
         {
-            Anchor = Anchor.TopRight,
-            Origin = Anchor.TopRight,
-            Position = new Vector2(-10, 10),
-            AutoSizeAxes = Axes.Both,
+            Anchor = Anchor.TopLeft,
+            Origin = Anchor.TopLeft,
             Direction = FlowDirection.Horizontal,
-            Spacing = new Vector2(10, 0)
-        });
+            AutoSizeAxes = Axes.Both,
+            Spacing = new Vector2(6, 0),
+            Padding = new MarginPadding { Left = 6, Top = 4 }
+        };
 
-        headerButtonsFlow.Add(new BasicButton
+        toolbar.Add(new BasicButton
         {
-            Text = "Up (Parent)",
+            Text = "Choose Drawable",
             TextSize = 12,
-            Action = () =>
-            {
-                if (targetRoot.Parent != null)
-                {
-                    targetRoot = targetRoot.Parent;
-                    timeUntilNextTreeRefresh = 0; // Force immediate refresh
-                }
-            }
-        });
-
-        headerButtonsFlow.Add(new BasicButton
-        {
-            Text = "Down (First Child)",
-            TextSize = 12,
-            Size = new Vector2(120, 30),
-            Action = () =>
-            {
-                if (targetRoot is Container c && c.Children.Count > 0)
-                {
-                    targetRoot = c.Children[0];
-                    timeUntilNextTreeRefresh = 0; // Force immediate refresh
-                }
-            }
-        });
-
-        headerButtonsFlow.Add(new BasicButton
-        {
-            Text = "Inspect",
+            Size = new Vector2(120, 26),
             DefaultColor = Color.DarkMagenta,
             HoverColor = Color.Magenta,
             Action = ToggleInspectMode
         });
 
-        // Tree view (left)
-        Add(leftContainer = new Container
+        toolbar.Add(new BasicButton
         {
-            RelativeSizeAxes = Axes.Both,
-            Anchor = Anchor.CentreLeft,
-            Origin = Anchor.CentreLeft,
-            Size = new Vector2(width_split, 0.75f),
-            RelativePositionAxes = Axes.X,
-            Name = "Left Container"
-        });
-
-        leftContainer.Add(new Box()
-        {
-            Anchor = Anchor.Centre,
-            Origin = Anchor.Centre,
-            RelativeSizeAxes = Axes.Both,
-            Color = Color.Black,
-            Alpha = 0.2f,
-            Size = new Vector2(1)
-        });
-
-        leftContainer.Add(parentTreeFlow = new ScrollableContainer()
-        {
-            RelativeSizeAxes = Axes.Both,
-            Anchor = Anchor.TopLeft,
-            Origin = Anchor.TopLeft,
-            Size = new Vector2(1),
-            RelativePositionAxes = Axes.Both,
-            Name = "Tree View Container",
-            Child = treeFlow = new FlowContainer
+            Text = "Up (Parent)",
+            TextSize = 12,
+            Size = new Vector2(100, 26),
+            Action = () =>
             {
-                Anchor = Anchor.TopLeft,
-                Origin = Anchor.TopLeft,
-                RelativeSizeAxes = Axes.X,
-                AutoSizeAxes = Axes.Y,
-                Spacing = new Vector2(0, 2),
-                Width = 1f,
-                Name = "Tree Flow"
+                // From the empty state this is the way to the whole tree, for the times you do want
+                // all of it: one press, rather than making every open pay for it.
+                if (targetRoot == null)
+                    SetTreeRoot(absoluteRoot);
+                else if (targetRoot.Parent != null)
+                    SetTreeRoot(targetRoot.Parent);
             }
         });
 
-        // Property (right)
-        Add(rightContainer = new Container
+        toolbar.Add(new BasicButton
         {
-            RelativeSizeAxes = Axes.Both,
-            Anchor = Anchor.CentreLeft,
-            Origin = Anchor.CentreLeft,
-            Size = new Vector2(1f - width_split, 0.75f),
-            RelativePositionAxes = Axes.X,
-            Position = new Vector2(width_split, 0),
-            Name = "Right Container"
-        });
-
-        rightContainer.Add(new Box()
-        {
-            Anchor = Anchor.Centre,
-            Origin = Anchor.Centre,
-            RelativeSizeAxes = Axes.Both,
-            Color = Color.Black,
-            Alpha = 0.2f,
-            Size = new Vector2(1)
-        });
-
-        rightContainer.Add(parentPropertyFlow = new ScrollableContainer()
-        {
-            RelativeSizeAxes = Axes.Both,
-            Anchor = Anchor.TopLeft,
-            Origin = Anchor.TopLeft,
-            Size = new Vector2(1),
-            RelativePositionAxes = Axes.Both,
-            Name = "Property View Container",
-            Child = propertyFlow = new FlowContainer()
+            Text = "Down (First Child)",
+            TextSize = 12,
+            Size = new Vector2(130, 26),
+            Action = () =>
             {
-                Anchor = Anchor.TopLeft,
-                Origin = Anchor.TopLeft,
-                RelativeSizeAxes = Axes.X,
-                AutoSizeAxes = Axes.Y,
-                Spacing = new Vector2(0, 5),
-                Width = 1f,
-                Name = "Property Flow"
+                if (targetRoot is Container c && c.Children.Count > 0)
+                    SetTreeRoot(c.Children[0]);
             }
         });
+
+        return toolbar;
     }
 
-    private double timeUntilNextTreeRefresh;
-    private double timeUntilNextPropertyRefresh;
+    protected internal override void OnOpened()
+    {
+        base.OnOpened();
+
+        if (Parent is DebugWindowLayer layer)
+            layer.AttachOverlay(inspectLayer);
+    }
+
+    protected internal override void OnClosed()
+    {
+        base.OnClosed();
+
+        // Inspect mode hides this window, so a close while inspecting would otherwise leave the
+        // window hidden and the picker claiming the whole screen with nothing to return to.
+        SetInspecting(false);
+
+        if (Parent is DebugWindowLayer layer)
+            layer.DetachOverlay(inspectLayer);
+    }
+
+    /// <summary>
+    /// What the tree pane is rooted at, or null while nothing has been chosen.
+    /// </summary>
+    public Drawable? TreeRoot => targetRoot;
+
+    /// <summary>
+    /// Roots the tree pane at <paramref name="root"/>, or empties it when given null. Refreshes on
+    /// the next frame rather than up to <see cref="tree_interval"/> later, since every caller is
+    /// answering a click.
+    /// </summary>
+    public void SetTreeRoot(Drawable? root)
+    {
+        targetRoot = root;
+        nextTreeRefresh = double.MinValue;
+    }
+
+    /// <summary>
+    /// Whether inspect mode is picking. While it is, this window is hidden — hidden drawables are
+    /// skipped when the positional input queue is built, which is what lets the picker reach a
+    /// drawable underneath where the window was sitting.
+    /// </summary>
+    public bool IsInspecting => inspectLayer.Inspecting;
+
+    public void ToggleInspectMode() => SetInspecting(!inspectLayer.Inspecting);
+
+    public void SetInspecting(bool inspecting)
+    {
+        if (inspectLayer.Inspecting == inspecting)
+            return;
+
+        inspectLayer.Inspecting = inspecting;
+
+        if (inspecting)
+            this.FadeOut(150, Easing.OutQuint);
+        else
+            this.FadeIn(150, Easing.OutQuint);
+    }
+
+    /// <summary>
+    /// While picking, this window claims no positional input at all.
+    /// </summary>
+    /// <remarks>
+    /// It also fades out, but a fade is a transition and correctness must not wait for one: for the
+    /// 150 ms it takes, a window that still claimed its rectangle would keep taking the clicks meant
+    /// for whatever is underneath it — a window is a solid object by design
+    /// (<see cref="DebugWindow.OnMouseDown"/>), and the default window covers a good part of the
+    /// screen. Hidden drawables are dropped from the positional queue, so this is only about the gap
+    /// before <see cref="Drawable.Alpha"/> gets there.
+    /// </remarks>
+    public override bool ReceivePositionalInputAt(Vector2 screenSpacePos)
+        => !inspectLayer.Inspecting && base.ReceivePositionalInputAt(screenSpacePos);
 
     public override void Update()
     {
         base.Update();
 
-        if (State == Visibility.Hidden) return;
+        // No visibility check and no releasing of content: a closed window is detached from the tree,
+        // so none of this runs while it is closed.
+        inspectLayer.UpdateSelection(selectedDrawable);
 
-        if (isInspecting)
+        if (Clock.CurrentTime >= nextTreeRefresh)
         {
-            var manager = GetContainingInputManager();
-            if (manager != null)
-                updateInspectHighlight(manager.CurrentState.MousePosition);
-        }
-
-        timeUntilNextPropertyRefresh -= Clock.ElapsedFrameTime;
-        if (timeUntilNextPropertyRefresh <= 0)
-        {
-            refreshProperties();
-
-            currentTimeText.Text = $"{DateTime.Now:dd MMMM yyyy HH:mm:ss tt}";
-            runningTimeText.Text = $"Has been running for {TimeSpan.FromSeconds(targetRoot.Clock.CurrentTime / 1000):hh\\:mm\\:ss}";
-
-            timeUntilNextPropertyRefresh = 20;
-        }
-
-        timeUntilNextTreeRefresh -= Clock.ElapsedFrameTime;
-        if (timeUntilNextTreeRefresh <= 0)
-        {
+            nextTreeRefresh = Clock.CurrentTime + tree_interval;
             refreshTree();
-            timeUntilNextTreeRefresh = 500;
         }
 
-        if (selectedDrawable != null && selectedDrawable.IsAlive && selectedDrawable.Parent != null)
-        {
-            highlightBox.Alpha = 0.4f;
+        updateTreeViewport();
 
-            // DrawRectangle is in absolute/screen space.
-            // Since Visualiser is usually full screen, we can map directly.
-            var rect = selectedDrawable.DrawRectangle;
-            highlightBox.Position = new Vector2(rect.X, rect.Y);
-            highlightBox.Size = new Vector2(rect.Width, rect.Height);
-        }
-        else
+        if (Clock.CurrentTime >= nextPropertyRefresh)
         {
-            highlightBox.Alpha = 0;
-        }
-
-        currentTimeText.Text = $"{DateTime.Now:dd MMMM yyyy HH:mm:ss tt}";
-        runningTimeText.Text = $"Has been running for {TimeSpan.FromSeconds(targetRoot.Clock.CurrentTime / 1000):hh\\:mm\\:ss}";
-    }
-
-    public void ToggleInspectMode()
-    {
-        isInspecting = !isInspecting;
-
-        if (isInspecting)
-        {
-            highlightBox.Alpha = 0;
-            leftContainer.FadeOut(200, Easing.OutQuint);
-            rightContainer.FadeOut(200, Easing.OutQuint);
-            backgroundBox.FadeTo(0.1f, 200, Easing.OutQuint);
-            headerButtonsFlow.FadeOut(200, Easing.OutQuint);
-            inspectHighlightBox.Alpha = 0.5f;
-            hoveredDrawable = null;
-        }
-        else
-        {
-            leftContainer.FadeIn(200, Easing.OutQuint);
-            rightContainer.FadeIn(200, Easing.OutQuint);
-            backgroundBox.FadeTo(0.75f, 200, Easing.OutQuint);
-            headerButtonsFlow.FadeIn(200, Easing.OutQuint);
-            inspectHighlightBox.Alpha = 0;
+            nextPropertyRefresh = Clock.CurrentTime + property_interval;
+            refreshProperties();
         }
     }
 
-    public override bool OnMouseMove(MouseEvent e)
-    {
-        if (isInspecting)
-        {
-            updateInspectHighlight(e.ScreenSpaceMousePosition);
-            return true;
-        }
-
-        return base.OnMouseMove(e);
-    }
-
-    private void updateInspectHighlight(Vector2 screenSpaceMousePosition)
-    {
-        hoveredDrawable = findDrawableUnderMouse(absoluteRoot, screenSpaceMousePosition);
-
-        if (hoveredDrawable != null)
-        {
-            var rect = hoveredDrawable.DrawRectangle;
-            inspectHighlightBox.Position = new Vector2(rect.X, rect.Y);
-            inspectHighlightBox.Size = new Vector2(rect.Width, rect.Height);
-            if (hoveredDrawable != lastHoveredDrawable)
-            {
-                inspectHighlightBox.Color = Color.LimeGreen;
-                inspectHighlightBox.FlashColor(Color.White, 300, Easing.OutQuint);
-            }
-            lastHoveredDrawable = hoveredDrawable;
-        }
-    }
-
-    public override bool OnMouseDown(MouseButtonEvent e)
-    {
-        if (isInspecting)
-        {
-            if (hoveredDrawable != null)
-            {
-                targetRoot = hoveredDrawable;
-                timeUntilNextTreeRefresh = 0;
-            }
-
-            ToggleInspectMode();
-            return true;
-        }
-
-        return base.OnMouseDown(e);
-    }
-
-    public override bool OnKeyDown(KeyEvent e)
-    {
-        if (e.Key == Key.Escape)
-        {
-            if (isInspecting)
-            {
-                ToggleInspectMode();
-                return true;
-            }
-
-            if (State == Visibility.Visible)
-            {
-                Hide();
-                return true;
-            }
-        }
-
-        return base.OnKeyDown(e);
-    }
-
-    private Drawable? findDrawableUnderMouse(Drawable root, Vector2 mousePos)
-    {
-        // skip the visualiser itself to prevent infinite loops / selecting the debugger
-        if (root == this || root is IRemoveFromDrawVisualiser)
-            return null;
-
-        // skip dead, hidden, or culled items
-        if (!root.IsAlive || !root.IsLoaded || root.IsHidden || root.IsMaskedAway && !root.AlwaysPresent || root.Alpha <= 0)
-            return null;
-
-        if (!root.Contains(mousePos))
-            return null;
-
-        if (root is Container c)
-        {
-            // Search children from front to back (reverse depth order) to catch the topmost UI element first
-            foreach (var child in c.Children.OrderBy(d => d.Depth).Reverse())
-            {
-                var found = findDrawableUnderMouse(child, mousePos);
-                if (found != null)
-                    return found;
-            }
-        }
-
-        return root;
-    }
-
+    /// <summary>
+    /// Walks the app's tree into a flat (drawable, depth) list and replaces the cached one if it
+    /// changed shape.
+    /// </summary>
     private void refreshTree()
     {
-        if (targetRoot == null) return;
-
-        // Gather the current state of the game's tree
         currentTreeStructure.Clear();
         buildTreeSnapshot(targetRoot, 0);
 
-        // Compare with cached state
-        bool treeChanged = false;
-        if (currentTreeStructure.Count != cachedTreeStructure.Count)
-        {
-            treeChanged = true;
-        }
-        else
+        emptyHint.Alpha = currentTreeStructure.Count == 0 ? 1 : 0;
+
+        bool changed = currentTreeStructure.Count != cachedTreeStructure.Count;
+
+        if (!changed)
         {
             for (int i = 0; i < currentTreeStructure.Count; i++)
             {
-                if (currentTreeStructure[i].drawable != cachedTreeStructure[i].drawable ||
-                    currentTreeStructure[i].depth != cachedTreeStructure[i].depth)
+                if (currentTreeStructure[i].Drawable != cachedTreeStructure[i].Drawable ||
+                    currentTreeStructure[i].Depth != cachedTreeStructure[i].Depth)
                 {
-                    treeChanged = true;
+                    changed = true;
                     break;
                 }
             }
         }
 
-        // Only rebuild the heavy UI if the hierarchy actually changed
-        if (treeChanged)
-        {
-            cachedTreeStructure.Clear();
-            cachedTreeStructure.AddRange(currentTreeStructure);
+        if (!changed)
+            return;
 
-            treeFlow.Clear();
-
-            for (int i = 0; i < cachedTreeStructure.Count; i++)
-            {
-                var item = cachedTreeStructure[i];
-
-                // Pass a function so the item can check if it's currently selected
-                var entry = new VisualiserTreeItem(item.drawable, item.depth,() => item.drawable == selectedDrawable)
-                {
-                    Position = new Vector2(0, i * 20),
-                    Height = 20,
-                    ClickAction = () => selectDrawable(item.drawable)
-                };
-
-                treeFlow.Add(entry);
-            }
-        }
+        cachedTreeStructure.Clear();
+        cachedTreeStructure.AddRange(currentTreeStructure);
     }
 
-    private void buildTreeSnapshot(Drawable d, int depth)
+    private void buildTreeSnapshot(Drawable? d, int depth)
     {
-        if (d == null) return;
-
-        Drawable cursor = d;
-        while (cursor != null)
-        {
-            if (cursor == this) return;
-            cursor = cursor.Parent;
-        }
+        if (d == null)
+            return;
 
         currentTreeStructure.Add((d, depth));
 
-        if (d is IRemoveFromDrawVisualiser) return;
+        if (d is IRemoveFromDrawVisualiser)
+            return;
 
         if (d is Container c)
         {
             for (int i = 0; i < c.Children.Count; i++)
-            {
                 buildTreeSnapshot(c.Children[i], depth + 1);
+        }
+    }
+
+    /// <summary>
+    /// Binds the pooled rows to the slice of the tree the pane can actually show.
+    /// </summary>
+    private void updateTreeViewport()
+    {
+        int count = cachedTreeStructure.Count;
+
+        float contentHeight = count * entry_height;
+
+        if (!Precision.AlmostEquals(contentHeight, lastTreeContentHeight))
+        {
+            treeContent.Height = contentHeight;
+            lastTreeContentHeight = contentHeight;
+        }
+
+        float viewport = treeScroll.ChildSize.Y;
+        float scroll = treeScroll.CurrentScroll.Y;
+
+        // One row of slack each way, so a row is bound before it is scrolled into view rather than
+        // appearing as it arrives.
+        int first = Math.Max(0, (int)(scroll / entry_height) - 1);
+        int last = Math.Min(count - 1, (int)((scroll + viewport) / entry_height) + 1);
+        int needed = Math.Max(0, last - first + 1);
+
+        while (rowPool.Count < needed)
+        {
+            var row = new VisualiserTreeItem(() => selectedDrawable, selectDrawable)
+            {
+                Height = entry_height
+            };
+
+            rowPool.Add(row);
+            treeContent.Add(row);
+        }
+
+        for (int i = 0; i < rowPool.Count; i++)
+        {
+            var row = rowPool[i];
+
+            if (i >= needed)
+            {
+                // Hidden rather than removed: a hidden subtree is skipped by both input queues and
+                // costs a container's worth of traversal, and the pane is about to need it again.
+                row.Bind(null, 0);
+                row.Alpha = 0;
+                continue;
             }
+
+            int index = first + i;
+            var entry = cachedTreeStructure[index];
+
+            row.Bind(entry.Drawable, entry.Depth);
+            row.Y = index * entry_height;
+            row.Alpha = 1;
         }
     }
 
     private void selectDrawable(Drawable d)
     {
         selectedDrawable = d;
+
+        // Straight away rather than on the next tick: this is a click being answered.
         refreshProperties();
+        nextPropertyRefresh = Clock.CurrentTime + property_interval;
     }
 
     private void refreshProperties()
     {
-        // If nothing is selected, clear everything and reset our cache
         if (selectedDrawable == null)
         {
             propertyFlow.Clear();
@@ -548,12 +489,13 @@ public partial class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVi
             lastSelectedDrawable = null;
             cachedProperties = null;
             cachedFields = null;
+            loadStateText = null;
             return;
         }
 
-        Type type = selectedDrawable.GetType();
+        var type = selectedDrawable.GetType();
 
-        // Rebuild UI layout only if we've selected a different drawable than last time.
+        // Rebuild the rows only when the selection changed; otherwise just re-read the values.
         if (lastSelectedDrawable != selectedDrawable)
         {
             propertyFlow.Clear();
@@ -568,6 +510,7 @@ public partial class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVi
             while (currentType != null && currentType != typeof(object))
             {
                 var props = currentType.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly);
+
                 foreach (var prop in props)
                 {
                     if (prop.GetIndexParameters().Length > 0) continue;
@@ -584,6 +527,7 @@ public partial class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVi
                 }
 
                 var fields = currentType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly);
+
                 foreach (var field in fields)
                 {
                     // Filter out compiler-generated backing fields for auto-properties
@@ -599,21 +543,16 @@ public partial class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVi
             cachedProperties = propList.ToArray();
             cachedFields = fieldList.ToArray();
 
-            // Header (Static, doesn't need to be tracked)
             addPropertyText($"Type: {type.Name}", Color.Yellow);
-
-            // Load State (Tracked manually)
             loadStateText = addPropertyText($"Load State: {selectedDrawable.IsLoaded}", Color.White);
 
-            // Properties
             foreach (var prop in cachedProperties)
             {
                 var textElement = addPropertyText($"{prop.Name}: loading...", Color.White);
                 propertyTextMap.Add(new PropertyTracker
                 {
                     Prop = prop,
-                    TextElement = textElement,
-                    LastStringValue = null
+                    TextElement = textElement
                 });
             }
 
@@ -628,11 +567,8 @@ public partial class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVi
             }
         }
 
-        // Update state in existing UI elements
         if (loadStateText != null)
-        {
             loadStateText.Text = $"Load State: {selectedDrawable.IsLoaded}";
-        }
 
         foreach (var tracker in propertyTextMap)
         {
@@ -648,12 +584,13 @@ public partial class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVi
 
                 tracker.LastStringValue = valStr;
 
-                Color textColor = Color.White;
+                var textColor = Color.White;
                 if (val is bool b) textColor = b ? Color.Green : Color.Red;
                 else if (val is ValueType) textColor = Color.Cyan;
 
                 bool isPrivate = (tracker.Prop?.GetMethod != null && !tracker.Prop.GetMethod.IsPublic) ||
                                  (tracker.Field != null && tracker.Field.IsPrivate);
+
                 if (isPrivate) textColor = Color.LightGray;
 
                 string name = tracker.Prop != null ? tracker.Prop.Name : tracker.Field!.Name;
@@ -673,14 +610,13 @@ public partial class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVi
         {
             Text = text,
             Color = color,
-            Font = FontUsage.Default.With(size: 16),
+            Font = FontUsage.Default.With(size: 14),
             Anchor = Anchor.CentreLeft,
             Origin = Anchor.CentreLeft,
-            Position = new Vector2(5, 0),
-            Size = new Vector2(30, 30)
+            Position = new Vector2(5, 0)
         };
 
-        propertyFlow.Add(new Container()
+        propertyFlow.Add(new Container
         {
             RelativeSizeAxes = Axes.X,
             Size = new Vector2(1, 15),
@@ -690,36 +626,219 @@ public partial class DrawVisualiser : FocusedOverlayContainer, IRemoveFromDrawVi
         return spriteText;
     }
 
-    protected override void PopIn() => this.FadeIn(200, Easing.OutQuint);
-
-    protected override void PopOut() => this.FadeOut(200, Easing.OutQuint);
-
     private class PropertyTracker
     {
-        public PropertyInfo Prop;
+        public PropertyInfo? Prop;
         public FieldInfo? Field;
-        public SpriteText TextElement;
+        public SpriteText TextElement = null!;
         public string? LastStringValue;
     }
 }
 
+/// <summary>
+/// <see cref="DrawVisualiser"/>'s highlight boxes and its inspect picker, in screen space.
+/// </summary>
+/// <remarks>
+/// Hosted by <see cref="DebugWindowLayer"/> as a sibling of the window rather than a child of it, for
+/// two reasons: a highlight drawn inside the window's body would be clipped to the window, and
+/// picking has to be able to reach a drawable anywhere on screen. While inspecting, this is
+/// deliberately modal over the whole screen — that is what picking means — and it claims nothing at
+/// all the rest of the time.
+/// </remarks>
+public partial class DrawVisualiserInspectLayer : Container
+{
+    private readonly Drawable pickRoot;
+    private readonly Box selectionHighlight;
+    private readonly Box inspectHighlight;
+
+    private Drawable? hovered;
+    private Drawable? lastFlashed;
+
+    /// <summary>Called with the drawable the user clicked while inspecting.</summary>
+    public Action<Drawable>? Picked { get; init; }
+
+    private bool inspecting;
+
+    public bool Inspecting
+    {
+        get => inspecting;
+        set
+        {
+            if (inspecting == value)
+                return;
+
+            inspecting = value;
+            hovered = null;
+            lastFlashed = null;
+
+            inspectHighlight.Alpha = value ? 0.5f : 0;
+        }
+    }
+
+    public DrawVisualiserInspectLayer(Drawable pickRoot)
+    {
+        this.pickRoot = pickRoot;
+
+        RelativeSizeAxes = Axes.Both;
+        Size = new Vector2(1);
+        Anchor = Anchor.TopLeft;
+        Origin = Anchor.TopLeft;
+
+        Add(selectionHighlight = new Box
+        {
+            Anchor = Anchor.TopLeft,
+            Origin = Anchor.TopLeft,
+            Color = Color.Red,
+            Alpha = 0,
+            Blending = BlendingMode.Additive
+        });
+
+        Add(inspectHighlight = new Box
+        {
+            Anchor = Anchor.TopLeft,
+            Origin = Anchor.TopLeft,
+            Color = Color.LimeGreen,
+            Alpha = 0,
+            Blending = BlendingMode.Additive
+        });
+    }
+
+    /// <summary>
+    /// Follows the selected drawable with the red highlight. Called by the window every frame, since
+    /// the thing being highlighted, is free to move.
+    /// </summary>
+    public void UpdateSelection(Drawable? selected)
+    {
+        if (selected == null || !selected.IsAlive || selected.Parent == null)
+        {
+            selectionHighlight.Alpha = 0;
+            return;
+        }
+
+        selectionHighlight.Alpha = 0.4f;
+
+        var rect = selected.DrawRectangle;
+        selectionHighlight.Position = new Vector2(rect.X, rect.Y);
+        selectionHighlight.Size = new Vector2(rect.Width, rect.Height);
+    }
+
+    /// <summary>
+    /// Claims the whole screen while picking, and nothing when not — positional dispatch only
+    /// descends into a drawable that says the cursor is over it, so this is the whole of the
+    /// modality, in one line.
+    /// </summary>
+    public override bool ReceivePositionalInputAt(Vector2 screenSpacePos) => inspecting;
+
+    public override void Update()
+    {
+        base.Update();
+
+        if (!inspecting)
+            return;
+
+        // From the input state rather than only from move events: content moves under a stationary
+        // cursor, and the highlight should follow that too.
+        var manager = GetContainingInputManager();
+
+        if (manager != null)
+            updateInspectHighlight(manager.CurrentState.MousePosition);
+    }
+
+    public override bool OnMouseMove(MouseEvent e)
+    {
+        if (!inspecting)
+            return false;
+
+        updateInspectHighlight(e.ScreenSpaceMousePosition);
+        return true;
+    }
+
+    public override bool OnMouseDown(MouseButtonEvent e)
+    {
+        if (!inspecting)
+            return false;
+
+        if (hovered != null)
+            Picked?.Invoke(hovered);
+        else
+            Inspecting = false;
+
+        return true;
+    }
+
+    public override bool OnHover(MouseEvent e) => inspecting;
+
+    private void updateInspectHighlight(Vector2 screenSpaceMousePosition)
+    {
+        hovered = findDrawableUnderMouse(pickRoot, screenSpaceMousePosition);
+
+        if (hovered == null)
+            return;
+
+        var rect = hovered.DrawRectangle;
+        inspectHighlight.Position = new Vector2(rect.X, rect.Y);
+        inspectHighlight.Size = new Vector2(rect.Width, rect.Height);
+
+        if (hovered != lastFlashed)
+        {
+            inspectHighlight.Color = Color.LimeGreen;
+            inspectHighlight.FlashColor(Color.White, 300, Easing.OutQuint);
+            lastFlashed = hovered;
+        }
+    }
+
+    private Drawable? findDrawableUnderMouse(Drawable root, Vector2 mousePos)
+    {
+        // The debug tools are not part of the app being inspected. The layer is marked, so this also
+        // skips every window and this overlay itself in one check.
+        if (root is IRemoveFromDrawVisualiser)
+            return null;
+
+        // skip dead, hidden, or culled items
+        if (!root.IsAlive || !root.IsLoaded || root.IsHidden || root.IsMaskedAway && !root.AlwaysPresent || root.Alpha <= 0)
+            return null;
+
+        if (!root.Contains(mousePos))
+            return null;
+
+        if (root is Container c)
+        {
+            // Search children from front to back (reverse depth order) to catch the topmost UI element first
+            foreach (var child in c.Children.OrderBy(d => d.Depth).Reverse())
+            {
+                var found = findDrawableUnderMouse(child, mousePos);
+
+                if (found != null)
+                    return found;
+            }
+        }
+
+        return root;
+    }
+}
+
+/// <summary>
+/// One line of <see cref="DrawVisualiser"/>'s tree pane. Pooled and re-bound as the pane scrolls, so
+/// these exist per visible line rather than per drawable in the app.
+/// </summary>
 public partial class VisualiserTreeItem : Container
 {
-    public Action ClickAction;
-    private readonly Drawable trackedDrawable;
-    private readonly Func<bool> checkSelected;
+    private readonly Func<Drawable?> selectedProvider;
+    private readonly Action<Drawable> clickAction;
 
     private readonly Box background;
     private readonly SpriteText label;
 
-    public VisualiserTreeItem(Drawable d, int depth, Func<bool> isSelected)
+    private Drawable? tracked;
+    private int trackedDepth = -1;
+
+    public VisualiserTreeItem(Func<Drawable?> selectedProvider, Action<Drawable> clickAction)
     {
-        trackedDrawable = d;
-        checkSelected = isSelected;
+        this.selectedProvider = selectedProvider;
+        this.clickAction = clickAction;
 
         RelativeSizeAxes = Axes.X;
-        Height = 20;
-        Width = 1f;
+        Width = 1;
 
         Add(background = new Box
         {
@@ -731,64 +850,73 @@ public partial class VisualiserTreeItem : Container
 
         Add(label = new SpriteText
         {
-            Text = d.GetDisplayName(),
-            Position = new Vector2(depth * 15 + 5, 0),
             Font = FontUsage.Default.With(size: 14),
-            Size = new Vector2(1, 20),
             Anchor = Anchor.CentreLeft,
             Origin = Anchor.CentreLeft
         });
+    }
+
+    /// <summary>
+    /// Points this row at a tree entry, or at nothing. A no-op when already bound to that entry,
+    /// which is the common case: scrolling re-binds every visible row every frame, and re-setting the
+    /// text would re-shape it.
+    /// </summary>
+    public void Bind(Drawable? drawable, int depth)
+    {
+        if (ReferenceEquals(tracked, drawable) && trackedDepth == depth)
+            return;
+
+        tracked = drawable;
+        trackedDepth = depth;
+
+        label.Text = drawable?.GetDisplayName() ?? string.Empty;
+        label.X = depth * 15 + 5;
     }
 
     public override void Update()
     {
         base.Update();
 
-        bool isSelected = checkSelected();
+        if (tracked == null)
+        {
+            background.Alpha = 0;
+            return;
+        }
+
+        bool isSelected = ReferenceEquals(selectedProvider(), tracked);
 
         var bgColor = isSelected ? Color.Blue : Color.Transparent;
-        if (trackedDrawable.IsHovered) bgColor = Color.Gray;
+        if (tracked.IsHovered) bgColor = Color.Gray;
 
         background.Color = bgColor;
         background.Alpha = isSelected ? 0.5f : 0.2f;
 
-        bool isUpdating = trackedDrawable.IsLoaded &&
-                          trackedDrawable.IsAlive &&
-                          trackedDrawable.Size != Vector2.Zero &&
-                          (!trackedDrawable.IsMaskedAway || trackedDrawable.AlwaysPresent);
+        bool isUpdating = tracked.IsLoaded &&
+                          tracked.IsAlive &&
+                          tracked.Size != Vector2.Zero &&
+                          (!tracked.IsMaskedAway || tracked.AlwaysPresent);
 
-        bool isDrawing = isUpdating && trackedDrawable.DrawAlpha > 0;
+        bool isDrawing = isUpdating && tracked.DrawAlpha > 0;
 
         if (isSelected)
         {
             label.Color = Color.Yellow;
-            label.Alpha = 1.0f;
+            label.Alpha = 1;
         }
         else
         {
             label.Color = Color.White;
-            label.Alpha = isUpdating && isDrawing ? 1.0f : 0.4f;
+            label.Alpha = isUpdating && isDrawing ? 1 : 0.4f;
         }
     }
 
-    public override bool OnDrag(MouseEvent e)
-    {
-        return false;
-    }
+    public override bool OnDrag(MouseEvent e) => false;
 
     public override bool OnClick(MouseButtonEvent e)
     {
-        ClickAction?.Invoke();
-        return true;
-    }
+        if (tracked != null)
+            clickAction(tracked);
 
-    public override bool OnKeyDown(KeyEvent e)
-    {
-        if (e.Key == Key.Escape)
-        {
-            Hide();
-            return true;
-        }
-        return base.OnKeyDown(e);
+        return true;
     }
 }

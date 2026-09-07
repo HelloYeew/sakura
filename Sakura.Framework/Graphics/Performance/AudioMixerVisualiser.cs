@@ -2,188 +2,76 @@
 // See the LICENSE file for full license text.
 
 using System;
-using System.Linq;
-using Sakura.Framework.Allocation;
+using System.Collections.Generic;
 using Sakura.Framework.Audio;
-using Sakura.Framework.Development;
-using Sakura.Framework.Extensions.DrawableExtensions;
+using Sakura.Framework.Extensions.ObjectExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Text;
-using Sakura.Framework.Graphics.Transforms;
-using Sakura.Framework.Input;
-using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
-using Sakura.Framework.Platform;
 
 namespace Sakura.Framework.Graphics.Performance;
 
-public partial class AudioMixerVisualiser : FocusedOverlayContainer, IRemoveFromDrawVisualiser
+public partial class AudioMixerVisualiser : DebugWindow
 {
-    private readonly Container contentContainer;
-    private readonly ScrollableContainer scrollContainer;
-    private readonly FlowContainer mainFlow;
-    private readonly SpriteText currentTimeText;
-    private readonly SpriteText runningTimeText;
-
-    [Resolved]
-    private AppHost host { get; set; }
+    protected override string Title => "Audio Mixer Visualiser (Ctrl + F9)";
+    protected override Vector2 DefaultSize => new Vector2(920, 420);
+    protected override Vector2 MinSize => new Vector2(700, 180);
+    protected override Color Accent => Color.Yellow;
 
     public AudioMixerVisualiser(IAudioManager audioManager)
     {
-        RelativeSizeAxes = Axes.Both;
-        Size = new Vector2(1);
-        Anchor = Anchor.TopLeft;
-        Origin = Anchor.TopLeft;
-
-        Add(new Box
-        {
-            RelativeSizeAxes = Axes.Both,
-            Size = new Vector2(1),
-            Color = Color.Black,
-            Alpha = 0.85f,
-            Anchor = Anchor.TopLeft,
-            Origin = Anchor.TopLeft
-        });
-
-        Add(new SpriteText
-        {
-            Text = "Audio Mixer Visualiser (Ctrl + F9)",
-            Font = FontUsage.Default.With(size: 30, weight: "Bold"),
-            Position = new Vector2(10, 5),
-            Color = Color.Yellow,
-            RelativeSizeAxes = Axes.X,
-            Height = 50,
-            Anchor = Anchor.TopLeft,
-            Origin = Anchor.TopLeft
-        });
-
-        Add(currentTimeText = new SpriteText
-        {
-            Text = "",
-            Font = FontUsage.Default.With(size: 16),
-            Anchor = Anchor.TopLeft,
-            Origin = Anchor.TopLeft,
-            Position = new Vector2(10, 50),
-            Color = Color.LightYellow,
-            RelativeSizeAxes = Axes.X,
-            Height = 30
-        });
-
-        Add(runningTimeText = new SpriteText
-        {
-            Text = "",
-            Font = FontUsage.Default.With(size: 16),
-            Anchor = Anchor.TopLeft,
-            Origin = Anchor.TopLeft,
-            Position = new Vector2(10, 70),
-            Color = Color.LightYellow,
-            RelativeSizeAxes = Axes.X,
-            Height = 30
-        });
-
-        Add(new SpriteText()
-        {
-            Text =
-                $"Sakura Framework v{DebugUtils.GetFrameworkVersion()}",
-            Font = FontUsage.Default.With(size: 16),
-            Anchor = Anchor.TopRight,
-            Origin = Anchor.TopRight,
-            Position = new Vector2(-10, 50),
-            Color = Color.LightYellow,
-            RelativeSizeAxes = Axes.X,
-            Height = 30
-        });
-
-        Add(new SpriteText()
-        {
-            Text = $"Running {Logger.AppIdentifier} v{Logger.VersionIdentifier} {(DebugUtils.IsDebugBuild ? "(Debug Build)" : "")}",
-            Font = FontUsage.Default.With(size: 16),
-            Anchor = Anchor.TopRight,
-            Origin = Anchor.TopRight,
-            Position = new Vector2(-10, 70),
-            Color = Color.LightYellow,
-            RelativeSizeAxes = Axes.X,
-            Height = 30
-        });
-
-        Add(contentContainer = new Container
-        {
-            RelativeSizeAxes = Axes.Both,
-            Size = new Vector2(1, 0.75f),
-            Padding = new MarginPadding(20),
-            Anchor = Anchor.Centre,
-            Origin = Anchor.Centre,
-        });
-
-        // Content Background Dim
-        contentContainer.Add(new Box
-        {
-            RelativeSizeAxes = Axes.Both,
-            Size = new Vector2(1),
-            Color = Color.Black,
-            Alpha = 0.2f,
-            Anchor = Anchor.Centre,
-            Origin = Anchor.Centre
-        });
-
-        contentContainer.Add(scrollContainer = new ScrollableContainer
+        var scrollContainer = new ScrollableContainer
         {
             RelativeSizeAxes = Axes.Both,
             Size = new Vector2(1),
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft
-        });
+        };
 
-        scrollContainer.Add(mainFlow = new FlowContainer
+        var mainFlow = new FlowContainer
         {
             RelativeSizeAxes = Axes.X,
             AutoSizeAxes = Axes.Y,
             Width = 1f,
             Spacing = new Vector2(0, 30),
-            Padding = new MarginPadding { Top = 10, Left = 10, Right = 10, Bottom = 10 },
+            Padding = new MarginPadding(10),
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft
-        });
+        };
 
-        if (audioManager.TrackMixer != null)
+        if (audioManager.TrackMixer.IsNotNull())
             mainFlow.Add(new MixerGroupDisplay("Track Mixer", audioManager.TrackMixer));
 
-        if (audioManager.SampleMixer != null)
+        if (audioManager.SampleMixer.IsNotNull())
             mainFlow.Add(new MixerGroupDisplay("Sample Mixer", audioManager.SampleMixer));
+
+        scrollContainer.Add(mainFlow);
+        Add(scrollContainer);
     }
-
-    public override void Update()
-    {
-        base.Update();
-
-        if (DrawAlpha <= 0)
-            return;
-
-        currentTimeText.Text = $"{DateTime.Now:dd MMMM yyyy HH:mm:ss tt}";
-        runningTimeText.Text = $"Has been running for {TimeSpan.FromSeconds(host.UpdateClock.CurrentTime / 1000):hh\\:mm\\:ss}";
-    }
-
-    public override bool OnKeyDown(KeyEvent e)
-    {
-        if (State == Visibility.Visible && e.Key == Key.Escape)
-        {
-            Hide();
-            return true;
-        }
-        return base.OnKeyDown(e);
-    }
-
-    protected override void PopIn() => this.FadeIn(200, Easing.OutQuint);
-    protected override void PopOut() => this.FadeOut(200, Easing.OutQuint);
 }
 
 public partial class MixerGroupDisplay : FlowContainer
 {
+    /// <summary>
+    /// How often the mixer's membership is re-read. Channels do not come and go at frame rate, and
+    /// the read has to take a lock the audio thread also wants.
+    /// </summary>
+    private const double membership_interval = 100;
+
     private readonly IAudioMixer mixer;
     private readonly FlowContainer channelsFlow;
+
+    /// <summary>
+    /// The channel each row is showing, in row order, so identity can diff membership. The
+    /// count alone is not enough: swapping one channel for another leaves the count unchanged and
+    /// would leave every row reporting the wrong channel.
+    /// </summary>
+    private readonly List<IAudioChannel> displayedChannels = new List<IAudioChannel>();
+
+    private double nextMembershipCheck = double.MinValue;
 
     public MixerGroupDisplay(string name, IAudioMixer mixer)
     {
@@ -198,7 +86,10 @@ public partial class MixerGroupDisplay : FlowContainer
 
         Add(channelsFlow = new FlowContainer
         {
-            Padding = new MarginPadding { Left = 20 },
+            Padding = new MarginPadding
+            {
+                Left = 20
+            },
             Direction = FlowDirection.Vertical,
             Spacing = new Vector2(0, 2),
             RelativeSizeAxes = Axes.X,
@@ -211,28 +102,74 @@ public partial class MixerGroupDisplay : FlowContainer
     {
         base.Update();
 
-        if (DrawAlpha <= 0)
+        if (Clock.CurrentTime < nextMembershipCheck)
             return;
+
+        nextMembershipCheck = Clock.CurrentTime + membership_interval;
+
+        // The BASS mixer hands out its live backing list and relies on callers locking the same
+        // object; the SDL mixers hand out an immutable snapshot where the lock is merely harmless.
+        // Either way the copy is taken under the lock, and the drawables are built outside it, so the
+        // audio thread is not kept waiting on UI construction.
+        IAudioChannel[] current;
 
         lock (mixer.ActiveChannels)
         {
-            int currentChannelCount = mixer.ActiveChannels.Count();
-            if (channelsFlow.Children.Count != currentChannelCount)
-            {
-                channelsFlow.Clear();
-                foreach (var channel in mixer.ActiveChannels)
-                {
-                    channelsFlow.Add(new ChannelLevelDisplay($"Channel [{channel.GetHashCode():X}]", channel, false));
-                }
-            }
+            var channels = new List<IAudioChannel>();
+
+            foreach (var channel in mixer.ActiveChannels)
+                channels.Add(channel);
+
+            current = channels.ToArray();
         }
+
+        if (!membershipChanged(current))
+            return;
+
+        channelsFlow.Clear();
+        displayedChannels.Clear();
+
+        foreach (var channel in current)
+        {
+            channelsFlow.Add(new ChannelLevelDisplay($"Channel [{channel.GetHashCode():X}]", channel, false));
+            displayedChannels.Add(channel);
+        }
+    }
+
+    private bool membershipChanged(IAudioChannel[] current)
+    {
+        if (current.Length != displayedChannels.Count)
+            return true;
+
+        for (int i = 0; i < current.Length; i++)
+        {
+            if (!ReferenceEquals(current[i], displayedChannels[i]))
+                return true;
+        }
+
+        return false;
     }
 }
 
 public partial class ChannelLevelDisplay : Container
 {
+    /// <summary>
+    /// How often the numbers are reformatted. The bars are animation and stay per-frame; the text is
+    /// six formatted strings per channel that nobody can read at 240 Hz.
+    /// </summary>
+    private const double text_interval = 100;
+
+    /// <summary>
+    /// Left edge of the meter, leaving room for the name and stats columns.
+    /// </summary>
+    private const float meter_left = 460;
+
+    /// <summary>
+    /// Width reserved on the right for the two dB readouts.
+    /// </summary>
+    private const float db_column = 130;
+
     private readonly IAudioChannel channel;
-    private readonly SpriteText nameText;
     private readonly SpriteText statsText;
     private readonly SpriteText dbTextLeft;
     private readonly SpriteText dbTextRight;
@@ -248,6 +185,8 @@ public partial class ChannelLevelDisplay : Container
     private float peakLeft;
     private float peakRight;
 
+    private double nextTextUpdate = double.MinValue;
+
     public ChannelLevelDisplay(string name, IAudioChannel channel, bool isMixer)
     {
         this.channel = channel;
@@ -255,7 +194,7 @@ public partial class ChannelLevelDisplay : Container
         Width = 1f;
         Height = isMixer ? 45 : 30;
 
-        Add(nameText = new SpriteText
+        Add(new SpriteText
         {
             Text = name,
             Font = FontUsage.Default.With(size: isMixer ? 20 : 16, weight: isMixer ? "Bold" : "Regular"),
@@ -268,17 +207,21 @@ public partial class ChannelLevelDisplay : Container
         {
             Font = FontUsage.Default.With(size: 14),
             Color = Color.White,
-            Position = new Vector2(220, 0),
-            Size = new Vector2(250, Height)
+            Position = new Vector2(210, 0),
+            Size = new Vector2(240, Height)
         });
 
+        // a window can be resized, and the old full-screen overlay's hard-coded 300px meter would then either overflow or
+        // leave the right half of the row empty.
         var barBackground = new Container
         {
-            Position = new Vector2(480, 5),
-            Size = new Vector2(300, Height - 10)
+            RelativeSizeAxes = Axes.X,
+            Width = 1,
+            Height = Height - 10,
+            Margin = new MarginPadding { Left = meter_left, Right = db_column, Top = 5 }
         };
 
-        // Dark grey background box
+        // Dark gray background box
         barBackground.Add(new Box
         {
             RelativeSizeAxes = Axes.Both,
@@ -330,29 +273,28 @@ public partial class ChannelLevelDisplay : Container
 
         Add(dbTextLeft = new SpriteText
         {
+            Anchor = Anchor.TopRight,
+            Origin = Anchor.TopRight,
             Font = FontUsage.Default.With(size: 12),
             Color = Color.LightGoldenrodYellow,
-            Position = new Vector2(790, 0),
-            Size = new Vector2(300, Height)
+            Position = new Vector2(-4, 0),
+            Size = new Vector2(db_column - 8, Height)
         });
 
         Add(dbTextRight = new SpriteText
         {
+            Anchor = Anchor.TopRight,
+            Origin = Anchor.TopRight,
             Font = FontUsage.Default.With(size: 12),
             Color = Color.LightGoldenrodYellow,
-            Position = new Vector2(790, Height / 2f),
-            Size = new Vector2(300, Height)
+            Position = new Vector2(-4, Height / 2f),
+            Size = new Vector2(db_column - 8, Height)
         });
     }
 
     public override void Update()
     {
         base.Update();
-
-        if (DrawAlpha <= 0)
-            return;
-
-        statsText.Text = $"Vol: {channel.Volume.Value * 100:0}% | Freq: {channel.Frequency.Value}x";
 
         float rawLeft = channel.AmplitudeLeft;
         float rawRight = channel.AmplitudeRight;
@@ -376,10 +318,6 @@ public partial class ChannelLevelDisplay : Container
         peakLeft = Math.Max(targetLeft, peakLeft - 0.005f);
         peakRight = Math.Max(targetRight, peakRight - 0.005f);
 
-        // Update Text
-        dbTextLeft.Text = $"L: {formatDb(leftDb)}";
-        dbTextRight.Text = $"R: {formatDb(rightDb)}";
-
         // Update Main Bars (Turn red if clipping near 0 dB)
         leftVolumeBar.Color = currentLeft > 0.95f ? Color.Red : Color.Lime;
         rightVolumeBar.Color = currentRight > 0.95f ? Color.Red : Color.Lime;
@@ -390,6 +328,16 @@ public partial class ChannelLevelDisplay : Container
         // Update Peak Markers (Subtracting 0.01f keeps the marker inside the bounds of the background box)
         leftPeakMarker.X = Math.Max(0f, peakLeft - 0.01f);
         rightPeakMarker.X = Math.Max(0f, peakRight - 0.01f);
+
+        if (Clock.CurrentTime < nextTextUpdate)
+            return;
+
+        nextTextUpdate = Clock.CurrentTime + text_interval;
+
+        statsText.Text = $"Vol: {channel.Volume.Value * 100:0}% | Freq: {channel.Frequency.Value}x";
+        dbTextLeft.Text = $"L: {formatDb(leftDb)}";
+        dbTextRight.Text = $"R: {formatDb(rightDb)}";
+
         return;
 
         string formatDb(float dbValue) => dbValue <= -99f ? "-∞ dB" : $"{dbValue,7:0.000} dB";

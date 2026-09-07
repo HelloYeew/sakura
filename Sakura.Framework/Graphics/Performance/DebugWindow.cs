@@ -28,7 +28,7 @@ public abstract partial class DebugWindow : Container
     protected abstract string Title { get; }
 
     /// <summary>
-    /// Size the window opens at the first time, before the user has moved or resized it.
+    /// Size the window opens for the first time, before the user has moved or resized it.
     /// </summary>
     protected virtual Vector2 DefaultSize => new Vector2(760, 520);
 
@@ -56,6 +56,24 @@ public abstract partial class DebugWindow : Container
     /// never detaches itself.
     /// </summary>
     internal event Action<DebugWindow>? CloseRequested;
+
+    /// <summary>
+    /// Called by the layer once this window has been attached, on every open rather than only the
+    /// first <see cref="Drawable.LoadComplete"/> runs once per instance, and a reopened window is
+    /// the same instance.
+    /// </summary>
+    protected internal virtual void OnOpened()
+    {
+    }
+
+    /// <summary>
+    /// Called by the layer as this window is detached. The place to give up anything that only makes
+    /// sense while the window is on screen <see cref="DrawVisualiser"/>'s screen-space overlay, for
+    /// one, which is a sibling of this window rather than a child and so is not detached with it.
+    /// </summary>
+    protected internal virtual void OnClosed()
+    {
+    }
 
     /// <summary>
     /// Raised when the user interacts with the window's chrome, so the layer can bring it to the

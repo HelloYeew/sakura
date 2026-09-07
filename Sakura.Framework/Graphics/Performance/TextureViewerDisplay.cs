@@ -5,8 +5,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Sakura.Framework.Allocation;
-using Sakura.Framework.Development;
-using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
@@ -14,34 +12,78 @@ using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Graphics.Textures;
-using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Graphics.Video;
-using Sakura.Framework.Input;
 using Sakura.Framework.IO;
-using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Graphics.Performance;
 
-public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFromDrawVisualiser
+public partial class TextureViewerDisplay : DebugWindow
 {
+    /// <summary>
+    /// How often the header, the card labels, and the card set itself are re-read.
+    /// </summary>
+    private const double refresh_interval = 100;
+
+    /// <summary>
+    /// Height reserved above the card list for the three header lines. Fixed, and the lines are
+    /// placed at fixed offsets within it, so the two cannot disagree about where the list starts.
+    /// </summary>
+    private const float header_height = 68;
+
+    private const float header_line_height = 18;
+
+    /// <summary>
+    /// Edge of one square preview card.
+    /// </summary>
+    private const float card_size = 160;
+
+    private const float card_padding = 5;
+
+    private const float card_label_spacing = 3;
+
+    /// <summary>
+    /// Space a card's flow is assumed to give one line of size-10 label text, used only to decide how
+    /// much of the card is left for the preview.
+    /// </summary>
+    private const float card_label_height = 16;
+
+    /// <summary>
+    /// A card's content box
+    /// </summary>
+    private const float card_content_size = card_size - card_padding * 2;
+
+    protected override string Title => "Texture & Atlas Viewer (Ctrl + F3)";
+    protected override Vector2 DefaultSize => new Vector2(900, 620);
+
+    // Wide enough for three card columns.
+    protected override Vector2 MinSize => new Vector2(560, 260);
+
+    protected override Color Accent => Color.LimeGreen;
+
+    /// <summary>
+    /// Unlike the other tools, a closed instance of this one is thrown away rather than kept since
+    /// a card holds a <see cref="Texture"/> through its <see cref="Sprite"/> or an <see cref="IVideoTexture"/>,
+    /// so a retained closed window keeps alive exactly the textures whose owners forgot to dispose of them, and this is the tool that
+    /// reports <c>Textures / Reclaimed by GC</c>. Keeping the cards would make it hide the leaks it
+    /// exists to report.
+    /// </summary>
+    protected internal override bool DisposeOnClose => true;
+
     private readonly FlowContainer flowContainer;
-    private readonly ScrollableContainer scrollContainer;
-    private readonly Container contentContainer;
-    private readonly SpriteText currentTimeText;
-    private readonly SpriteText runningTimeText;
-    private readonly SpriteText bindsText;
-    private readonly SpriteText vramText;
-    private readonly SpriteText nativeMemoryText;
+    private readonly SpriteText liveText;
+    private readonly SpriteText summaryText;
+    private readonly SpriteText categoryText;
 
     private int lastTextureUpdates = -1;
     private int lastAtlasPageCount = -1;
     private int lastTextureAtlasPageCount = -1;
     private int lastTextureCount = -1;
     private int lastVideoCount = -1;
-    private double lastUpdateTime;
+
+    private double nextRefreshTime = double.MinValue;
 
     private IRenderer renderer = null!;
 
@@ -94,143 +136,27 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
 
     public TextureViewerDisplay()
     {
-        RelativeSizeAxes = Axes.Both;
-        Anchor = Anchor.TopLeft;
-        Origin = Anchor.TopLeft;
-        Size = new Vector2(1);
-
-        Add(new Box
+        var header = new Container
         {
-            Anchor = Anchor.TopLeft,
-            Origin = Anchor.TopLeft,
-            RelativeSizeAxes = Axes.Both,
-            Color = Color.Black,
-            Size = new Vector2(1),
-            Alpha = 0.75f
-        });
-
-        Add(new SpriteText
-        {
-            Text = "Texture & Atlas Viewer (Ctrl + F3)",
-            Font = FontUsage.Default.With(size: 30, weight: "Bold"),
-            Anchor = Anchor.TopLeft,
-            Origin = Anchor.TopLeft,
-            Position = new Vector2(10, 5),
-            Color = Color.LimeGreen,
-            Height = 50
-        });
-
-        Add(currentTimeText = new SpriteText
-        {
-            Text = "",
-            Font = FontUsage.Default.With(size: 16),
-            Anchor = Anchor.TopLeft,
-            Origin = Anchor.TopLeft,
-            Position = new Vector2(10, 50),
-            Color = Color.LightGreen,
             RelativeSizeAxes = Axes.X,
-            Height = 30
-        });
+            Width = 1,
+            Height = header_height,
+            Padding = new MarginPadding { Left = 10, Right = 10, Top = 8 }
+        };
 
-        Add(runningTimeText = new SpriteText
-        {
-            Text = "",
-            Font = FontUsage.Default.With(size: 16),
-            Anchor = Anchor.TopLeft,
-            Origin = Anchor.TopLeft,
-            Position = new Vector2(10, 70),
-            Color = Color.LightGreen,
-            RelativeSizeAxes = Axes.X,
-            Height = 30
-        });
+        header.Add(liveText = headerLine(0));
+        header.Add(summaryText = headerLine(header_line_height));
+        header.Add(categoryText = headerLine(header_line_height * 2));
 
-        Add(bindsText = new SpriteText
-        {
-            Text = "Texture Binds (Last Frame): 0",
-            Font = FontUsage.Default.With(size: 16),
-            Anchor = Anchor.TopLeft,
-            Origin = Anchor.TopLeft,
-            Position = new Vector2(10, 90),
-            Color = Color.LightGreen,
-            RelativeSizeAxes = Axes.X,
-            Height = 30
-        });
+        Add(header);
 
-        Add(new SpriteText()
-        {
-            Text =
-                $"Sakura Framework v{DebugUtils.GetFrameworkVersion()}",
-            Font = FontUsage.Default.With(size: 16),
-            Anchor = Anchor.TopRight,
-            Origin = Anchor.TopRight,
-            Position = new Vector2(-10, 50),
-            Color = Color.LightGreen,
-            RelativeSizeAxes = Axes.X,
-            Height = 30
-        });
-
-        Add(new SpriteText()
-        {
-            Text = $"Running {Logger.AppIdentifier} v{Logger.VersionIdentifier} {(DebugUtils.IsDebugBuild ? "(Debug Build)" : "")}",
-            Font = FontUsage.Default.With(size: 16),
-            Anchor = Anchor.TopRight,
-            Origin = Anchor.TopRight,
-            Position = new Vector2(-10, 70),
-            Color = Color.LightGreen,
-            RelativeSizeAxes = Axes.X,
-            Height = 30
-        });
-
-        Add(vramText = new SpriteText
-        {
-            Text = "",
-            Font = FontUsage.Default.With(size: 16),
-            Anchor = Anchor.TopLeft,
-            Origin = Anchor.TopLeft,
-            Position = new Vector2(10, 110),
-            Color = Color.LightGreen,
-            RelativeSizeAxes = Axes.X,
-            Height = 30
-        });
-
-        Add(nativeMemoryText = new SpriteText
-        {
-            Text = "",
-            Font = FontUsage.Default.With(size: 16),
-            Anchor = Anchor.TopLeft,
-            Origin = Anchor.TopLeft,
-            Position = new Vector2(10, 130),
-            Color = Color.LightGreen,
-            RelativeSizeAxes = Axes.X,
-            Height = 30
-        });
-
-        Add(contentContainer = new Container
-        {
-            Anchor = Anchor.Centre,
-            Origin = Anchor.Centre,
-            RelativeSizeAxes = Axes.Both,
-            Size = new Vector2(1, 0.75f),
-            Padding = new MarginPadding(20)
-        });
-
-        contentContainer.Add(new Box()
-        {
-            Anchor = Anchor.Centre,
-            Origin = Anchor.Centre,
-            RelativeSizeAxes = Axes.Both,
-            Color = Color.Black,
-            Alpha = 0.2f,
-            Size = new Vector2(1)
-        });
-
-        contentContainer.Add(scrollContainer = new ScrollableContainer
+        var scrollContainer = new ScrollableContainer
         {
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
             RelativeSizeAxes = Axes.Both,
             Size = new Vector2(1)
-        });
+        };
 
         scrollContainer.Add(flowContainer = new FlowContainer
         {
@@ -239,61 +165,49 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
             AutoSizeAxes = Axes.Y,
             Direction = FlowDirection.Horizontal,
             Spacing = new Vector2(5),
+            Padding = new MarginPadding { Left = 10, Right = 10, Bottom = 10 },
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft
         });
+
+        // Padding rather than a height, so the list keeps filling the window as it is resized. The
+        // cards flow horizontally and wrap, so they follow the window's width on their own.
+        Add(new Container
+        {
+            RelativeSizeAxes = Axes.Both,
+            Size = new Vector2(1),
+            Padding = new MarginPadding { Top = header_height },
+            Child = scrollContainer
+        });
     }
+
+    private static SpriteText headerLine(float y) => new SpriteText
+    {
+        Anchor = Anchor.TopLeft,
+        Origin = Anchor.TopLeft,
+        Font = FontUsage.Default.With(size: 14),
+        Color = Color.LightGreen,
+        Position = new Vector2(0, y),
+        Height = header_line_height
+    };
 
     protected override void LoadComplete()
     {
         base.LoadComplete();
 
         renderer = host.Renderer;
-        refreshTextures();
     }
 
     public override void Update()
     {
         base.Update();
 
-        if (State == Visibility.Hidden) return;
-
-        currentTimeText.Text = $"{DateTime.Now:dd MMMM yyyy HH:mm:ss tt}";
-        runningTimeText.Text = $"Has been running for {TimeSpan.FromSeconds(host.UpdateClock.CurrentTime / 1000):hh\\:mm\\:ss}";
-
-        int textureBinds = GlobalStatistics.Get<int>("Renderer", "Texture Binds (Last Frame)").Value;
-        bindsText.Text = $"Texture Binds (Last Frame): {textureBinds}";
-
-        long liveBytes = TextureRegistry.LiveBytes;
-        long peakBytes = GlobalStatistics.Get<long>("Textures", "Peak Bytes").Value;
-        long reclaimed = GlobalStatistics.Get<long>("Textures", "Reclaimed by GC").Value;
-
-        int slices = TextureRegistry.LiveSliceCount;
-
-        vramText.Text = $"Live: {TextureRegistry.LiveCount} textures, {toMegabytes(liveBytes)} (peak {toMegabytes(peakBytes)})"
-                        + (slices > 0 ? $"+ {slices} atlas slices" : "")
-                        + (reclaimed > 0 ? $"— {reclaimed} reclaimed by GC (a Dispose is being missed!)" : "");
-
-        nativeMemoryText.Text =
-            $"Native: {toMegabytes(NativeMemoryTracker.TotalBytes)} (peak {toMegabytes(NativeMemoryTracker.PeakTotalBytes)})"
-            + $"   tex {toMegabytes(NativeMemoryTracker.BytesFor(NativeMemoryCategory.Textures))}"
-            + $"   fb {toMegabytes(NativeMemoryTracker.BytesFor(NativeMemoryCategory.FrameBuffers))}"
-            + $"   video {toMegabytes(NativeMemoryTracker.BytesFor(NativeMemoryCategory.Video))}"
-            + $"   audio {toMegabytes(NativeMemoryTracker.BytesFor(NativeMemoryCategory.Audio))}"
-            + $"   fonts {toMegabytes(NativeMemoryTracker.BytesFor(NativeMemoryCategory.Fonts))}"
-            + $"   other {toMegabytes(NativeMemoryTracker.BytesFor(NativeMemoryCategory.Other))}"
-            // mapped font files are a ceiling of file-backed pages the OS may never fault in,
-            // so folding them into Native would overstate a figure whose
-            // whole job is to be read against the process footprint. Referencing it here also forces the
-            // statistic to register, so "Fonts -> Mapped Bytes" reads 0 rather than being absent when
-            // nothing has been mapped.
-            + $"   (mapped {toMegabytes(NativeFileMapping.MappedBytes)})";
-
-        if (host.UpdateClock.CurrentTime - lastUpdateTime < 100)
+        if (Clock.CurrentTime < nextRefreshTime)
             return;
 
-        lastUpdateTime = host.UpdateClock.CurrentTime;
+        nextRefreshTime = Clock.CurrentTime + refresh_interval;
 
+        updateHeader();
         updateVideoLabels();
         updateBindLabels();
 
@@ -313,6 +227,37 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
             lastVideoCount = currentVideoCount;
             refreshTextures();
         }
+    }
+
+    private void updateHeader()
+    {
+        long liveBytes = TextureRegistry.LiveBytes;
+        long peakBytes = GlobalStatistics.Get<long>("Textures", "Peak Bytes").Value;
+        long reclaimed = GlobalStatistics.Get<long>("Textures", "Reclaimed by GC").Value;
+
+        int slices = TextureRegistry.LiveSliceCount;
+
+        liveText.Text = $"Live: {TextureRegistry.LiveCount} textures, {toMegabytes(liveBytes)} (peak {toMegabytes(peakBytes)})"
+                        + (slices > 0 ? $" + {slices} atlas slices" : "")
+                        + (reclaimed > 0 ? $" — {reclaimed} reclaimed by GC (a Dispose is being missed!)" : "");
+
+        int textureBinds = GlobalStatistics.Get<int>("Renderer", "Texture Binds (Last Frame)").Value;
+
+        summaryText.Text = $"Binds last frame: {textureBinds}"
+                           + $"   Native: {toMegabytes(NativeMemoryTracker.TotalBytes)} (peak {toMegabytes(NativeMemoryTracker.PeakTotalBytes)})";
+
+        categoryText.Text = $"tex {toMegabytes(NativeMemoryTracker.BytesFor(NativeMemoryCategory.Textures))}"
+                            + $"   fb {toMegabytes(NativeMemoryTracker.BytesFor(NativeMemoryCategory.FrameBuffers))}"
+                            + $"   video {toMegabytes(NativeMemoryTracker.BytesFor(NativeMemoryCategory.Video))}"
+                            + $"   audio {toMegabytes(NativeMemoryTracker.BytesFor(NativeMemoryCategory.Audio))}"
+                            + $"   fonts {toMegabytes(NativeMemoryTracker.BytesFor(NativeMemoryCategory.Fonts))}"
+                            + $"   other {toMegabytes(NativeMemoryTracker.BytesFor(NativeMemoryCategory.Other))}"
+                            // mapped font files are a ceiling of file-backed pages the OS may never fault in,
+                            // so folding them into Native would overstate a figure whose
+                            // whole job is to be read against the process footprint. Referencing it here also forces the
+                            // statistic to register, so "Fonts -> Mapped Bytes" reads 0 rather than being absent when
+                            // nothing has been mapped.
+                            + $"   (mapped {toMegabytes(NativeFileMapping.MappedBytes)})";
     }
 
     private static string toMegabytes(long bytes) => $"{bytes / 1024.0 / 1024.0:0.0} MB";
@@ -495,6 +440,22 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
     }
 
     /// <summary>
+    /// The label-and-preview column inside a card.
+    /// </summary>
+    private static FlowContainer cardFlow(Drawable[] children) => new FlowContainer
+    {
+        Anchor = Anchor.TopLeft,
+        Origin = Anchor.TopLeft,
+        Direction = FlowDirection.Vertical,
+        RelativeSizeAxes = Axes.X,
+        AutoSizeAxes = Axes.Y,
+        Width = 1,
+        Spacing = new Vector2(0, card_label_spacing),
+        Padding = new MarginPadding(card_padding),
+        Children = children
+    };
+
+    /// <summary>
     /// Creates an info-only summary card for one video texture pool. The individual textures in the
     /// pool follow it as <see cref="createVideoTextureCard"/> previews.
     /// </summary>
@@ -511,7 +472,7 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
         var uploadedText = new SpriteText
         {
             Text = $"Uploaded: {uploaded} / {total}",
-            Font = FontUsage.Default.With(size: 12),
+            Font = FontUsage.Default.With(size: 10),
             Color = uploaded == total ? Color.LimeGreen : Color.Yellow
         };
 
@@ -521,7 +482,10 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
         {
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
-            Size = new Vector2(256, 256),
+            Size = new Vector2(card_size),
+            // A card clips its own content: a preview or a label that misjudges the space left over
+            // stays inside its card rather than drawing across the one next to it.
+            Masking = true,
             Children = new Drawable[]
             {
                 new Box
@@ -530,36 +494,34 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
                     Color = Color.Black,
                     Alpha = 0.9f
                 },
-                new FlowContainer
+                cardFlow(new Drawable[]
                 {
-                    Direction = FlowDirection.Vertical,
-                    RelativeSizeAxes = Axes.Both,
-                    Size = new Vector2(1),
-                    Spacing = new Vector2(0, 6),
-                    Padding = new MarginPadding(10),
-                    Children = new Drawable[]
+                    new SpriteText
                     {
-                        new SpriteText
-                        {
-                            Text = "Video Texture Pool",
-                            Font = FontUsage.Default.With(size: 14, weight: "Bold"),
-                            Color = Color.White
-                        },
-                        new SpriteText
-                        {
-                            Text = $"{width}x{height}, {toMegabytes(bytes)} each",
-                            Font = FontUsage.Default.With(size: 12),
-                            Color = Color.LightGray
-                        },
-                        new SpriteText
-                        {
-                            Text = $"Pool size: {total} ({toMegabytes(bytes * total)})",
-                            Font = FontUsage.Default.With(size: 12),
-                            Color = Color.LightGray
-                        },
-                        uploadedText
-                    }
-                }
+                        Text = "Video Texture Pool",
+                        Font = FontUsage.Default.With(size: 12, weight: "Bold"),
+                        Color = Color.White
+                    },
+                    new SpriteText
+                    {
+                        Text = $"{width}x{height},",
+                        Font = FontUsage.Default.With(size: 10),
+                        Color = Color.LightGray
+                    },
+                    new SpriteText
+                    {
+                        Text = $"{toMegabytes(bytes)} each",
+                        Font = FontUsage.Default.With(size: 10),
+                        Color = Color.LightGray
+                    },
+                    new SpriteText
+                    {
+                        Text = $"Pool: {total} ({toMegabytes(bytes * total)})",
+                        Font = FontUsage.Default.With(size: 10),
+                        Color = Color.LightGray
+                    },
+                    uploadedText
+                })
             }
         };
     }
@@ -571,13 +533,6 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
     /// </summary>
     private Container createVideoTextureCard(IVideoTexture videoTexture, int index, int total)
     {
-        const float card_size = 256;
-        const float padding = 5;
-        const float spacing = 4;
-        const float title_height = 20;
-        const float state_height = 14;
-        const float bind_height = 14;
-
         var state = describeVideoState(videoTexture);
 
         var stateText = new SpriteText
@@ -593,7 +548,8 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
 
         var bindText = createBindLabel(videoTexture.Binds)!;
 
-        var area = new Vector2(card_size - padding * 2, card_size - padding * 2 - title_height - state_height - bind_height - spacing * 3);
+        // Three label lines above the preview: title, state, binds.
+        var area = new Vector2(card_content_size, card_content_size - 3 * (card_label_height + card_label_spacing));
 
         // A video frame lives in YUV planes rather than a Texture, so FillMode has no aspect ratio to
         // letterbox against — scale the preview to the frame's aspect within the card by hand.
@@ -609,6 +565,9 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
             Size = new Vector2(card_size),
+            // A card clips its own content: a preview or a label that misjudges the space left over
+            // stays inside its card rather than drawing across the one next to it.
+            Masking = true,
             Children = new Drawable[]
             {
                 new Box
@@ -619,56 +578,47 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
                     Color = Color.DarkGray,
                     Alpha = 0.5f
                 },
-                new FlowContainer
+                cardFlow(new Drawable[]
                 {
-                    Anchor = Anchor.Centre,
-                    Origin = Anchor.Centre,
-                    RelativeSizeAxes = Axes.Both,
-                    Size = new Vector2(1),
-                    Spacing = new Vector2(0, spacing),
-                    Padding = new MarginPadding(padding),
-                    Direction = FlowDirection.Vertical,
-                    Children = new Drawable[]
+                    new SpriteText
                     {
-                        new SpriteText
+                        Anchor = Anchor.TopLeft,
+                        Origin = Anchor.TopLeft,
+                        Text = $"Video Pool Texture {index + 1}/{total} ({videoTexture.Width}x{videoTexture.Height}, {toMegabytes(NativeTextureMemory.BytesForVideoPlanes(videoTexture.Width, videoTexture.Height))})",
+                        Font = FontUsage.Default.With(size: 10),
+                        Color = Color.White,
+                        // Truncated rather than left to the card's masking, so it ends in an
+                        // ellipsis rather than mid-glyph.
+                        Truncate = true,
+                        MaxWidth = card_content_size
+                    },
+                    stateText,
+                    bindText,
+                    new Container
+                    {
+                        Anchor = Anchor.TopLeft,
+                        Origin = Anchor.TopLeft,
+                        Size = area,
+                        Children = new Drawable[]
                         {
-                            Anchor = Anchor.TopLeft,
-                            Origin = Anchor.TopLeft,
-                            Text = $"Video Pool Texture {index + 1}/{total} ({videoTexture.Width}x{videoTexture.Height}, {toMegabytes(NativeTextureMemory.BytesForVideoPlanes(videoTexture.Width, videoTexture.Height))})",
-                            Font = FontUsage.Default.With(size: 10),
-                            Color = Color.White,
-                            // Nothing masks a card, so a title too long for one would draw over its neighbour.
-                            Truncate = true,
-                            MaxWidth = card_size - padding * 2
-                        },
-                        stateText,
-                        bindText,
-                        new Container
-                        {
-                            Anchor = Anchor.TopLeft,
-                            Origin = Anchor.TopLeft,
-                            Size = area,
-                            Children = new Drawable[]
+                            new Box
                             {
-                                new Box
-                                {
-                                    Anchor = Anchor.Centre,
-                                    Origin = Anchor.Centre,
-                                    RelativeSizeAxes = Axes.Both,
-                                    Color = Color.Black,
-                                    Alpha = 0.5f
-                                },
-                                new VideoTexturePreview(videoTexture, videoShader)
-                                {
-                                    Anchor = Anchor.Centre,
-                                    Origin = Anchor.Centre,
-                                    RelativeSizeAxes = Axes.Both,
-                                    Size = previewSize
-                                }
+                                Anchor = Anchor.Centre,
+                                Origin = Anchor.Centre,
+                                RelativeSizeAxes = Axes.Both,
+                                Color = Color.Black,
+                                Alpha = 0.5f
+                            },
+                            new VideoTexturePreview(videoTexture, videoShader)
+                            {
+                                Anchor = Anchor.Centre,
+                                Origin = Anchor.Centre,
+                                RelativeSizeAxes = Axes.Both,
+                                Size = previewSize
                             }
                         }
                     }
-                }
+                })
             }
         };
     }
@@ -676,10 +626,6 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
     private Container createTextureCard(string title, Texture texture)
     {
         var state = describeState(texture);
-
-        const float title_height = 20;
-        const float bind_height = 14;
-        float stateHeight = state == null ? 0 : 14;
 
         var labels = new List<Drawable>
         {
@@ -689,7 +635,12 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
                 Origin = Anchor.TopLeft,
                 Text = title,
                 Font = FontUsage.Default.With(size: 10),
-                Color = Color.White
+                Color = Color.White,
+                // A texture's title is a full asset path, so most of them are wider than a card.
+                // The card masks anyway, but a clipped title ends mid-glyph where a truncated one
+                // ends in an ellipsis.
+                Truncate = true,
+                MaxWidth = card_content_size
             }
         };
 
@@ -710,11 +661,13 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
         if (bindLabel != null)
             labels.Add(bindLabel);
 
+        float previewHeight = card_content_size - labels.Count * (card_label_height + card_label_spacing);
+
         labels.Add(new Container
         {
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
-            Size = new Vector2(256, 256 - title_height - stateHeight - (bindLabel == null ? 0 : bind_height)),
+            Size = new Vector2(card_content_size, previewHeight),
             Child = new Sprite
             {
                 Anchor = Anchor.Centre,
@@ -730,7 +683,10 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
         {
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
-            Size = new Vector2(256, 256),
+            Size = new Vector2(card_size),
+            // A card clips its own content: a preview or a label that misjudges the space left over
+            // stays inside its card rather than drawing across the one next to it.
+            Masking = true,
             Children = new Drawable[]
             {
                 new Box
@@ -741,40 +697,15 @@ public partial class TextureViewerDisplay : FocusedOverlayContainer, IRemoveFrom
                     Color = Color.DarkGray,
                     Alpha = 0.5f
                 },
-                new FlowContainer
-                {
-                    Anchor = Anchor.Centre,
-                    Origin = Anchor.Centre,
-                    RelativeSizeAxes = Axes.Both,
-                    Size = new Vector2(1),
-                    Spacing = new Vector2(0, 5),
-                    Padding = new MarginPadding(5),
-                    Children = labels.ToArray()
-                }
+                cardFlow(labels.ToArray())
             }
         };
     }
-
-    public override bool OnKeyDown(KeyEvent e)
-    {
-        if (State == Visibility.Visible && e.Key == Key.Escape)
-        {
-            Hide();
-            return true;
-        }
-        return base.OnKeyDown(e);
-    }
-
-    protected override void PopIn() => this.FadeIn(200, Easing.OutQuint);
-
-    protected override void PopOut() => this.FadeOut(200, Easing.OutQuint);
 
     protected override void Dispose(bool isDisposing)
     {
         if (IsDisposed) return;
 
-        // The preview cards borrow this shader, they never own it — releasing it here is the only
-        // disposal, and it must happen on the draw thread.
         if (videoShader != null)
         {
             var shader = videoShader;
