@@ -29,8 +29,9 @@ internal sealed class SDLNativeAudioMixer : SDLNativeAudioChannel, ISDLMixer
     /// </summary>
     /// <remarks>
     /// Rebuilt on mutation rather than copied on read because <see cref="ActiveChannels"/> is polled
-    /// every frame by <see cref="Graphics.Performance.AudioMixerVisualiser"/>, and a per-read copy
-    /// would add steady allocation churn to a backend whose whole premise is not provoking the GC.
+    /// by <see cref="Graphics.Performance.AudioMixerVisualiser"/> every 100ms while it is open, and
+    /// a per-read copy would add allocation churn to a backend whose whole premise is not provoking
+    /// the GC.
     /// </remarks>
     private volatile IAudioChannel[] snapshot = Array.Empty<IAudioChannel>();
 
