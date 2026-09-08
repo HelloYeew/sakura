@@ -312,11 +312,11 @@ public abstract partial class DebugWindow : Container
                 Alpha = 0.1f
             });
 
-            Add(new SpriteText
+            Add(new IconSprite()
             {
                 Anchor = Anchor.Centre,
                 Origin = Anchor.Centre,
-                Text = "X",
+                Icon = IconUsage.Close,
                 Font = FontUsage.Default.With(size: 12, weight: "Bold"),
                 Color = Color.White
             });
