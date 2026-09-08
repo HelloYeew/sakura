@@ -28,6 +28,16 @@ public class GlobalStatistic<T> : IGlobalStatistic
         }
     }
 
+    public double? NumericValue => Value switch
+    {
+        int i => i,
+        long l => l,
+        float f => f,
+        double d => d,
+        decimal dec => (double)dec,
+        _ => null
+    };
+
     public GlobalStatistic(string group, string name)
     {
         Group = group;
