@@ -76,6 +76,16 @@ public class DebugWindowLayerTest
         root.UpdateSubTree();
     }
 
+    /// <summary>
+    /// Advances past any window's close animation. Closing plays the window out and the layer detaches
+    /// it when that finishes, so a close is only observable a few frames later.
+    /// </summary>
+    private void runClose()
+    {
+        runFrame();
+        runFrame(1000);
+    }
+
     [Test]
     public void NothingIsBuiltUntilFirstOpen()
     {
@@ -104,6 +114,16 @@ public class DebugWindowLayerTest
         layer.Close<StubWindow>();
         runFrame();
 
+        // Still a child while it plays out, but closed to everything that asks.
+        Assert.Multiple(() =>
+        {
+            Assert.That(window.IsClosing, Is.True);
+            Assert.That(layer.IsOpen<StubWindow>(), Is.False);
+            Assert.That(layer.OpenWindows, Is.Empty);
+        });
+
+        runClose();
+
         Assert.Multiple(() =>
         {
             Assert.That(window.Parent, Is.Null);
@@ -120,13 +140,107 @@ public class DebugWindowLayerTest
         runFrame();
 
         layer.Close<StubWindow>();
-        runFrame();
+        runClose();
 
-        // A window that hid itself would still be a child with Alpha 0. Nothing here should be.
+        // A window that hid itself would still be a child with Alpha 0 once its animation ended.
+        // Nothing here should be: the animation is a send-off, not the resting state.
         foreach (var child in layer.Children)
             Assert.That(child, Is.Not.InstanceOf<DebugWindow>());
 
         Assert.That(window.Alpha, Is.EqualTo(1).Within(0.001f));
+    }
+
+    [Test]
+    public void OpeningPlaysTheWindowIn()
+    {
+        var window = layer.Open(() => new StubWindow(1));
+
+        // Before a single frame has run: the window is attached but has not been drawn yet, so it
+        // starts from invisible rather than popping in at full alpha for one frame.
+        Assert.Multiple(() =>
+        {
+            Assert.That(window.Alpha, Is.EqualTo(0).Within(0.001f));
+            Assert.That(window.Scale.X, Is.LessThan(1));
+        });
+
+        runFrame();
+        Assert.That(window.Alpha, Is.GreaterThan(0), "The open animation should be under way.");
+
+        runFrame(1000);
+        Assert.Multiple(() =>
+        {
+            Assert.That(window.Alpha, Is.EqualTo(1).Within(0.001f));
+            Assert.That(window.Scale.X, Is.EqualTo(1).Within(0.001f));
+        });
+    }
+
+    /// <summary>
+    /// Re-opening a window still playing out catches it rather than starting over. The
+    /// instance never left the tree, so snapping it back to invisible first would be a flicker.
+    /// </summary>
+    [Test]
+    public void ReopeningMidCloseCancelsTheClose()
+    {
+        var window = layer.Open(() => new StubWindow(1));
+        runFrame(1000);
+
+        layer.Close<StubWindow>();
+        runFrame(70);
+
+        float partway = window.Alpha;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(window.IsClosing, Is.True);
+            Assert.That(partway, Is.LessThan(1).And.GreaterThan(0), "Should be caught mid-fade.");
+        });
+
+        var reopened = layer.Open(() => new StubWindow(2));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(reopened, Is.SameAs(window), "the instance should be reused, not rebuilt");
+            Assert.That(window.IsClosing, Is.False);
+            Assert.That(window.Alpha, Is.EqualTo(partway).Within(0.001f), "should carry on from where the close got to, not restart from zero");
+        });
+
+        runFrame(1000);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(window.Parent, Is.EqualTo(layer), "the cancelled close must not detach it later");
+            Assert.That(window.Alpha, Is.EqualTo(1).Within(0.001f));
+            Assert.That(layer.IsOpen<StubWindow>(), Is.True);
+        });
+    }
+
+    /// <summary>
+    /// A window on its way out is not a target. Its animation is a send-off, and for the length of it
+    /// the app underneath must already be clickable.
+    /// </summary>
+    [Test]
+    public void AClosingWindowClaimsNoInput()
+    {
+        var window = layer.Open(() => new StubWindow(1));
+        window.SetBounds(new Vector2(100, 100), new Vector2(400, 300));
+        runFrame(1000);
+
+        var inside = window.ToScreenSpace(new Vector2(0.5f, 0.5f));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(window.ReceivePositionalInputAt(inside), Is.True);
+            Assert.That(layer.NotifyMouseDown(inside), Is.True);
+        });
+
+        layer.Close<StubWindow>();
+        runFrame();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(window.ReceivePositionalInputAt(inside), Is.False);
+            Assert.That(layer.NotifyMouseDown(inside), Is.False, "a closing window must not be raised back to the front either");
+        });
     }
 
     [Test]
@@ -141,7 +255,7 @@ public class DebugWindowLayerTest
         Assert.That(markers, Is.EqualTo(1));
 
         layer.Close<StubWindow>();
-        runFrame();
+        runClose();
 
         var reopened = layer.Open(() => new StubWindow(2));
         runFrame();
@@ -164,7 +278,7 @@ public class DebugWindowLayerTest
         runFrame();
 
         layer.Close<DisposingStubWindow>();
-        runFrame();
+        runClose();
 
         var second = layer.Open(() => new DisposingStubWindow(++built));
         runFrame();
@@ -318,7 +432,7 @@ public class DebugWindowLayerTest
         runFrame();
 
         layer.CloseAll();
-        runFrame();
+        runClose();
 
         Assert.That(layer.Children, Is.Empty);
     }

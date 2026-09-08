@@ -211,6 +211,63 @@ public class ContainerMaskScaleTest
     }
 
     /// <summary>
+    /// Border must follow the container's alpha
+    /// </summary>
+    [Test]
+    public void TestBorderFadesWithContainerAlpha()
+    {
+        var bordered = new Container
+        {
+            Size = new Vector2(200, 100),
+            Masking = true,
+            BorderThickness = 2,
+            BorderColor = Color.FromArgb(200, 255, 255, 255)
+        };
+
+        root.Add(bordered);
+        settle();
+
+        Assert.That(popDrawNode(bordered).BorderColor.A, Is.EqualTo(200), "An opaque container must pass its border colour through untouched.");
+
+        bordered.Alpha = 0.25f;
+        settle();
+
+        var faded = popDrawNode(bordered);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(faded.BorderColor.A, Is.EqualTo(50).Within(1), "200 alpha at 0.25 draw alpha → 50.");
+            Assert.That(faded.BorderColor.R, Is.EqualTo(255), "Only the alpha channel scales.");
+        });
+
+        bordered.Alpha = 0;
+        settle();
+
+        // Nothing is drawn at all at zero alpha, so there is no border to check — the node returns early.
+        Assert.That(popCalls(bordered), Is.Empty, "A fully faded container draws nothing, border included.");
+    }
+
+    /// <summary>
+    /// Renders the container's draw node and returns the single mask that was popped.
+    /// </summary>
+    private static RecordingRenderer.MaskCall popDrawNode(Container container)
+    {
+        var pops = popCalls(container);
+
+        Assert.That(pops, Has.Count.EqualTo(1), "Masking container must pop exactly one mask.");
+        return pops[0];
+    }
+
+    private static List<RecordingRenderer.MaskCall> popCalls(Container container)
+    {
+        var recorder = new RecordingRenderer();
+        var node = (ContainerDrawNode)container.GenerateDrawNode(0);
+        node.Draw(recorder);
+
+        return recorder.Pops;
+    }
+
+    /// <summary>
     /// Minimal <see cref="IRenderer"/> that records the geometry passed to <c>PushMask</c>/<c>PopMask</c>.
     /// Everything else is a no-op — <see cref="ContainerDrawNode.Draw"/> only touches these masking calls
     /// (its child list is empty when the node is generated in isolation).
@@ -219,13 +276,14 @@ public class ContainerMaskScaleTest
     {
         public readonly struct MaskCall
         {
-            public MaskCall(Vector2 center, Vector2 halfSize, float shearX, float cornerRadius, float borderThickness)
+            public MaskCall(Vector2 center, Vector2 halfSize, float shearX, float cornerRadius, float borderThickness, Color borderColor = default)
             {
                 Center = center;
                 HalfSize = halfSize;
                 ShearX = shearX;
                 CornerRadius = cornerRadius;
                 BorderThickness = borderThickness;
+                BorderColor = borderColor;
             }
 
             public Vector2 Center { get; }
@@ -233,6 +291,7 @@ public class ContainerMaskScaleTest
             public float ShearX { get; }
             public float CornerRadius { get; }
             public float BorderThickness { get; }
+            public Color BorderColor { get; }
         }
 
         public List<MaskCall> Pushes { get; } = new();
@@ -242,7 +301,7 @@ public class ContainerMaskScaleTest
             => Pushes.Add(new MaskCall(maskCenter, maskHalfSize, shearX, cornerRadius, 0f));
 
         public void PopMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<VertexData> maskVertices = default)
-            => Pops.Add(new MaskCall(maskCenter, maskHalfSize, shearX, cornerRadius, borderThickness));
+            => Pops.Add(new MaskCall(maskCenter, maskHalfSize, shearX, cornerRadius, borderThickness, borderColor));
 
         public void DrawEdgeEffect(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float edgeRadius, Vector2 offset, Color color, bool glow, bool hollow, ReadOnlySpan<VertexData> quadVertices) { }
 

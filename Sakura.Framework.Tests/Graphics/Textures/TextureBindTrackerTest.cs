@@ -38,6 +38,31 @@ public class TextureBindTrackerTest
         Assert.That(counter.LastFrame, Is.Zero);
     }
 
+    [Test]
+    public void EverBoundIsFalseUntilTheFirstBind()
+    {
+        Assert.That(counter.EverBound, Is.False);
+
+        counter.Record();
+
+        Assert.That(counter.EverBound, Is.True);
+    }
+
+    [Test]
+    public void EverBoundStaysTrueOnceTheBindsStop()
+    {
+        record(counter, 2);
+        TextureBindTracker.EndFrame();
+        TextureBindTracker.EndFrame();
+        TextureBindTracker.EndFrame();
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(counter.LastFrame, Is.Zero, "the binds were several frames ago");
+            Assert.That(counter.EverBound, Is.True);
+        }
+    }
+
     /// <summary>
     /// Binds are only reported once their frame has closed, so the number a reader sees never changes
     /// under it mid-frame.
@@ -120,15 +145,15 @@ public class TextureBindTrackerTest
 
         TextureBindTracker.EndFrame();
 
-        Assert.Multiple(() =>
+        using (Assert.EnterMultipleScope())
         {
-            Assert.That(GlobalStatistics.Get<int>("Renderer", "Texture Binds (Last Frame)").Value, Is.EqualTo(5));
+            Assert.That(GlobalStatistics.Get<int>("Renderer", "Texture Binds This Frame").Value, Is.EqualTo(5));
             Assert.That(counter.LastFrame, Is.EqualTo(2));
             Assert.That(other.LastFrame, Is.EqualTo(3));
-        });
+        }
 
         TextureBindTracker.EndFrame();
 
-        Assert.That(GlobalStatistics.Get<int>("Renderer", "Texture Binds (Last Frame)").Value, Is.Zero, "the total resets with the frame");
+        Assert.That(GlobalStatistics.Get<int>("Renderer", "Texture Binds This Frame").Value, Is.Zero, "the total resets with the frame");
     }
 }

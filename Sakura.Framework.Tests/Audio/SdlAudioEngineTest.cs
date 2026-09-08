@@ -398,7 +398,7 @@ public class SdlAudioEngineTest
         Thread.Sleep(200);
         manager.Update(0);
 
-        double queued = GlobalStatistics.Get<double>("Audio", "SDL Queued (ms)").Value;
+        double queued = GlobalStatistics.Get<double>("Audio", "SDL Queued").Value;
 
         Assert.That(queued, Is.GreaterThan(0), "The mix thread is not filling the device queue.");
     }
@@ -480,13 +480,13 @@ public class SdlAudioEngineTest
             {
                 // Renamed rather than reused: there is a real device callback to time now, where the
                 // managed mixer could only time a block it chose to push.
-                Assert.That(GlobalStatistics.Get<long>("Audio", "SDL Callback (µs)").Value, Is.GreaterThan(0));
+                Assert.That(GlobalStatistics.Get<long>("Audio", "SDL Callback").Value, Is.GreaterThan(0));
                 Assert.That(GlobalStatistics.Get<long>("Audio", "SDL Put Failures").Value, Is.Zero);
             }
             else
             {
-                Assert.That(GlobalStatistics.Get<long>("Audio", "SDL Mix Block (µs)").Value, Is.GreaterThan(0));
-                Assert.That(GlobalStatistics.Get<double>("Audio", "SDL Queued (ms)").Value, Is.GreaterThan(0));
+                Assert.That(GlobalStatistics.Get<long>("Audio", "SDL Mix Block").Value, Is.GreaterThan(0));
+                Assert.That(GlobalStatistics.Get<double>("Audio", "SDL Queued").Value, Is.GreaterThan(0));
             }
         });
     }

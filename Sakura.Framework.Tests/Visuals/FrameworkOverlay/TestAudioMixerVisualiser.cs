@@ -1,7 +1,9 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using System.Linq;
+using System.Text.RegularExpressions;
 using NUnit.Framework;
 using Sakura.Framework.Allocation;
 using Sakura.Framework.Audio;
@@ -83,12 +85,66 @@ public partial class TestAudioMixerVisualiser : TestScene
         AddAssert("Rows did not grow", () => countChannelRows() <= withChannel);
     }
 
+    /// <summary>
+    /// The header reads the engine's own statistics, which are registered on the engine's first update
+    /// rather than at construction, so it has to keep re-reading them rather than snapshot on open.
+    /// </summary>
+    [Test]
+    public void TestHeaderReportsTheEngine()
+    {
+        AddWaitStep("Let the header tick", 300);
+
+        AddAssert("Engine line names the engine", () => window().EngineSummary.StartsWith("Engine: ", StringComparison.Ordinal));
+        AddAssert("Engine line carries the volumes", () => window().EngineSummary.Contains("Master ", StringComparison.Ordinal));
+        AddAssert("Device line carries a latency", () => window().DeviceSummary.Contains("Latency: ", StringComparison.Ordinal));
+        AddAssert("Fault line said something", () => window().FaultSummary.Length > 0);
+    }
+
+    /// <summary>
+    /// The header counts channels from the two mixer groups rather than reading
+    /// <see cref="IAudioMixer.ActiveChannels"/> a second time, so that it cannot report a membership
+    /// the rows underneath it disagree with — and so that it does not take the audio thread's lock
+    /// again on its own tick. This scores the two staying in step, whether the engine under
+    /// test routes anything into a mixer.
+    /// </summary>
+    [Test]
+    public void TestHeaderChannelCountMatchesTheRows()
+    {
+        AddWaitStep("Let the membership and header tick", 300);
+
+        AddAssert("Counts agree with the rows", () => headerChannelCount() == countChannelRows() - mixerCount());
+
+        AddStep("Play a track", () => testTrack.GetChannel().Play());
+        AddStep("Play a sample", () => testSample.GetChannel().Play());
+        AddWaitStep("Let the membership and header tick", 300);
+
+        AddAssert("Counts still agree with the rows", () => headerChannelCount() == countChannelRows() - mixerCount());
+    }
+
+    /// <summary>
+    /// The two-channel figures the engine line ends with, added together.
+    /// </summary>
+    private int headerChannelCount()
+    {
+        var match = Regex.Match(window().EngineSummary, @"Channels: (\d+) track, (\d+) sample");
+
+        Assert.That(match.Success, Is.True, $"the engine line lost its channel counts: {window().EngineSummary}");
+
+        return int.Parse(match.Groups[1].Value) + int.Parse(match.Groups[2].Value);
+    }
+
+    /// <summary>
+    /// A mixer gets a row of its own above its channels, so those rows have to come off the total
+    /// before it can be compared against a channel count.
+    /// </summary>
+    private int mixerCount() => DrawableExtensions.CountOfType<MixerGroupDisplay>(window());
+
     [Test]
     public void TestCloseDetaches()
     {
         AddStep("Close", () => layer.Toggle(() => new AudioMixerVisualiser(audioManager)));
 
-        AddAssert("Nothing left in the layer", () => layer.Children.Count == 0);
+        AddUntilStep("Nothing left in the layer once the close animation ends", () => layer.Children.Count == 0);
 
         AddStep("Reopen", () => layer.Toggle(() => new AudioMixerVisualiser(audioManager)));
 

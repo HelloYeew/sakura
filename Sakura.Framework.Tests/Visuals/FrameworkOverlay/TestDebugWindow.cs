@@ -63,7 +63,7 @@ public partial class TestDebugWindow : ManualInputManagerTestScene
 
         AddStep("Toggle again", () => layer.Toggle(() => new PinkWindow()));
         AddAssert("Is closed", () => !layer.IsOpen<PinkWindow>());
-        AddAssert("Detached, not hidden", () => layer.Children.Count == 0);
+        AddUntilStep("Detached, not left hidden", () => layer.Children.Count == 0);
     }
 
     [Test]
