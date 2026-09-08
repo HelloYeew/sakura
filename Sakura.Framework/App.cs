@@ -124,7 +124,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
 
     /// <summary>
     /// Hosts the four debug tools, each of which is a floating window built on the first press of its
-    /// key and detached from the tree when it is closed. See DEBUG_WINDOWS.md.
+    /// key and detached from the tree when it is closed.
     /// </summary>
     private DebugWindowLayer debugWindows;
 
@@ -379,7 +379,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
     {
         InputManager.HandleMouseDown(e.Button, e.ScreenSpaceMousePosition);
         rebuildInputQueues();
-        
+
         debugWindows?.NotifyMouseDown(e.ScreenSpaceMousePosition);
 
         BeginMouseDownFocusTracking();

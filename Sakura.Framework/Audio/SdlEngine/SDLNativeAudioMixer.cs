@@ -12,11 +12,11 @@ namespace Sakura.Framework.Audio.SdlEngine;
 /// A mixer node inside <c>libsakura-audio</c>, presented as an <see cref="IAudioMixer"/>.
 /// </summary>
 /// <remarks>
-/// A native mixer sums its children and then applies its own gain, filter and metering exactly as a
+/// A native mixer sums its children and then applies its own gain, filter, and metering exactly as a
 /// voice does, which is what preserves <see cref="BassEngine.BassAudioMixer"/>'s semantics. SDL's own
 /// device mixing is flat, so routing everything straight at the device would have left
 /// <see cref="IAudioManager.TrackMixer"/> and <see cref="IAudioManager.SampleMixer"/> as bookkeeping
-/// with no per-mixer volume, filter or spectrum.
+/// with no per-mixer volume, filter, or spectrum.
 /// </remarks>
 [SuppressMessage("ReSharper", "InconsistentNaming")]
 internal sealed class SDLNativeAudioMixer : SDLNativeAudioChannel, ISDLMixer
@@ -44,7 +44,7 @@ internal sealed class SDLNativeAudioMixer : SDLNativeAudioChannel, ISDLMixer
     /// The channels routed into this mixer.
     /// </summary>
     /// <remarks>
-    /// Returns an immutable snapshot, so enumerating it is safe without external locking and cannot
+    /// Returns an immutable snapshot, so listing it is safe without external locking and cannot
     /// throw if a channel is added or removed mid-iteration. The BASS backend instead hands out its
     /// live backing list and happens to work because callers lock the same object — this does not
     /// reproduce that arrangement.

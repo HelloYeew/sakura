@@ -256,11 +256,6 @@ public class SdlAudioEngineTest
     /// <summary>
     /// The shipped default is the low-latency one, and it is honoured.
     /// </summary>
-    /// <remarks>
-    /// Pinned as its own test because the default is a decision with evidence behind it — see
-    /// AUDIO_SDL.md — rather than an arbitrary constant, and because changing it silently is exactly
-    /// the failure mode the risk table warns about in both directions.
-    /// </remarks>
     [Test]
     public void Manager_DefaultsToALowLatencyDeviceBuffer()
     {
@@ -290,13 +285,6 @@ public class SdlAudioEngineTest
     /// <summary>
     /// The reported latency includes the device buffer, not just SDL's queue.
     /// </summary>
-    /// <remarks>
-    /// This is the assertion that would have caught the first version of this code. In the callback
-    /// model SDL asks the callback for exactly what it needs and takes it immediately, so the stream
-    /// queue is empty whenever anything looks at it — a latency read from the queue alone is zero on
-    /// the native engine, and the compensation it feeds does nothing at all. On real CoreAudio the
-    /// numbers are 5.33 ms native at a 256-frame buffer against 106.67 ms managed; see AUDIO_SDL.md.
-    /// </remarks>
     [TestCase(true)]
     [TestCase(false)]
     public void Manager_ReportsOutputLatencyIncludingTheDeviceBuffer(bool native)
@@ -339,13 +327,6 @@ public class SdlAudioEngineTest
     /// <summary>
     /// A device that is keeping up never has its buffer raised behind the user's back.
     /// </summary>
-    /// <remarks>
-    /// The failure this guards is the expensive one. A watchdog that fires spuriously does not crash
-    /// or log anything alarming — it quietly writes a larger buffer into every user's config and
-    /// gives back the latency this whole backend exists to win, and the only symptom is that the
-    /// numbers in AUDIO_SDL.md stop matching reality. The threshold logic is covered in
-    /// <see cref="UnderrunWatchdogTest"/>; this covers the wiring being pointed at a real counter.
-    /// </remarks>
     [TestCase(true)]
     [TestCase(false)]
     public void Manager_DoesNotRaiseTheBufferOnAHealthyDevice(bool native)
@@ -387,12 +368,6 @@ public class SdlAudioEngineTest
     /// <summary>
     /// The device-change poll runs and finds nothing to report on a device that has not changed.
     /// </summary>
-    /// <remarks>
-    /// A weak assertion on purpose: swapping the output device out from under a running stream is not
-    /// something a test can stage, so what is covered here is that the poll executes, that it does not
-    /// mistake the first reading for a change, and that it leaves the recorded buffer size intact.
-    /// The behaviour on an actual device change is verified by hand — see AUDIO_SDL.md.
-    /// </remarks>
     [TestCase(true)]
     [TestCase(false)]
     public void Manager_DeviceChangePollIsQuietWhenNothingChanged(bool native)

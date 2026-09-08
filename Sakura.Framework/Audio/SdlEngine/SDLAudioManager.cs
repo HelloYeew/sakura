@@ -516,21 +516,6 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     /// <summary>
     /// Acts, once, when the device is starving steadily rather than occasionally.
     /// </summary>
-    /// <remarks>
-    /// <para>
-    /// This is what makes an aggressive default shippable rather than a gamble. The shipped device
-    /// buffer is chosen on measurement from the machines anyone has actually run — see AUDIO_SDL.md —
-    /// and the thing measurement cannot rule out is scheduling jitter somewhere nobody has tried. So
-    /// the default is a starting point that retreats under evidence rather than a promise.
-    /// </para>
-    /// <para>
-    /// The retreat is persisted and takes effect next launch rather than being applied here. Growing
-    /// the buffer live would mean tearing down and reopening the device underneath a callback that is
-    /// very likely running, for an audible gap, on a code path that exists for nothing else — and the
-    /// session it would rescue is one that has already been missing its deadlines for five seconds.
-    /// Writing the number down costs one line of config and fixes the machine permanently.
-    /// </para>
-    /// </remarks>
     private void handleSustainedUnderruns(UnderrunWatchdog.Observation observation, double frameTime)
     {
         var verdict = underrunWatchdog.Poll(observation, frameTime);
