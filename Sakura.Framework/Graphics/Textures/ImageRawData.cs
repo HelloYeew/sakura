@@ -47,8 +47,8 @@ public readonly struct ImageRawData : IDisposable
     /// </summary>
     private static readonly ArrayPool<byte> pixel_pool = ArrayPool<byte>.Create(max_pooled_length, max_buffers_per_bucket);
 
-    private static readonly GlobalStatistic<long> stat_live_bytes = GlobalStatistics.Get<long>("Textures", "Pixel Buffer Bytes (live)");
-    private static readonly GlobalStatistic<long> stat_peak_bytes = GlobalStatistics.Get<long>("Textures", "Pixel Buffer Bytes (peak)");
+    private static readonly GlobalStatistic<long> stat_live_bytes = GlobalStatistics.Get<long>("Textures", "Pixel Buffer Bytes (live)", StatisticKind.Gauge, StatisticUnit.Bytes);
+    private static readonly GlobalStatistic<long> stat_peak_bytes = GlobalStatistics.Get<long>("Textures", "Pixel Buffer Bytes (peak)", StatisticKind.Gauge, StatisticUnit.Bytes);
 
     private static long liveBytes;
 

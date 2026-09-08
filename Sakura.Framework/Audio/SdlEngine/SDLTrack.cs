@@ -43,7 +43,7 @@ internal sealed unsafe class SDLTrack : ITrack, IHasActiveChannels, IDisposable
 
         if (Length > 0)
         {
-            GlobalStatistics.Get<int>("Audio", "Loaded Tracks").Value++;
+            GlobalStatistics.Get<int>("Audio", "Loaded Tracks", StatisticKind.Cumulative).Value++;
             Logger.Debug($"🔈 Track opened from file, no in-memory copy: {path}");
         }
     }
@@ -64,7 +64,7 @@ internal sealed unsafe class SDLTrack : ITrack, IHasActiveChannels, IDisposable
 
         if (Length > 0)
         {
-            GlobalStatistics.Get<int>("Audio", "Loaded Tracks").Value++;
+            GlobalStatistics.Get<int>("Audio", "Loaded Tracks", StatisticKind.Cumulative).Value++;
             Logger.Verbose($"🔈 Track loaded from stream ({data.Length / 1024} KB held in unmanaged memory)");
         }
     }
@@ -181,7 +181,7 @@ internal sealed unsafe class SDLTrack : ITrack, IHasActiveChannels, IDisposable
         isDisposed = true;
 
         if (Length > 0)
-            GlobalStatistics.Get<int>("Audio", "Loaded Tracks").Value--;
+            GlobalStatistics.Get<int>("Audio", "Loaded Tracks", StatisticKind.Cumulative).Value--;
 
         // Only this track's own reference. Channels still playing hold theirs, and the block
         // survives until the last of them is disposed.

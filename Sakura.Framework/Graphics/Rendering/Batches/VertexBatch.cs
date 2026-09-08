@@ -27,7 +27,7 @@ namespace Sakura.Framework.Graphics.Rendering.Batches;
 /// </remarks>
 public sealed class VertexBatch
 {
-    private static readonly GlobalStatistic<int> stat_buffer_full_flushes = GlobalStatistics.Get<int>("Renderer", "Buffer Full Flushes");
+    private static readonly GlobalStatistic<int> stat_buffer_full_flushes = GlobalStatistics.Get<int>("Renderer", "Buffer Full Flushes", StatisticKind.PerFrame);
 
     /// <summary>
     /// Clip rect meaning "no active clip" to the fragment shader's <c>applyClipping</c>.

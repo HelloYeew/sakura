@@ -13,7 +13,7 @@ namespace Sakura.Framework.Graphics.Rendering;
 
 public class ContainerDrawNode : DrawNode
 {
-    private static readonly GlobalStatistic<int> stat_culled = GlobalStatistics.Get<int>("Drawables", "Culled");
+    private static readonly GlobalStatistic<int> stat_culled = GlobalStatistics.Get<int>("Drawables", "Culled", StatisticKind.PerFrame);
 
     public long TopologyInvalidationID { get; internal set; }
 
@@ -111,7 +111,18 @@ public class ContainerDrawNode : DrawNode
         }
 
         if (Masking)
-            renderer.PopMask(screenCenter, screenHalfSize, ShearX, cornerRadiusScreen, borderThicknessScreen, BorderColor, Vertices);
+        {
+            // Premultiply by the container's overall draw alpha, the same way drawEdgeEffect does. The
+            // border is shaded from a uniform rather than from vertex colors, so this is the only
+            // place DrawAlpha can reach it — without it a fading container keeps a fully opaque
+            // outline around contents that have already gone.
+            var borderColor = BorderColor;
+
+            if (DrawAlpha < 1f)
+                borderColor = Color.FromArgb((int)Math.Clamp(borderColor.A * DrawAlpha, 0f, 255f), borderColor);
+
+            renderer.PopMask(screenCenter, screenHalfSize, ShearX, cornerRadiusScreen, borderThicknessScreen, borderColor, Vertices);
+        }
 
         // Glows render on top of the container's contents.
         if (hasEdgeEffect && EdgeEffect.Type == EdgeEffectType.Glow)

@@ -53,7 +53,7 @@ public static class DrawableDisposalQueue
     private static readonly ConcurrentQueue<PendingRelease> queue = new ConcurrentQueue<PendingRelease>();
 
     private static readonly GlobalStatistic<int> stat_pending = GlobalStatistics.Get<int>("Drawables", "Disposal Queue (pending)");
-    private static readonly GlobalStatistic<long> stat_disposed = GlobalStatistics.Get<long>("Drawables", "Disposed");
+    private static readonly GlobalStatistic<long> stat_disposed = GlobalStatistics.Get<long>("Drawables", "Disposed", StatisticKind.Cumulative);
 
     /// <summary>
     /// Number of releases currently waiting (approximate, for stats/debugging).

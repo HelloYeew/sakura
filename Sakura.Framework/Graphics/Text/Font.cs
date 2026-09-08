@@ -29,13 +29,13 @@ public class Font : IDisposable
     /// Reads near zero on an idle frame. A number that climbs while nothing on screen changes means
     /// something is re-shaping text it already shaped.
     /// </remarks>
-    private static readonly GlobalStatistic<long> stat_text_shapes = GlobalStatistics.Get<long>("Fonts", "Text Shapes");
+    private static readonly GlobalStatistic<long> stat_text_shapes = GlobalStatistics.Get<long>("Fonts", "Text Shapes", StatisticKind.Cumulative);
 
     /// <summary>
     /// Runs shaped within those calls. Higher than <see cref="stat_text_shapes"/> for text that mixes
     /// scripts, since each stretch covered by a different font is shaped separately.
     /// </summary>
-    private static readonly GlobalStatistic<long> stat_shaped_runs = GlobalStatistics.Get<long>("Fonts", "Shaped Runs");
+    private static readonly GlobalStatistic<long> stat_shaped_runs = GlobalStatistics.Get<long>("Fonts", "Shaped Runs", StatisticKind.Cumulative);
 
     private readonly TextureAtlas atlas;
 

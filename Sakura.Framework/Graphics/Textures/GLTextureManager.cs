@@ -123,7 +123,7 @@ public class GLTextureManager : ITextureManager
             texture.Name = cacheKey;
             textureCache[cacheKey] = texture;
             GlobalStatistics.Get<int>("Textures", "Loaded Textures").Value = textureCache.Count;
-            GlobalStatistics.Get<int>("Textures", "Texture Updates").Value++;
+            GlobalStatistics.Get<int>("Textures", "Texture Updates", StatisticKind.Cumulative).Value++;
         }
 
         return texture;

@@ -311,7 +311,7 @@ public partial class VideoSprite : Drawable
                     retire(lastFrame);
 
                 lastFrame = availableFrames.Dequeue();
-                GlobalStatistics.Get<int>("Video", "Frames Displayed").Value++;
+                GlobalStatistics.Get<int>("Video", "Frames Displayed", StatisticKind.Cumulative).Value++;
             }
 
             // Count frames still queued ahead of playback position as skipped
@@ -323,7 +323,7 @@ public partial class VideoSprite : Drawable
                 else break;
             }
             if (skipped > 0)
-                GlobalStatistics.Get<int>("Video", "Frames Skipped").Value += skipped;
+                GlobalStatistics.Get<int>("Video", "Frames Skipped", StatisticKind.Cumulative).Value += skipped;
         }
 
         if (lastFrame != null)
@@ -338,7 +338,7 @@ public partial class VideoSprite : Drawable
             else
                 // The frame due for display has not reached the draw thread yet, so this update draws
                 // the previous texture again.
-                GlobalStatistics.Get<long>("Video", "Fallback To Previous Texture").Value++;
+                GlobalStatistics.Get<long>("Video", "Fallback To Previous Texture", StatisticKind.Cumulative).Value++;
 
             currentVideoTexture = lastUploadedTexture ?? vt;
 
@@ -356,7 +356,7 @@ public partial class VideoSprite : Drawable
         Buffering = decoder.IsRunning && availableFrames.Count == 0 && lastFrame == null;
 
         GlobalStatistics.Get<bool>("Video", "Buffering").Value = Buffering;
-        GlobalStatistics.Get<double>("Video", "Playback Position (ms)").Value = Math.Round(CurrentTime, 1);
+        GlobalStatistics.Get<double>("Video", "Playback Position", StatisticKind.Gauge, StatisticUnit.Milliseconds).Value = Math.Round(CurrentTime, 1);
         GlobalStatistics.Get<int>("Video", "Queue Depth").Value = availableFrames.Count;
         GlobalStatistics.Get<int>("Video", "Frames Retiring").Value = retiringFrames.Count;
     }

@@ -12,7 +12,7 @@ namespace Sakura.Framework.Graphics.Rendering;
 
 public class DrawNode
 {
-    private static readonly GlobalStatistic<int> stat_drawn_last_frame = GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame");
+    private static readonly GlobalStatistic<int> stat_drawn_last_frame = GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame", StatisticKind.PerFrame);
 
     public long InvalidationID { get; internal set; }
 

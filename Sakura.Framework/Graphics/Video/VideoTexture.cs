@@ -92,7 +92,7 @@ public sealed class VideoTexture : IVideoTexture
         upload.Upload(NativeTexture);
         upload.Dispose();
         Volatile.Write(ref uploadComplete, true);
-        GlobalStatistics.Get<int>("Video", "Frames Uploaded").Value++;
+        GlobalStatistics.Get<int>("Video", "Frames Uploaded", StatisticKind.Cumulative).Value++;
     }
 
     /// <summary>

@@ -19,8 +19,8 @@ namespace Sakura.Framework.Graphics.Rendering.Batches;
 /// </summary>
 public class TriangleBatch : IDisposable
 {
-    private static readonly GlobalStatistic<int> stat_draw_calls = GlobalStatistics.Get<int>("Renderer", "Draw Calls");
-    private static readonly GlobalStatistic<int> stat_vertices_drawn = GlobalStatistics.Get<int>("Renderer", "Vertices Drawn");
+    private static readonly GlobalStatistic<int> stat_draw_calls = GlobalStatistics.Get<int>("Renderer", "Draw Calls", StatisticKind.PerFrame);
+    private static readonly GlobalStatistic<int> stat_vertices_drawn = GlobalStatistics.Get<int>("Renderer", "Vertices Drawn", StatisticKind.PerFrame);
 
     private readonly GL gl;
     private readonly uint vao;

@@ -211,7 +211,7 @@ public partial class TextureViewerDisplay : DebugWindow
         updateVideoLabels();
         updateBindLabels();
 
-        int currentTextureUpdates = GlobalStatistics.Get<int>("Textures", "Texture Updates").Value;
+        int currentTextureUpdates = GlobalStatistics.Get<int>("Textures", "Texture Updates", StatisticKind.Cumulative).Value;
         int currentAtlasPageCount = fontStore.Atlas != null ? fontStore.Atlas.GetAllPages().Count() : 0;
         int currentTextureAtlasPageCount = textureManager.Atlas?.PageCount ?? 0;
         int currentTextureCount = textureManager.GetAllTextures().Count();
@@ -232,8 +232,8 @@ public partial class TextureViewerDisplay : DebugWindow
     private void updateHeader()
     {
         long liveBytes = TextureRegistry.LiveBytes;
-        long peakBytes = GlobalStatistics.Get<long>("Textures", "Peak Bytes").Value;
-        long reclaimed = GlobalStatistics.Get<long>("Textures", "Reclaimed by GC").Value;
+        long peakBytes = GlobalStatistics.Get<long>("Textures", "Peak Bytes", StatisticKind.Gauge, StatisticUnit.Bytes).Value;
+        long reclaimed = GlobalStatistics.Get<long>("Textures", "Reclaimed by GC", StatisticKind.Cumulative).Value;
 
         int slices = TextureRegistry.LiveSliceCount;
 
@@ -241,7 +241,7 @@ public partial class TextureViewerDisplay : DebugWindow
                         + (slices > 0 ? $" + {slices} atlas slices" : "")
                         + (reclaimed > 0 ? $" — {reclaimed} reclaimed by GC (a Dispose is being missed!)" : "");
 
-        int textureBinds = GlobalStatistics.Get<int>("Renderer", "Texture Binds (Last Frame)").Value;
+        int textureBinds = GlobalStatistics.Get<int>("Renderer", "Texture Binds This Frame", StatisticKind.PerFrame).Value;
 
         summaryText.Text = $"Binds last frame: {textureBinds}"
                            + $"   Native: {toMegabytes(NativeMemoryTracker.TotalBytes)} (peak {toMegabytes(NativeMemoryTracker.PeakTotalBytes)})";

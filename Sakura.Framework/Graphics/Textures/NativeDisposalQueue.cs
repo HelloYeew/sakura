@@ -34,7 +34,7 @@ public static class NativeDisposalQueue
 {
     private static readonly ConcurrentQueue<Action> queue = new ConcurrentQueue<Action>();
 
-    private static readonly GlobalStatistic<long> stat_reclaimed = GlobalStatistics.Get<long>("Textures", "Reclaimed by GC");
+    private static readonly GlobalStatistic<long> stat_reclaimed = GlobalStatistics.Get<long>("Textures", "Reclaimed by GC", StatisticKind.Cumulative);
     private static readonly GlobalStatistic<int> stat_pending = GlobalStatistics.Get<int>("Textures", "Reclaim Queue (pending)");
 
     /// <summary>

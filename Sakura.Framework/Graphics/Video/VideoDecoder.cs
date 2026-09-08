@@ -747,7 +747,7 @@ public unsafe class VideoDecoder : IDisposable
     {
         if (!availableTextures.TryDequeue(out var tex))
         {
-            GlobalStatistics.Get<int>("Video", "Frames Waiting (Pool Empty)").Value++;
+            GlobalStatistics.Get<int>("Video", "Frames Waiting (Pool Empty)", StatisticKind.Cumulative).Value++;
             return false;
         }
 
@@ -768,7 +768,7 @@ public unsafe class VideoDecoder : IDisposable
             NativeTexture = tex,
             Generation = generation,
         });
-        GlobalStatistics.Get<int>("Video", "Frames Decoded").Value++;
+        GlobalStatistics.Get<int>("Video", "Frames Decoded", StatisticKind.Cumulative).Value++;
         return true;
     }
 

@@ -24,7 +24,7 @@ namespace Sakura.Framework.Graphics.Rendering;
 [SuppressMessage("ReSharper", "InconsistentNaming")]
 public partial class GLShader : IShader
 {
-    private static readonly GlobalStatistic<int> stat_shader_binds = GlobalStatistics.Get<int>("Renderer", "Shader Binds");
+    private static readonly GlobalStatistic<int> stat_shader_binds = GlobalStatistics.Get<int>("Renderer", "Shader Binds", StatisticKind.PerFrame);
 
     private readonly GL gl;
     private readonly uint handle;
@@ -76,7 +76,7 @@ public partial class GLShader : IShader
         uint fragment = compileShader(ShaderType.FragmentShader, fragSrc, fragmentPath);
 
         handle = link(vertex, fragment);
-        GlobalStatistics.Get<int>("Graphics", "Loaded Shaders").Value++;
+        GlobalStatistics.Get<int>("Graphics", "Loaded Shaders", StatisticKind.Cumulative).Value++;
     }
 
     /// <summary>
@@ -94,7 +94,7 @@ public partial class GLShader : IShader
         uint fragment = compileShader(ShaderType.FragmentShader, fragmentSource);
 
         handle = link(vertex, fragment);
-        GlobalStatistics.Get<int>("Graphics", "Loaded Shaders").Value++;
+        GlobalStatistics.Get<int>("Graphics", "Loaded Shaders", StatisticKind.Cumulative).Value++;
     }
 
     /// <summary>
@@ -110,7 +110,7 @@ public partial class GLShader : IShader
         uint fragment = loadFromAssembly(ShaderType.FragmentShader, fragmentResourcePath, assembly);
 
         handle = link(vertex, fragment);
-        GlobalStatistics.Get<int>("Graphics", "Loaded Shaders").Value++;
+        GlobalStatistics.Get<int>("Graphics", "Loaded Shaders", StatisticKind.Cumulative).Value++;
     }
 
     public nint Handle => (nint)handle;
@@ -284,7 +284,7 @@ public partial class GLShader : IShader
 
         uniformBlocks.Clear();
 
-        GlobalStatistics.Get<int>("Graphics", "Loaded Shaders").Value--;
+        GlobalStatistics.Get<int>("Graphics", "Loaded Shaders", StatisticKind.Cumulative).Value--;
         disposed = true;
         GC.SuppressFinalize(this);
     }

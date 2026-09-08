@@ -57,7 +57,7 @@ internal class BassSample : ISample, IHasActiveChannels, IDisposable
         dataPtr = data.Pointer;
         dataLength = data.Length;
 
-        GlobalStatistics.Get<int>("Audio", "Loaded Samples").Value++;
+        GlobalStatistics.Get<int>("Audio", "Loaded Samples", StatisticKind.Cumulative).Value++;
 
         Length = calculateLength();
     }
@@ -141,7 +141,7 @@ internal class BassSample : ISample, IHasActiveChannels, IDisposable
         isDisposed = true;
 
         if (data != null)
-            GlobalStatistics.Get<int>("Audio", "Loaded Samples").Value--;
+            GlobalStatistics.Get<int>("Audio", "Loaded Samples", StatisticKind.Cumulative).Value--;
 
         // Only this sample's own reference. Channels still playing hold theirs, and the block
         // survives until the last one is disposed. On the finalizer path the buffer is left to its

@@ -11,8 +11,8 @@ namespace Sakura.Framework.Graphics.Textures;
 /// </summary>
 public static class TextureBindTracker
 {
-    private static readonly GlobalStatistic<int> stat_binds = GlobalStatistics.Get<int>("Renderer", "Texture Binds");
-    private static readonly GlobalStatistic<int> stat_binds_last_frame = GlobalStatistics.Get<int>("Renderer", "Texture Binds (Last Frame)");
+    private static readonly GlobalStatistic<int> stat_binds = GlobalStatistics.Get<int>("Renderer", "Texture Binds", StatisticKind.Cumulative);
+    private static readonly GlobalStatistic<int> stat_binds_last_frame = GlobalStatistics.Get<int>("Renderer", "Texture Binds This Frame", StatisticKind.PerFrame);
 
     /// <summary>
     /// Which frame is being drawn. Incremented by <see cref="EndFrame"/> and used by

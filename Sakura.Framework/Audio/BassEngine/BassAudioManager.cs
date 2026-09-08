@@ -292,13 +292,13 @@ internal class BassAudioManager : IAudioManager, IDisposable
             action.Invoke();
         }
 
-        GlobalStatistics.Get<double>("Audio", "BASS CPU Usage (%)").Value = Bass.CPUUsage;
+        GlobalStatistics.Get<double>("Audio", "BASS CPU Usage", StatisticKind.Gauge, StatisticUnit.Percent).Value = Bass.CPUUsage;
 
         // Named to line up with "SDL Output Latency (ms)" so the two backends can be read against each
         // other in the same overlay. Constant for the life of the device, published every frame anyway
         // because a statistic that only appears once is a statistic nobody sees.
-        GlobalStatistics.Get<double>("Audio", "BASS Output Latency (ms)").Value = OutputLatencyMs;
-        GlobalStatistics.Get<int>("Audio", "BASS Playback Buffer (ms)").Value = PlaybackBufferMs;
+        GlobalStatistics.Get<double>("Audio", "BASS Output Latency", StatisticKind.Gauge, StatisticUnit.Milliseconds).Value = OutputLatencyMs;
+        GlobalStatistics.Get<int>("Audio", "BASS Playback Buffer", StatisticKind.Gauge, StatisticUnit.Milliseconds).Value = PlaybackBufferMs;
     }
 
     public void Dispose()

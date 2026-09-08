@@ -15,11 +15,11 @@ public static class GCStatistics
     private static readonly GlobalStatistic<int> stat_gen0 = GlobalStatistics.Get<int>("GC", "Gen 0 Collections");
     private static readonly GlobalStatistic<int> stat_gen1 = GlobalStatistics.Get<int>("GC", "Gen 1 Collections");
     private static readonly GlobalStatistic<int> stat_gen2 = GlobalStatistics.Get<int>("GC", "Gen 2 Collections");
-    private static readonly GlobalStatistic<long> stat_total_pause_ms = GlobalStatistics.Get<long>("GC", "Total Pause (ms)");
-    private static readonly GlobalStatistic<double> stat_last_pause_ms = GlobalStatistics.Get<double>("GC", "Last Pause (ms)");
-    private static readonly GlobalStatistic<double> stat_max_pause_ms = GlobalStatistics.Get<double>("GC", "Max Pause (ms)");
-    private static readonly GlobalStatistic<long> stat_heap_bytes = GlobalStatistics.Get<long>("GC", "Managed Heap (bytes)");
-    private static readonly GlobalStatistic<long> stat_committed_bytes = GlobalStatistics.Get<long>("GC", "Committed (bytes)");
+    private static readonly GlobalStatistic<long> stat_total_pause_ms = GlobalStatistics.Get<long>("GC", "Total Pause", StatisticKind.Gauge, StatisticUnit.Milliseconds);
+    private static readonly GlobalStatistic<double> stat_last_pause_ms = GlobalStatistics.Get<double>("GC", "Last Pause", StatisticKind.Gauge, StatisticUnit.Milliseconds);
+    private static readonly GlobalStatistic<double> stat_max_pause_ms = GlobalStatistics.Get<double>("GC", "Max Pause", StatisticKind.Gauge, StatisticUnit.Milliseconds);
+    private static readonly GlobalStatistic<long> stat_heap_bytes = GlobalStatistics.Get<long>("GC", "Managed Heap", StatisticKind.Gauge, StatisticUnit.Bytes);
+    private static readonly GlobalStatistic<long> stat_committed_bytes = GlobalStatistics.Get<long>("GC", "Committed", StatisticKind.Gauge, StatisticUnit.Bytes);
 
     private static double maxPauseMs;
 
