@@ -42,7 +42,8 @@ public partial class DebugWindowLayer : Container, IRemoveFromDrawVisualiser
     }
 
     /// <summary>
-    /// The windows currently open, front-most last.
+    /// The windows currently open, front-most last. A window playing its close animation is still a
+    /// child for as long as that runs, but it is on its way out and is not one of these.
     /// </summary>
     public IEnumerable<DebugWindow> OpenWindows
     {
@@ -50,14 +51,13 @@ public partial class DebugWindowLayer : Container, IRemoveFromDrawVisualiser
         {
             foreach (var child in Children)
             {
-                if (child is DebugWindow window)
+                if (child is DebugWindow window && !window.IsClosing)
                     yield return window;
             }
         }
     }
 
-    public bool IsOpen<T>() where T : DebugWindow
-        => instances.TryGetValue(typeof(T), out var window) && window.Parent != null;
+    public bool IsOpen<T>() where T : DebugWindow => instances.TryGetValue(typeof(T), out var window) && window.Parent != null && !window.IsClosing;
 
     /// <summary>
     /// Opens the window if it is closed, closes it if it is open. <paramref name="factory"/> runs only
@@ -94,6 +94,15 @@ public partial class DebugWindowLayer : Container, IRemoveFromDrawVisualiser
                 window.SetBounds(nextCascadePosition(), window.CurrentSize);
 
             window.OnOpened();
+            window.PlayOpen(fromScratch: true);
+        }
+        else if (window.IsClosing)
+        {
+            // Caught on its way out. It never left the tree and it kept its bounds, so this is the
+            // same window being un-dismissed: play it back in from where the close had got to, and
+            // re-run OnOpened because closing already ran OnClosed against it.
+            window.OnOpened();
+            window.PlayOpen(fromScratch: false);
         }
 
         raise(window);
@@ -166,19 +175,49 @@ public partial class DebugWindowLayer : Container, IRemoveFromDrawVisualiser
 
     private void close(DebugWindow window)
     {
-        if (window.Parent == null)
+        if (window.Parent == null || window.IsClosing)
             return;
 
         storedBounds[window.GetType()] = (window.Position, window.CurrentSize);
 
         window.OnClosed();
+        window.PlayClose();
+    }
 
+    /// <summary>
+    /// Detaches the windows whose close animation has finished. Doing this here rather than from a
+    /// transform callback keeps one owner for the bookkeeping, and means a close canceled by a
+    /// re-open leaves nothing scheduled to fire against a window that is open again.
+    /// </summary>
+    public override void Update()
+    {
+        base.Update();
+
+        List<DebugWindow>? finished = null;
+
+        foreach (var child in Children)
+        {
+            if (child is DebugWindow { IsClosing: true } window && window.CloseAnimationFinished)
+                (finished ??= new List<DebugWindow>()).Add(window);
+        }
+
+        if (finished == null)
+            return;
+
+        foreach (var window in finished)
+            detach(window);
+    }
+
+    private void detach(DebugWindow window)
+    {
         bool dispose = window.DisposeOnClose;
 
         Remove(window, dispose);
 
         if (dispose)
             instances.Remove(window.GetType());
+        else
+            window.ResetAfterClose();
     }
 
     /// <summary>

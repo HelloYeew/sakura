@@ -2,11 +2,13 @@
 // See the LICENSE file for full license text.
 
 using System;
+using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Text;
+using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
 
@@ -21,6 +23,12 @@ public abstract partial class DebugWindow : Container
 
     private const float resize_grip_size = 16;
     private const float corner_radius = 6;
+
+    /// <summary>
+    /// Scale a window sits at when closed, which the open animation grows out of and the close
+    /// animation settles back to.
+    /// </summary>
+    private const float closed_scale = 0.96f;
 
     /// <summary>
     /// Shown in the title bar. Include the shortcut that opens it.
@@ -50,6 +58,26 @@ public abstract partial class DebugWindow : Container
     /// nothing per frame, and keeping the instance preserves scroll position and selection.
     /// </summary>
     protected internal virtual bool DisposeOnClose => false;
+
+    /// <summary>
+    /// How long the window takes to play in milliseconds
+    /// </summary>
+    protected virtual double OpenDuration => 200;
+
+    /// <summary>
+    /// How long the window takes to play out in milliseconds
+    /// </summary>
+    protected virtual double CloseDuration => 140;
+
+    /// <summary>
+    /// Whether the window is playing its close animation
+    /// </summary>
+    public bool IsClosing { get; private set; }
+
+    /// <summary>
+    /// Clock time the close animation is done and the layer may detach the window.
+    /// </summary>
+    private double closeFinishesAt;
 
     /// <summary>
     /// Raised when the user asks for this window to close. The layer owns what that does — the window
@@ -188,6 +216,52 @@ public abstract partial class DebugWindow : Container
 
         return titleBar;
     }
+
+    protected virtual void AnimateOpen()
+    {
+        this.ScaleTo(1, OpenDuration, Easing.OutQuint);
+        this.FadeIn(OpenDuration, Easing.OutQuint);
+    }
+
+    protected virtual void AnimateClose()
+    {
+        this.ScaleTo(closed_scale, CloseDuration, Easing.OutQuint);
+        this.FadeOut(CloseDuration, Easing.OutQuint);
+    }
+
+    internal void PlayOpen(bool fromScratch)
+    {
+        IsClosing = false;
+
+        if (fromScratch)
+        {
+            Alpha = 0;
+            Scale = new Vector2(closed_scale);
+        }
+
+        AnimateOpen();
+    }
+
+    internal void PlayClose()
+    {
+        IsClosing = true;
+        closeFinishesAt = Clock.CurrentTime + CloseDuration;
+
+        AnimateClose();
+    }
+
+    internal bool CloseAnimationFinished => Clock.CurrentTime >= closeFinishesAt;
+
+    internal void ResetAfterClose()
+    {
+        ClearTransforms();
+
+        IsClosing = false;
+        Alpha = 1;
+        Scale = Vector2.One;
+    }
+
+    public override bool ReceivePositionalInputAt(Vector2 screenSpacePos) => !IsClosing && base.ReceivePositionalInputAt(screenSpacePos);
 
     /// <summary>
     /// Places the window, clamped into the parent the same way a drag would be.
