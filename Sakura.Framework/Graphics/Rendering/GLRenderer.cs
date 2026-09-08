@@ -27,17 +27,17 @@ namespace Sakura.Framework.Graphics.Rendering;
 [SuppressMessage("ReSharper", "InconsistentNaming")]
 public class GLRenderer : IGLRenderer, IDisposable
 {
-    private static readonly GlobalStatistic<int> stat_draw_calls = GlobalStatistics.Get<int>("Renderer", "Draw Calls");
-    private static readonly GlobalStatistic<int> stat_vertices_drawn = GlobalStatistics.Get<int>("Renderer", "Vertices Drawn");
-    private static readonly GlobalStatistic<int> stat_shader_binds = GlobalStatistics.Get<int>("Renderer", "Shader Binds");
+    private static readonly GlobalStatistic<int> stat_draw_calls = GlobalStatistics.Get<int>("Renderer", "Draw Calls", StatisticKind.PerFrame);
+    private static readonly GlobalStatistic<int> stat_vertices_drawn = GlobalStatistics.Get<int>("Renderer", "Vertices Drawn", StatisticKind.PerFrame);
+    private static readonly GlobalStatistic<int> stat_shader_binds = GlobalStatistics.Get<int>("Renderer", "Shader Binds", StatisticKind.PerFrame);
 
-    private static readonly GlobalStatistic<int> stat_slot_exhaustion_flushes = GlobalStatistics.Get<int>("Renderer", "Slot Exhaustion Flushes");
-    private static readonly GlobalStatistic<int> stat_state_change_flushes = GlobalStatistics.Get<int>("Renderer", "State Change Flushes");
-    private static readonly GlobalStatistic<int> stat_buffer_full_flushes = GlobalStatistics.Get<int>("Renderer", "Buffer Full Flushes");
-    private static readonly GlobalStatistic<int> stat_drawables_updated = GlobalStatistics.Get<int>("Drawables", "Updated Last Frame");
-    private static readonly GlobalStatistic<int> stat_drawables_invalidations = GlobalStatistics.Get<int>("Drawables", "Invalidations");
-    private static readonly GlobalStatistic<int> stat_drawables_culled = GlobalStatistics.Get<int>("Drawables", "Culled");
-    private static readonly GlobalStatistic<int> stat_drawables_drawn = GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame");
+    private static readonly GlobalStatistic<int> stat_slot_exhaustion_flushes = GlobalStatistics.Get<int>("Renderer", "Slot Exhaustion Flushes", StatisticKind.PerFrame);
+    private static readonly GlobalStatistic<int> stat_state_change_flushes = GlobalStatistics.Get<int>("Renderer", "State Change Flushes", StatisticKind.PerFrame);
+    private static readonly GlobalStatistic<int> stat_buffer_full_flushes = GlobalStatistics.Get<int>("Renderer", "Buffer Full Flushes", StatisticKind.PerFrame);
+    private static readonly GlobalStatistic<int> stat_drawables_updated = GlobalStatistics.Get<int>("Drawables", "Updated Last Frame", StatisticKind.PerFrame);
+    private static readonly GlobalStatistic<int> stat_drawables_invalidations = GlobalStatistics.Get<int>("Drawables", "Invalidations", StatisticKind.PerFrame);
+    private static readonly GlobalStatistic<int> stat_drawables_culled = GlobalStatistics.Get<int>("Drawables", "Culled", StatisticKind.PerFrame);
+    private static readonly GlobalStatistic<int> stat_drawables_drawn = GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame", StatisticKind.PerFrame);
 
     private static GL gl;
 
@@ -357,17 +357,17 @@ public class GLRenderer : IGLRenderer, IDisposable
 
         resetTextureSlots();
 
-        stat_draw_calls.Value = 0;
-        stat_vertices_drawn.Value = 0;
-        stat_shader_binds.Value = 0;
+        stat_draw_calls.CompleteFrame();
+        stat_vertices_drawn.CompleteFrame();
+        stat_shader_binds.CompleteFrame();
 
-        stat_slot_exhaustion_flushes.Value = 0;
-        stat_state_change_flushes.Value = 0;
-        stat_buffer_full_flushes.Value = 0;
-        stat_drawables_updated.Value = 0;
-        stat_drawables_invalidations.Value = 0;
-        stat_drawables_culled.Value = 0;
-        stat_drawables_drawn.Value = 0;
+        stat_slot_exhaustion_flushes.CompleteFrame();
+        stat_state_change_flushes.CompleteFrame();
+        stat_buffer_full_flushes.CompleteFrame();
+        stat_drawables_updated.CompleteFrame();
+        stat_drawables_invalidations.CompleteFrame();
+        stat_drawables_culled.CompleteFrame();
+        stat_drawables_drawn.CompleteFrame();
 
         shader.Use();
 
@@ -551,7 +551,7 @@ public class GLRenderer : IGLRenderer, IDisposable
         }
 
         // All slots taken, flush and start a fresh slot set.
-        stat_slot_exhaustion_flushes.Value++;
+        stat_slot_exhaustion_flushes.Accumulator++;
         triangleBatch.Draw();
         resetTextureSlots();
 
@@ -733,7 +733,7 @@ public class GLRenderer : IGLRenderer, IDisposable
         if (blendingMode == currentBlendMode)
             return;
 
-        stat_state_change_flushes.Value++;
+        stat_state_change_flushes.Accumulator++;
         triangleBatch.Draw();
 
         currentBlendMode = blendingMode;

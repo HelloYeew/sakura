@@ -30,10 +30,10 @@ namespace Sakura.Framework.Graphics.Rendering.Direct3D11;
 /// </summary>
 public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 {
-    private static readonly GlobalStatistic<int> stat_draw_calls = GlobalStatistics.Get<int>("Renderer", "Draw Calls");
-    private static readonly GlobalStatistic<int> stat_vertices_drawn = GlobalStatistics.Get<int>("Renderer", "Vertices Drawn");
-    private static readonly GlobalStatistic<int> stat_slot_exhaustion_flushes = GlobalStatistics.Get<int>("Renderer", "Slot Exhaustion Flushes");
-    private static readonly GlobalStatistic<int> stat_state_change_flushes = GlobalStatistics.Get<int>("Renderer", "State Change Flushes");
+    private static readonly GlobalStatistic<int> stat_draw_calls = GlobalStatistics.Get<int>("Renderer", "Draw Calls", StatisticKind.PerFrame);
+    private static readonly GlobalStatistic<int> stat_vertices_drawn = GlobalStatistics.Get<int>("Renderer", "Vertices Drawn", StatisticKind.PerFrame);
+    private static readonly GlobalStatistic<int> stat_slot_exhaustion_flushes = GlobalStatistics.Get<int>("Renderer", "Slot Exhaustion Flushes", StatisticKind.PerFrame);
+    private static readonly GlobalStatistic<int> stat_state_change_flushes = GlobalStatistics.Get<int>("Renderer", "State Change Flushes", StatisticKind.PerFrame);
 
     /// <summary>
     /// The live renderer instance, for static notifications (texture deletion). Effectively a
@@ -648,10 +648,10 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         if (device == null || swapChain == null)
             return;
 
-        stat_draw_calls.Value = 0;
-        stat_vertices_drawn.Value = 0;
-        stat_slot_exhaustion_flushes.Value = 0;
-        stat_state_change_flushes.Value = 0;
+        stat_draw_calls.CompleteFrame();
+        stat_vertices_drawn.CompleteFrame();
+        stat_slot_exhaustion_flushes.CompleteFrame();
+        stat_state_change_flushes.CompleteFrame();
 
         rootNode?.Draw(this);
 
@@ -722,7 +722,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         }
 
         // All slots taken: flush and start a fresh slot set.
-        stat_slot_exhaustion_flushes.Value++;
+        stat_slot_exhaustion_flushes.Accumulator++;
         FlushBatch();
         resetTextureSlots();
 
@@ -822,8 +822,8 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         context.IASetVertexBuffer(0, vertexBuffer, (uint)stride, 0);
         context.DrawIndexed((uint)indexCount, 0, 0);
 
-        stat_draw_calls.Value++;
-        stat_vertices_drawn.Value += vertexCount;
+        stat_draw_calls.Accumulator++;
+        stat_vertices_drawn.Accumulator += vertexCount;
 
         batch.Reset();
     }
@@ -841,8 +841,8 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         context.IASetVertexBuffer(0, vertexBuffer, (uint)stride, 0);
         context.Draw((uint)vertices.Length, 0);
 
-        stat_draw_calls.Value++;
-        stat_vertices_drawn.Value += vertices.Length;
+        stat_draw_calls.Accumulator++;
+        stat_vertices_drawn.Accumulator += vertices.Length;
     }
 
     /// <summary>
@@ -888,7 +888,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
             return;
 
         // The blend state applies at draw time, so the pending batch must go out under the old mode.
-        stat_state_change_flushes.Value++;
+        stat_state_change_flushes.Accumulator++;
         FlushBatch();
 
         currentBlendMode = blendingMode;

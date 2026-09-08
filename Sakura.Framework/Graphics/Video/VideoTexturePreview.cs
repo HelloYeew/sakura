@@ -15,8 +15,8 @@ namespace Sakura.Framework.Graphics.Video;
 /// </summary>
 public partial class VideoTexturePreview : Drawable
 {
-    private readonly IVideoTexture videoTexture;
-    private readonly IShader? videoShader;
+    private IVideoTexture? videoTexture;
+    private IShader? videoShader;
 
     /// <summary>
     /// Compiles the shader a preview draws with. Must be called on the draw thread.
@@ -28,10 +28,20 @@ public partial class VideoTexturePreview : Drawable
     /// A shader from <see cref="CreateShader"/>, owned by the caller. When null (it has not finished
     /// compiling yet), nothing is drawn.
     /// </param>
-    public VideoTexturePreview(IVideoTexture videoTexture, IShader? videoShader)
+    public VideoTexturePreview(IVideoTexture? videoTexture, IShader? videoShader)
     {
         this.videoTexture = videoTexture;
         this.videoShader = videoShader;
+    }
+
+    /// <summary>
+    /// Points this preview at a different texture or at a shader that has since finished compiling,
+    /// mainly use it for texture viewer previews.
+    /// </summary>
+    public void Bind(IVideoTexture? texture, IShader? shader)
+    {
+        videoTexture = texture;
+        videoShader = shader;
     }
 
     protected override DrawNode CreateDrawNode() => new VideoDrawNode();
@@ -39,7 +49,7 @@ public partial class VideoTexturePreview : Drawable
     public override DrawNode GenerateDrawNodeSubtree(int frameIndex)
     {
         var node = base.GenerateDrawNodeSubtree(frameIndex) as VideoDrawNode;
-        node?.ApplyVideoState(videoTexture, videoTexture.ConversionMatrix, videoShader);
+        node?.ApplyVideoState(videoTexture, videoTexture?.ConversionMatrix, videoShader);
         return node!;
     }
 }

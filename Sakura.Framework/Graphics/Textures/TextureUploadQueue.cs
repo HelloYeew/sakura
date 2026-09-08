@@ -33,8 +33,8 @@ public sealed class TextureUploadQueue
     private readonly ConcurrentQueue<PendingUpload> queue = new ConcurrentQueue<PendingUpload>();
 
     private static readonly GlobalStatistic<int> stat_pending = GlobalStatistics.Get<int>("Textures", "Upload Queue (pending)");
-    private static readonly GlobalStatistic<long> stat_processed = GlobalStatistics.Get<long>("Textures", "Uploads Processed");
-    private static readonly GlobalStatistic<long> stat_bytes_last_frame = GlobalStatistics.Get<long>("Textures", "Upload Bytes / Frame");
+    private static readonly GlobalStatistic<long> stat_processed = GlobalStatistics.Get<long>("Textures", "Uploads Processed", StatisticKind.Cumulative);
+    private static readonly GlobalStatistic<long> stat_bytes_last_frame = GlobalStatistics.Get<long>("Textures", "Upload Bytes", StatisticKind.PerFrame, StatisticUnit.Bytes);
 
     /// <summary>
     /// Number of uploads currently waiting (approximate, for stats/debugging).

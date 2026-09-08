@@ -23,7 +23,7 @@ public class DependencyContainer : IReadOnlyDependencyContainer
     // and keeps deep-tree resolution walks cheap.
     private ConcurrentDictionary<Type, object>? cache;
 
-    private static readonly GlobalStatistic<int> cached_count_statistic = GlobalStatistics.Get<int>("DI", "Cached Dependencies");
+    private static readonly GlobalStatistic<int> cached_count_statistic = GlobalStatistics.Get<int>("DI", "Cached Dependencies", StatisticKind.Cumulative);
 
     public DependencyContainer(IReadOnlyDependencyContainer? parent = null)
     {

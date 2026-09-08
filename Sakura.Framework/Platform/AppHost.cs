@@ -39,7 +39,7 @@ public abstract class AppHost : IDisposable
 
     private static readonly double ms_per_tick = 1000.0 / Stopwatch.Frequency;
 
-    private static readonly GlobalStatistic<double> stat_uptime = GlobalStatistics.Get<double>("Host", "Uptime (ms)");
+    private static readonly GlobalStatistic<double> stat_uptime = GlobalStatistics.Get<double>("Host", "Uptime", StatisticKind.Gauge, StatisticUnit.Milliseconds);
 
     /// <summary>
     /// How often the GC/texture statistics are refreshed on the main loop.
@@ -47,8 +47,8 @@ public abstract class AppHost : IDisposable
     private const double gc_statistics_interval_ms = 250;
 
     private long lastGCStatisticsTicks;
-    private static readonly GlobalStatistic<double> stat_target_update_hz = GlobalStatistics.Get<double>("Host", "Target Update Hz");
-    private static readonly GlobalStatistic<int> stat_drawn_last_frame = GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame");
+    private static readonly GlobalStatistic<double> stat_target_update_hz = GlobalStatistics.Get<double>("Host", "Target Update Rate", StatisticKind.Gauge, StatisticUnit.Hertz);
+    private static readonly GlobalStatistic<int> stat_drawn_last_frame = GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame", StatisticKind.PerFrame);
 
     public IWindow Window { get; private set; }
     public IRenderer Renderer { get; private set; }

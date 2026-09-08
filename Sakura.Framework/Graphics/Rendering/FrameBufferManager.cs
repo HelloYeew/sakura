@@ -37,7 +37,7 @@ public class FrameBufferManager
             {
                 // The draw thread was too slow and missed the previous frame
                 // Means that update is faster than draw
-                GlobalStatistics.Get<int>("Buffers", "Dropped Frames").Value++;
+                GlobalStatistics.Get<int>("Buffers", "Dropped Frames", StatisticKind.Cumulative).Value++;
             }
 
             // Swap the current update buffer with the waiting buffer
@@ -69,7 +69,7 @@ public class FrameBufferManager
             }
             else
             {
-                GlobalStatistics.Get<int>("Buffers", "Draw Starvation").Value++;
+                GlobalStatistics.Get<int>("Buffers", "Draw Starvation", StatisticKind.Cumulative).Value++;
             }
             return drawIndex;
         }

@@ -74,7 +74,7 @@ internal sealed class SDLSample : ISample, IHasActiveChannels, IDisposable
                 buffer = decoded;
             }
 
-            GlobalStatistics.Get<int>("Audio", "Loaded Samples").Value++;
+            GlobalStatistics.Get<int>("Audio", "Loaded Samples", StatisticKind.Cumulative).Value++;
             Logger.Verbose($"🔈 Sample decoded to PCM ({decoded.Samples.Length * sizeof(float) / 1024} KB, {decoded.LengthMs:F0}ms)");
         }
         catch (Exception e)
@@ -137,7 +137,7 @@ internal sealed class SDLSample : ISample, IHasActiveChannels, IDisposable
         isDisposed = true;
 
         if (buffer != null || nativeBuffer != 0)
-            GlobalStatistics.Get<int>("Audio", "Loaded Samples").Value--;
+            GlobalStatistics.Get<int>("Audio", "Loaded Samples", StatisticKind.Cumulative).Value--;
 
         // On the managed path, channels hold their own reference to the buffer through
         // MemoryPcmSource and the GC frees it once the last of them is gone. On the native path this

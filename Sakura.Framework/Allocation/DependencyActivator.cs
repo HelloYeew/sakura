@@ -175,7 +175,7 @@ public static class DependencyActivator
                         : $"'{current.FullName}'";
                     Logger.Debug($"[DI] Reflection fallback for {location}. Make it (and any enclosing class) partial to enable source generation.");
 
-                    GlobalStatistics.Get<int>("DI", "Reflection Fallback Uses").Value++;
+                    GlobalStatistics.Get<int>("DI", "Reflection Fallback Uses", StatisticKind.Cumulative).Value++;
                 }
 
                 activator_cache[current] = new ActivatorEntry(injectDelegate, cacheDelegate);

@@ -11,7 +11,7 @@ namespace Sakura.Framework.Graphics.Textures;
 internal static class SharedTextureStatistics
 {
     private static readonly GlobalStatistic<int> stat_keys = GlobalStatistics.Get<int>("Textures", "Shared Keys");
-    private static readonly GlobalStatistic<long> stat_hits = GlobalStatistics.Get<long>("Textures", "Shared Hits");
+    private static readonly GlobalStatistic<long> stat_hits = GlobalStatistics.Get<long>("Textures", "Shared Hits", StatisticKind.Cumulative);
 
     /// <summary>
     /// Records a request satisfied by an already-loaded texture, i.e. a decode and upload avoided.

@@ -19,8 +19,8 @@ namespace Sakura.Framework.Graphics.Rendering.Batches;
 /// </summary>
 public class TriangleBatch : IDisposable
 {
-    private static readonly GlobalStatistic<int> stat_draw_calls = GlobalStatistics.Get<int>("Renderer", "Draw Calls");
-    private static readonly GlobalStatistic<int> stat_vertices_drawn = GlobalStatistics.Get<int>("Renderer", "Vertices Drawn");
+    private static readonly GlobalStatistic<int> stat_draw_calls = GlobalStatistics.Get<int>("Renderer", "Draw Calls", StatisticKind.PerFrame);
+    private static readonly GlobalStatistic<int> stat_vertices_drawn = GlobalStatistics.Get<int>("Renderer", "Vertices Drawn", StatisticKind.PerFrame);
 
     private readonly GL gl;
     private readonly uint vao;
@@ -149,8 +149,8 @@ public class TriangleBatch : IDisposable
 
         gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)rawVertices.Length);
 
-        stat_draw_calls.Value++;
-        stat_vertices_drawn.Value += rawVertices.Length;
+        stat_draw_calls.Accumulator++;
+        stat_vertices_drawn.Accumulator += rawVertices.Length;
     }
 
     /// <summary>
@@ -200,8 +200,8 @@ public class TriangleBatch : IDisposable
 
         gl.DrawElements(PrimitiveType.Triangles, (uint)indexCount, DrawElementsType.UnsignedInt, null);
 
-        stat_draw_calls.Value++;
-        stat_vertices_drawn.Value += vertexCount;
+        stat_draw_calls.Accumulator++;
+        stat_vertices_drawn.Accumulator += vertexCount;
 
         batch.Reset();
         return vertexCount;

@@ -11,8 +11,8 @@ namespace Sakura.Framework.Graphics.Textures;
 /// </summary>
 public static class TextureBindTracker
 {
-    private static readonly GlobalStatistic<int> stat_binds = GlobalStatistics.Get<int>("Renderer", "Texture Binds");
-    private static readonly GlobalStatistic<int> stat_binds_last_frame = GlobalStatistics.Get<int>("Renderer", "Texture Binds (Last Frame)");
+    private static readonly GlobalStatistic<int> stat_binds = GlobalStatistics.Get<int>("Renderer", "Texture Binds", StatisticKind.Cumulative);
+    private static readonly GlobalStatistic<int> stat_binds_last_frame = GlobalStatistics.Get<int>("Renderer", "Texture Binds This Frame", StatisticKind.PerFrame);
 
     /// <summary>
     /// Which frame is being drawn. Incremented by <see cref="EndFrame"/> and used by
@@ -89,6 +89,18 @@ public sealed class TextureBindCounter
         count++;
         TextureBindTracker.RecordBind();
     }
+
+    /// <summary>
+    /// Whether this texture has ever been bound. False means nothing has drawn it since it was
+    /// created, which is the durable form of the question <see cref="LastFrame"/> can only answer for
+    /// one frame at a time — a texture drawn every other frame reads zero half the time, but has been
+    /// bound.
+    /// </summary>
+    /// <remarks>
+    /// A texture bound only during a loading screen stays true forever after, so read this as "nothing
+    /// has ever drawn this", not as "this is not being drawn now".
+    /// </remarks>
+    public bool EverBound => stampedFrame >= 0;
 
     /// <summary>
     /// How many times this texture was bound during the last completed frame. Safe to read from any

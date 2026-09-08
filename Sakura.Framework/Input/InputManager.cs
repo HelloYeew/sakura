@@ -70,7 +70,7 @@ public class InputManager : IFocusManager
         // The explicitly-chosen root is always walked; only descendants are filtered by the opt-in.
         // This lets a subtree root (e.g. a ManualInputManager that has opted itself out of its
         // parent's queues) still build its own queues over itself.
-        if (!drawable.IsLoaded || (!isRoot && !drawable.HandleNonPositionalInput))
+        if (!drawable.IsLoaded || !drawable.IsAlive || (drawable.IsHidden && !drawable.AlwaysPresent) || (!isRoot && !drawable.HandleNonPositionalInput))
             return;
 
         if (drawable is Container container)

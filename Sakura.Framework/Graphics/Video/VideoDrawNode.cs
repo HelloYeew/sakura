@@ -20,7 +20,7 @@ internal class VideoDrawNode : DrawNode
     /// <summary>
     /// Draws that produced nothing because the texture handed to this node was not uploaded yet.
     /// </summary>
-    private static readonly GlobalStatistic<long> stat_skipped_draws = GlobalStatistics.Get<long>("Video", "Draws Skipped (Upload Incomplete)");
+    private static readonly GlobalStatistic<long> stat_skipped_draws = GlobalStatistics.Get<long>("Video", "Draws Skipped (Upload Incomplete)", StatisticKind.Cumulative);
 
     private IVideoTexture? videoTexture;
     private float[]? yuvMatrix;

@@ -17,7 +17,7 @@ public sealed class NativeFileMapping : INativeBytes
     /// <summary>
     /// Total length of every live mapping.
     /// </summary>
-    private static readonly GlobalStatistic<long> stat_mapped_bytes = GlobalStatistics.Get<long>("Fonts", "Mapped Bytes");
+    private static readonly GlobalStatistic<long> stat_mapped_bytes = GlobalStatistics.Get<long>("Fonts", "Mapped Bytes", StatisticKind.Gauge, StatisticUnit.Bytes);
 
     private static long mappedBytes;
 

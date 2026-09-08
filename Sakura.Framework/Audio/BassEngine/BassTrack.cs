@@ -76,7 +76,7 @@ internal class BassTrack : ITrack, IHasActiveChannels, IDisposable
             return;
         }
 
-        GlobalStatistics.Get<int>("Audio", "Loaded Tracks").Value++;
+        GlobalStatistics.Get<int>("Audio", "Loaded Tracks", StatisticKind.Cumulative).Value++;
 
         Length = Bass.ChannelBytes2Seconds(decoderStreamHandle, Bass.ChannelGetLength(decoderStreamHandle)) * 1000.0;
 
@@ -103,7 +103,7 @@ internal class BassTrack : ITrack, IHasActiveChannels, IDisposable
             return;
         }
 
-        GlobalStatistics.Get<int>("Audio", "Loaded Tracks").Value++;
+        GlobalStatistics.Get<int>("Audio", "Loaded Tracks", StatisticKind.Cumulative).Value++;
 
         Length = Bass.ChannelBytes2Seconds(decoderStreamHandle, Bass.ChannelGetLength(decoderStreamHandle)) * 1000.0;
 
@@ -211,7 +211,7 @@ internal class BassTrack : ITrack, IHasActiveChannels, IDisposable
         if (decoderStreamHandle != 0)
         {
             Bass.StreamFree(decoderStreamHandle);
-            GlobalStatistics.Get<int>("Audio", "Loaded Tracks").Value--;
+            GlobalStatistics.Get<int>("Audio", "Loaded Tracks", StatisticKind.Cumulative).Value--;
         }
 
         if (disposing)

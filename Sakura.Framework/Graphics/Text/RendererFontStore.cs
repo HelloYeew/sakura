@@ -120,6 +120,13 @@ public class RendererFontStore : IFontStore
     public RendererFontStore(IRenderer renderer)
     {
         atlas = new TextureAtlas(renderer, 1024, 1024);
+
+        // Touching the mapping tracker is what registers "Fonts -> Mapped Bytes", and it is only ever
+        // touched by loadFace when a font comes from a file path. An app whose fonts are all embedded
+        // resources never maps one, and the statistic would be absent rather than zero — a reading of
+        // "nothing is mapped" is worth having, and it should not depend on a debug window happening to
+        // be opened.
+        _ = NativeFileMapping.MappedBytes;
     }
 
     private void loadFrameworkFonts(Storage resourceStorage)
@@ -396,7 +403,7 @@ public class RendererFontStore : IFontStore
 
                     if (mapped != null)
                     {
-                        GlobalStatistics.Get<int>("Fonts", "Loaded Fonts").Value++;
+                        GlobalStatistics.Get<int>("Fonts", "Loaded Fonts", StatisticKind.Cumulative).Value++;
                         return mapped;
                     }
                 }
@@ -411,7 +418,7 @@ public class RendererFontStore : IFontStore
                 var font = loadFontFromStream(name, stream);
                 Logger.Debug($"Loaded font {name} from {filename}");
 
-                GlobalStatistics.Get<int>("Fonts", "Loaded Fonts").Value++;
+                GlobalStatistics.Get<int>("Fonts", "Loaded Fonts", StatisticKind.Cumulative).Value++;
 
                 return font;
             }
@@ -454,7 +461,7 @@ public class RendererFontStore : IFontStore
                     return null!;
                 }
 
-                GlobalStatistics.Get<int>("Fonts", "Loaded Fonts").Value++;
+                GlobalStatistics.Get<int>("Fonts", "Loaded Fonts", StatisticKind.Cumulative).Value++;
 
                 return font;
             }
@@ -984,10 +991,10 @@ public class RendererFontStore : IFontStore
     /// </summary>
     public int ShapeCacheSize { get; set; } = DEFAULT_SHAPE_CACHE_SIZE;
 
-    private static readonly GlobalStatistic<long> stat_shape_hits = GlobalStatistics.Get<long>("Fonts", "Shape Cache Hits");
-    private static readonly GlobalStatistic<long> stat_shape_misses = GlobalStatistics.Get<long>("Fonts", "Shape Cache Misses");
+    private static readonly GlobalStatistic<long> stat_shape_hits = GlobalStatistics.Get<long>("Fonts", "Shape Cache Hits", StatisticKind.Cumulative);
+    private static readonly GlobalStatistic<long> stat_shape_misses = GlobalStatistics.Get<long>("Fonts", "Shape Cache Misses", StatisticKind.Cumulative);
     private static readonly GlobalStatistic<int> stat_shape_entries = GlobalStatistics.Get<int>("Fonts", "Shaped Text Entries");
-    private static readonly GlobalStatistic<long> stat_shape_bytes = GlobalStatistics.Get<long>("Fonts", "Shaped Text Bytes");
+    private static readonly GlobalStatistic<long> stat_shape_bytes = GlobalStatistics.Get<long>("Fonts", "Shaped Text Bytes", StatisticKind.Gauge, StatisticUnit.Bytes);
 
     /// <summary>
     /// Everything about a request that changes the shaped output. <see cref="FontUsage"/> carries family,

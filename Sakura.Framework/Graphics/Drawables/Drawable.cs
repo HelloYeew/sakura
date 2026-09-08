@@ -30,10 +30,10 @@ namespace Sakura.Framework.Graphics.Drawables;
 /// </summary>
 public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposable
 {
-    private static readonly GlobalStatistic<int> stat_updated_last_frame = GlobalStatistics.Get<int>("Drawables", "Updated Last Frame");
-    private static readonly GlobalStatistic<int> stat_invalidations = GlobalStatistics.Get<int>("Drawables", "Invalidations");
-    private static readonly GlobalStatistic<int> stat_draw_node_applied = GlobalStatistics.Get<int>("DrawNodes", "State Applied");
-    private static readonly GlobalStatistic<int> stat_draw_node_reused = GlobalStatistics.Get<int>("DrawNodes", "State Reused (Clean)");
+    private static readonly GlobalStatistic<int> stat_updated_last_frame = GlobalStatistics.Get<int>("Drawables", "Updated Last Frame", StatisticKind.PerFrame);
+    private static readonly GlobalStatistic<int> stat_invalidations = GlobalStatistics.Get<int>("Drawables", "Invalidations", StatisticKind.PerFrame);
+    private static readonly GlobalStatistic<int> stat_draw_node_applied = GlobalStatistics.Get<int>("DrawNodes", "State Applied", StatisticKind.Cumulative);
+    private static readonly GlobalStatistic<int> stat_draw_node_reused = GlobalStatistics.Get<int>("DrawNodes", "State Reused (Clean)", StatisticKind.Cumulative);
 
     private Container? parent;
 
@@ -1099,7 +1099,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
         if ((Invalidation & flags) == flags && (!dirtiesGeometry || OwnGeometryInvalidated))
             return;
 
-        stat_invalidations.Value++;
+        stat_invalidations.Accumulator++;
 
         Invalidation |= flags;
 
@@ -1126,7 +1126,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
         if ((Invalidation & InvalidationFlags.DrawInfo) != 0)
             return;
 
-        stat_invalidations.Value++;
+        stat_invalidations.Accumulator++;
         Invalidation |= InvalidationFlags.DrawInfo;
         DrawNodeInvalidationId++;
         Parent?.MarkSubtreeDrawStateDirty();
@@ -1249,7 +1249,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
     {
         if (!IsLoaded) return;
 
-        stat_updated_last_frame.Value++;
+        stat_updated_last_frame.Accumulator++;
 
         if (Invalidation == InvalidationFlags.None)
             return;

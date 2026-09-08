@@ -27,12 +27,12 @@ public class RoutingImageLoader : IImageLoader
     /// Reads zero on a library of JPEGs and PNGs. A number that climbs means the fallback is carrying
     /// real traffic, which is worth knowing before concluding stb is doing the work.
     /// </remarks>
-    private static readonly GlobalStatistic<long> stat_fallbacks = GlobalStatistics.Get<long>("Textures", "ImageSharp Fallbacks");
+    private static readonly GlobalStatistic<long> stat_fallbacks = GlobalStatistics.Get<long>("Textures", "ImageSharp Fallbacks", StatisticKind.Cumulative);
 
     /// <summary>
     /// Images routed to ImageSharp up front because they declare an EXIF orientation.
     /// </summary>
-    private static readonly GlobalStatistic<long> stat_oriented = GlobalStatistics.Get<long>("Textures", "ImageSharp Oriented Routes");
+    private static readonly GlobalStatistic<long> stat_oriented = GlobalStatistics.Get<long>("Textures", "ImageSharp Oriented Routes", StatisticKind.Cumulative);
 
     private readonly StbImageLoader stb = new StbImageLoader();
 

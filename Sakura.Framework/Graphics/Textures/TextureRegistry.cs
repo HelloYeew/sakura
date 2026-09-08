@@ -37,8 +37,8 @@ public static class TextureRegistry
 
     private static readonly GlobalStatistic<int> stat_live_count = GlobalStatistics.Get<int>("Textures", "Live Count");
     private static readonly GlobalStatistic<int> stat_live_slices = GlobalStatistics.Get<int>("Textures", "Live Atlas Slices");
-    private static readonly GlobalStatistic<long> stat_live_bytes = GlobalStatistics.Get<long>("Textures", "Live Bytes");
-    private static readonly GlobalStatistic<long> stat_peak_bytes = GlobalStatistics.Get<long>("Textures", "Peak Bytes");
+    private static readonly GlobalStatistic<long> stat_live_bytes = GlobalStatistics.Get<long>("Textures", "Live Bytes", StatisticKind.Gauge, StatisticUnit.Bytes);
+    private static readonly GlobalStatistic<long> stat_peak_bytes = GlobalStatistics.Get<long>("Textures", "Peak Bytes", StatisticKind.Gauge, StatisticUnit.Bytes);
 
     private static int liveCount;
     private static int liveSliceCount;

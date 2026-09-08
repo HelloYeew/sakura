@@ -3,145 +3,112 @@
 
 using System;
 using System.Collections.Generic;
-using Sakura.Framework.Allocation;
-using Sakura.Framework.Development;
-using Sakura.Framework.Extensions.DrawableExtensions;
+using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Text;
-using Sakura.Framework.Graphics.Transforms;
-using Sakura.Framework.Input;
-using Sakura.Framework.Logging;
+using Sakura.Framework.Graphics.UserInterface;
 using Sakura.Framework.Maths;
-using Sakura.Framework.Platform;
+using Sakura.Framework.Reactive;
 using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Graphics.Performance;
 
-public partial class GlobalStatisticsDisplay : FocusedOverlayContainer, IRemoveFromDrawVisualiser
+public partial class GlobalStatisticsDisplay : DebugWindow
 {
-    private readonly FlowContainer groupsFlow;
-    private readonly ScrollableContainer scrollContainer;
-    private readonly Container contentContainer;
-    private readonly Dictionary<string, FlowContainer> groupContainers = new Dictionary<string, FlowContainer>();
-    private readonly Dictionary<IGlobalStatistic, SpriteText> statValueTexts = new Dictionary<IGlobalStatistic, SpriteText>();
+    /// <summary>
+    /// How often the values are re-read.
+    /// </summary>
+    private const double refresh_interval = 100;
+
+    private const float group_width = 350;
+
+    private const float toolbar_height = 34;
+
+    private const string mark_baseline_text = "Mark baseline";
+    private const string clear_baseline_text = "Clear baseline";
 
     /// <summary>
-    /// Each group's rows in display order, so a statistic that registers after its group was already built
-    /// can be put in its alphabetical place rather than appended.
+    /// How long a value takes to decay from <see cref="live_color"/> back to <see cref="resting_color"/>
+    /// after it last changed. Comfortably longer than <see cref="refresh_interval"/>, so a value that
+    /// keeps changing never finishes decaying and simply stays lit.
     /// </summary>
-    private readonly Dictionary<string, List<(string Name, Drawable Row)>> groupRows = new Dictionary<string, List<(string, Drawable)>>();
-    private readonly SpriteText currentTimeText;
-    private readonly SpriteText runningTimeText;
+    private const double decay_duration = 900;
 
-    [Resolved]
-    private AppHost host { get; set; }
+    // FromArgb rather than Color.White: a named color carries its KnownColor, so it compares unequal
+    // to the identical value the lerp produces and every first decay step would invalidate for nothing.
+    private static readonly Color live_color = Color.FromArgb(255, 255, 255, 255);
+    private static readonly Color resting_color = Color.FromArgb(255, 124, 124, 124);
+
+    private static readonly Color delta_up_color = Color.FromArgb(255, 232, 174, 92);
+    private static readonly Color delta_down_color = Color.FromArgb(255, 104, 190, 214);
+
+    /// <summary>
+    /// Gap between a value and the delta sitting to its left.
+    /// </summary>
+    private const float delta_gap = 8;
+
+    protected override string Title => "Global Statistics (Ctrl + F2)";
+    protected override Vector2 DefaultSize => new Vector2(780, 520);
+    protected override Vector2 MinSize => new Vector2(380, 200);
+    protected override Color Accent => Color.Cyan;
+
+    private readonly FlowContainer groupsFlow;
+    private readonly SpriteText emptyHint;
+
+    private BasicTextBox search = null!;
+    private BasicButton baselineButton = null!;
+
+    private readonly Dictionary<IGlobalStatistic, double> baseline = new Dictionary<IGlobalStatistic, double>();
+
+    private bool baselineActive;
+
+    private readonly Dictionary<string, StatGroup> groups = new Dictionary<string, StatGroup>();
+
+    private readonly List<string> groupOrder = new List<string>();
+
+    private readonly Dictionary<IGlobalStatistic, StatRow> statRows = new Dictionary<IGlobalStatistic, StatRow>();
+
+    private string filter = string.Empty;
+
+    /// <summary>
+    /// Set when the set of rows or the filter changes, so the flows are reconciled once at the end of
+    /// a refresh rather than once per statistic that happened to arrive during it.
+    /// </summary>
+    private bool layoutDirty;
+
+    private double nextRefreshTime = double.MinValue;
 
     public GlobalStatisticsDisplay()
     {
-        RelativeSizeAxes = Axes.Both;
-        Anchor = Anchor.TopLeft;
-        Origin = Anchor.TopLeft;
-        Size = new Vector2(1);
+        Add(buildToolbar());
 
-        Add(new Box
+        var body = new Container
         {
-            Anchor = Anchor.TopLeft,
-            Origin = Anchor.TopLeft,
             RelativeSizeAxes = Axes.Both,
             Size = new Vector2(1),
-            Color = Color.Black,
-            Alpha = 0.75f
-        });
+            Padding = new MarginPadding { Top = toolbar_height }
+        };
 
-        Add(new SpriteText
+        body.Add(emptyHint = new SpriteText
         {
-            Text = "Global Statistics (Ctrl + F2)",
-            Font = FontUsage.Default.With(size: 30, weight: "Bold"),
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
-            Position = new Vector2(10, 5),
-            Color = Color.Cyan,
-            RelativeSizeAxes = Axes.X,
-            Height = 50
-        });
-
-        Add(currentTimeText = new SpriteText
-        {
-            Text = "",
-            Font = FontUsage.Default.With(size: 16),
-            Anchor = Anchor.TopLeft,
-            Origin = Anchor.TopLeft,
-            Position = new Vector2(10, 50),
+            Position = new Vector2(12, 10),
+            Font = FontUsage.Default.With(size: 12),
             Color = Color.LightCyan,
-            RelativeSizeAxes = Axes.X,
-            Height = 30
+            Alpha = 0
         });
 
-        Add(runningTimeText = new SpriteText
-        {
-            Text = "",
-            Font = FontUsage.Default.With(size: 16),
-            Anchor = Anchor.TopLeft,
-            Origin = Anchor.TopLeft,
-            Position = new Vector2(10, 70),
-            Color = Color.LightCyan,
-            RelativeSizeAxes = Axes.X,
-            Height = 30
-        });
-
-        Add(new SpriteText()
-        {
-            Text = $"Sakura Framework v{DebugUtils.GetFrameworkVersion()}",
-            Font = FontUsage.Default.With(size: 16),
-            Anchor = Anchor.TopRight,
-            Origin = Anchor.TopRight,
-            Position = new Vector2(-10, 50),
-            Color = Color.LightCyan,
-            RelativeSizeAxes = Axes.X,
-            Height = 30
-        });
-
-        Add(new SpriteText()
-        {
-            Text = $"Running {Logger.AppIdentifier} v{Logger.VersionIdentifier} {(DebugUtils.IsDebugBuild ? "(Debug Build)" : "")}",
-            Font = FontUsage.Default.With(size: 16),
-            Anchor = Anchor.TopRight,
-            Origin = Anchor.TopRight,
-            Position = new Vector2(-10, 70),
-            Color = Color.LightCyan,
-            RelativeSizeAxes = Axes.X,
-            Height = 30
-        });
-
-        Add(contentContainer = new Container
-        {
-            Anchor = Anchor.Centre,
-            Origin = Anchor.Centre,
-            RelativeSizeAxes = Axes.Both,
-            Size = new Vector2(1, 0.75f),
-            Padding = new MarginPadding(20)
-        });
-
-        contentContainer.Add(new Box()
-        {
-            Anchor = Anchor.Centre,
-            Origin = Anchor.Centre,
-            RelativeSizeAxes = Axes.Both,
-            Color = Color.Black,
-            Alpha = 0.2f,
-            Size = new Vector2(1)
-        });
-
-        contentContainer.Add(scrollContainer = new ScrollableContainer
+        var scrollContainer = new ScrollableContainer
         {
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
             RelativeSizeAxes = Axes.Both,
             Size = new Vector2(1)
-        });
+        };
 
         scrollContainer.Add(groupsFlow = new FlowContainer
         {
@@ -150,123 +117,377 @@ public partial class GlobalStatisticsDisplay : FocusedOverlayContainer, IRemoveF
             AutoSizeAxes = Axes.Y,
             Width = 1,
             Spacing = new Vector2(30, 15),
+            Padding = new MarginPadding(10),
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft
         });
+
+        body.Add(scrollContainer);
+
+        Add(body);
     }
 
-    /// <summary>
-    /// Puts a group's rows back into alphabetical order after one arrived out of turn.
-    /// </summary>
-    private static void reorderRows(FlowContainer groupFlow, List<(string Name, Drawable Row)> rows)
+    private Drawable buildToolbar()
     {
-        rows.Sort(static (a, b) => string.CompareOrdinal(a.Name, b.Name));
+        var toolbar = new Container
+        {
+            RelativeSizeAxes = Axes.X,
+            Width = 1,
+            Height = toolbar_height,
+            Padding = new MarginPadding(4)
+        };
 
-        foreach (var row in rows)
-            groupFlow.Remove(row.Row, dispose: false);
+        baselineButton = new BasicButton
+        {
+            Text = mark_baseline_text,
+            TextSize = 12,
+            Size = new Vector2(120, 26),
+            Anchor = Anchor.CentreLeft,
+            Origin = Anchor.CentreLeft,
+            DefaultColor = Color.Teal,
+            HoverColor = Color.DarkCyan,
+            Action = toggleBaseline
+        };
 
-        foreach (var row in rows)
-            groupFlow.Add(row.Row);
+        toolbar.Add(baselineButton);
+
+        search = createSearchBox();
+        search.Text.ValueChanged += e =>
+        {
+            filter = e.NewValue ?? string.Empty;
+            layoutDirty = true;
+            nextRefreshTime = double.MinValue;
+        };
+
+        toolbar.Add(new Container
+        {
+            RelativeSizeAxes = Axes.Both,
+            Size = new Vector2(1),
+            Padding = new MarginPadding { Left = 130 },
+            Child = search
+        });
+
+        return toolbar;
     }
+
+    private static BasicTextBox createSearchBox() => new BasicTextBox
+    {
+        Anchor = Anchor.CentreLeft,
+        Origin = Anchor.CentreLeft,
+        RelativeSizeAxes = Axes.Both,
+        Size = new Vector2(1),
+        PlaceholderText = "Filter statistics by name or group",
+        BackgroundColor = Color.FromArgb(255, 24, 34, 36),
+        BackgroundFocusedColor = Color.FromArgb(255, 38, 60, 64),
+        ReleaseFocusOnCommit = false
+    };
+
+    public Reactive<string> SearchText => search.Text;
 
     public override void Update()
     {
         base.Update();
 
-        if (State == Visibility.Hidden) return;
+        if (Clock.CurrentTime < nextRefreshTime)
+            return;
+
+        nextRefreshTime = Clock.CurrentTime + refresh_interval;
 
         foreach (var stat in GlobalStatistics.GetStatistics())
         {
-            if (!groupContainers.TryGetValue(stat.Group, out var groupFlow))
+            if (!groups.TryGetValue(stat.Group, out var group))
+                group = addGroup(stat.Group);
+
+            if (!statRows.TryGetValue(stat, out var row))
+                row = addRow(stat, group);
+
+            string display = stat.DisplayValue;
+            var delta = renderDelta(stat);
+
+            if (row.Value.Text != display)
             {
-                groupFlow = new FlowContainer
-                {
-                    Direction = FlowDirection.Vertical,
-                    RelativeSizeAxes = Axes.None,
-                    AutoSizeAxes = Axes.Y,
-                    Width = 350,
-                    Spacing = new Vector2(0, 2),
-                    Anchor = Anchor.TopLeft,
-                    Origin = Anchor.TopLeft,
-                    Padding = new MarginPadding { Bottom = 10 }
-                };
-
-                groupFlow.Add(new SpriteText
-                {
-                    Anchor = Anchor.TopLeft,
-                    Origin = Anchor.TopLeft,
-                    Text = stat.Group,
-                    Font = FontUsage.Default.With(size: 20, weight: "Bold"),
-                    Color = Color.Cyan
-                });
-
-                groupContainers[stat.Group] = groupFlow;
-                groupsFlow.Add(groupFlow);
+                row.Value.Text = display;
+                row.LastChanged = Clock.CurrentTime;
+                row.Decaying = true;
             }
 
-            if (!statValueTexts.TryGetValue(stat, out var valueTextElement))
+            if (delta == null)
             {
-                var rowContainer = new Container
-                {
-                    RelativeSizeAxes = Axes.X,
-                    AutoSizeAxes = Axes.Y,
-                    Size = new Vector2(1, 0)
-                };
-
-                rowContainer.Add(new SpriteText
-                {
-                    Anchor = Anchor.TopLeft,
-                    Origin = Anchor.TopLeft,
-                    Text = stat.Name,
-                    Font = FontUsage.Default.With(size: 14),
-                    Color = Color.LightGray
-                });
-
-                valueTextElement = new SpriteText
-                {
-                    Anchor = Anchor.TopRight,
-                    Origin = Anchor.TopRight,
-                    Font = FontUsage.Default.With(size: 14),
-                    Color = Color.White
-                };
-
-                rowContainer.Add(valueTextElement);
-                statValueTexts[stat] = valueTextElement;
-                groupFlow.Add(rowContainer);
-
-                if (!groupRows.TryGetValue(stat.Group, out var rows))
-                    groupRows[stat.Group] = rows = new List<(string, Drawable)>();
-
-                rows.Add((stat.Name, rowContainer));
-
-                // Rows arrive in order, so the common case is that the one just appended already belongs
-                // last and there is nothing to do.
-                if (rows.Count > 1 && string.CompareOrdinal(stat.Name, rows[^2].Name) < 0)
-                    reorderRows(groupFlow, rows);
+                row.Delta.Text = string.Empty;
+                row.Delta.Alpha = 0;
+            }
+            else
+            {
+                row.Delta.Text = delta.Value.Text;
+                row.Delta.Color = delta.Value.Color;
+                row.Delta.Alpha = 1;
+                row.Delta.X = -(row.Value.Size.X + delta_gap);
             }
 
-            string newDisplayValue = stat.DisplayValue;
-            if (valueTextElement.Text != newDisplayValue)
-            {
-                valueTextElement.Text = newDisplayValue;
-            }
+            if (row.Decaying)
+                applyDecay(row);
         }
 
-        currentTimeText.Text = $"{DateTime.Now:dd MMMM yyyy HH:mm:ss tt}";
-        runningTimeText.Text = $"Has been running for {TimeSpan.FromSeconds(host.UpdateClock.CurrentTime / 1000):hh\\:mm\\:ss}";
+        if (!layoutDirty)
+            return;
+
+        layoutDirty = false;
+        rebuildLayout();
     }
 
-    public override bool OnKeyDown(KeyEvent e)
+    private void applyDecay(StatRow row)
     {
-        if (State == Visibility.Visible && e.Key == Key.Escape)
-        {
-            Hide();
-            return true;
-        }
-        return base.OnKeyDown(e);
+        double age = Clock.CurrentTime - row.LastChanged;
+        float t = (float)Math.Clamp(age / decay_duration, 0, 1);
+
+        row.Value.Color = ColorExtensions.Lerp(live_color, resting_color, t);
+
+        if (t >= 1)
+            row.Decaying = false;
     }
 
-    protected override void PopIn() => this.FadeIn(200, Easing.OutQuint);
+    /// <summary>
+    /// Whether values are currently being reported against a marked baseline.
+    /// </summary>
+    public bool HasBaseline => baselineActive;
 
-    protected override void PopOut() => this.FadeOut(200, Easing.OutQuint);
+    /// <summary>
+    /// Marks the current values as the baseline or drops the one already marked.
+    /// </summary>
+    public void ToggleBaseline() => toggleBaseline();
+
+    private void toggleBaseline()
+    {
+        baselineActive = !baselineActive;
+        baseline.Clear();
+
+        baselineButton.Text = baselineActive ? clear_baseline_text : mark_baseline_text;
+
+        // Re-read on the next frame so the suffixes appear or disappear at once rather than as each
+        // value happens to move.
+        foreach (var row in statRows.Values)
+        {
+            row.Delta.Text = string.Empty;
+            row.Delta.Alpha = 0;
+        }
+
+        nextRefreshTime = double.MinValue;
+    }
+
+    /// <summary>
+    /// What a statistic has moved by since the baseline, or null when there is nothing to report.
+    /// </summary>
+    private (string Text, Color Color)? renderDelta(IGlobalStatistic stat)
+    {
+        if (!baselineActive)
+            return null;
+
+        if (stat.Kind == StatisticKind.PerFrame)
+            return null;
+
+        double? numeric = stat.NumericValue;
+
+        if (numeric == null)
+            return null;
+
+        if (!baseline.TryGetValue(stat, out double from))
+        {
+            baseline[stat] = numeric.Value;
+            return null;
+        }
+
+        double delta = numeric.Value - from;
+
+        if (delta == 0)
+            return null;
+
+        string formatted = delta == Math.Floor(delta) ? Math.Abs(delta).ToString("N0") : Math.Abs(delta).ToString("N2");
+        bool up = delta > 0;
+
+        return ($"{(up ? "+" : "-")}{formatted}", up ? delta_up_color : delta_down_color);
+    }
+
+    private bool matches(string group, string name)
+        => filter.Length == 0
+           || group.Contains(filter, StringComparison.OrdinalIgnoreCase)
+           || name.Contains(filter, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Reconciles both flows against the groups, their rows, and the filter.
+    /// </summary>
+    private void rebuildLayout()
+    {
+        groupOrder.Sort(StringComparer.Ordinal);
+
+        foreach (var groupFlow in currentChildren(groupsFlow))
+            groupsFlow.Remove(groupFlow, dispose: false);
+
+        int shownGroups = 0;
+
+        foreach (string name in groupOrder)
+        {
+            var group = groups[name];
+
+            foreach (var row in currentChildren(group.Flow))
+            {
+                if (row != group.Header)
+                    group.Flow.Remove(row, dispose: false);
+            }
+
+            int shownRows = 0;
+
+            foreach (var row in group.Rows)
+            {
+                if (!matches(name, row.Name))
+                    continue;
+
+                group.Flow.Add(row.Row);
+                shownRows++;
+            }
+
+            if (shownRows == 0)
+                continue;
+
+            groupsFlow.Add(group.Flow);
+            shownGroups++;
+        }
+
+        if (shownGroups == 0 && filter.Length > 0)
+        {
+            emptyHint.Text = $"No statistic matches \"{filter}\"";
+            emptyHint.Alpha = 1;
+        }
+        else
+            emptyHint.Alpha = 0;
+    }
+
+    /// <summary>
+    /// A snapshot of a container's children, so the caller can remove from it while iterating.
+    /// </summary>
+    private static List<Drawable> currentChildren(Container container) => new List<Drawable>(container.Children);
+
+    private StatGroup addGroup(string name)
+    {
+        var groupFlow = new FlowContainer
+        {
+            Direction = FlowDirection.Vertical,
+            RelativeSizeAxes = Axes.None,
+            AutoSizeAxes = Axes.Y,
+            Width = group_width,
+            Spacing = new Vector2(0, 2),
+            Anchor = Anchor.TopLeft,
+            Origin = Anchor.TopLeft,
+            Padding = new MarginPadding { Bottom = 10 }
+        };
+
+        var header = new SpriteText
+        {
+            Anchor = Anchor.TopLeft,
+            Origin = Anchor.TopLeft,
+            Text = name,
+            Font = FontUsage.Default.With(size: 20, weight: "Bold"),
+            Color = Accent
+        };
+
+        groupFlow.Add(header);
+
+        var group = new StatGroup(name, groupFlow, header);
+
+        groups[name] = group;
+        groupOrder.Add(name);
+        layoutDirty = true;
+
+        return group;
+    }
+
+    private StatRow addRow(IGlobalStatistic stat, StatGroup group)
+    {
+        var rowContainer = new Container
+        {
+            RelativeSizeAxes = Axes.X,
+            AutoSizeAxes = Axes.Y,
+            Size = new Vector2(1, 0)
+        };
+
+        rowContainer.Add(new SpriteText
+        {
+            Anchor = Anchor.TopLeft,
+            Origin = Anchor.TopLeft,
+            Text = stat.Name,
+            Font = FontUsage.Default.With(size: 14),
+            Color = Color.LightGray
+        });
+
+        var valueTextElement = new SpriteText
+        {
+            Anchor = Anchor.TopRight,
+            Origin = Anchor.TopRight,
+            Font = FontUsage.Default.With(size: 14),
+            Color = resting_color
+        };
+
+        var deltaTextElement = new SpriteText
+        {
+            Anchor = Anchor.TopRight,
+            Origin = Anchor.TopRight,
+            Font = FontUsage.Default.With(size: 14),
+            Color = delta_up_color,
+            Alpha = 0
+        };
+
+        rowContainer.Add(valueTextElement);
+        rowContainer.Add(deltaTextElement);
+
+        var row = new StatRow(valueTextElement, deltaTextElement);
+        statRows[stat] = row;
+
+        group.Rows.Add((stat.Name, rowContainer));
+        group.Rows.Sort(static (a, b) => string.CompareOrdinal(a.Name, b.Name));
+
+        layoutDirty = true;
+
+        return row;
+    }
+
+    /// <summary>
+    /// A statistic's value text and when it last moved.
+    /// </summary>
+    private sealed class StatRow
+    {
+        public readonly SpriteText Value;
+
+        /// <summary>
+        /// Sits to the left of <see cref="Value"/>, in its own color, so "what this is now" and "what
+        /// it has done since the baseline" never share a channel.
+        /// </summary>
+        public readonly SpriteText Delta;
+
+        public double LastChanged;
+        public bool Decaying;
+
+        public StatRow(SpriteText value, SpriteText delta)
+        {
+            Value = value;
+            Delta = delta;
+        }
+    }
+
+    /// <summary>
+    /// One group's chrome and the rows under it, held in display order.
+    /// </summary>
+    private sealed class StatGroup
+    {
+        public readonly FlowContainer Flow;
+        public readonly Drawable Header;
+        public readonly List<(string Name, Drawable Row)> Rows = new List<(string, Drawable)>();
+
+        public StatGroup(string name, FlowContainer flow, Drawable header)
+        {
+            Name = name;
+            Flow = flow;
+            Header = header;
+        }
+
+        public string Name { get; }
+    }
 }

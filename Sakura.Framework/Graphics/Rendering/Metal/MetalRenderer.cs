@@ -26,10 +26,10 @@ namespace Sakura.Framework.Graphics.Rendering.Metal;
 /// </summary>
 public sealed class MetalRenderer : IMetalRenderer
 {
-    private static readonly GlobalStatistic<int> stat_draw_calls = GlobalStatistics.Get<int>("Renderer", "Draw Calls");
-    private static readonly GlobalStatistic<int> stat_vertices_drawn = GlobalStatistics.Get<int>("Renderer", "Vertices Drawn");
-    private static readonly GlobalStatistic<int> stat_slot_exhaustion_flushes = GlobalStatistics.Get<int>("Renderer", "Slot Exhaustion Flushes");
-    private static readonly GlobalStatistic<int> stat_state_change_flushes = GlobalStatistics.Get<int>("Renderer", "State Change Flushes");
+    private static readonly GlobalStatistic<int> stat_draw_calls = GlobalStatistics.Get<int>("Renderer", "Draw Calls", StatisticKind.PerFrame);
+    private static readonly GlobalStatistic<int> stat_vertices_drawn = GlobalStatistics.Get<int>("Renderer", "Vertices Drawn", StatisticKind.PerFrame);
+    private static readonly GlobalStatistic<int> stat_slot_exhaustion_flushes = GlobalStatistics.Get<int>("Renderer", "Slot Exhaustion Flushes", StatisticKind.PerFrame);
+    private static readonly GlobalStatistic<int> stat_state_change_flushes = GlobalStatistics.Get<int>("Renderer", "State Change Flushes", StatisticKind.PerFrame);
 
     /// <summary>
     /// The live renderer instance, for static notifications (texture deletion). Effectively a
@@ -436,10 +436,10 @@ public sealed class MetalRenderer : IMetalRenderer
         if (device == nint.Zero)
             return;
 
-        stat_draw_calls.Value = 0;
-        stat_vertices_drawn.Value = 0;
-        stat_slot_exhaustion_flushes.Value = 0;
-        stat_state_change_flushes.Value = 0;
+        stat_draw_calls.CompleteFrame();
+        stat_vertices_drawn.CompleteFrame();
+        stat_slot_exhaustion_flushes.CompleteFrame();
+        stat_state_change_flushes.CompleteFrame();
 
         rootNode?.Draw(this);
 
@@ -494,7 +494,7 @@ public sealed class MetalRenderer : IMetalRenderer
         }
 
         // All slots taken: flush and start a fresh slot set.
-        stat_slot_exhaustion_flushes.Value++;
+        stat_slot_exhaustion_flushes.Accumulator++;
         FlushBatch();
         resetTextureSlots();
 
@@ -707,7 +707,7 @@ public sealed class MetalRenderer : IMetalRenderer
 
         // Blend is baked into the pipeline, and the pipeline applies to every draw the encoder has not
         // yet issued so the pending batch must go out under the old mode first.
-        stat_state_change_flushes.Value++;
+        stat_state_change_flushes.Accumulator++;
         FlushBatch();
 
         currentBlendMode = blendingMode;
@@ -889,7 +889,7 @@ public sealed class MetalRenderer : IMetalRenderer
     /// </summary>
     private void rawDrawDone()
     {
-        stat_draw_calls.Value++;
+        stat_draw_calls.Accumulator++;
         resetTextureSlots();
     }
 
@@ -923,8 +923,8 @@ public sealed class MetalRenderer : IMetalRenderer
         fixed (SakuraVertex* ptr = batch.Vertices)
             SakuraMetalNative.sakura_metal_draw_triangles(device, ptr, vertexCount, SakuraVertex.Size);
 
-        stat_draw_calls.Value++;
-        stat_vertices_drawn.Value += vertexCount;
+        stat_draw_calls.Accumulator++;
+        stat_vertices_drawn.Accumulator += vertexCount;
 
         batch.Reset();
     }

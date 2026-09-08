@@ -12,6 +12,7 @@ using Sakura.Framework.Audio.BassEngine;
 using Sakura.Framework.Audio.Headless;
 using Sakura.Framework.Audio.SdlEngine;
 using Sakura.Framework.Configurations;
+using Sakura.Framework.Development;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Performance;
@@ -26,6 +27,7 @@ using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Platform.Dialogs;
 using Sakura.Framework.Reactive;
+using Sakura.Framework.Statistic;
 using Sakura.Framework.Threading;
 using Sakura.Framework.Timing;
 
@@ -120,10 +122,11 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
     /// </summary>
     public event Action Ready;
 
-    private DrawVisualiser drawVisualiser;
-    private GlobalStatisticsDisplay globalStatisticsDisplay;
-    private TextureViewerDisplay textureViewerDisplay;
-    private AudioMixerVisualiser audioMixerVisualiser;
+    /// <summary>
+    /// Hosts the four debug tools, each of which is a floating window built on the first press of its
+    /// key and detached from the tree when it is closed.
+    /// </summary>
+    private DebugWindowLayer debugWindows;
 
     public override void Load()
     {
@@ -220,52 +223,23 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
 
         fpsGraphState = Host.FrameworkConfigManager.Get(FrameworkSetting.ShowFpsGraph, PerformanceOverlayState.Hidden);
 
-        Add(drawVisualiser = new DrawVisualiser(this)
+        Add(debugWindows = new DebugWindowLayer
         {
-            Depth = float.MaxValue - 10,
-            Alpha = 0
-        });
-        Add(textureViewerDisplay = new TextureViewerDisplay()
-        {
-            Depth = float.MaxValue - 10,
-            Alpha = 0
-        });
-        Add(globalStatisticsDisplay = new GlobalStatisticsDisplay()
-        {
-            Depth = float.MaxValue - 10,
-            Alpha = 0
-        });
-        Add(audioMixerVisualiser = new AudioMixerVisualiser(AudioManager)
-        {
-            Depth = float.MaxValue - 10,
-            Alpha = 0
+            Depth = float.MaxValue - 5
         });
         Add(new FpsGraph()
         {
             Depth = float.MaxValue
         });
+
+        registerHostStatistics();
     }
 
-    private void toggleVisualiser()
+    private static void registerHostStatistics()
     {
-        if (textureViewerDisplay.State == Visibility.Visible) textureViewerDisplay.Hide();
-        drawVisualiser.ToggleVisibility();
-    }
-
-    private void toggleStatisticsDisplay()
-    {
-        globalStatisticsDisplay.ToggleVisibility();
-    }
-
-    private void toggleTextureViewerDisplay()
-    {
-        if (globalStatisticsDisplay.State == Visibility.Visible) globalStatisticsDisplay.Hide();
-        textureViewerDisplay.ToggleVisibility();
-    }
-
-    private void toggleAudioMixerVisualiserDisplay()
-    {
-        audioMixerVisualiser.ToggleVisibility();
+        GlobalStatistics.Get<string>("Host", "Framework Version").Value = DebugUtils.GetFrameworkVersion();
+        GlobalStatistics.Get<string>("Host", "App Version").Value = $"{Logger.AppIdentifier} {Logger.VersionIdentifier}";
+        GlobalStatistics.Get<string>("Host", "Build").Value = DebugUtils.IsDebugBuild ? "Debug" : "Release";
     }
 
     /// <summary>
@@ -349,19 +323,23 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
 
         if (!e.IsRepeat && e.Key == Key.F1 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
-            toggleVisualiser();
+            // Shift opens the window if it is closed and goes straight to picking, rather than
+            // toggling the window and the mode in one keystroke as this used to.
             if ((e.Modifiers & KeyModifiers.Shift) > 0)
-                drawVisualiser.ToggleInspectMode();
+                debugWindows.Open(() => new DrawVisualiser(this)).ToggleInspectMode();
+            else
+                debugWindows.Toggle(() => new DrawVisualiser(this));
+
             return true;
         }
         else if (!e.IsRepeat && e.Key == Key.F2 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
-            toggleStatisticsDisplay();
+            debugWindows.Toggle(() => new GlobalStatisticsDisplay());
             return true;
         }
         else if (!e.IsRepeat && e.Key == Key.F3 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
-            toggleTextureViewerDisplay();
+            debugWindows.Toggle(() => new TextureViewerDisplay());
             return true;
         }
         else if (!e.IsRepeat && e.Key == Key.F7 && (e.Modifiers & KeyModifiers.Control) > 0)
@@ -370,7 +348,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
         }
         else if (!e.IsRepeat && e.Key == Key.F9 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
-            toggleAudioMixerVisualiserDisplay();
+            debugWindows.Toggle(() => new AudioMixerVisualiser(AudioManager));
             return true;
         }
         if (!e.IsRepeat && e.Key == Key.F11 && (e.Modifiers & KeyModifiers.Control) > 0)
@@ -401,6 +379,8 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
     {
         InputManager.HandleMouseDown(e.Button, e.ScreenSpaceMousePosition);
         rebuildInputQueues();
+
+        debugWindows?.NotifyMouseDown(e.ScreenSpaceMousePosition);
 
         BeginMouseDownFocusTracking();
 
