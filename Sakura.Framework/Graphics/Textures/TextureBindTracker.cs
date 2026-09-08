@@ -91,6 +91,18 @@ public sealed class TextureBindCounter
     }
 
     /// <summary>
+    /// Whether this texture has ever been bound. False means nothing has drawn it since it was
+    /// created, which is the durable form of the question <see cref="LastFrame"/> can only answer for
+    /// one frame at a time — a texture drawn every other frame reads zero half the time, but has been
+    /// bound.
+    /// </summary>
+    /// <remarks>
+    /// A texture bound only during a loading screen stays true forever after, so read this as "nothing
+    /// has ever drawn this", not as "this is not being drawn now".
+    /// </remarks>
+    public bool EverBound => stampedFrame >= 0;
+
+    /// <summary>
     /// How many times this texture was bound during the last completed frame. Safe to read from any
     /// thread.
     /// </summary>

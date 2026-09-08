@@ -120,6 +120,13 @@ public class RendererFontStore : IFontStore
     public RendererFontStore(IRenderer renderer)
     {
         atlas = new TextureAtlas(renderer, 1024, 1024);
+
+        // Touching the mapping tracker is what registers "Fonts -> Mapped Bytes", and it is only ever
+        // touched by loadFace when a font comes from a file path. An app whose fonts are all embedded
+        // resources never maps one, and the statistic would be absent rather than zero — a reading of
+        // "nothing is mapped" is worth having, and it should not depend on a debug window happening to
+        // be opened.
+        _ = NativeFileMapping.MappedBytes;
     }
 
     private void loadFrameworkFonts(Storage resourceStorage)
