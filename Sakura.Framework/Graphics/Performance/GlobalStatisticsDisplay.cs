@@ -282,6 +282,9 @@ public partial class GlobalStatisticsDisplay : DebugWindow
         if (!baselineActive)
             return null;
 
+        if (stat.Kind == StatisticKind.PerFrame)
+            return null;
+
         double? numeric = stat.NumericValue;
 
         if (numeric == null)
