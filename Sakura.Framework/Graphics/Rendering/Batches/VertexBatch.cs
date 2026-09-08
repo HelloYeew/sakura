@@ -106,7 +106,7 @@ public sealed class VertexBatch
     {
         if (vertexCount + vertexSpace > MaxVertices || indexCount + indexSpace > MaxIndices)
         {
-            stat_buffer_full_flushes.Value++;
+            stat_buffer_full_flushes.Accumulator++;
             flush();
         }
     }

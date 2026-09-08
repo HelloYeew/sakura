@@ -118,7 +118,7 @@ public partial class GLShader : IShader
     public void Use()
     {
         gl.UseProgram(handle);
-        stat_shader_binds.Value++;
+        stat_shader_binds.Accumulator++;
     }
 
     /// <summary>

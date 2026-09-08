@@ -102,7 +102,7 @@ public class ContainerDrawNode : DrawNode
 
                 if (!isVisible)
                 {
-                    stat_culled.Value++;
+                    stat_culled.Accumulator++;
                     continue;
                 }
             }

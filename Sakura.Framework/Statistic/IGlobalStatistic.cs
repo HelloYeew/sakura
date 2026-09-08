@@ -12,4 +12,11 @@ public interface IGlobalStatistic
     StatisticUnit Unit { get; }
     double? NumericValue { get; }
     void Clear();
+
+    /// <summary>
+    /// Ends the frame a <see cref="StatisticKind.PerFrame"/> statistic has been accumulating, so
+    /// <see cref="DisplayValue"/> reports a whole frame rather than however far the current one has
+    /// got.
+    /// </summary>
+    void CompleteFrame();
 }

@@ -1099,7 +1099,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
         if ((Invalidation & flags) == flags && (!dirtiesGeometry || OwnGeometryInvalidated))
             return;
 
-        stat_invalidations.Value++;
+        stat_invalidations.Accumulator++;
 
         Invalidation |= flags;
 
@@ -1126,7 +1126,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
         if ((Invalidation & InvalidationFlags.DrawInfo) != 0)
             return;
 
-        stat_invalidations.Value++;
+        stat_invalidations.Accumulator++;
         Invalidation |= InvalidationFlags.DrawInfo;
         DrawNodeInvalidationId++;
         Parent?.MarkSubtreeDrawStateDirty();
@@ -1249,7 +1249,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
     {
         if (!IsLoaded) return;
 
-        stat_updated_last_frame.Value++;
+        stat_updated_last_frame.Accumulator++;
 
         if (Invalidation == InvalidationFlags.None)
             return;

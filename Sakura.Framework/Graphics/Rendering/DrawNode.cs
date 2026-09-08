@@ -99,7 +99,7 @@ public class DrawNode
         if (DrawAlpha <= 0 || VertexCount == 0)
             return;
 
-        stat_drawn_last_frame.Value++;
+        stat_drawn_last_frame.Accumulator++;
         renderer.SetBlendMode(Blending);
 
         if (Topology == VertexTopology.Quads)

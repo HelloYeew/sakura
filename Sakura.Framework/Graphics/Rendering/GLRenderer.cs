@@ -357,17 +357,17 @@ public class GLRenderer : IGLRenderer, IDisposable
 
         resetTextureSlots();
 
-        stat_draw_calls.Value = 0;
-        stat_vertices_drawn.Value = 0;
-        stat_shader_binds.Value = 0;
+        stat_draw_calls.CompleteFrame();
+        stat_vertices_drawn.CompleteFrame();
+        stat_shader_binds.CompleteFrame();
 
-        stat_slot_exhaustion_flushes.Value = 0;
-        stat_state_change_flushes.Value = 0;
-        stat_buffer_full_flushes.Value = 0;
-        stat_drawables_updated.Value = 0;
-        stat_drawables_invalidations.Value = 0;
-        stat_drawables_culled.Value = 0;
-        stat_drawables_drawn.Value = 0;
+        stat_slot_exhaustion_flushes.CompleteFrame();
+        stat_state_change_flushes.CompleteFrame();
+        stat_buffer_full_flushes.CompleteFrame();
+        stat_drawables_updated.CompleteFrame();
+        stat_drawables_invalidations.CompleteFrame();
+        stat_drawables_culled.CompleteFrame();
+        stat_drawables_drawn.CompleteFrame();
 
         shader.Use();
 
@@ -551,7 +551,7 @@ public class GLRenderer : IGLRenderer, IDisposable
         }
 
         // All slots taken, flush and start a fresh slot set.
-        stat_slot_exhaustion_flushes.Value++;
+        stat_slot_exhaustion_flushes.Accumulator++;
         triangleBatch.Draw();
         resetTextureSlots();
 
@@ -733,7 +733,7 @@ public class GLRenderer : IGLRenderer, IDisposable
         if (blendingMode == currentBlendMode)
             return;
 
-        stat_state_change_flushes.Value++;
+        stat_state_change_flushes.Accumulator++;
         triangleBatch.Draw();
 
         currentBlendMode = blendingMode;
