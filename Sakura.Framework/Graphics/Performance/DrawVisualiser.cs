@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Sakura.Framework.Extensions.DrawableExtensions;
+using Sakura.Framework.Extensions.IconUsageExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
@@ -95,6 +96,7 @@ public partial class DrawVisualiser : DebugWindow
     private PropertyInfo[]? cachedProperties;
     private FieldInfo[]? cachedFields;
     private SpriteText? loadStateText;
+    private SpriteText? stateText;
     private readonly List<PropertyTracker> propertyTextMap = new List<PropertyTracker>();
 
     /// <summary>
@@ -611,6 +613,7 @@ public partial class DrawVisualiser : DebugWindow
             cachedProperties = null;
             cachedFields = null;
             loadStateText = null;
+            stateText = null;
             return;
         }
 
@@ -680,6 +683,10 @@ public partial class DrawVisualiser : DebugWindow
                 ? addPropertyText($"Load State: {selectedDrawable.IsLoaded}", Color.White)
                 : null;
 
+            stateText = matchesPropertyFilter("State")
+                ? addPropertyText("State: ", Color.White)
+                : null;
+
             foreach (var prop in cachedProperties!)
             {
                 if (!matchesPropertyFilter(prop.Name))
@@ -709,6 +716,14 @@ public partial class DrawVisualiser : DebugWindow
 
         if (loadStateText != null)
             loadStateText.Text = $"Load State: {selectedDrawable.IsLoaded}";
+
+        if (stateText != null)
+        {
+            var state = DrawableStateDisplay.Of(selectedDrawable);
+
+            stateText.Text = $"State: {DrawableStateDisplay.IconFor(state).ToGlyph()} {DrawableStateDisplay.DescriptionFor(state)}";
+            stateText.Color = DrawableStateDisplay.ColorFor(state);
+        }
 
         foreach (var tracker in propertyTextMap)
         {
@@ -963,17 +978,132 @@ public partial class DrawVisualiserInspectLayer : Container
     }
 }
 
+public enum DrawableState
+{
+    /// <summary>
+    /// Loaded, alive, sized, visible, and not culled.
+    /// </summary>
+    Drawing,
+
+    /// <summary>
+    /// Disposed but still in a tree, which is a bug wherever it is seen.
+    /// </summary>
+    Disposed,
+
+    /// <summary>
+    /// Not through <see cref="LoadState.Ready"/> yet, which is why everything else reads zero.
+    /// </summary>
+    Loading,
+
+    /// <summary>
+    /// Outside its lifetime, awaiting removal.
+    /// </summary>
+    NotAlive,
+
+    /// <summary>
+    /// Laid out, but with no area.
+    /// </summary>
+    ZeroSize,
+
+    /// <summary>
+    /// Hidden by its own alpha, as opposed to an ancestor's.
+    /// </summary>
+    Hidden,
+
+    /// <summary>
+    /// Culled by an ancestor's mask. Still updating.
+    /// </summary>
+    Culled
+}
+
+public static class DrawableStateDisplay
+{
+    public static DrawableState Of(Drawable d)
+    {
+        if (d.IsDisposed)
+            return DrawableState.Disposed;
+
+        if (!d.IsLoaded)
+            return DrawableState.Loading;
+
+        if (!d.IsAlive)
+            return DrawableState.NotAlive;
+
+        if (d.Size == Vector2.Zero)
+            return DrawableState.ZeroSize;
+
+        if (d.Alpha <= 0)
+            return DrawableState.Hidden;
+
+        if (d.IsMaskedAway && !d.AlwaysPresent)
+            return DrawableState.Culled;
+
+        return DrawableState.Drawing;
+    }
+
+    public static IconUsage IconFor(DrawableState state) => state switch
+    {
+        DrawableState.Disposed => IconUsage.DeleteForever,
+        DrawableState.Loading => IconUsage.HourglassEmpty,
+        DrawableState.NotAlive => IconUsage.TimerOff,
+        DrawableState.ZeroSize => IconUsage.CropFree,
+        DrawableState.Hidden => IconUsage.VisibilityOff,
+        DrawableState.Culled => IconUsage.ContentCut,
+        _ => IconUsage.Circle
+    };
+
+    public static Color ColorFor(DrawableState state) => state switch
+    {
+        DrawableState.Disposed => Color.FromArgb(255, 244, 96, 96),
+        DrawableState.Loading => Color.FromArgb(255, 240, 190, 90),
+        DrawableState.NotAlive => Color.FromArgb(255, 148, 148, 148),
+        DrawableState.ZeroSize => Color.FromArgb(255, 176, 176, 176),
+        DrawableState.Hidden => Color.FromArgb(255, 176, 176, 176),
+        DrawableState.Culled => Color.FromArgb(255, 128, 176, 216),
+        _ => Color.FromArgb(255, 128, 208, 128)
+    };
+
+    public static string DescriptionFor(DrawableState state) => state switch
+    {
+        DrawableState.Disposed => "Disposed",
+        DrawableState.Loading => "Loading",
+        DrawableState.NotAlive => "Not alive (outside lifetime)",
+        DrawableState.ZeroSize => "Zero size",
+        DrawableState.Hidden => "Hidden (alpha 0)",
+        DrawableState.Culled => "Culled (masked away)",
+        _ => "Drawing"
+    };
+}
+
 /// <summary>
 /// One line of <see cref="DrawVisualiser"/>'s tree pane. Pooled and re-bound as the pane scrolls, so
 /// these exist per visible line rather than per drawable in the app.
 /// </summary>
 public partial class VisualiserTreeItem : Container
 {
+    private const float selection_bar_width = 3;
+    private const float gutter_width = 15;
+
+    private const float content_left = selection_bar_width + gutter_width;
+
+    private const float dim_alpha = 0.45f;
+
+    private const float icon_size = 12;
+
+    private static readonly Color selection_color = Color.FromArgb(255, 72, 132, 224);
+    private static readonly Color cursor_color = Color.FromArgb(255, 108, 208, 118);
+    private static readonly Color qualifier_color = Color.FromArgb(255, 155, 155, 155);
+
     private readonly Func<Drawable?> selectedProvider;
     private readonly Action<Drawable> clickAction;
 
     private readonly Box background;
-    private readonly SpriteText label;
+    private readonly Box selectionBar;
+    private readonly IconSprite stateTag;
+    private readonly FlowContainer labelFlow;
+    private readonly SpriteText nameLabel;
+    private readonly SpriteText typeLabel;
+    private readonly IconSprite cursorMark;
 
     private Drawable? tracked;
     private int trackedDepth = -1;
@@ -983,6 +1113,33 @@ public partial class VisualiserTreeItem : Container
     /// pane is not using.
     /// </summary>
     public Drawable? Tracked => tracked;
+
+    /// <summary>
+    /// Whether this row is the selected one.
+    /// </summary>
+    public bool IsSelected { get; private set; }
+
+    /// <summary>
+    /// The row's background fill with a combination of tree interaction and app-cursor state.
+    /// </summary>
+    /// <param name="selected">Whether this is the selected row.</param>
+    /// <param name="rowHovered">Whether the mouse is over this row, in the tree.</param>
+    /// <param name="cursorOn">Whether the app cursor is over the drawable itself, out in the app.</param>
+    public static (Color Color, float Alpha) RowFill(bool selected, bool rowHovered, bool cursorOn)
+    {
+        if (selected)
+            return (selection_color, rowHovered ? 0.42f : 0.28f);
+
+        if (rowHovered)
+            return (Color.White, 0.14f);
+
+        if (cursorOn)
+            return (cursor_color, 0.16f);
+
+        return (Color.White, 0);
+    }
+
+    public DrawableState State { get; private set; } = DrawableState.Drawing;
 
     public VisualiserTreeItem(Func<Drawable?> selectedProvider, Action<Drawable> clickAction)
     {
@@ -1000,11 +1157,58 @@ public partial class VisualiserTreeItem : Container
             Origin = Anchor.TopLeft
         });
 
-        Add(label = new SpriteText
+        // Selection gets a channel of its own so that hovering a selected row can never take the
+        // selection cue away, which is what a single shared background color used to do.
+        Add(selectionBar = new Box
         {
-            Font = FontUsage.Default.With(size: 14),
+            RelativeSizeAxes = Axes.Y,
+            Height = 1,
+            Width = selection_bar_width,
+            Anchor = Anchor.TopLeft,
+            Origin = Anchor.TopLeft,
+            Color = selection_color,
+            Alpha = 0
+        });
+
+        Add(stateTag = new IconSprite
+        {
+            IconSize = icon_size,
             Anchor = Anchor.CentreLeft,
-            Origin = Anchor.CentreLeft
+            Origin = Anchor.Centre,
+            X = selection_bar_width + gutter_width / 2,
+            Alpha = 0
+        });
+
+        Add(labelFlow = new FlowContainer
+        {
+            Direction = FlowDirection.Horizontal,
+            AutoSizeAxes = Axes.Both,
+            Anchor = Anchor.CentreLeft,
+            Origin = Anchor.CentreLeft,
+            Spacing = new Vector2(5, 0),
+            Children = new Drawable[]
+            {
+                nameLabel = new SpriteText
+                {
+                    Font = FontUsage.Default.With(size: 14),
+                    Color = Color.White
+                },
+                typeLabel = new SpriteText
+                {
+                    Font = FontUsage.Default.With(size: 14),
+                    Color = Color.White
+                }
+            }
+        });
+
+        Add(cursorMark = new IconSprite
+        {
+            IconSize = icon_size,
+            Anchor = Anchor.CentreRight,
+            Origin = Anchor.CentreRight,
+            X = -6,
+            Color = cursor_color,
+            Alpha = 0
         });
     }
 
@@ -1021,8 +1225,24 @@ public partial class VisualiserTreeItem : Container
         tracked = drawable;
         trackedDepth = depth;
 
-        label.Text = drawable?.GetDisplayName() ?? string.Empty;
-        label.X = depth * 15 + 5;
+        if (drawable == null)
+        {
+            nameLabel.Text = string.Empty;
+            typeLabel.Text = string.Empty;
+        }
+        else
+        {
+            string display = drawable.GetDisplayName();
+            string name = drawable.Name;
+
+            nameLabel.Text = name;
+            typeLabel.Text = name.Length > 0 ? display.Substring(name.Length + 1) : display;
+
+            // Dim display name if that drawable has a name
+            typeLabel.Color = name.Length > 0 ? qualifier_color : Color.White;
+        }
+
+        labelFlow.X = content_left + depth * 15 + 5;
     }
 
     public override void Update()
@@ -1032,34 +1252,51 @@ public partial class VisualiserTreeItem : Container
         if (tracked == null)
         {
             background.Alpha = 0;
+            selectionBar.Alpha = 0;
+            stateTag.Alpha = 0;
+            cursorMark.Alpha = 0;
+            IsSelected = false;
             return;
         }
 
         bool isSelected = ReferenceEquals(selectedProvider(), tracked);
 
-        var bgColor = isSelected ? Color.Blue : Color.Transparent;
-        if (tracked.IsHovered) bgColor = Color.Gray;
+        bool rowHovered = IsHovered;
+        bool cursorOn = tracked.IsHovered || tracked.IsDragged;
 
-        background.Color = bgColor;
-        background.Alpha = isSelected ? 0.5f : 0.2f;
+        IsSelected = isSelected;
+        selectionBar.Alpha = isSelected ? 1 : 0;
 
-        bool isUpdating = tracked.IsLoaded &&
-                          tracked.IsAlive &&
-                          tracked.Size != Vector2.Zero &&
-                          (!tracked.IsMaskedAway || tracked.AlwaysPresent);
+        var fill = RowFill(isSelected, rowHovered, cursorOn);
 
-        bool isDrawing = isUpdating && tracked.DrawAlpha > 0;
+        background.Color = fill.Color;
+        background.Alpha = fill.Alpha;
 
-        if (isSelected)
-        {
-            label.Color = Color.Yellow;
-            label.Alpha = 1;
-        }
+        State = DrawableStateDisplay.Of(tracked);
+
+        if (State == DrawableState.Drawing)
+            stateTag.Alpha = 0;
         else
         {
-            label.Color = Color.White;
-            label.Alpha = isUpdating && isDrawing ? 1 : 0.4f;
+            stateTag.Icon = DrawableStateDisplay.IconFor(State);
+            stateTag.Color = DrawableStateDisplay.ColorFor(State);
+            stateTag.Alpha = 1;
         }
+        
+        labelFlow.Alpha = tracked.DrawAlpha > 0 ? 1 : dim_alpha;
+
+        if (tracked.IsDragged)
+        {
+            cursorMark.Icon = IconUsage.PanTool;
+            cursorMark.Alpha = 1;
+        }
+        else if (tracked.IsHovered)
+        {
+            cursorMark.Icon = IconUsage.NearMe;
+            cursorMark.Alpha = 1;
+        }
+        else
+            cursorMark.Alpha = 0;
     }
 
     public override bool OnDrag(MouseEvent e) => false;
