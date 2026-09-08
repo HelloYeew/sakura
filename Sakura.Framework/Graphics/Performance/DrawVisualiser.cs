@@ -16,6 +16,7 @@ using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Graphics.UserInterface;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
+using Sakura.Framework.Reactive;
 using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Graphics.Performance;
@@ -30,6 +31,11 @@ public partial class DrawVisualiser : DebugWindow
     private const float entry_height = 20;
 
     private const float toolbar_height = 34;
+
+    /// <summary>
+    /// Height of the search row
+    /// </summary>
+    private const float search_height = 30;
 
     /// <summary>
     /// How often the property pane re-reads the selected drawable.
@@ -55,16 +61,17 @@ public partial class DrawVisualiser : DebugWindow
     /// What the tree pane is rooted at, or null for the empty state it opens in. Moved by the
     /// toolbar buttons and by choosing a drawable.
     /// </summary>
-    /// <remarks>
-    /// It deliberately does not start at the app root. Nobody reads a whole app's tree — the way this
-    /// tool is actually used is "what is that thing on screen", so it opens empty and asks you to
-    /// choose a drawable; walking up from there reaches the root for anyone who does want all of it.
-    /// It is also the cheapest possible first open, since an empty tree walks nothing.
-    /// </remarks>
     private Drawable? targetRoot;
 
     private readonly ScrollableContainer treeScroll;
     private readonly Container treeContent;
+
+    private readonly BasicTextBox treeSearch;
+    private readonly BasicTextBox propertySearch;
+
+    private string treeFilter = string.Empty;
+    private string propertyFilter = string.Empty;
+    private string lastPropertyFilter = string.Empty;
 
     /// <summary>
     /// Shown instead of the tree while nothing has been chosen, and says how to choose.
@@ -112,8 +119,10 @@ public partial class DrawVisualiser : DebugWindow
         {
             Picked = picked =>
             {
+                treeSearch?.Text.Value = string.Empty;
+
                 SetTreeRoot(picked);
-                selectDrawable(picked);
+                SelectDrawable(picked);
                 SetInspecting(false);
             }
         };
@@ -124,7 +133,10 @@ public partial class DrawVisualiser : DebugWindow
         {
             RelativeSizeAxes = Axes.Both,
             Size = new Vector2(1),
-            Padding = new MarginPadding { Top = toolbar_height }
+            Padding = new MarginPadding
+            {
+                Top = toolbar_height
+            }
         };
 
         var treePane = new Container
@@ -144,7 +156,29 @@ public partial class DrawVisualiser : DebugWindow
             Alpha = 0.2f
         });
 
-        treePane.Add(emptyHint = new SpriteText
+        treeSearch = createSearchBox("Filter tree by name or type");
+        treeSearch.Text.ValueChanged += e =>
+        {
+            treeFilter = e.NewValue ?? string.Empty;
+            nextTreeRefresh = double.MinValue;
+        };
+
+        treePane.Add(wrapSearchBox(treeSearch, "Tree Search"));
+
+        var treeBody = new Container
+        {
+            Anchor = Anchor.TopLeft,
+            Origin = Anchor.TopLeft,
+            RelativeSizeAxes = Axes.Both,
+            Size = new Vector2(1),
+            Padding = new MarginPadding
+            {
+                Top = search_height
+            },
+            Name = "Tree Body"
+        };
+
+        treeBody.Add(emptyHint = new SpriteText
         {
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
@@ -154,7 +188,7 @@ public partial class DrawVisualiser : DebugWindow
             Text = "Nothing chosen"
         });
 
-        treePane.Add(treeScroll = new ScrollableContainer
+        treeBody.Add(treeScroll = new ScrollableContainer
         {
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
@@ -170,6 +204,8 @@ public partial class DrawVisualiser : DebugWindow
                 Name = "Tree Content"
             }
         });
+
+        treePane.Add(treeBody);
 
         var propertyPane = new Container
         {
@@ -190,7 +226,26 @@ public partial class DrawVisualiser : DebugWindow
             Alpha = 0.2f
         });
 
-        propertyPane.Add(propertyScroll = new ScrollableContainer
+        propertySearch = createSearchBox("Filter properties and fields");
+        propertySearch.Text.ValueChanged += e =>
+        {
+            propertyFilter = e.NewValue ?? string.Empty;
+            nextPropertyRefresh = double.MinValue;
+        };
+
+        propertyPane.Add(wrapSearchBox(propertySearch, "Property Search"));
+
+        var propertyBody = new Container
+        {
+            Anchor = Anchor.TopLeft,
+            Origin = Anchor.TopLeft,
+            RelativeSizeAxes = Axes.Both,
+            Size = new Vector2(1),
+            Padding = new MarginPadding { Top = search_height },
+            Name = "Property Body"
+        };
+
+        propertyBody.Add(propertyScroll = new ScrollableContainer
         {
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
@@ -209,6 +264,8 @@ public partial class DrawVisualiser : DebugWindow
                 Name = "Property Flow"
             }
         });
+
+        propertyPane.Add(propertyBody);
 
         panes.Add(treePane);
         panes.Add(propertyPane);
@@ -269,6 +326,30 @@ public partial class DrawVisualiser : DebugWindow
         return toolbar;
     }
 
+    private static BasicTextBox createSearchBox(string placeholder) => new BasicTextBox
+    {
+        Anchor = Anchor.TopLeft,
+        Origin = Anchor.TopLeft,
+        RelativeSizeAxes = Axes.Both,
+        Size = new Vector2(1),
+        PlaceholderText = placeholder,
+        BackgroundColor = Color.FromArgb(255, 34, 26, 32),
+        BackgroundFocusedColor = Color.FromArgb(255, 62, 40, 56),
+        // Filtering is live, just ignore enter on commit
+        ReleaseFocusOnCommit = false
+    };
+
+    private static Container wrapSearchBox(BasicTextBox box, string name) => new Container
+    {
+        Anchor = Anchor.TopLeft,
+        Origin = Anchor.TopLeft,
+        RelativeSizeAxes = Axes.X,
+        Size = new Vector2(1, search_height),
+        Padding = new MarginPadding(3, 4),
+        Name = name,
+        Child = box
+    };
+
     protected internal override void OnOpened()
     {
         base.OnOpened();
@@ -293,6 +374,17 @@ public partial class DrawVisualiser : DebugWindow
     /// What the tree pane is rooted at, or null while nothing has been chosen.
     /// </summary>
     public Drawable? TreeRoot => targetRoot;
+
+    /// <summary>
+    /// The tree pane's search box. Matched case-insensitively against
+    /// <see cref="Drawable.GetDisplayName"/>, so it covers both a drawable's name and its type.
+    /// </summary>
+    public Reactive<string> TreeSearchText => treeSearch.Text;
+
+    /// <summary>
+    /// The property pane's search box. Matched case-insensitively against member names.
+    /// </summary>
+    public Reactive<string> PropertySearchText => propertySearch.Text;
 
     /// <summary>
     /// Roots the tree pane at <paramref name="root"/>, or empties it when given null. Refreshes on
@@ -373,7 +465,13 @@ public partial class DrawVisualiser : DebugWindow
         currentTreeStructure.Clear();
         buildTreeSnapshot(targetRoot, 0);
 
-        emptyHint.Alpha = currentTreeStructure.Count == 0 ? 1 : 0;
+        if (currentTreeStructure.Count == 0)
+        {
+            emptyHint.Alpha = 1;
+            emptyHint.Text = targetRoot != null && treeFilter.Length > 0 ? $"Nothing matches \"{treeFilter}\"" : "Nothing chosen";
+        }
+        else
+            emptyHint.Alpha = 0;
 
         bool changed = currentTreeStructure.Count != cachedTreeStructure.Count;
 
@@ -397,21 +495,34 @@ public partial class DrawVisualiser : DebugWindow
         cachedTreeStructure.AddRange(currentTreeStructure);
     }
 
-    private void buildTreeSnapshot(Drawable? d, int depth)
+    /// <summary>
+    /// Appends <paramref name="d"/> and its subtree to <see cref="currentTreeStructure"/>, and
+    /// returns whether anything was kept.
+    /// </summary>
+    private bool buildTreeSnapshot(Drawable? d, int depth)
     {
         if (d == null)
-            return;
+            return false;
+
+        int index = currentTreeStructure.Count;
 
         currentTreeStructure.Add((d, depth));
 
-        if (d is IRemoveFromDrawVisualiser)
-            return;
+        bool keptBelow = false;
 
-        if (d is Container c)
+        if (d is not IRemoveFromDrawVisualiser && d is Container c)
         {
             for (int i = 0; i < c.Children.Count; i++)
-                buildTreeSnapshot(c.Children[i], depth + 1);
+                keptBelow |= buildTreeSnapshot(c.Children[i], depth + 1);
         }
+
+        if (treeFilter.Length == 0 || keptBelow || d.GetDisplayName().Contains(treeFilter, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // Nothing here or below matched. Non-matching descendants have already dropped themselves,
+        // so this is the entry added above and nothing else.
+        currentTreeStructure.RemoveRange(index, currentTreeStructure.Count - index);
+        return false;
     }
 
     /// <summary>
@@ -440,7 +551,7 @@ public partial class DrawVisualiser : DebugWindow
 
         while (rowPool.Count < needed)
         {
-            var row = new VisualiserTreeItem(() => selectedDrawable, selectDrawable)
+            var row = new VisualiserTreeItem(() => selectedDrawable, SelectDrawable)
             {
                 Height = entry_height
             };
@@ -471,8 +582,18 @@ public partial class DrawVisualiser : DebugWindow
         }
     }
 
-    private void selectDrawable(Drawable d)
+    /// <summary>
+    /// Shows <paramref name="d"/> in the property pane, as clicking its row does. Does not move the
+    /// tree root.
+    /// </summary>
+    public void SelectDrawable(Drawable d)
     {
+        // A filter narrowed against the last drawable's members says nothing about a different one,
+        // and at worst matches none of them, so the pane a new selection opens in is the unfiltered
+        // one. Only an actual change resets it, so re-clicking the selected row keeps the filter.
+        if (!ReferenceEquals(selectedDrawable, d))
+            propertySearch.Text.Value = string.Empty;
+
         selectedDrawable = d;
 
         // Straight away rather than on the next tick: this is a click being answered.
@@ -495,13 +616,12 @@ public partial class DrawVisualiser : DebugWindow
 
         var type = selectedDrawable.GetType();
 
-        // Rebuild the rows only when the selection changed; otherwise just re-read the values.
-        if (lastSelectedDrawable != selectedDrawable)
-        {
-            propertyFlow.Clear();
-            propertyTextMap.Clear();
-            lastSelectedDrawable = selectedDrawable;
+        bool selectionChanged = lastSelectedDrawable != selectedDrawable;
 
+        // The member lists depend on the selection alone, so a keystroke in the search box re-filters
+        // rows without walking the inheritance chain again.
+        if (selectionChanged)
+        {
             var propList = new List<PropertyInfo>();
             var fieldList = new List<FieldInfo>();
             Type? currentType = type;
@@ -542,12 +662,29 @@ public partial class DrawVisualiser : DebugWindow
 
             cachedProperties = propList.ToArray();
             cachedFields = fieldList.ToArray();
+        }
 
+        // Rebuild the rows when the selection or the filter changed; otherwise just re-read the
+        // values.
+        if (selectionChanged || lastPropertyFilter != propertyFilter)
+        {
+            propertyFlow.Clear();
+            propertyTextMap.Clear();
+            lastSelectedDrawable = selectedDrawable;
+            lastPropertyFilter = propertyFilter;
+
+            // The type is the heading of the pane rather than one of its rows, so it survives every filter
             addPropertyText($"Type: {type.Name}", Color.Yellow);
-            loadStateText = addPropertyText($"Load State: {selectedDrawable.IsLoaded}", Color.White);
 
-            foreach (var prop in cachedProperties)
+            loadStateText = matchesPropertyFilter("Load State")
+                ? addPropertyText($"Load State: {selectedDrawable.IsLoaded}", Color.White)
+                : null;
+
+            foreach (var prop in cachedProperties!)
             {
+                if (!matchesPropertyFilter(prop.Name))
+                    continue;
+
                 var textElement = addPropertyText($"{prop.Name}: loading...", Color.White);
                 propertyTextMap.Add(new PropertyTracker
                 {
@@ -556,8 +693,11 @@ public partial class DrawVisualiser : DebugWindow
                 });
             }
 
-            foreach (var field in cachedFields)
+            foreach (var field in cachedFields!)
             {
+                if (!matchesPropertyFilter(field.Name))
+                    continue;
+
                 var textElement = addPropertyText($"{field.Name}: loading...", Color.White);
                 propertyTextMap.Add(new PropertyTracker
                 {
@@ -603,6 +743,12 @@ public partial class DrawVisualiser : DebugWindow
             }
         }
     }
+
+    /// <summary>
+    /// Whether a member of this name survives the property search box
+    /// </summary>
+    private bool matchesPropertyFilter(string name)
+        => propertyFilter.Length == 0 || name.Contains(propertyFilter, StringComparison.OrdinalIgnoreCase);
 
     private SpriteText addPropertyText(string text, Color color)
     {
@@ -831,6 +977,12 @@ public partial class VisualiserTreeItem : Container
 
     private Drawable? tracked;
     private int trackedDepth = -1;
+
+    /// <summary>
+    /// The tree entry this row is currently showing, or null while it is one of the pooled rows the
+    /// pane is not using.
+    /// </summary>
+    public Drawable? Tracked => tracked;
 
     public VisualiserTreeItem(Func<Drawable?> selectedProvider, Action<Drawable> clickAction)
     {
