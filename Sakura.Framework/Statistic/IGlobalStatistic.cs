@@ -8,6 +8,8 @@ public interface IGlobalStatistic
     string Group { get; }
     string Name { get; }
     string DisplayValue { get; }
+    StatisticKind Kind { get; }
+    StatisticUnit Unit { get; }
     double? NumericValue { get; }
     void Clear();
 }
