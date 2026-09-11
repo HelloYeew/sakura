@@ -52,6 +52,9 @@ public class GlobalStatistic<T> : IGlobalStatistic
             case StatisticUnit.Bytes:
                 return formatBytes(numeric.Value);
 
+            case StatisticUnit.BytesPerSecond:
+                return $"{formatBytes(numeric.Value)}/s";
+
             case StatisticUnit.Milliseconds:
                 return $"{numeric.Value:N2} ms";
 

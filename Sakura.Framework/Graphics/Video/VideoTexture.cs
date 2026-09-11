@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System.Diagnostics;
 using System.Threading;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Textures;
@@ -89,7 +90,11 @@ public sealed class VideoTexture : IVideoTexture
         if (upload == null) return;
 
         pendingUpload = null;
+
+        long uploadStart = Stopwatch.GetTimestamp();
         upload.Upload(NativeTexture);
+        VideoStatistics.RecordUpload(Stopwatch.GetTimestamp() - uploadStart);
+
         upload.Dispose();
         Volatile.Write(ref uploadComplete, true);
         GlobalStatistics.Get<int>("Video", "Frames Uploaded", StatisticKind.Cumulative).Value++;

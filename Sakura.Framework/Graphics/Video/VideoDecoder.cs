@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -99,9 +100,14 @@ public unsafe class VideoDecoder : IDisposable
     private double pendingUploadFrameTime;
     private int pendingUploadFrameGeneration;
 
+    // Time spent in avcodec_send_packet since the last frame came out, attributed to the next frame
+    // that does. Decode-thread only. Without this the decode stage under-reports on software decoded,
+    // where a sending can block on the codec's internal thread pool.
+    private long pendingSendTicks;
+
     private Task? decodeTask;
     private CancellationTokenSource? cts;
-    private readonly ConcurrentQueue<Action> decoderCommands = new();
+    private readonly ConcurrentQueue<Action> decoderCommands = new ConcurrentQueue<Action>();
 
     private readonly IRenderer renderer;
     private readonly ITextureManager textureManager;
@@ -490,7 +496,7 @@ public unsafe class VideoDecoder : IDisposable
         codecContext = ffmpeg.avcodec_alloc_context3(codec);
         codecContext->pkt_timebase = avStream->time_base;
         ffmpeg.avcodec_parameters_to_context(codecContext, avStream->codecpar);
-        
+
         int threads = softwareDecodeThreads();
         codecContext->thread_count = threads;
 
@@ -617,7 +623,10 @@ public unsafe class VideoDecoder : IDisposable
 
     private int sendPacket(AVFrame* receiveFrame, AVPacket* packet)
     {
+        long sendStart = Stopwatch.GetTimestamp();
         int result = ffmpeg.avcodec_send_packet(codecContext, packet);
+        pendingSendTicks += Stopwatch.GetTimestamp() - sendStart;
+
         if (result == 0 || result == -ffmpeg.EAGAIN)
             readDecodedFrames(receiveFrame);
         else
@@ -629,7 +638,10 @@ public unsafe class VideoDecoder : IDisposable
     {
         while (true)
         {
+            long decodeStart = Stopwatch.GetTimestamp();
             int result = ffmpeg.avcodec_receive_frame(codecContext, receiveFrame);
+            long decodeTicks = Stopwatch.GetTimestamp() - decodeStart;
+
             if (result < 0)
             {
                 // Codec fully drained (EOF) while still in a post-seek skip means the seek target
@@ -650,6 +662,10 @@ public unsafe class VideoDecoder : IDisposable
                 break;
             }
 
+            VideoStatistics.RecordDecode(pendingSendTicks + decodeTicks);
+            pendingSendTicks = 0;
+            VideoStatistics.RecordDecoderFormat((AVPixelFormat)receiveFrame->format);
+
             long ts = receiveFrame->best_effort_timestamp != ffmpeg.AV_NOPTS_VALUE
                 ? receiveFrame->best_effort_timestamp
                 : receiveFrame->pts;
@@ -665,7 +681,10 @@ public unsafe class VideoDecoder : IDisposable
                 if (!hwTransferFrames.TryDequeue(out var hwFrame))
                     hwFrame = new FFmpegFrame(returnHwTransferFrame);
 
+                long transferStart = Stopwatch.GetTimestamp();
                 int transferResult = ffmpeg.av_hwframe_transfer_data(hwFrame.Pointer, receiveFrame, 0);
+                VideoStatistics.RecordTransfer(Stopwatch.GetTimestamp() - transferStart);
+
                 if (transferResult < 0)
                 {
                     Logger.Warning($"[VideoDecoder] HW frame transfer failed: {transferResult}");
@@ -677,13 +696,19 @@ public unsafe class VideoDecoder : IDisposable
             }
             else
             {
+                VideoStatistics.RecordTransfer(0);
                 frame = new FFmpegFrame();
                 ffmpeg.av_frame_move_ref(frame.Pointer, receiveFrame);
             }
 
             lastDecodedFrameTime = (float)frameTime;
 
+            VideoStatistics.RecordFrame(frame.PixelFormat, frame.Pointer->width, frame.Pointer->height);
+
+            long convertStart = Stopwatch.GetTimestamp();
             frame = ensureYuv420P(frame);
+            VideoStatistics.RecordConvert(Stopwatch.GetTimestamp() - convertStart);
+
             if (frame == null) continue;
 
             // Post-seek skip: drop frames between the landed keyframe and the seek target so

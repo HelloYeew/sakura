@@ -7,6 +7,7 @@ public enum StatisticUnit
 {
     None,
     Bytes,
+    BytesPerSecond,
     Milliseconds,
     Microseconds,
     Percent,
