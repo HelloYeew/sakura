@@ -5,9 +5,9 @@ namespace Sakura.Framework.Allocation;
 
 /// <summary>
 /// Implemented by the source generator on every <see cref="IDependencyInjectionCandidate"/> class.
-/// Calling <see cref="RegisterForDependencyActivation"/> walks the full inheritance chain once and
+/// Calling <see cref="RegisterForDependencyActivation"/> walks the full inheritance chain at once and
 /// registers compile-time inject/cache delegates into the <see cref="DependencyActivator"/> cache,
-/// so subsequent activations require no reflection.
+/// so later activations require no reflection.
 /// </summary>
 public interface ISourceGeneratedDependencyActivator
 {

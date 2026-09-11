@@ -16,7 +16,7 @@ namespace Sakura.Framework.Allocation;
 /// <para>
 /// Builds inject/cache delegates by compiling expression trees once per type, so the
 /// steady-state cost is a single delegate call with direct (JIT-compiled) member access —
-/// no <see cref="MethodInfo.Invoke"/>, boxing or argument arrays per activation.
+/// no <see cref="MethodInfo.Invoke(object, object[])"/>, boxing or argument arrays per activation.
 /// </para>
 /// </summary>
 internal static class ReflectionDependencyActivator

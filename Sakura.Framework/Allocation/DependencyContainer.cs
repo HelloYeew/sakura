@@ -9,11 +9,11 @@ namespace Sakura.Framework.Allocation;
 
 /// <summary>
 /// A container for managing and resolving dependencies.
+/// </summary>
 /// <remarks>
 /// Since 2026.609.0 the activator moved to <see cref="DependencyActivator"/>
 /// This class now just a storage.
 /// </remarks>
-/// </summary>
 public class DependencyContainer : IReadOnlyDependencyContainer
 {
     private readonly IReadOnlyDependencyContainer? parent;
@@ -88,9 +88,7 @@ public class DependencyContainer : IReadOnlyDependencyContainer
         }
 
         // A non-DependencyContainer implementation in the chain resolves through the interface.
-        if (current != null)
-            return current.Get<T>();
+        return current != null ? current.Get<T>() : throw new InvalidOperationException($"Dependency of type {typeof(T).FullName} not found.");
 
-        throw new InvalidOperationException($"Dependency of type {typeof(T).FullName} not found.");
     }
 }

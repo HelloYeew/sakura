@@ -35,7 +35,7 @@ public interface IDependencyActivatorRegistry
     bool IsRegistered(Type type);
 
     /// <summary>
-    /// Registers the inject and/or cache delegates for <paramref name="type"/>.
+    /// Registers the injection and/or cache delegates for <paramref name="type"/>.
     /// Either delegate may be null if the type has no [Resolved]/[BackgroundDependencyLoader] members
     /// or no [Cached] members respectively.
     /// </summary>

@@ -14,10 +14,10 @@ namespace Sakura.Framework.Allocation;
 /// <para>
 /// For types processed by the source generator, delegates are registered once via
 /// <see cref="ISourceGeneratedDependencyActivator.RegisterForDependencyActivation"/> and then
-/// called directly with no reflection overhead on subsequent activations.
+/// called directly with no reflection overhead on later activations.
 /// </para>
 /// <para>
-/// For types that's not processed by the generator (e.g. assemblies without the generator reference,
+/// For types that are not processed by the generator (e.g., assemblies without the generator reference,
 /// or types loaded after hot reload), <see cref="ReflectionDependencyActivator"/> is used as a
 /// transparent fallback and its results are also cached per type.
 /// </para>
@@ -124,7 +124,7 @@ public static class DependencyActivator
             generated.RegisterForDependencyActivation(proxy);
         }
 
-        // Register any levels the generated chain skipped (e.g. non-partial classes), or the
+        // Register any levels the generated chain skipped (e.g., non-partial classes), or the
         // whole hierarchy when no generated code exists, via the reflection fallback so
         // [Resolved]/[Cached] members on those types still work.
         registerReflectionFallback(type);
@@ -141,7 +141,7 @@ public static class DependencyActivator
         var injects = new List<InjectDependenciesDelegate>(levels.Count);
         var caches = new List<CacheDependenciesDelegate>(levels.Count);
 
-        // levels is most-derived-first; iterate in reverse for base-first ordering.
+        // levels are most-derived-first; iterate in reverse for base-first ordering.
         for (int i = levels.Count - 1; i >= 0; i--)
         {
             if (levels[i].InjectDelegate != null)
@@ -166,7 +166,7 @@ public static class DependencyActivator
                 var injectDelegate = ReflectionDependencyActivator.GetInjectDelegate(current);
                 var cacheDelegate = ReflectionDependencyActivator.GetCacheDelegate(current);
 
-                // Only log when this level actually has DI members; an entry-less level is
+                // Only log when this level actually has DI members; an entry-lower level is
                 // not a problem worth pointing the user at.
                 if (injectDelegate != null || cacheDelegate != null)
                 {
