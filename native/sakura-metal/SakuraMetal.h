@@ -128,6 +128,9 @@ void sakura_metal_upload_texture(SakuraMetalTexture* texture, const void* data, 
 // glyph/sprite atlas to blit individual entries into a shared page.
 void sakura_metal_upload_texture_region(SakuraMetalTexture* texture, int x, int y, int width, int height, const void* data);
 
+// destroys a texture. for a zero-copy plane the CoreVideo objects behind it are not released here but
+// handed to the next frame's GPU completion, because VideoToolbox would otherwise recycle the pixel
+// buffer while a command buffer is still sampling it. safe to call outside a frame.
 void sakura_metal_destroy_texture(SakuraMetalTexture* texture);
 
 // video planes (R8 / RG8 textures)
@@ -142,6 +145,24 @@ SakuraMetalTexture* sakura_metal_create_plane_texture(SakuraMetalDevice* device,
 // source stride in BYTES (FFmpeg's linesize, which may exceed the row's texel width due to padding,
 // and which counts two bytes per texel on an RG8 plane). no swizzle, replaces the whole texture.
 void sakura_metal_upload_plane(SakuraMetalTexture* texture, const void* data, int width, int height, int bytesPerRow);
+
+// whether a CVPixelBuffer can be sampled by sakura_metal_create_plane_texture_from_pixel_buffer -- i.e.
+// whether it is 8-bit bi-planar 4:2:0. lets the caller choose between the zero-copy and the copying
+// path up front, instead of discovering the answer once it has already skipped the readback.
+int sakura_metal_can_sample_pixel_buffer(const void* cvPixelBuffer);
+
+// creates a plane texture that BORROWS a VideoToolbox frame's IOSurface rather than copying into one of
+// our own -- the zero-copy path. `cvPixelBuffer` is the CVPixelBufferRef an AV_PIX_FMT_VIDEOTOOLBOX
+// AVFrame carries in data[3]; `planeIndex` selects the NV12 plane (0 = luma, 1 = interleaved CbCr) and
+// `channels` its format (1 -> R8Unorm, 2 -> RG8Unorm). the plane's dimensions come from the pixel
+// buffer, not from the caller.
+//
+// returns NULL when the pixel buffer is not 8-bit bi-planar 4:2:0 (10-bit HDR, 4:2:2, 4:4:4), so the
+// caller falls back to the copying path instead of sampling something it cannot interpret.
+//
+// the returned texture retains the pixel buffer. destroying it does NOT release that reference
+// immediately -- see sakura_metal_destroy_texture.
+SakuraMetalTexture* sakura_metal_create_plane_texture_from_pixel_buffer(SakuraMetalDevice* device, void* cvPixelBuffer, int planeIndex, int channels);
 
 // binds the texture (and a default linear sampler) to the given fragment texture/sampler slot
 // for subsequent draws this frame. the main shader's u_Textures[] is at [[texture(0)]]/[[sampler(0)]].
