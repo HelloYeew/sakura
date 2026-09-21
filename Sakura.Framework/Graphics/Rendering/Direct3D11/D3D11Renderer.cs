@@ -226,7 +226,11 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         instance = this;
         windowHandle = win32Surface.WindowHandle;
 
-        var flags = DeviceCreationFlags.BgraSupport;
+        // VideoSupport is required before D3D11VA can completely decode onto this device, and it has to be
+        // asked for at creation — there is no way to add it afterward. Requested unconditionally
+        // rather than only when video is in use, because the decoder is created long after this and a
+        // device without it would simply fall back to a slower path with no explanation.
+        var flags = DeviceCreationFlags.BgraSupport | DeviceCreationFlags.VideoSupport;
 #if DEBUG
         flags |= DeviceCreationFlags.Debug;
 #endif
@@ -242,6 +246,8 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
                 throw new InvalidOperationException("Failed to create the Direct3D 11 device.");
         }
 
+        enableMultithreadProtection();
+
         logDeviceInfo();
         createSwapChain();
 
@@ -250,6 +256,23 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         createMainShader();
         createWhitePixel();
         createBatch();
+    }
+
+    /// <summary>
+    /// Turns on the device's internal critical section, so the decoded thread and the draw thread can
+    /// both issue work without corrupting each other's state.
+    /// </summary>
+    private void enableMultithreadProtection()
+    {
+        using var multithread = device?.QueryInterfaceOrNull<ID3D11Multithread>();
+
+        if (multithread == null)
+        {
+            Logger.Verbose("D3D11: ID3D11Multithread unavailable; hardware video decode will not be able to share this device safely.");
+            return;
+        }
+
+        multithread.SetMultithreadProtected(true);
     }
 
     private bool tryCreateDevice(DeviceCreationFlags flags, FeatureLevel[] featureLevels)
@@ -1056,8 +1079,48 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
             ["VideoBlock"] = new D3D11Shader.UniformBinding(D3D11Shader.Stage.Fragment, mask_cb_slot),
         };
 
-    public INativeVideoTexture CreateVideoTexture(int width, int height) =>
-        new D3D11VideoTexture(device, context, width, height);
+    public INativeVideoTexture CreateVideoTexture(int width, int height, VideoPlaneLayout layout, bool fromHardwareFrame = false) =>
+        fromHardwareFrame
+            ? new D3D11HardwareVideoTexture(device, context, width, height)
+            : new D3D11VideoTexture(device, context, width, height, layout);
+
+    /// <inheritdoc/>
+    public nint NativeDevicePointer => device?.NativePointer ?? nint.Zero;
+
+    /// <summary>
+    /// True for a D3D11VA frame whose decoder texture array is NV12, which is what the R8 + R8G8 SRV
+    /// pair <c>video_nv12.frag</c> samples maps onto.
+    /// </summary>
+    /// <remarks>
+    /// The pixel format alone does not answer this, exactly as on Metal: 10-bit HDR arrives as
+    /// <c>AV_PIX_FMT_D3D11</c> too, backed by a P010 array that would need R16/R16G16 views and a
+    /// different shader normalisation. Those frames take the readback path instead, which is what they
+    /// do today regardless.
+    /// <para>
+    /// DXVA2 and CUDA never reach here — they are different pixel formats with no SRV story — so they
+    /// fall back for free.
+    /// </para>
+    /// </remarks>
+    public unsafe bool CanSampleHardwareFrame(FFmpeg.AutoGen.AVFrame* frame)
+    {
+        if (device == null || frame == null)
+            return false;
+
+        if ((FFmpeg.AutoGen.AVPixelFormat)frame->format != FFmpeg.AutoGen.AVPixelFormat.AV_PIX_FMT_D3D11)
+            return false;
+
+        nint texturePtr = (nint)frame->data[0];
+
+        if (texturePtr == nint.Zero)
+            return false;
+
+        // Wrapped without taking ownership: the AddRef balances the Dispose, so the decoder's own
+        // reference is untouched either way.
+        using var texture = new ID3D11Texture2D(texturePtr);
+        texture.AddRef();
+
+        return texture.Description.Format == Format.NV12;
+    }
 
     public IFrameBuffer CreateFrameBuffer(int width, int height, bool pixelSnapping = false) =>
         new D3D11FrameBuffer(device, context, width, height);

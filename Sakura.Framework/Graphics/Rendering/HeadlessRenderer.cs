@@ -192,7 +192,14 @@ public class HeadlessRenderer : IRenderer
 
     public IShader CreateShader(Storage storage, string vertexPath, string fragmentPath) => new HeadlessShader();
 
-    public INativeVideoTexture CreateVideoTexture(int width, int height) => new HeadlessNativeVideoTexture(width, height);
+    /// <summary>
+    /// Virtual so a test can stand in a texture that inspects what the decoder hands it. This type
+    /// exists to be substituted for a real backend, and the video path is the one place where what
+    /// arrives at the texture rather than what is drawn is the thing under test.
+    /// </summary>
+    public virtual INativeVideoTexture CreateVideoTexture(int width, int height, VideoPlaneLayout layout, bool fromHardwareFrame = false) => new HeadlessNativeVideoTexture(width, height, layout);
+
+    public virtual unsafe bool CanSampleHardwareFrame(FFmpeg.AutoGen.AVFrame* frame) => false;
 
     public INativeTexture CreateNativeTexture(int width, int height) => new HeadlessNativeTexture(width, height);
 

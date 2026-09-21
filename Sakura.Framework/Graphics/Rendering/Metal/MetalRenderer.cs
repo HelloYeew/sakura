@@ -929,7 +929,28 @@ public sealed class MetalRenderer : IMetalRenderer
         batch.Reset();
     }
 
-    public INativeVideoTexture CreateVideoTexture(int width, int height) => new MetalVideoTexture(device, width, height);
+    public INativeVideoTexture CreateVideoTexture(int width, int height, VideoPlaneLayout layout, bool fromHardwareFrame = false) =>
+        fromHardwareFrame
+            ? new MetalHardwareVideoTexture(device, width, height)
+            : new MetalVideoTexture(device, width, height, layout);
+
+    /// <summary>
+    /// True for a VideoToolbox frame whose <c>CVPixelBuffer</c> is 8-bit bi-planar 4:2:0, which is what
+    /// <c>CVMetalTextureCache</c> can hand back as the R8 + RG8 pair <c>video_nv12.frag</c> samples.
+    /// The pixel format alone does not answer this — 10-bit HDR arrives as VIDEOTOOLBOX too — so the
+    /// buffer itself is probed.
+    /// </summary>
+    public unsafe bool CanSampleHardwareFrame(FFmpeg.AutoGen.AVFrame* frame)
+    {
+        if (device == nint.Zero || frame == null)
+            return false;
+
+        if ((FFmpeg.AutoGen.AVPixelFormat)frame->format != FFmpeg.AutoGen.AVPixelFormat.AV_PIX_FMT_VIDEOTOOLBOX)
+            return false;
+
+        // data[3] is the CVPixelBufferRef on a VideoToolbox frame.
+        return SakuraMetalNative.sakura_metal_can_sample_pixel_buffer((nint)frame->data[3]) != 0;
+    }
     public INativeTexture CreateNativeTexture(int width, int height) => new MetalTexture(device, width, height);
 
     #endregion

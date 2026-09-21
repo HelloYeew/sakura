@@ -13,6 +13,6 @@ internal interface INativeSleep : IDisposable
     /// <summary>
     /// Sleep for the given duration.
     /// </summary>
-    /// <returns>True if sleep succeeded; false if it should fall back to <see cref="System.Threading.Thread.Sleep"/>.</returns>
+    /// <returns>True if sleep succeeded; false if it should fall back to <see cref="System.Threading.Thread.Sleep(int)"/>.</returns>
     bool Sleep(TimeSpan duration);
 }

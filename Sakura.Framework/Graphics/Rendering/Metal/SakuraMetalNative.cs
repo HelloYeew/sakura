@@ -122,10 +122,16 @@ internal static class SakuraMetalNative
     public static extern void sakura_metal_destroy_texture(nint texture);
 
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
-    public static extern nint sakura_metal_create_plane_texture(nint device, int width, int height);
+    public static extern nint sakura_metal_create_plane_texture(nint device, int width, int height, int channels);
 
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern unsafe void sakura_metal_upload_plane(nint texture, void* data, int width, int height, int bytesPerRow);
+
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int sakura_metal_can_sample_pixel_buffer(nint cvPixelBuffer);
+
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern nint sakura_metal_create_plane_texture_from_pixel_buffer(nint device, nint cvPixelBuffer, int planeIndex, int channels);
 
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern void sakura_metal_set_fragment_texture(nint device, nint texture, int slot);

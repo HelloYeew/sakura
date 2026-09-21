@@ -18,6 +18,7 @@ public enum FrameworkSetting
     WindowMode,
     ExecutionMode,
     HardwareAcceleration,
+    VideoZeroCopy,
     RendererType,
     WindowX,
     WindowY,

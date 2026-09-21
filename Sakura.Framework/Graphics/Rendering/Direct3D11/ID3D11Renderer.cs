@@ -19,4 +19,17 @@ public interface ID3D11Renderer : IRenderer
     /// texture.
     /// </summary>
     void DrawVerticesRaw(ReadOnlySpan<Vertex.Vertex> vertices);
+
+    /// <summary>
+    /// The raw <c>ID3D11Device*</c> this renderer draws with, or <see cref="nint.Zero"/> before
+    /// initialisation.
+    /// </summary>
+    /// <remarks>
+    /// Exposed for one purpose: handing the device to FFmpeg's D3D11VA hardware context so the decoder
+    /// produces frames on the *same* device this renderer samples them from. Letting FFmpeg create its
+    /// own device would put every frame on a different device, and crossing that boundary costs a
+    /// shared-resource copy — which is the entire thing zero-copy exists to avoid. The caller does not
+    /// own this reference and must not release it.
+    /// </remarks>
+    nint NativeDevicePointer { get; }
 }

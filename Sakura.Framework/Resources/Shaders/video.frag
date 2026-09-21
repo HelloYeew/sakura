@@ -16,8 +16,11 @@ layout(set = 1, binding = 0) uniform sampler2D u_TextureY;
 layout(set = 1, binding = 1) uniform sampler2D u_TextureU;
 layout(set = 1, binding = 2) uniform sampler2D u_TextureV;
 
-// YUV -> RGB conversion. Carried as a mat4 for a clean std140 layout (a mat3 would pad each
-// column to 16 bytes anyway); only the upper-left 3x3 is used. Matches VideoBlock in C#.
+// Affine YUV -> RGB: the upper-left 3x3 is the colorspace matrix, and the fourth column is the
+// black/chroma offset folded in as a translation, so `u_YuvCoeff * vec4(yuv, 1.0)` both offsets and
+// converts. The offset lives here rather than as a constant in this shader because it depends on the
+// frame's colour range -- limited-range video sits at 16..235, full-range video at 0..255 -- and the
+// decoder is the only thing that knows which arrived. Matches VideoBlock in C#.
 layout(set = 0, binding = 4, std140) uniform VideoBlock
 {
     mat4 u_YuvCoeff;
@@ -29,8 +32,7 @@ void main()
     float cb = texture(u_TextureU, v_TexCoords).r;
     float cr = texture(u_TextureV, v_TexCoords).r;
 
-    vec3 yuv = vec3(y - 0.0625, cb - 0.5, cr - 0.5);
-    vec3 rgb = clamp(mat3(u_YuvCoeff) * yuv, 0.0, 1.0);
+    vec3 rgb = clamp((u_YuvCoeff * vec4(y, cb, cr, 1.0)).rgb, 0.0, 1.0);
 
     // The YUV matrix produces gamma-encoded (non-linear) RGB values matching the
     // video stream's transfer function (approx. BT.709 gamma ~2.2).

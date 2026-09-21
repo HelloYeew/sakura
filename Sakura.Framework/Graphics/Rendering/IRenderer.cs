@@ -152,10 +152,31 @@ public interface IRenderer
     IShader CreateShader(Storage storage, string vertexPath, string fragmentPath);
 
     /// <summary>
-    /// Creates a backend-specific YUV420P video texture of the given dimensions.
+    /// Creates a backend-specific video texture of the given dimensions and plane layout.
     /// Must be called on the render thread.
     /// </summary>
-    INativeVideoTexture CreateVideoTexture(int width, int height);
+    /// <param name="width">The width of the video texture.</param>
+    /// <param name="height">The height of the video texture.</param>
+    /// <param name="layout">The plane layout of the video texture.</param>
+    /// <param name="fromHardwareFrame">
+    /// When true, the texture will be fed frames still living in the decoder's own GPU memory and
+    /// should borrow them rather than allocate planes of its own — only ever true when
+    /// <see cref="CanSampleHardwareFrame"/> returned true for those frames. A backend that has no
+    /// zero-copy path can ignore this, since it never says yes to that question.
+    /// </param>
+    INativeVideoTexture CreateVideoTexture(int width, int height, VideoPlaneLayout layout, bool fromHardwareFrame = false);
+
+    /// <summary>
+    /// Whether this backend can sample <paramref name="frame"/> directly out of the memory the decoder
+    /// produced it in, with no <c>av_hwframe_transfer_data</c> readback and no upload.
+    /// </summary>
+    /// <remarks>
+    /// Asked per frame rather than per format because a hardware pixel format says very little: an
+    /// <c>AV_PIX_FMT_VIDEOTOOLBOX</c> frame could be carrying 8-bit NV12 or 10-bit HDR, and only the
+    /// backend can tell. A false answer means the frame takes the readback-and-upload path, which is
+    /// always available.
+    /// </remarks>
+    unsafe bool CanSampleHardwareFrame(FFmpeg.AutoGen.AVFrame* frame);
 
     /// <summary>
     /// Creates an empty backend-specific 2D texture of the given size (RGBA8). The caller uploads

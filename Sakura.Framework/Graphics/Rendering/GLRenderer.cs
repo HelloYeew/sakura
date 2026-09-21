@@ -323,7 +323,15 @@ public class GLRenderer : IGLRenderer, IDisposable
         return new GLShader(gl, vert, frag);
     }
 
-    public INativeVideoTexture CreateVideoTexture(int width, int height) => new VideoGLTexture(gl, width, height);
+    public INativeVideoTexture CreateVideoTexture(int width, int height, VideoPlaneLayout layout, bool fromHardwareFrame = false) => new VideoGLTexture(gl, width, height, layout);
+
+    /// <summary>
+    /// Always false. GL is the fallback backend on every platform, and its interop options are legacy
+    /// (macOS <c>CVOpenGLTextureCache</c>), vendor-specific (Windows <c>WGL_NV_DX_interop2</c>) or
+    /// EGL-only (Linux VAAPI). GL on macOS therefore keeps taking the
+    /// readback path even while Metal does not, which is exactly what this returning false preserves.
+    /// </summary>
+    public unsafe bool CanSampleHardwareFrame(FFmpeg.AutoGen.AVFrame* frame) => false;
 
     public INativeTexture CreateNativeTexture(int width, int height) => new GLTexture(gl, width, height);
 

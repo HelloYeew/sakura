@@ -162,36 +162,37 @@ public struct BlurBlock
 /// YUV→RGB conversion coefficients for the video shader. Matches <c>VideoBlock</c> in video.frag.
 /// </summary>
 /// <remarks>
-/// The shader declares the coefficients as a <c>mat4</c> (using only the upper-left 3×3) because a
-/// std140 <c>mat3</c> pads each column to 16 bytes anyway; a <c>mat4</c> is the same 64 bytes with a
-/// far simpler, less error-prone layout. Use <see cref="FromMat3"/> to build it from a row-major
-/// float[9].
+/// The shader declares the coefficients as a <c>mat4</c> because a std140 <c>mat3</c> pads each column
+/// to 16 bytes anyway; a <c>mat4</c> is the same 64 bytes with a far simpler, less error-prone layout.
+/// The fourth column, once dead padding, now carries the black/chroma offset as a translation, so the
+/// shader applies offset and conversion in one multiply and the colour range stops being a constant
+/// baked into the shader. Use <see cref="FromAffine"/>.
 /// </remarks>
 [StructLayout(LayoutKind.Explicit, Size = 64)]
 public struct VideoBlock
 {
     /// <summary>
-    /// YUV→RGB matrix; upper-left 3×3 is used. Maps to <c>mat4 u_YuvCoeff</c>.
+    /// Affine YUV→RGB transform. Maps to <c>mat4 u_YuvCoeff</c>, applied as
+    /// <c>u_YuvCoeff * vec4(y, cb, cr, 1.0)</c>.
     /// </summary>
     [FieldOffset(0)]
     public Matrix4x4 YuvCoeff;
 
     /// <summary>
-    /// Builds a <see cref="VideoBlock"/> from a 3×3 matrix supplied as a row-major float[9],
-    /// placing it in the upper-left of a 4×4 (identity elsewhere). The GLSL side reads it as
-    /// <c>mat3(u_YuvCoeff)</c>, which takes the upper-left 3 columns × 3 rows.
+    /// Builds a <see cref="VideoBlock"/> from a column-major 4×4 supplied as a float[16] — the layout
+    /// GLSL reads a <c>mat4</c> in, and what
+    /// <see cref="Sakura.Framework.Graphics.Video.VideoDecoder.GetConversionMatrix"/> produces.
     /// </summary>
-    public static VideoBlock FromMat3(float[] m)
+    public static VideoBlock FromAffine(float[] m)
     {
-        var sm = Matrix4x4.Identity;
-
-        // The GLSL source treated u_YuvCoeff as a mat3 multiplied as `coeff * yuv` with the array
-        // uploaded column-major (UniformMatrix3 convention). Matrix4x4 is row-major,
-        // and mat3(mat4) in GLSL reads columns; place the 9 values so the resulting mat3 columns
-        // match the original mat3 columns 1:1.
-        sm.M11 = m[0]; sm.M12 = m[1]; sm.M13 = m[2];
-        sm.M21 = m[3]; sm.M22 = m[4]; sm.M23 = m[5];
-        sm.M31 = m[6]; sm.M32 = m[7]; sm.M33 = m[8];
+        // Matrix4x4 is row-major in memory (M11 M12 M13 M14, then M21...), so the first four floats of
+        // the struct are what GLSL reads as column 0. Writing m's column c into row c lands each
+        // column where the shader expects it.
+        var sm = new Matrix4x4(
+            m[0], m[1], m[2], m[3],
+            m[4], m[5], m[6], m[7],
+            m[8], m[9], m[10], m[11],
+            m[12], m[13], m[14], m[15]);
 
         return new VideoBlock
         {

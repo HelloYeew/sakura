@@ -38,10 +38,16 @@ internal static class NativeTextureMemory
         => NativeMemoryTracker.Add(category, BytesFor(width, height));
 
     /// <summary>
-    /// Bytes the three single-channel planes of a YUV420P video frame occupy: a full-resolution luma
-    /// plane plus two chroma planes at half resolution per axis, rounded up exactly as the video
-    /// textures size them.
+    /// Bytes the planes of a 4:2:0 8-bit video frame occupy: a full-resolution luma plane plus chroma
+    /// at half resolution per axis, rounded up exactly as the video textures size them.
     /// </summary>
+    /// <remarks>
+    /// The same figure for either <see cref="VideoPlaneLayout"/>, which is worth stating because it
+    /// looks like it should not be: YUV420P spreads chroma over two single-channel half-resolution
+    /// planes and NV12 over one two-channel one, and both come to 12 bits per pixel. Only a texture
+    /// that actually owns its planes should be charged this — see
+    /// <see cref="INativeVideoTexture.PlaneBytes"/>.
+    /// </remarks>
     internal static long BytesForVideoPlanes(int width, int height)
     {
         long chromaWidth = (Math.Max(0, width) + 1) / 2;

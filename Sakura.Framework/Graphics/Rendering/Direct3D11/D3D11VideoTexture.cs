@@ -17,10 +17,11 @@ using ID3D11Texture2D = Vortice.Direct3D11.ID3D11Texture2D;
 namespace Sakura.Framework.Graphics.Rendering.Direct3D11;
 
 /// <summary>
-/// Three single-channel <c>R8_UNORM</c> Direct3D 11 textures holding the Y, U, V planes of a YUV420P
-/// frame
+/// The Direct3D 11 plane set for one video frame: three <c>R8_UNORM</c> textures (Y, U, V) under
+/// <see cref="VideoPlaneLayout.Yuv420P"/>, or an <c>R8_UNORM</c> luma plus a half-resolution
+/// <c>R8G8_UNORM</c> plane holding interleaved Cb and Cr under <see cref="VideoPlaneLayout.Nv12"/>
 /// <remarks>
-/// The video shader samples all three planes (at <c>t0</c>/<c>t1</c>/<c>t2</c>) and does YUV -> RGB on the
+/// The video shader samples the planes (at <c>t0</c>/<c>t1</c>[/<c>t2</c>]) and does YUV -> RGB on the
 /// GPU. Planes are not sRGB, the samples are raw luma/chroma, and the shader handles the
 /// transfer function itself.
 /// </remarks>
@@ -47,6 +48,14 @@ public sealed class D3D11VideoTexture : INativeVideoTexture
     public int Height { get; }
 
     /// <summary>
+    /// 1.5 bytes per pixel across the plane set, the same figure this texture's memory lease is taken
+    /// for, so the tracker and anything displaying a size agree.
+    /// </summary>
+    public long PlaneBytes => NativeTextureMemory.BytesForVideoPlanes(Width, Height);
+
+    public VideoPlaneLayout Layout { get; }
+
+    /// <summary>
     /// Whether at least one frame has been uploaded. Written on the draw thread, read on the update
     /// thread, accessed via <see cref="Volatile"/>.
     /// </summary>
@@ -62,24 +71,34 @@ public sealed class D3D11VideoTexture : INativeVideoTexture
     /// </summary>
     private readonly NativeMemoryLease memoryLease;
 
-    public D3D11VideoTexture(ID3D11Device device, ID3D11DeviceContext context, int width, int height)
+    public D3D11VideoTexture(ID3D11Device device, ID3D11DeviceContext context, int width, int height, VideoPlaneLayout layout = VideoPlaneLayout.Yuv420P)
     {
         this.device = device;
         this.context = context;
         Width = width;
         Height = height;
+        Layout = layout;
 
-        // YUV420P: chroma planes are half-resolution (rounded up), matching the other backends.
+        // Chroma is half-resolution (rounded up) in both layouts, matching the other backends.
         int chromaWidth = (width + 1) / 2;
         int chromaHeight = (height + 1) / 2;
 
-        yTexture = createPlane(width, height);
-        uTexture = createPlane(chromaWidth, chromaHeight);
-        vTexture = createPlane(chromaWidth, chromaHeight);
-
+        yTexture = createPlane(width, height, Format.R8_UNorm);
         ySrv = device.CreateShaderResourceView(yTexture);
-        uSrv = device.CreateShaderResourceView(uTexture);
-        vSrv = device.CreateShaderResourceView(vTexture);
+
+        if (layout == VideoPlaneLayout.Nv12)
+        {
+            uTexture = createPlane(chromaWidth, chromaHeight, Format.R8G8_UNorm);
+            uSrv = device.CreateShaderResourceView(uTexture);
+        }
+        else
+        {
+            uTexture = createPlane(chromaWidth, chromaHeight, Format.R8_UNorm);
+            vTexture = createPlane(chromaWidth, chromaHeight, Format.R8_UNorm);
+
+            uSrv = device.CreateShaderResourceView(uTexture);
+            vSrv = device.CreateShaderResourceView(vTexture);
+        }
 
         clampSampler = createSampler(TextureAddressMode.Clamp);
         repeatSampler = createSampler(TextureAddressMode.Wrap);
@@ -87,14 +106,14 @@ public sealed class D3D11VideoTexture : INativeVideoTexture
         memoryLease = NativeMemoryTracker.Add(NativeMemoryCategory.Video, NativeTextureMemory.BytesForVideoPlanes(width, height));
     }
 
-    private ID3D11Texture2D createPlane(int width, int height) =>
+    private ID3D11Texture2D createPlane(int width, int height, Format format) =>
         device.CreateTexture2D(new Texture2DDescription
         {
             Width = (uint)Math.Max(1, width),
             Height = (uint)Math.Max(1, height),
             MipLevels = 1,
             ArraySize = 1,
-            Format = Format.R8_UNorm,
+            Format = format,
             SampleDescription = new SampleDescription(1, 0),
             Usage = ResourceUsage.Default,
             BindFlags = BindFlags.ShaderResource,
@@ -115,9 +134,9 @@ public sealed class D3D11VideoTexture : INativeVideoTexture
         });
 
     /// <summary>
-    /// Binds the Y, U, V planes and their sampler to slots 0, 1, 2 on the pixel stage (matching the
-    /// video shader's <c>u_TextureY/U/V</c> at <c>t0/t1/t2</c> and <c>s0/s1/s2</c>). Must be called on
-    /// the draw thread. <paramref name="tiling"/> selects the repeating vs clamp sampler.
+    /// Binds the planes and their sampler to slots 0, 1 (and 2 for YUV420P) on the pixel stage,
+    /// matching the video shader's samplers at <c>t0/t1[/t2]</c> and <c>s0/s1[/s2]</c>. Must be called
+    /// on the draw thread. <paramref name="tiling"/> selects the repeating vs clamp sampler.
     /// </summary>
     public void BindPlanes(bool tiling)
     {
@@ -125,13 +144,21 @@ public sealed class D3D11VideoTexture : INativeVideoTexture
 
         var sampler = tiling ? repeatSampler : clampSampler;
 
-        context.PSSetShaderResources(0, new[] { ySrv, uSrv, vSrv });
-        context.PSSetSamplers(0, new[] { sampler, sampler, sampler });
+        if (Layout == VideoPlaneLayout.Nv12)
+        {
+            context.PSSetShaderResources(0, new[] { ySrv, uSrv });
+            context.PSSetSamplers(0, new[] { sampler, sampler });
+        }
+        else
+        {
+            context.PSSetShaderResources(0, new[] { ySrv, uSrv, vSrv });
+            context.PSSetSamplers(0, new[] { sampler, sampler, sampler });
+        }
     }
 
     /// <summary>
-    /// Uploads a decoded YUV420P frame into the Y, U, V planes. Each plane's FFmpeg linesize (which may
-    /// exceed the plane width due to row padding) is passed as the source row pitch, so
+    /// Uploads a decoded frame into the planes. Each plane's FFmpeg linesize (which may exceed the
+    /// plane width due to row padding) is passed as the source row pitch, so
     /// <c>UpdateSubresource</c> skips the padding. Must be called on the draw thread.
     /// </summary>
     public unsafe void Upload(AVFrame* frame)
@@ -143,7 +170,9 @@ public sealed class D3D11VideoTexture : INativeVideoTexture
 
         uploadPlane(yTexture, frame->data[0], frame->linesize[0], width, height);
         uploadPlane(uTexture, frame->data[1], frame->linesize[1], chromaWidth, chromaHeight);
-        uploadPlane(vTexture, frame->data[2], frame->linesize[2], chromaWidth, chromaHeight);
+
+        if (Layout == VideoPlaneLayout.Yuv420P)
+            uploadPlane(vTexture, frame->data[2], frame->linesize[2], chromaWidth, chromaHeight);
 
         MarkAvailable();
     }
@@ -153,8 +182,9 @@ public sealed class D3D11VideoTexture : INativeVideoTexture
         if (data == null || width <= 0 || height <= 0)
             return;
 
-        // R8 (1 byte/texel): the source row pitch is the FFmpeg linesize; UpdateSubresource reads the
-        // plane width per row and advances `linesize` bytes, so any trailing row padding is skipped.
+        // The source row pitch is the FFmpeg linesize, already in bytes for both R8 and R8G8 planes;
+        // UpdateSubresource reads one row's worth per row and advances `linesize` bytes, so any
+        // trailing row padding is skipped.
         context.UpdateSubresource(texture, 0, null, (nint)data, (uint)linesize, 0);
     }
 

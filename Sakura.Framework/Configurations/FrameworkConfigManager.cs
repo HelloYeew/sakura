@@ -28,6 +28,7 @@ public class FrameworkConfigManager : ConfigManager<FrameworkSetting>
         Get(FrameworkSetting.AudioDeviceBufferFrames, SDLAudioManager.DEFAULT_DEVICE_BUFFER_FRAMES);
         Get(FrameworkSetting.WindowMode, WindowMode.Windowed);
         Get(FrameworkSetting.HardwareAcceleration, true);
+        Get(FrameworkSetting.VideoZeroCopy, true);
         Get(FrameworkSetting.RendererType, RendererType.Automatic);
         Get(FrameworkSetting.WindowX, -1);
         Get(FrameworkSetting.WindowY, -1);
