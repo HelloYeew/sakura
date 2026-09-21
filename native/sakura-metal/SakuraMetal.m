@@ -5,6 +5,7 @@
 
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
+#import <CoreVideo/CoreVideo.h>
 #import <TargetConditionals.h>
 #include <string.h> // strlcpy
 #if TARGET_OS_IPHONE
@@ -58,6 +59,13 @@ struct SakuraMetalTexture
     BOOL hasMips;
     BOOL isRenderTarget; // sampled with the clamp sampler (blur needs clamp-to-edge), not repeat
     BOOL isPlane;        // single-channel R8 YUV plane; also sampled clamp-to-edge
+
+    // Zero-copy video planes only (NULL on every other texture): the CoreVideo objects that back
+    // `texture`, and the device whose deferred-release list they have to go through when this texture
+    // is destroyed. `texture` here is not ours -- it is a view onto the pixel buffer's IOSurface.
+    CVMetalTextureRef cvTexture;
+    CVPixelBufferRef cvPixelBuffer;
+    SakuraMetalDevice* owner;
 };
 
 // One entry on the render-target stack: the texture being rendered into (nil = the drawable) plus
@@ -125,12 +133,55 @@ struct SakuraMetalDevice
     BOOL semaphoreWaitedThisFrame;             // did begin_frame take the semaphore? (balance the signal)
     int frameIndex;                            // increments per frame; ring slot = frameIndex % count
 
+    // Zero-copy video. The cache maps a VideoToolbox CVPixelBuffer's IOSurface planes to MTLTextures
+    // with no copy at all. Created on the first video frame rather than in sakura_metal_create, since
+    // most processes never play one and the cache holds IOSurface mappings alive.
+    CVMetalTextureCacheRef videoTextureCache;
+
+    // CoreVideo objects handed over by destroyed zero-copy textures, waiting on the GPU to be done with
+    // them. Attached to the next committed command buffer's completion handler in end_frame -- see the
+    // reasoning there. NULL when empty; the array itself owns its members.
+    CFMutableArrayRef pendingReleases;
+
     __unsafe_unretained id<MTLBuffer> vertexBuffer; // == ringBuffers[frameIndex % count] for this frame
     NSUInteger vertexBufferCapacity; // == ringCapacity[...] for the active buffer
     NSUInteger vertexBufferOffset;   // bump pointer within the current frame
     NSUInteger vertexBytesThisFrame; // total large-draw bytes requested this frame (peak tracking)
     NSUInteger vertexBytesLastFrame; // previous frame's peak, used to size the buffer in begin_frame
 };
+
+// Hands a CoreVideo object to the device's deferred-release list: it is released when the GPU has
+// finished the next frame, not now. Takes ownership of the caller's reference either way.
+//
+// Releasing a zero-copy plane's CVPixelBuffer while a command buffer is still sampling it is not a
+// use-after-free -- the MTLTexture keeps the memory alive -- it is worse than that: VideoToolbox
+// recycles the buffer back into its decode pool and overwrites the pixels, so a *future* frame's
+// content appears inside the one being drawn.
+static void deferRelease(SakuraMetalDevice* device, CFTypeRef ref)
+{
+    if (ref == NULL)
+        return;
+
+    // No device left to defer through (teardown ordering). Releasing now is the only option, and by
+    // then the drain in sakura_metal_destroy has already waited for every in-flight frame.
+    if (device == NULL)
+    {
+        CFRelease(ref);
+        return;
+    }
+
+    if (device->pendingReleases == NULL)
+        device->pendingReleases = CFArrayCreateMutable(NULL, 0, &kCFTypeArrayCallBacks);
+
+    if (device->pendingReleases == NULL)
+    {
+        CFRelease(ref);
+        return;
+    }
+
+    CFArrayAppendValue(device->pendingReleases, ref); // kCFTypeArrayCallBacks retains on append
+    CFRelease(ref);                                   // ...so our reference is handed over, not leaked
+}
 
 SakuraMetalDevice* sakura_metal_create(void* caMetalLayer)
 {
@@ -279,6 +330,21 @@ void sakura_metal_destroy(SakuraMetalDevice* device)
 
     if (device->frameSemaphore)
         CFRelease((__bridge CFTypeRef)device->frameSemaphore);
+
+    // Safe here and only here: the drain above has waited for every in-flight frame, so nothing the
+    // GPU is reading is in this list. A frame that never ended leaves its entries here too.
+    if (device->pendingReleases)
+    {
+        CFRelease(device->pendingReleases);
+        device->pendingReleases = NULL;
+    }
+
+    if (device->videoTextureCache)
+    {
+        CVMetalTextureCacheFlush(device->videoTextureCache, 0);
+        CFRelease(device->videoTextureCache);
+        device->videoTextureCache = NULL;
+    }
 
     free(device);
 }
@@ -461,8 +527,34 @@ void sakura_metal_end_frame(SakuraMetalDevice* device)
         device->semaphoreWaitedThisFrame = NO;
     }
 
+    // Release the CoreVideo objects that zero-copy video textures handed over, once this frame's work
+    // completes. There is one command queue and command buffers on it complete in commit order, so this
+    // buffer completing proves every buffer committed before it has already finished -- which is
+    // exactly the set that could still be sampling those textures.
+    //
+    // This is what makes the lifetime argument hold without reasoning about pool depth: acquires and
+    // releases both happen in the draw thread's queue drain, which runs *before* begin_frame, so a
+    // texture handed over during frame N's drain is covered by frame N's own completion. If this frame
+    // never got a command buffer (no drawable), the list stays put for the next frame rather than being
+    // released early.
+    if (device->pendingReleases != NULL && top->commandBuffer)
+    {
+        CFMutableArrayRef refs = device->pendingReleases;
+        device->pendingReleases = NULL;
+        [top->commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> _Nonnull cb) {
+            (void)cb;
+            CFRelease(refs); // drops the array's retain on every member
+        }];
+    }
+
     if (top->commandBuffer)
         [top->commandBuffer commit];
+
+    // Let the texture cache drop IOSurface mappings nothing references any more. Apple's guidance is
+    // once per frame; it only purges unreferenced entries, so textures held by a live plane or by the
+    // deferred list above are unaffected.
+    if (device->videoTextureCache != NULL)
+        CVMetalTextureCacheFlush(device->videoTextureCache, 0);
 
     // Drop this frame's one-off overflow buffers. Safe after commit: an encoder retains the resources
     // it references for as long as the command buffer needs them.
@@ -1048,10 +1140,17 @@ void sakura_metal_destroy_texture(SakuraMetalTexture* texture)
     if (texture == NULL)
         return;
 
+    // The MTLTexture can go now even on a zero-copy plane: an encoder retains the resources it
+    // references for as long as its command buffer needs them, so our reference is not the one keeping
+    // it alive. The CoreVideo objects underneath it are a different matter -- see deferRelease.
     if (texture->texture)
         CFRelease((__bridge CFTypeRef)texture->texture);
     if (texture->queue)
         CFRelease((__bridge CFTypeRef)texture->queue);
+
+    deferRelease(texture->owner, texture->cvTexture);
+    deferRelease(texture->owner, texture->cvPixelBuffer);
+
     free(texture);
 }
 
@@ -1108,6 +1207,108 @@ void sakura_metal_upload_plane(SakuraMetalTexture* texture, const void* data, in
                         mipmapLevel:0
                           withBytes:data
                         bytesPerRow:(NSUInteger)(bytesPerRow > 0 ? bytesPerRow : width)];
+}
+
+// Only 8-bit bi-planar 4:2:0 maps onto the R8 + RG8 pair video_nv12.frag samples. 10-bit HDR ('x420')
+// would need R16/RG16 textures and a different normalisation in the shader, and 4:2:2 or 4:4:4 a
+// different plane geometry entirely.
+static BOOL isSamplablePixelBuffer(CVPixelBufferRef pixelBuffer)
+{
+    if (pixelBuffer == NULL)
+        return NO;
+
+    OSType format = CVPixelBufferGetPixelFormatType(pixelBuffer);
+    return format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange ||
+           format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
+}
+
+int sakura_metal_can_sample_pixel_buffer(const void* cvPixelBuffer)
+{
+    return isSamplablePixelBuffer((CVPixelBufferRef)cvPixelBuffer) ? 1 : 0;
+}
+
+SakuraMetalTexture* sakura_metal_create_plane_texture_from_pixel_buffer(SakuraMetalDevice* device, void* cvPixelBuffer, int planeIndex, int channels)
+{
+    if (device == NULL || device->device == nil || cvPixelBuffer == NULL)
+        return NULL;
+
+    if (channels != 1 && channels != 2)
+        return NULL;
+
+    CVPixelBufferRef pixelBuffer = (CVPixelBufferRef)cvPixelBuffer;
+
+    // Re-checked rather than trusted: the caller probes with sakura_metal_can_sample_pixel_buffer before
+    // choosing this path, but a mid-stream format change could land a different buffer here. Returning
+    // NULL sends the frame down the copying path, which is the path it takes today anyway.
+    if (!isSamplablePixelBuffer(pixelBuffer))
+        return NULL;
+
+    if (planeIndex < 0 || (size_t)planeIndex >= CVPixelBufferGetPlaneCount(pixelBuffer))
+        return NULL;
+
+    if (device->videoTextureCache == NULL)
+    {
+        if (CVMetalTextureCacheCreate(kCFAllocatorDefault, NULL, device->device, NULL, &device->videoTextureCache) != kCVReturnSuccess)
+        {
+            device->videoTextureCache = NULL;
+            return NULL;
+        }
+    }
+
+    // The pixel buffer is the authority on its own geometry: how the chroma plane's half resolution
+    // rounds is CoreVideo's decision, not ours to re-derive from the frame dimensions and hope it
+    // matches.
+    size_t width = CVPixelBufferGetWidthOfPlane(pixelBuffer, (size_t)planeIndex);
+    size_t height = CVPixelBufferGetHeightOfPlane(pixelBuffer, (size_t)planeIndex);
+
+    if (width == 0 || height == 0)
+        return NULL;
+
+    CVMetalTextureRef cvTexture = NULL;
+    CVReturn result = CVMetalTextureCacheCreateTextureFromImage(
+        kCFAllocatorDefault,
+        device->videoTextureCache,
+        pixelBuffer,
+        NULL,
+        (channels == 2 ? MTLPixelFormatRG8Unorm : MTLPixelFormatR8Unorm),
+        width,
+        height,
+        (size_t)planeIndex,
+        &cvTexture);
+
+    if (result != kCVReturnSuccess || cvTexture == NULL)
+    {
+        if (cvTexture != NULL)
+            CFRelease(cvTexture);
+        return NULL;
+    }
+
+    id<MTLTexture> texture = CVMetalTextureGetTexture(cvTexture);
+
+    if (texture == nil)
+    {
+        CFRelease(cvTexture);
+        return NULL;
+    }
+
+    SakuraMetalTexture* t = (SakuraMetalTexture*)calloc(1, sizeof(SakuraMetalTexture));
+
+    if (t == NULL)
+    {
+        CFRelease(cvTexture);
+        return NULL;
+    }
+
+    t->texture = texture; CFRetain((__bridge CFTypeRef)texture);
+    t->queue = nil;
+    t->hasMips = NO;
+    // Same treatment as a copied plane: luma and chroma must not wrap at the frame edge, so the clamp
+    // sampler is the right default here too. Missing this is edge bleed rather than a crash.
+    t->isPlane = YES;
+    t->cvTexture = cvTexture;                        // takes the +1 from CreateTextureFromImage
+    t->cvPixelBuffer = pixelBuffer; CFRetain(pixelBuffer);
+    t->owner = device;
+    return t;
 }
 
 void sakura_metal_set_fragment_texture(SakuraMetalDevice* device, SakuraMetalTexture* texture, int slot)
