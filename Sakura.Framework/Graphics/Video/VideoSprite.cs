@@ -43,7 +43,7 @@ public partial class VideoSprite : Drawable
     private bool syncToClock;
 
     private VideoDecoder decoder = null!;
-    private IShader? videoShader;
+    private VideoShaderSet? videoShaders;
 
     private readonly Queue<DecodedFrame> availableFrames = new();
     private DecodedFrame? lastFrame;
@@ -141,10 +141,17 @@ public partial class VideoSprite : Drawable
 
         decoder.HardwareAcceleration.BindTo(config.Get<bool>(Configurations.FrameworkSetting.HardwareAcceleration));
 
-        // Shader must be compiled on the draw thread (GL context owner in multi-thread mode).
+        // Bound rather than left at its default so the two paths can be compared live on one decode —
+        // and so there is a switch to reach for if the interop misbehaves somewhere. Only has an effect
+        // on a backend that offers zero-copy completely; see VideoDecoder.ZeroCopy.
+        decoder.ZeroCopy.BindTo(config.Get<bool>(Configurations.FrameworkSetting.VideoZeroCopy));
+
+        // Shaders must be compiled on the draw thread (GL context owner in multi-thread mode). Both
+        // layout variants are built here because which one is needed is not known until the first
+        // frame arrives — see VideoShaderSet.
         renderer.ScheduleToDrawThread(() =>
         {
-            videoShader = renderer.CreateShader(renderer.ShaderStorage, "video.vert", "video.frag");
+            videoShaders = VideoShaderSet.Create(renderer);
         });
 
         decoder.Start();
@@ -158,7 +165,10 @@ public partial class VideoSprite : Drawable
     public override DrawNode GenerateDrawNodeSubtree(int frameIndex)
     {
         var node = base.GenerateDrawNodeSubtree(frameIndex) as VideoDrawNode;
-        node?.ApplyVideoState(currentVideoTexture, currentMatrix, videoShader);
+        // The shader follows the texture's own layout, so frames from before a format change keep
+        // drawing correctly while they drain out of the queue.
+        node?.ApplyVideoState(currentVideoTexture, currentMatrix,
+            currentVideoTexture != null ? videoShaders?.For(currentVideoTexture.Layout) : null);
 
         // Record what this node is now holding, so a retired frame's texture is only returned to the
         // pool once no node still points at it
@@ -188,7 +198,7 @@ public partial class VideoSprite : Drawable
 
     private void seekTo(double absoluteMs)
     {
-        if (decoder == null || decoder.State == VideoDecoder.DecoderState.Preparing)
+        if (decoder.IsNull() || decoder.State == VideoDecoder.DecoderState.Preparing)
             return;
 
         // seekBaseMs records where in the video we seeked to.
@@ -234,7 +244,7 @@ public partial class VideoSprite : Drawable
     {
         base.Update();
 
-        if (!IsLoaded || decoder == null || decoder.State == VideoDecoder.DecoderState.Preparing) return;
+        if (!IsLoaded || decoder.IsNull() || decoder.State == VideoDecoder.DecoderState.Preparing) return;
 
         if (syncToClock)
         {
@@ -329,7 +339,10 @@ public partial class VideoSprite : Drawable
         if (lastFrame != null)
         {
             var vt = lastFrame.NativeTexture;
-            currentMatrix = decoder.GetConversionMatrix();
+            // The texture's matrix is the one stamped on for the frame it actually holds, so it
+            // reflects that frame's colour range; the decoder's is a stream-level fallback for before
+            // any frame has landed.
+            currentMatrix = vt.ConversionMatrix ?? decoder.GetConversionMatrix();
 
             // If the new frame's upload is already complete, use it directly.
             // Otherwise fall back to the last confirmed-uploaded texture — no black frames.
@@ -455,11 +468,11 @@ public partial class VideoSprite : Drawable
         }
 
         // gl.DeleteProgram must run on the draw thread.
-        if (videoShader != null)
+        if (videoShaders != null)
         {
-            var shader = videoShader;
-            videoShader = null;
-            renderer?.ScheduleToDrawThread(shader.Dispose);
+            var shaders = videoShaders;
+            videoShaders = null;
+            renderer?.ScheduleToDrawThread(shaders.Dispose);
         }
 
         base.Dispose(isDisposing);

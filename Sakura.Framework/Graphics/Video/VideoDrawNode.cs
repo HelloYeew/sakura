@@ -10,7 +10,7 @@ using Sakura.Framework.Statistic;
 namespace Sakura.Framework.Graphics.Video;
 
 /// <summary>
-/// Renders a YUV420P video frame using the dedicated video shader.
+/// Renders a decoded video frame using the video shader variant that matches its plane layout.
 /// All GPU calls run on the draw thread inside <see cref="Draw"/>.
 /// No GL types are referenced here — GL stays inside <see cref="VideoTexture"/>
 /// and <see cref="Sakura.Framework.Graphics.Textures.VideoGLTexture"/>.
@@ -70,18 +70,27 @@ internal class VideoDrawNode : DrawNode
                 Projection = renderer.ProjectionMatrix
             });
 
-        // Bind Y/U/V planes to texture units 0/1/2 — backend specifics stay inside VideoTexture.
-        // Tile fill repeats the frame (UVs > 1), so the planes need a repeating wrap; otherwise clamp.
+        // Bind the planes to consecutive texture units from 0 — backend specifics stay inside
+        // VideoTexture. Tile fill repeats the frame (UVs > 1), so the planes need a repeating wrap;
+        // otherwise clamp.
         videoTexture.BindPlanes(FillMode == TextureFillMode.Tile);
 
         // GL maps sampler uniforms by name; on Metal these are no-ops (planes are bound by slot in
-        // BindPlanes, matching the shader's [[texture(0/1/2)]]).
+        // BindPlanes, matching the shader's [[texture(0/1/2)]]). The names must match the variant the
+        // caller picked for this texture's layout — NV12 has no third plane and calls its second one
+        // u_TextureCbCr.
         videoShader.SetUniform("u_TextureY", 0);
-        videoShader.SetUniform("u_TextureU", 1);
-        videoShader.SetUniform("u_TextureV", 2);
+
+        if (videoTexture.Layout == VideoPlaneLayout.Nv12)
+            videoShader.SetUniform("u_TextureCbCr", 1);
+        else
+        {
+            videoShader.SetUniform("u_TextureU", 1);
+            videoShader.SetUniform("u_TextureV", 2);
+        }
 
         if (yuvMatrix != null)
-            videoShader.SetUniformBlock("VideoBlock", VideoBlock.FromMat3(yuvMatrix));
+            videoShader.SetUniformBlock("VideoBlock", VideoBlock.FromAffine(yuvMatrix));
 
         renderer.ApplyCurrentClip(WritableVertices);
 

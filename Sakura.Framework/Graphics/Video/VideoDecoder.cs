@@ -11,6 +11,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using FFmpeg.AutoGen;
 using Sakura.Framework.Graphics.Rendering;
+using Sakura.Framework.Graphics.Rendering.Direct3D11;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
@@ -46,6 +47,22 @@ public unsafe class VideoDecoder : IDisposable
     public readonly Reactive<bool> HardwareAcceleration = new Reactive<bool>(true);
 
     /// <summary>
+    /// Whether hardware-decoded frames may be sampled where the decoder produced them, skipping the
+    /// readback and the upload entirely. Only has an effect where the active renderer supports it,
+    /// Metal with VideoToolbox today; see <see cref="IRenderer.CanSampleHardwareFrame"/>.
+    /// </summary>
+    /// <remarks>
+    /// Unlike <see cref="HardwareAcceleration"/> this needs no codec reopen: the frames are identical
+    /// either way, and only their route to the GPU changes. Flipping it re-warms the texture pool on the
+    /// next frame because the path is part of <see cref="VideoTextureShape"/>.
+    /// <para>
+    /// It stays switchable at runtime for two reasons. It is the kill switch if the interop misbehaves
+    /// on hardware nobody has tried
+    /// </para>
+    /// </remarks>
+    public readonly Reactive<bool> ZeroCopy = new Reactive<bool>(true);
+
+    /// <summary>
     /// The hardware device type that was successfully initialised, or
     /// <see cref="AVHWDeviceType.AV_HWDEVICE_TYPE_NONE"/> when running on software.
     /// Updated each time the codec is (re)opened.
@@ -63,11 +80,29 @@ public unsafe class VideoDecoder : IDisposable
 
     private avio_alloc_context_read_packet? readPacketCallback;
     private avio_alloc_context_seek? seekCallback;
+
+    /// <summary>
+    /// Held for the codec context's lifetime: FFmpeg keeps the raw function pointer, so letting the
+    /// delegate be collected would leave it calling into freed memory.
+    /// </summary>
+    private AVCodecContext_get_format? getFormatCallback;
+
     private GCHandle selfHandle;
     private bool inputOpened;
-    private bool texturePoolWarmed;
+
+    // The shape of the pool is currently warmed for, or null before the first frame. A frame that does not
+    // match means the codec was reopened into a different format — toggling hardware acceleration does
+    // exactly that, flipping between NV12 and YUV420P — or that zero-copy was toggled, so a fresh set is
+    // warmed and the old textures are dropped as they come back (see tryEmitFrame). Frames already
+    // queued for display keep working while that happens: the shader is picked from each texture's own
+    // layout, so the two layouts coexist.
+    private VideoTextureShape? poolShape;
 
     private const int io_buffer_size = 4096;
+
+    /// <summary>
+    /// How many textures the pool holds, on either path.
+    /// </summary>
     private const int max_pending_frames = 6;
 
     private readonly ConcurrentQueue<DecodedFrame> decodedFrames = new ConcurrentQueue<DecodedFrame>();
@@ -76,8 +111,16 @@ public unsafe class VideoDecoder : IDisposable
     private readonly ConcurrentQueue<FFmpegFrame> hwTransferFrames = new ConcurrentQueue<FFmpegFrame>();
     private readonly ConcurrentQueue<FFmpegFrame> scalerFrames = new ConcurrentQueue<FFmpegFrame>();
 
+    /// <summary>
+    /// Frames that carry a zero-copy hardware reference rather than pixels. Pooled for the same reason
+    /// as the others — the alternative is an <c>av_frame_alloc</c> per displayed frame on the thread
+    /// that competes with audio decoding.
+    /// </summary>
+    private readonly ConcurrentQueue<FFmpegFrame> zeroCopyFrames = new ConcurrentQueue<FFmpegFrame>();
+
     private void returnHwTransferFrame(FFmpegFrame f) => hwTransferFrames.Enqueue(f);
     private void returnScalerFrame(FFmpegFrame f) => scalerFrames.Enqueue(f);
+    private void returnZeroCopyFrame(FFmpegFrame f) => zeroCopyFrames.Enqueue(f);
 
     private volatile float lastDecodedFrameTime;
     private double? skipOutputUntilTime;
@@ -131,7 +174,7 @@ public unsafe class VideoDecoder : IDisposable
     public void Start()
     {
         State = DecoderState.Preparing;
-        texturePoolWarmed = false;
+        poolShape = null;
 
         HardwareAcceleration.ValueChanged += onHardwareAccelerationChanged;
 
@@ -210,8 +253,9 @@ public unsafe class VideoDecoder : IDisposable
             Logger.Verbose($"[VideoDecoder] Codec recreated — HW={HardwareAcceleration.Value}, device={ActiveHardwareDevice}");
         }
 
-        // Reset pool warm-up so next frame triggers texture recreation if needed
-        texturePoolWarmed = false;
+        // The pool is deliberately left alone: the next frame's size and layout decide whether it needs
+        // rebuilding. Blanket-resetting the warm-up flag here would warm a second full set even when
+        // the format did not change, and nothing ever retired the first.
         State = DecoderState.Ready;
     }
 
@@ -290,29 +334,126 @@ public unsafe class VideoDecoder : IDisposable
         return list;
     }
 
+    /// <summary>
+    /// The affine YUV->RGB transform for this stream's declared colorspace and range, as a
+    /// column-major float[16]. Frames carry their own values and may disagree with the stream's, so
+    /// prefer a texture's <see cref="VideoTexture.ConversionMatrix"/> where one is in hand; this is the
+    /// fallback for before the first frame arrives.
+    /// </summary>
     public float[] GetConversionMatrix()
     {
-        if (codecContext == null) return rec601_matrix;
+        if (codecContext == null)
+            return affineFrom(rec601_limited, limited_luma_offset);
 
-        bool useHdtv = codecContext->colorspace == AVColorSpace.AVCOL_SPC_BT709
-                    || (codecContext->colorspace == AVColorSpace.AVCOL_SPC_UNSPECIFIED
-                        && (codecContext->width >= 704 || codecContext->height >= 576));
-        return useHdtv ? rec709_matrix : rec601_matrix;
+        return ConversionMatrixFor(codecContext->colorspace, codecContext->color_range, codecContext->width, codecContext->height);
     }
 
-    private static readonly float[] rec709_matrix =
+    /// <summary>
+    /// The affine transform for one frame, preferring the frame's own colorspace and range over the
+    /// stream's. A hardware decoder can hand back full-range NV12 (VideoToolbox's
+    /// <c>420YpCbCr8BiPlanarFullRange</c>) from a stream that declares nothing, and reading it off the
+    /// frame is the only way to tell.
+    /// </summary>
+    private float[] conversionMatrixFor(AVFrame* frame)
+    {
+        var colorspace = frame->colorspace != AVColorSpace.AVCOL_SPC_UNSPECIFIED || codecContext == null
+            ? frame->colorspace
+            : codecContext->colorspace;
+
+        var range = frame->color_range != AVColorRange.AVCOL_RANGE_UNSPECIFIED || codecContext == null
+            ? frame->color_range
+            : codecContext->color_range;
+
+        return ConversionMatrixFor(colorspace, range, frame->width, frame->height);
+    }
+
+    internal static float[] ConversionMatrixFor(AVColorSpace colorspace, AVColorRange range, int width, int height)
+    {
+        // Unspecified colorspace falls back to the size heuristic that has always been here: anything
+        // SD-sized is assumed BT.601, anything larger BT.709.
+        bool useHdtv = colorspace == AVColorSpace.AVCOL_SPC_BT709
+                    || (colorspace == AVColorSpace.AVCOL_SPC_UNSPECIFIED && (width >= 704 || height >= 576));
+
+        // Unspecified range means limited: that is the assumption for broadcast-derived video, and the
+        // one every frame that reached this code before the range was read at all was treated under.
+        bool fullRange = range == AVColorRange.AVCOL_RANGE_JPEG;
+
+        if (fullRange)
+            return affineFrom(useHdtv ? rec709_full : rec601_full, 0f);
+
+        return affineFrom(useHdtv ? rec709_limited : rec601_limited, limited_luma_offset);
+    }
+
+    // Column-major 3x3 YUV->RGB coefficients: m[0..2] is the Y column, m[3..5] Cb, m[6..8] Cr, so the
+    // shader's mat * (y, cb, cr) reads them straight through.
+    //
+    // The limited-range pairs carry the 255/219 luma and 255/224 chroma expansion (hence the 1.164s);
+    // the full-range pairs do not, because full-range samples already span the whole 0-255. Picking the
+    // wrong one of a pair is a washed-out or crushed picture, not a broken one, which is exactly why it
+    // went unnoticed before the frame's color range was consulted at all.
+
+    private static readonly float[] rec709_limited =
     {
         1.164f,  1.164f, 1.164f,
         0.000f, -0.213f, 2.112f,
         1.793f, -0.533f, 0.000f
     };
 
-    private static readonly float[] rec601_matrix =
+    private static readonly float[] rec601_limited =
     {
         1.164f,  1.164f, 1.164f,
         0.000f, -0.392f, 2.017f,
         1.596f, -0.813f, 0.000f
     };
+
+    private static readonly float[] rec709_full =
+    {
+        1.0000f,  1.0000f, 1.0000f,
+        0.0000f, -0.1873f, 1.8556f,
+        1.5748f, -0.4681f, 0.0000f
+    };
+
+    private static readonly float[] rec601_full =
+    {
+        1.0000f,  1.000000f, 1.000f,
+        0.0000f, -0.344136f, 1.772f,
+        1.4020f, -0.714136f, 0.000f
+    };
+
+    /// <summary>
+    /// Black level for limited-range video, and the chroma centre. Normalised by 255 because that is
+    /// what a UNORM8 sampler divides by — the shader previously used 16/256 and 128/256, which is a
+    /// fraction of a code value off.
+    /// </summary>
+    private const float limited_luma_offset = 16f / 255f;
+
+    private const float chroma_offset = 128f / 255f;
+
+    /// <summary>
+    /// Folds a 3x3 colour matrix and the sample offsets into the single affine transform the shader
+    /// applies as <c>u_YuvCoeff * vec4(y, cb, cr, 1.0)</c>: the coefficients occupy columns 0-2, and
+    /// column 3 carries <c>-(M * offset)</c> so the subtraction happens inside the same multiply.
+    /// Returned column-major, the layout GLSL reads a <c>mat4</c> in.
+    /// </summary>
+    private static float[] affineFrom(float[] m, float lumaOffset)
+    {
+        float[] result = new float[16];
+
+        for (int row = 0; row < 3; row++)
+        {
+            float cy = m[row];
+            float cb = m[3 + row];
+            float cr = m[6 + row];
+
+            result[row] = cy;
+            result[4 + row] = cb;
+            result[8 + row] = cr;
+            result[12 + row] = -(cy * lumaOffset + cb * chroma_offset + cr * chroma_offset);
+        }
+
+        result[15] = 1f;
+        return result;
+    }
 
     private static int readPacket(void* opaque, byte* buf, int bufSize)
     {
@@ -461,19 +602,30 @@ public unsafe class VideoDecoder : IDisposable
         ctx->pkt_timebase = avStream->time_base;
         ffmpeg.avcodec_parameters_to_context(ctx, avStream->codecpar);
 
-        // Create the hardware device context
-        AVBufferRef* hwDeviceCtx = null;
-        int hwResult = ffmpeg.av_hwdevice_ctx_create(&hwDeviceCtx, hwType, null, null, 0);
-        if (hwResult < 0)
+        // Create the hardware device context. D3D11VA gets a special one built around the renderer's
+        // own device; everything else lets FFmpeg create its own, which is right for them because
+        // nothing samples their frames in place.
+        AVBufferRef* hwDeviceCtx = hwType == AVHWDeviceType.AV_HWDEVICE_TYPE_D3D11VA
+            ? createSharedD3D11DeviceContext()
+            : createOwnedDeviceContext(hwType);
+
+        if (hwDeviceCtx == null)
         {
             ffmpeg.avcodec_free_context(&ctx);
-            Logger.Verbose($"[VideoDecoder] Failed to create HW device context for {hwType}: {hwResult}");
             return false;
         }
 
         // Transfer ownership of hwDeviceCtx to the codec context.
         // avcodec_free_context will free it — do not call av_buffer_unref separately.
         ctx->hw_device_ctx = hwDeviceCtx;
+
+        // D3D11VA only: claim the frame context ourselves so the decoder's texture array is created
+        // bindable. See negotiateD3D11Format.
+        if (hwType == AVHWDeviceType.AV_HWDEVICE_TYPE_D3D11VA && renderer is ID3D11Renderer)
+        {
+            getFormatCallback = negotiateD3D11Format;
+            ctx->get_format = getFormatCallback;
+        }
 
         if (ffmpeg.avcodec_open2(ctx, codec, null) < 0)
         {
@@ -485,6 +637,145 @@ public unsafe class VideoDecoder : IDisposable
         codecContext = ctx;
         return true;
     }
+
+    /// <summary>
+    /// The plain case: FFmpeg allocates and owns the device. Right for every backend that reads its
+    /// frames back to the CPU, because nothing on our side ever touches that device.
+    /// </summary>
+    private AVBufferRef* createOwnedDeviceContext(AVHWDeviceType hwType)
+    {
+        AVBufferRef* ctx = null;
+        int result = ffmpeg.av_hwdevice_ctx_create(&ctx, hwType, null, null, 0);
+
+        if (result < 0)
+        {
+            Logger.Verbose($"[VideoDecoder] Failed to create HW device context for {hwType}: {result}");
+            return null;
+        }
+
+        return ctx;
+    }
+
+    /// <summary>
+    /// Builds a D3D11VA device context around the <em>renderer's</em> <c>ID3D11Device</c> instead of
+    /// letting FFmpeg create its own.
+    /// </summary>
+    /// <remarks>
+    /// This is the precondition for zero-copy on this backend and not an optimization on top of it: another
+    ///  cannot sample a texture produced on one device without a shared-resource copy,
+    /// which is the exact copy the whole phase exists to delete. Sharing also puts decoding and draw on
+    /// one immediate context, which is what makes the frame lifetime story hold —
+    /// see <see cref="D3D11HardwareVideoTexture"/>.
+    /// <para>
+    /// Returns null when the renderer is not D3D11 or has no device yet, and the caller then falls back
+    /// to <see cref="createOwnedDeviceContext"/>. That path still decodes in hardware; it just reads
+    /// the frames back like every other backend.
+    /// </para>
+    /// </remarks>
+    private AVBufferRef* createSharedD3D11DeviceContext()
+    {
+        if (renderer is not ID3D11Renderer d3d11 || d3d11.NativeDevicePointer == nint.Zero)
+        {
+            Logger.Verbose("[VideoDecoder] D3D11VA without a D3D11 renderer to share a device with; letting FFmpeg own one.");
+            return createOwnedDeviceContext(AVHWDeviceType.AV_HWDEVICE_TYPE_D3D11VA);
+        }
+
+        AVBufferRef* ctx = ffmpeg.av_hwdevice_ctx_alloc(AVHWDeviceType.AV_HWDEVICE_TYPE_D3D11VA);
+
+        if (ctx == null)
+        {
+            Logger.Verbose("[VideoDecoder] av_hwdevice_ctx_alloc failed for D3D11VA.");
+            return null;
+        }
+
+        var deviceCtx = (AVHWDeviceContext*)ctx->data;
+        var d3dCtx = (AVD3D11VADeviceContext*)deviceCtx->hwctx;
+
+        // FFmpeg releases this on teardown, so hand it a reference of its own rather than ours —
+        // otherwise closing a video would drop the renderer's device out from under the app.
+        var device = new Vortice.Direct3D11.ID3D11Device(d3d11.NativeDevicePointer);
+        device.AddRef();
+
+        d3dCtx->device = (FFmpeg.AutoGen.ID3D11Device*)d3d11.NativeDevicePointer;
+
+        int result = ffmpeg.av_hwdevice_ctx_init(ctx);
+
+        if (result < 0)
+        {
+            Logger.Warning($"[VideoDecoder] Failed to initialise a shared D3D11 device context ({result}); falling back to an FFmpeg-owned device.");
+            ffmpeg.av_buffer_unref(&ctx);
+            device.Release();
+            return createOwnedDeviceContext(AVHWDeviceType.AV_HWDEVICE_TYPE_D3D11VA);
+        }
+
+        Logger.Verbose("[VideoDecoder] D3D11VA sharing the renderer's device.");
+        return ctx;
+    }
+
+    /// <summary>
+    /// <c>get_format</c> for D3D11VA: takes over allocation of the frame context so the decoder's
+    /// texture array is created with <c>D3D11_BIND_SHADER_RESOURCE</c>.
+    /// </summary>
+    /// <remarks>
+    /// Without this flag the array cannot be bound as a shader resource <em>at all</em>, whatever the
+    /// view says — and the flag can only be set before <c>av_hwframe_ctx_init</c>, which is why the
+    /// frame context has to be built here rather than left to FFmpeg's default.
+    /// <para>
+    /// The pool is also deepened by <see cref="max_pending_frames"/>. D3D11VA's pool is a single
+    /// texture array whose <c>ArraySize</c> is fixed at init, unlike VideoToolbox's growable buffer
+    /// pool — so every frame the display path holds is one the decoder cannot use, and the default
+    /// size assumes nobody holds any.
+    /// </para>
+    /// <para>
+    /// Falling through to the next format in the list is always safe: it means the readback path.
+    /// </para>
+    /// </remarks>
+    private AVPixelFormat negotiateD3D11Format(AVCodecContext* ctx, AVPixelFormat* formats)
+    {
+        AVPixelFormat first = formats != null ? formats[0] : AVPixelFormat.AV_PIX_FMT_NONE;
+
+        for (AVPixelFormat* f = formats; f != null && *f != AVPixelFormat.AV_PIX_FMT_NONE; f++)
+        {
+            if (*f != AVPixelFormat.AV_PIX_FMT_D3D11)
+                continue;
+
+            AVBufferRef* framesRef = null;
+            int result = ffmpeg.avcodec_get_hw_frames_parameters(ctx, ctx->hw_device_ctx, AVPixelFormat.AV_PIX_FMT_D3D11, &framesRef);
+
+            if (result < 0 || framesRef == null)
+            {
+                Logger.Warning($"[VideoDecoder] avcodec_get_hw_frames_parameters failed ({result}); D3D11 frames will not be bindable.");
+                return first;
+            }
+
+            var frames = (AVHWFramesContext*)framesRef->data;
+            var d3dFrames = (AVD3D11VAFramesContext*)frames->hwctx;
+
+            d3dFrames->BindFlags |= d3_d11_bind_shader_resource;
+            frames->initial_pool_size += max_pending_frames;
+
+            result = ffmpeg.av_hwframe_ctx_init(framesRef);
+
+            if (result < 0)
+            {
+                Logger.Warning($"[VideoDecoder] av_hwframe_ctx_init failed for a bindable D3D11 array ({result}); falling back.");
+                ffmpeg.av_buffer_unref(&framesRef);
+                return first;
+            }
+
+            ctx->hw_frames_ctx = framesRef;
+            return AVPixelFormat.AV_PIX_FMT_D3D11;
+        }
+
+        return first;
+    }
+
+    /// <summary>
+    /// <c>D3D11_BIND_SHADER_RESOURCE</c>. Spelled out because FFmpeg.AutoGen exposes
+    /// <c>BindFlags</c> as a plain integer rather than the D3D enum, and Vortice's
+    /// <c>BindFlags.ShaderResource</c> is a different type.
+    /// </summary>
+    private const uint d3_d11_bind_shader_resource = 0x8;
 
     /// <summary>
     /// Decode threads to give the software codec.
@@ -546,7 +837,7 @@ public unsafe class VideoDecoder : IDisposable
                             }
                         }
 
-                        if (!texturePoolWarmed || !availableTextures.IsEmpty)
+                        if (poolShape == null || !availableTextures.IsEmpty)
                             decodeNextFrame(packet, receiveFrame);
                         else
                         {
@@ -678,21 +969,41 @@ public unsafe class VideoDecoder : IDisposable
 
             if (((AVPixelFormat)receiveFrame->format).IsHardwareFormat())
             {
-                if (!hwTransferFrames.TryDequeue(out var hwFrame))
-                    hwFrame = new FFmpegFrame(returnHwTransferFrame);
-
-                long transferStart = Stopwatch.GetTimestamp();
-                int transferResult = ffmpeg.av_hwframe_transfer_data(hwFrame.Pointer, receiveFrame, 0);
-                VideoStatistics.RecordTransfer(Stopwatch.GetTimestamp() - transferStart);
-
-                if (transferResult < 0)
+                // Asked per frame, not per format: a hardware pixel format says nothing about what the
+                // underlying buffer holds, and the renderer is the only thing that can tell. A false
+                // answer — no zero-copy path on this backend, 10-bit content, an interop failure —
+                // falls through to the readback, which always works.
+                if (ZeroCopy.Value && renderer.CanSampleHardwareFrame(receiveFrame))
                 {
-                    Logger.Warning($"[VideoDecoder] HW frame transfer failed: {transferResult}");
-                    hwFrame.Return();
-                    continue;
-                }
+                    VideoStatistics.RecordTransfer(0);
 
-                frame = hwFrame;
+                    if (!zeroCopyFrames.TryDequeue(out var hwRef))
+                        hwRef = new FFmpegFrame(returnZeroCopyFrame);
+
+                    // Moves the reference, not the pixels: hwRef now holds the frame's claim on the
+                    // CVPixelBuffer and keeps VideoToolbox from recycling it until the frame is
+                    // returned to the pool.
+                    ffmpeg.av_frame_move_ref(hwRef.Pointer, receiveFrame);
+                    frame = hwRef;
+                }
+                else
+                {
+                    if (!hwTransferFrames.TryDequeue(out var hwFrame))
+                        hwFrame = new FFmpegFrame(returnHwTransferFrame);
+
+                    long transferStart = Stopwatch.GetTimestamp();
+                    int transferResult = ffmpeg.av_hwframe_transfer_data(hwFrame.Pointer, receiveFrame, 0);
+                    VideoStatistics.RecordTransfer(Stopwatch.GetTimestamp() - transferStart);
+
+                    if (transferResult < 0)
+                    {
+                        Logger.Warning($"[VideoDecoder] HW frame transfer failed: {transferResult}");
+                        hwFrame.Return();
+                        continue;
+                    }
+
+                    frame = hwFrame;
+                }
             }
             else
             {
@@ -703,10 +1014,10 @@ public unsafe class VideoDecoder : IDisposable
 
             lastDecodedFrameTime = (float)frameTime;
 
-            VideoStatistics.RecordFrame(frame.PixelFormat, frame.Pointer->width, frame.Pointer->height);
+            VideoStatistics.RecordFrame(frame.PixelFormat, frame.Pointer->width, frame.Pointer->height, layoutFor(frame.PixelFormat), frame.PixelFormat.IsHardwareFormat());
 
             long convertStart = Stopwatch.GetTimestamp();
-            frame = ensureYuv420P(frame);
+            frame = ensureSamplableFormat(frame);
             VideoStatistics.RecordConvert(Stopwatch.GetTimestamp() - convertStart);
 
             if (frame == null) continue;
@@ -733,21 +1044,20 @@ public unsafe class VideoDecoder : IDisposable
                 skipOutputUntilTime = null;
             }
 
-            int width  = frame.Pointer->width;
-            int height = frame.Pointer->height;
+            var shape = shapeFor(frame);
 
-            // Schedule pool warm-up on the draw thread on the very first frame.
-            // texturePoolWarmed is only scheduled once; the decode loop then polls
-            // availableTextures until textures arrive (typically within one draw frame ~4ms).
-            if (!texturePoolWarmed)
+            // Schedule pool warm-up on the draw thread on the very first frame, and again whenever the
+            // frames stop matching what the pool holds. The decode loop then polls availableTextures
+            // until textures arrive (typically within one draw frame ~4ms); textures from the previous
+            // shape are dropped in tryEmitFrame as they come back.
+            if (poolShape != shape)
             {
-                texturePoolWarmed = true;
-                int capturedW = width;
-                int capturedH = height;
+                poolShape = shape;
+
                 renderer.ScheduleToDrawThread(() =>
                 {
                     for (int i = 0; i < max_pending_frames; i++)
-                        availableTextures.Enqueue(new VideoTexture(renderer, textureManager, capturedW, capturedH));
+                        availableTextures.Enqueue(new VideoTexture(renderer, textureManager, shape));
                 });
             }
 
@@ -764,28 +1074,47 @@ public unsafe class VideoDecoder : IDisposable
     }
 
     /// <summary>
-    /// Uploads a converted YUV420P frame into a pooled texture and enqueues it for display.
-    /// Returns false (without consuming the frame) if the texture pool is currently empty —
-    /// the caller is responsible for holding the frame and retrying.
+    /// Uploads a frame into a pooled texture and enqueues it for display.
+    /// Returns false (without consuming the frame) if the texture pool holds nothing this frame can go
+    /// into — the caller is responsible for holding the frame and retrying.
     /// </summary>
     private bool tryEmitFrame(FFmpegFrame frame, double frameTime, int generation)
     {
-        if (!availableTextures.TryDequeue(out var tex))
+        // Derived from the frame rather than read off poolShape: a frame held back during a post-seek
+        // skip, or parked in pendingUploadFrame, can be emitted after a format change moved the pool on,
+        // and it still has to land in a texture that fits *it*.
+        var shape = shapeFor(frame);
+
+        VideoTexture? tex = null;
+
+        // Textures from a previous shape come back through ReturnFrames long after the pool was
+        // re-warmed for a new one. Drop them here rather than uploading a frame into a plane set that
+        // cannot hold it — the alternative is a silent mis-sample, since an NV12 frame's second plane
+        // is twice as wide in bytes as a YUV420P texture expects.
+        while (availableTextures.TryDequeue(out var candidate))
+        {
+            if (candidate.Shape == shape)
+            {
+                tex = candidate;
+                break;
+            }
+
+            candidate.Dispose();
+        }
+
+        if (tex == null)
         {
             GlobalStatistics.Get<int>("Video", "Frames Waiting (Pool Empty)", StatisticKind.Cumulative).Value++;
             return false;
         }
 
-        int width = frame.Pointer->width;
-        int height = frame.Pointer->height;
-
         var upload = new VideoTextureUpload(frame);
 
-        tex.SetData(upload, GetConversionMatrix());
+        tex.SetData(upload, conversionMatrixFor(frame.Pointer));
 
         // Texture is a dimension-only proxy — no GL handles, no Video namespace import needed.
         // VideoSprite reads NativeTexture directly for rendering.
-        var texture = new Texture(width, height);
+        var texture = new Texture(shape.Width, shape.Height);
         decodedFrames.Enqueue(new DecodedFrame
         {
             Time = frameTime,
@@ -797,8 +1126,51 @@ public unsafe class VideoDecoder : IDisposable
         return true;
     }
 
-    private FFmpegFrame ensureYuv420P(FFmpegFrame frame)
+    /// <summary>
+    /// The texture shape a decoded frame needs.
+    /// </summary>
+    /// <remarks>
+    /// The zero-copy flag is read back off the pixel format rather than carried alongside: a frame that
+    /// still has a hardware format here is one that was never read back, because the transfer path
+    /// replaces it with NV12 or YUV420P. Deriving it means the two cannot drift apart, which matters
+    /// because this is called both as a frame is produced and again when a held one is emitted later.
+    /// </remarks>
+    private static VideoTextureShape shapeFor(FFmpegFrame frame) => new VideoTextureShape(
+        frame.Pointer->width,
+        frame.Pointer->height,
+        layoutFor(frame.PixelFormat),
+        frame.PixelFormat.IsHardwareFormat());
+
+    /// <summary>
+    /// Which plane set a samplable frame maps onto. Only the two formats
+    /// <see cref="ensureSamplableFormat"/> can produce reach this.
+    /// </summary>
+    private static VideoPlaneLayout layoutFor(AVPixelFormat format) => format switch
     {
+        AVPixelFormat.AV_PIX_FMT_NV12 => VideoPlaneLayout.Nv12,
+
+        // Zero-copy hardware frames
+        AVPixelFormat.AV_PIX_FMT_VIDEOTOOLBOX => VideoPlaneLayout.Nv12,
+        AVPixelFormat.AV_PIX_FMT_D3D11 => VideoPlaneLayout.Nv12,
+
+        _ => VideoPlaneLayout.Yuv420P,
+    };
+
+    /// <summary>
+    /// Brings a frame into a format the shaders can sample directly, converting only when it is in
+    /// neither.
+    /// </summary>
+    private FFmpegFrame ensureSamplableFormat(FFmpegFrame frame)
+    {
+        // A hardware frame that reached here is one of the renderer said it would sample in place, so
+        // there is nothing to convert, and nothing here could convert it anyway, since its data[]
+        // are opaque handles rather than pixels.
+        if (frame.PixelFormat.IsHardwareFormat())
+            return frame;
+
+        if (frame.PixelFormat == AVPixelFormat.AV_PIX_FMT_NV12)
+            return frame;
+
         const AVPixelFormat target = AVPixelFormat.AV_PIX_FMT_YUV420P;
         if (frame.PixelFormat == target) return frame;
 
@@ -914,6 +1286,7 @@ public unsafe class VideoDecoder : IDisposable
 
         while (hwTransferFrames.TryDequeue(out var hf)) hf.Dispose();
         while (scalerFrames.TryDequeue(out var sf)) sf.Dispose();
+        while (zeroCopyFrames.TryDequeue(out var zf)) zf.Dispose();
 
         videoStream?.Dispose();
         videoStream = null;

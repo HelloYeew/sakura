@@ -16,32 +16,33 @@ namespace Sakura.Framework.Graphics.Video;
 public partial class VideoTexturePreview : Drawable
 {
     private IVideoTexture? videoTexture;
-    private IShader? videoShader;
+    private VideoShaderSet? videoShaders;
 
     /// <summary>
-    /// Compiles the shader a preview draws with. Must be called on the draw thread.
+    /// Compiles the shaders a preview draws with. Must be called on the draw thread. A pool can hold
+    /// either layout, so both variants are needed — see <see cref="VideoShaderSet"/>.
     /// </summary>
-    public static IShader CreateShader(IRenderer renderer) => renderer.CreateShader(renderer.ShaderStorage, "video.vert", "video.frag");
+    public static VideoShaderSet CreateShader(IRenderer renderer) => VideoShaderSet.Create(renderer);
 
     /// <param name="videoTexture">The texture to preview. Borrowed, not owned.</param>
-    /// <param name="videoShader">
-    /// A shader from <see cref="CreateShader"/>, owned by the caller. When null (it has not finished
+    /// <param name="videoShaders">
+    /// Shaders from <see cref="CreateShader"/>, owned by the caller. When null (they have not finished
     /// compiling yet), nothing is drawn.
     /// </param>
-    public VideoTexturePreview(IVideoTexture? videoTexture, IShader? videoShader)
+    public VideoTexturePreview(IVideoTexture? videoTexture, VideoShaderSet? videoShaders)
     {
         this.videoTexture = videoTexture;
-        this.videoShader = videoShader;
+        this.videoShaders = videoShaders;
     }
 
     /// <summary>
     /// Points this preview at a different texture or at a shader that has since finished compiling,
     /// mainly use it for texture viewer previews.
     /// </summary>
-    public void Bind(IVideoTexture? texture, IShader? shader)
+    public void Bind(IVideoTexture? texture, VideoShaderSet? shaders)
     {
         videoTexture = texture;
-        videoShader = shader;
+        videoShaders = shaders;
     }
 
     protected override DrawNode CreateDrawNode() => new VideoDrawNode();
@@ -49,7 +50,8 @@ public partial class VideoTexturePreview : Drawable
     public override DrawNode GenerateDrawNodeSubtree(int frameIndex)
     {
         var node = base.GenerateDrawNodeSubtree(frameIndex) as VideoDrawNode;
-        node?.ApplyVideoState(videoTexture, videoTexture?.ConversionMatrix, videoShader);
+        node?.ApplyVideoState(videoTexture, videoTexture?.ConversionMatrix,
+            videoTexture != null ? videoShaders?.For(videoTexture.Layout) : null);
         return node!;
     }
 }

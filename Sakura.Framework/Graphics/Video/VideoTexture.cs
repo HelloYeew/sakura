@@ -10,7 +10,7 @@ using Sakura.Framework.Statistic;
 namespace Sakura.Framework.Graphics.Video;
 
 /// <summary>
-/// A YUV420P video texture.
+/// A decoded video frame's texture, in whichever <see cref="VideoPlaneLayout"/> the decoder produced.
 /// <see cref="SetData"/> stores the upload request on the decode thread (no render-thread calls).
 /// The actual upload is performed lazily on the render thread the first time this texture
 /// is about to be drawn. <see cref="UploadComplete"/> becomes true after the upload.
@@ -25,6 +25,16 @@ public sealed class VideoTexture : IVideoTexture
 
     public int Width  => NativeTexture.Width;
     public int Height => NativeTexture.Height;
+
+    public VideoPlaneLayout Layout => NativeTexture.Layout;
+
+    public long PlaneBytes => NativeTexture.PlaneBytes;
+
+    /// <summary>
+    /// The frame shape this texture was built for. The decoder's pool is keyed on it: a texture whose
+    /// shape no longer matches the frames arriving is dropped rather than reused.
+    /// </summary>
+    internal VideoTextureShape Shape { get; }
 
     public TextureBindCounter Binds => NativeTexture.Binds;
 
@@ -42,8 +52,8 @@ public sealed class VideoTexture : IVideoTexture
     public bool IsDisposed => Volatile.Read(ref isDisposed);
 
     /// <summary>
-    /// The YUV -> RGB matrix for the frames uploaded here, stamped on by
-    /// <see cref="SetData"/>. Null until the first frame arrives.
+    /// The affine YUV -> RGB transform for the frames uploaded here (column-major float[16]), stamped
+    /// on by <see cref="SetData"/>. Null until the first frame arrives.
     /// </summary>
     public float[]? ConversionMatrix => Volatile.Read(ref conversionMatrix);
     private float[]? conversionMatrix;
@@ -54,11 +64,12 @@ public sealed class VideoTexture : IVideoTexture
     private readonly IRenderer renderer;
     private bool isDisposed;
 
-    public VideoTexture(IRenderer renderer, ITextureManager textureManager, int width, int height)
+    internal VideoTexture(IRenderer renderer, ITextureManager textureManager, VideoTextureShape shape)
     {
         this.renderer = renderer;
         this.textureManager = textureManager;
-        NativeTexture = renderer.CreateVideoTexture(width, height);
+        Shape = shape;
+        NativeTexture = renderer.CreateVideoTexture(shape.Width, shape.Height, shape.Layout, shape.FromHardwareFrame);
         textureManager.RegisterVideoTexture(this);
     }
 
@@ -67,9 +78,9 @@ public sealed class VideoTexture : IVideoTexture
     /// </summary>
     /// <param name="upload">The frame to upload on the next render-thread flush.</param>
     /// <param name="conversionMatrix">
-    /// The YUV→RGB matrix for this frame's colorspace, exposed as <see cref="ConversionMatrix"/> so a
-    /// consumer holding only this texture can convert it. Ignored when null, keeping whatever the last
-    /// frame set.
+    /// The affine YUV→RGB transform for this frame's colorspace and colour range, exposed as
+    /// <see cref="ConversionMatrix"/> so a consumer holding only this texture can convert it. Ignored
+    /// when null, keeping whatever the last frame set.
     /// </param>
     public void SetData(VideoTextureUpload upload, float[]? conversionMatrix = null)
     {
@@ -96,7 +107,12 @@ public sealed class VideoTexture : IVideoTexture
         VideoStatistics.RecordUpload(Stopwatch.GetTimestamp() - uploadStart);
 
         upload.Dispose();
-        Volatile.Write(ref uploadComplete, true);
+
+        // Follows the texture rather than assuming success. A copying backend always succeeds, but a
+        // zero-copy one can fail to map a frame it was handed — and marking that complete would draw
+        // with whatever textures were bound last, which is a corrupt frame rather than a missing one.
+        Volatile.Write(ref uploadComplete, NativeTexture.Available);
+
         GlobalStatistics.Get<int>("Video", "Frames Uploaded", StatisticKind.Cumulative).Value++;
     }
 

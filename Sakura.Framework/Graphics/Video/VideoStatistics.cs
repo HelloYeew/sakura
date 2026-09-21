@@ -3,6 +3,7 @@
 
 using System.Diagnostics;
 using FFmpeg.AutoGen;
+using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Graphics.Video;
@@ -61,16 +62,19 @@ internal static class VideoStatistics
         GlobalStatistics.Get<string>("Video", "Decoder Format");
 
     /// <summary>
-    /// The format reaching the conversion step for hardware decode what the readback produced.
+    /// The format actually being sampled — what the readback produced on the copying path, or the
+    /// <c>CVPixelBuffer</c>'s own layout on the zero-copy one, suffixed <c>(zero-copy)</c> so the two
+    /// are distinguishable. Deliberately not the codec's surface type, which
+    /// <see cref="stat_decoder_format"/> already reports: a hardware format here would say nothing
+    /// about what the shader receives.
     /// </summary>
     private static readonly GlobalStatistic<string> stat_frame_format =
         GlobalStatistics.Get<string>("Video", "Frame Format");
 
     /// <summary>
-    /// Size of one frame as it reaches the conversion step, so 4K and 1080p are comparable at a
-    /// glance. That is what the readback moved and what the conversion reads; the upload moves the
-    /// same amount again while NV12 and YUV420P are both 12 bits per pixel, which is every case the
-    /// hardware path hits today.
+    /// Size of one decoded frame, so 4K and 1080p are comparable at a glance. A property of the
+    /// content, reported on every path — including zero-copy, where the frame is this large and none
+    /// of it is moved. What is or is not moved is <see cref="stat_byte_rate"/>'s job.
     /// </summary>
     private static readonly GlobalStatistic<long> stat_frame_bytes =
         GlobalStatistics.Get<long>("Video", "Frame Bytes", StatisticKind.Gauge, StatisticUnit.Bytes);
@@ -89,6 +93,7 @@ internal static class VideoStatistics
     private static AVPixelFormat lastFrameFormat = AVPixelFormat.AV_PIX_FMT_NONE;
     private static int lastFrameWidth;
     private static int lastFrameHeight;
+    private static bool lastFrameZeroCopy;
     private static long frameBytes;
 
     // Decode-thread only: the open byte-rate window.
@@ -108,6 +113,13 @@ internal static class VideoStatistics
     public static void RecordUpload(long ticks) => accumulate(stat_upload, ticks);
 
     /// <summary>
+    /// How a sampled plane layout reads in the overlay, matching the FFmpeg pixel-format spelling it
+    /// corresponds to, so the two paths are comparable at a glance.
+    /// </summary>
+    private static string layoutName(VideoPlaneLayout layout) =>
+        layout == VideoPlaneLayout.Nv12 ? "nv12" : "yuv420p";
+
+    /// <summary>
     /// Records the format the codec produced, before any hardware readback.
     /// </summary>
     public static void RecordDecoderFormat(AVPixelFormat format)
@@ -122,24 +134,41 @@ internal static class VideoStatistics
     /// <summary>
     /// Records a frame arriving at the conversion step and folds its size into the byte rate.
     /// </summary>
-    public static void RecordFrame(AVPixelFormat format, int width, int height)
+    public static void RecordFrame(AVPixelFormat format, int width, int height, VideoPlaneLayout sampledLayout, bool zeroCopy)
     {
-        if (format != lastFrameFormat || width != lastFrameWidth || height != lastFrameHeight)
+        if (format != lastFrameFormat || width != lastFrameWidth || height != lastFrameHeight || zeroCopy != lastFrameZeroCopy)
         {
             lastFrameFormat = format;
             lastFrameWidth = width;
             lastFrameHeight = height;
+            lastFrameZeroCopy = zeroCopy;
 
-            stat_frame_format.Value = formatName(format);
+            // On the zero-copy path `format` is the opaque hardware surface type, which names neither
+            // what is sampled nor how big it is — av_image_get_buffer_size returns <= 0 for it. Both
+            // answers come from the layout instead, which is the thing the shader actually sees.
+            if (zeroCopy)
+            {
+                stat_frame_format.Value = $"{layoutName(sampledLayout)} (zero-copy)";
+                frameBytes = NativeTextureMemory.BytesForVideoPlanes(width, height);
+            }
+            else
+            {
+                stat_frame_format.Value = formatName(format);
 
-            // align 1: the packed size, which is what the upload moves. The decoder's own buffers are
-            // padded wider than this, but that padding is skipped a row at a time rather than sent.
-            int size = ffmpeg.av_image_get_buffer_size(format, width, height, 1);
-            frameBytes = size > 0 ? size : 0;
+                // align 1: the packed size, which is what the upload moves. The decoder's own buffers
+                // are padded wider than this, but that padding is skipped a row at a time rather than
+                // sent.
+                int size = ffmpeg.av_image_get_buffer_size(format, width, height, 1);
+                frameBytes = size > 0 ? size : 0;
+            }
+
             stat_frame_bytes.Value = frameBytes;
         }
 
-        windowBytes += frameBytes;
+        // Bytes the pipeline actually passes over the bus, which is the whole point of the rate: zero
+        // on the zero-copy path, where the frame is never read back and never uploaded. A non-zero
+        // Frame Bytes beside a zero rate is the result, not a bug.
+        windowBytes += zeroCopy ? 0 : frameBytes;
 
         long now = Stopwatch.GetTimestamp();
 
