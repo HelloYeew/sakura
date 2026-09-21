@@ -1055,19 +1055,24 @@ void sakura_metal_destroy_texture(SakuraMetalTexture* texture)
     free(texture);
 }
 
-SakuraMetalTexture* sakura_metal_create_plane_texture(SakuraMetalDevice* device, int width, int height)
+SakuraMetalTexture* sakura_metal_create_plane_texture(SakuraMetalDevice* device, int width, int height, int channels)
 {
     if (device == NULL || device->device == nil || width <= 0 || height <= 0)
         return NULL;
 
-    // Single-channel R8Unorm — raw luma/chroma samples, NOT sRGB (the video shader does its own
-    // YUV→RGB + gamma). No mips; sampled with the clamp sampler.
+    // One channel for any YUV420P plane (and NV12's luma), two for NV12's interleaved CbCr. Anything
+    // else is a caller bug rather than a format we fall back for.
+    if (channels != 1 && channels != 2)
+        return NULL;
+
+    // Raw luma/chroma samples, NOT sRGB (the video shader does its own YUV→RGB + gamma).
+    // No mips; sampled with the clamp sampler.
     // Pooled for the same reason as sakura_metal_create_texture above.
     id<MTLTexture> texture = nil;
     @autoreleasepool
     {
         MTLTextureDescriptor* td = [MTLTextureDescriptor
-            texture2DDescriptorWithPixelFormat:MTLPixelFormatR8Unorm
+            texture2DDescriptorWithPixelFormat:(channels == 2 ? MTLPixelFormatRG8Unorm : MTLPixelFormatR8Unorm)
                                          width:(NSUInteger)width
                                         height:(NSUInteger)height
                                      mipmapped:NO];
@@ -1095,8 +1100,9 @@ void sakura_metal_upload_plane(SakuraMetalTexture* texture, const void* data, in
     if (texture == NULL || texture->texture == nil || data == NULL || width <= 0 || height <= 0)
         return;
 
-    // Single channel, no swizzle. bytesPerRow is the source stride (FFmpeg linesize ≥ width). Metal's
-    // replaceRegion reads `height` rows of that stride and copies the leading `width` bytes of each.
+    // No swizzle. bytesPerRow is the source stride in bytes (FFmpeg linesize); Metal derives the bytes
+    // per texel from the texture's own pixel format, so one call serves both R8 and RG8 planes. It
+    // reads `height` rows of that stride and copies the leading `width` texels of each.
     MTLRegion region = MTLRegionMake2D(0, 0, (NSUInteger)width, (NSUInteger)height);
     [texture->texture replaceRegion:region
                         mipmapLevel:0

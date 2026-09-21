@@ -130,15 +130,17 @@ void sakura_metal_upload_texture_region(SakuraMetalTexture* texture, int x, int 
 
 void sakura_metal_destroy_texture(SakuraMetalTexture* texture);
 
-// video planes (single-channel R8 textures)
+// video planes (R8 / RG8 textures)
 
-// creates a single-channel R8Unorm texture for one YUV plane (linear, clamp-to-edge sampling, no
-// mips, NOT sRGB — the samples are raw luma/chroma, not colour). returns NULL on failure.
-SakuraMetalTexture* sakura_metal_create_plane_texture(SakuraMetalDevice* device, int width, int height);
+// creates an R8Unorm (channels == 1) or RG8Unorm (channels == 2) texture for one video plane
+// (linear, clamp-to-edge sampling, no mips, NOT sRGB — the samples are raw luma/chroma, not colour).
+// two channels is the interleaved CbCr plane of an NV12 frame; one is any YUV420P plane, or NV12's
+// luma. returns NULL on failure, including for any other channel count.
+SakuraMetalTexture* sakura_metal_create_plane_texture(SakuraMetalDevice* device, int width, int height, int channels);
 
-// uploads single-channel R8 pixel data into a plane texture. `bytesPerRow` is the source stride
-// (FFmpeg's linesize, which may exceed width due to padding); pass width for tightly-packed data.
-// no swizzle (single channel), replaces the whole texture.
+// uploads pixel data into a plane texture. `width`/`height` are in texels and `bytesPerRow` is the
+// source stride in BYTES (FFmpeg's linesize, which may exceed the row's texel width due to padding,
+// and which counts two bytes per texel on an RG8 plane). no swizzle, replaces the whole texture.
 void sakura_metal_upload_plane(SakuraMetalTexture* texture, const void* data, int width, int height, int bytesPerRow);
 
 // binds the texture (and a default linear sampler) to the given fragment texture/sampler slot
