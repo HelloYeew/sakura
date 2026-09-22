@@ -204,6 +204,16 @@ SakuraMetalDevice* sakura_metal_create(void* caMetalLayer)
     layer.pixelFormat = MTLPixelFormatBGRA8Unorm_sRGB;
     layer.framebufferOnly = YES;
 
+    // Tag what those sRGB-encoded values actually ARE. CAMetalLayer.colorspace, per its header:
+    // "If nil, no colormatching occurs. If non-nil, the rendered content will be colormatched to
+    // the colorspace of the context containing this layer (typically the display's colorspace)."
+    CGColorSpaceRef colorspace = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    if (colorspace != NULL)
+    {
+        layer.colorspace = colorspace;  // the property retains
+        CGColorSpaceRelease(colorspace);
+    }
+
     // Set the backing scale + physical drawable size up front so the VERY FIRST frame renders at
     // native (Retina) resolution. Without this the layer defaults to contentsScale 1.0 and a
     // logical-sized drawable, so early frames (and any glyphs/sprites rasterised then) come out soft.
