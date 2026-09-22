@@ -13,7 +13,6 @@ using Sakura.Framework.Audio.Headless;
 using Sakura.Framework.Audio.SdlEngine;
 using Sakura.Framework.Configurations;
 using Sakura.Framework.Development;
-using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Graphics.Rendering;
@@ -45,6 +44,12 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
 
     protected ITextureManager TextureManager { get; private set; }
     protected IFontStore FontStore { get; private set; }
+
+    /// <summary>
+    /// Tells the font store what pixel density the window is now on, so text rasterized for the old
+    /// display can be re-measured.
+    /// </summary>
+    internal void UpdateDpiScale(float dpiScale) => FontStore?.SetDpiScale(dpiScale);
     protected VideoStore VideoStore { get; private set; }
 
     private Reactive<PerformanceOverlayState> fpsGraphState;
@@ -207,6 +212,10 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
             default:
                 throw new NotSupportedException($"Renderer type {Host.Renderer.GetType().FullName} is not supported.");
         }
+
+        Host.Window.GetPhysicalSize(out int physicalWidth, out _);
+        FontStore.SetDpiScale(Host.Window.Width > 0 ? (float)physicalWidth / Host.Window.Width : 1.0f);
+
         Cache(TextureManager);
         Cache(imageLoader);
         Cache(FontStore);
@@ -476,6 +485,8 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
     public virtual bool ChangeFocus(Drawable? potentialFocusTarget) => InputManager.ChangeFocus(potentialFocusTarget);
 
     public virtual void TriggerFocusContention(Drawable? triggerSource) => InputManager.TriggerFocusContention(triggerSource);
+
+    public virtual bool MoveFocusToNextTabStop(bool reverse = false) => InputManager.MoveFocusToNextTabStop(reverse);
 
     #endregion
 }

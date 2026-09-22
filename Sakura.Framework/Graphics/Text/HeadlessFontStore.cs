@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Platform;
+using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Graphics.Text;
 
@@ -99,6 +100,22 @@ public class HeadlessFontStore : IFontStore
     public FontVariation GetVariation(FontUsage usage) => usage.ToVariation();
 
     public ShapedText Shape(FontUsage usage, string text, float dpiScale) => ShapedText.Empty;
+
+    public float DpiScale { get; private set; } = 1.0f;
+
+    public int DpiScaleVersion { get; private set; }
+    
+    public void SetDpiScale(float dpiScale)
+    {
+        if (!float.IsFinite(dpiScale) || dpiScale <= 0)
+            return;
+
+        if (Precision.AlmostEquals(DpiScale, dpiScale, 0.001f))
+            return;
+
+        DpiScale = dpiScale;
+        DpiScaleVersion++;
+    }
 
     public void Dispose()
     {

@@ -16,6 +16,7 @@ using Sakura.Framework.IO;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Statistic;
+using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Graphics.Text;
 
@@ -114,6 +115,24 @@ public class RendererFontStore : IFontStore
     }
 
     public int CacheVersion { get; private set; }
+
+    public float DpiScale { get; private set; } = 1.0f;
+
+    public int DpiScaleVersion { get; private set; }
+
+    public void SetDpiScale(float dpiScale)
+    {
+        if (!float.IsFinite(dpiScale) || dpiScale <= 0)
+            return;
+
+        if (Precision.AlmostEquals(DpiScale, dpiScale, 0.001f))
+            return;
+
+        DpiScale = dpiScale;
+        DpiScaleVersion++;
+
+        Logger.Debug($"DPI scale changed to {DpiScale}");
+    }
 
     private Font defaultFont;
 

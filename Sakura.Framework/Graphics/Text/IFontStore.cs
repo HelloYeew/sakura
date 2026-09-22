@@ -137,6 +137,23 @@ public interface IFontStore : IDisposable
     ShapedText Shape(FontUsage usage, string text, float dpiScale);
 
     /// <summary>
+    /// Physical pixels per logical pixel for the display the window is currently on
+    /// </summary>
+    float DpiScale { get; }
+
+    /// <summary>
+    /// Increments whenever <see cref="DpiScale"/> changes, so a drawable holding a layout measured at
+    /// the old scale can tell that it is stale with a single integer compare per frame.
+    /// </summary>
+    int DpiScaleVersion { get; }
+
+    /// <summary>
+    /// Sets the scale glyphs are rasterized at. Called when the window moves to a display with a
+    /// different pixel density, or when that display's scale changes.
+    /// </summary>
+    void SetDpiScale(float dpiScale);
+
+    /// <summary>
     /// A version number that increments whenever the font store's cache is updated.
     /// Will increment mostly when <see cref="ClearCaches"/> is called.
     /// </summary>
