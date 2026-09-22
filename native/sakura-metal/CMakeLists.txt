@@ -44,7 +44,8 @@ target_link_libraries(sakura-metal
     "-framework Metal"
     "-framework QuartzCore"
     "-framework Foundation"
-    "-framework CoreVideo")
+    "-framework CoreVideo"
+    "-framework CoreGraphics")
 
 if(IOS)
     if(NOT CMAKE_OSX_DEPLOYMENT_TARGET OR CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS 12.0)
