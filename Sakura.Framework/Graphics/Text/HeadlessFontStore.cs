@@ -104,7 +104,7 @@ public class HeadlessFontStore : IFontStore
     public float DpiScale { get; private set; } = 1.0f;
 
     public int DpiScaleVersion { get; private set; }
-    
+
     public void SetDpiScale(float dpiScale)
     {
         if (!float.IsFinite(dpiScale) || dpiScale <= 0)

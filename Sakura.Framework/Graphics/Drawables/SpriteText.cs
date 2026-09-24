@@ -29,11 +29,13 @@ public partial class SpriteText : Drawable
     private ShapedText? shapedText;
     private int lastCacheVersion = -1;
 
-    [Resolved]
-    private IFontStore fontStore { get; set; } = null!;
+    /// <summary>
+    /// The DPI generation the current layout was measured at
+    /// </summary>
+    private int lastDpiScaleVersion = -1;
 
     [Resolved]
-    private IWindow window { get; set; } = null!;
+    private IFontStore fontStore { get; set; } = null!;
 
     private Vector2 contentSize;
 
@@ -216,9 +218,10 @@ public partial class SpriteText : Drawable
 
     public override void Update()
     {
-        if (fontStore != null && lastCacheVersion != fontStore.CacheVersion)
+        if (fontStore != null && (lastCacheVersion != fontStore.CacheVersion || lastDpiScaleVersion != fontStore.DpiScaleVersion))
         {
             lastCacheVersion = fontStore.CacheVersion;
+            lastDpiScaleVersion = fontStore.DpiScaleVersion;
             layoutInvalidated = true;
             shapedText = null;
             Invalidate(InvalidationFlags.DrawInfo);
@@ -235,20 +238,17 @@ public partial class SpriteText : Drawable
 
     private void computeLayout()
     {
-        if ((fontStore == null || window == null) && Dependencies != null)
+        if (fontStore == null && Dependencies != null)
             DependencyActivator.Inject(this, Dependencies);
 
-        // Dependencies not ready yet. Leave layoutInvalidated set so we measure once they are,
-        // but flip the re-entrancy guard to avoid spinning if Size is read in the meantime.
-        if (fontStore == null || window == null) return;
+        if (fontStore == null) return;
 
         computingLayout = true;
         try
         {
-            window.GetPhysicalSize(out int physW, out int physH);
-            float dpiScale = (float)physW / window.Width;
-
-            if (dpiScale <= 0) dpiScale = 1.0f;
+            float dpiScale = fontStore.DpiScale;
+            
+            lastDpiScaleVersion = fontStore.DpiScaleVersion;
 
             // Shaped through the store rather than by resolving a Font and calling ProcessText: the store
             // caches the result, and only it knows when one has been invalidated by a font being
