@@ -3,6 +3,7 @@
 
 using System;
 using Sakura.Framework.Extensions.ColorExtensions;
+using Sakura.Framework.Extensions.ObjectExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
@@ -25,7 +26,9 @@ public abstract partial class ColorPicker : Container, ITabStop
     public Reactive<Color> Current { get; } = new Reactive<Color>(Color.White);
 
     /// <summary>
-    /// Pixel size of the saturation/value square
+    /// Pixel size of the saturation/value square. Its width is ignored while the picker has
+    /// <see cref="Axes.X"/> in its <c>RelativeSizeAxes</c>: the square, the hue bar, and the hex row
+    /// then fill whatever width the picker is given, less its padding.
     /// </summary>
     public Vector2 SaturationValueAreaSize { get; init; } = new Vector2(300, 220);
 
@@ -38,6 +41,17 @@ public abstract partial class ColorPicker : Container, ITabStop
     /// Vertical spacing between the square, the hue bar, and the hex/preview row.
     /// </summary>
     public float Spacing { get; init; } = 10;
+
+    /// <summary>
+    /// Corner radius of the saturation/value square. It does not clip the markers: they sit in a
+    /// layer above the square, so one at a corner is drawn whole.
+    /// </summary>
+    public float SaturationValueCornerRadius { get; init; }
+
+    /// <summary>
+    /// Corner radius of the hue bar. Half of <see cref="HueBarHeight"/> or more gives a pill.
+    /// </summary>
+    public float HueBarCornerRadius { get; init; }
 
     /// <summary>
     /// The saturation/value square region. Exposed so tests and consumers can target it.
@@ -136,6 +150,10 @@ public abstract partial class ColorPicker : Container, ITabStop
 
     private readonly SaturationValueSelector svArea;
     private readonly HueSelector hueBar;
+    private readonly Container svFrame;
+    private readonly Container hueFrame;
+    private readonly FlowContainer layout;
+    private readonly FlowContainer? bottomRow;
     private readonly Box svHueLayer;
     private readonly Drawable svMarker;
     private readonly Drawable hueMarker;
@@ -161,7 +179,7 @@ public abstract partial class ColorPicker : Container, ITabStop
 
         svArea = new SaturationValueSelector
         {
-            Size = SaturationValueAreaSize,
+            RelativeSizeAxes = Axes.Both,
             Masking = true,
             PositionChanged = onSaturationValueChanged,
             Children = new Drawable[]
@@ -179,6 +197,15 @@ public abstract partial class ColorPicker : Container, ITabStop
                     RelativeSizeAxes = Axes.Both,
                     ColorInfo = ColorInfo.GradientVertical(Color.Black.WithAlpha(0), Color.Black)
                 },
+            }
+        };
+
+        svFrame = new Container
+        {
+            Size = SaturationValueAreaSize,
+            Children = new Drawable[]
+            {
+                svArea,
                 new NonPositionalContainer
                 {
                     RelativeSizeAxes = Axes.Both,
@@ -189,33 +216,41 @@ public abstract partial class ColorPicker : Container, ITabStop
 
         hueBar = new HueSelector
         {
-            Size = new Vector2(width, HueBarHeight),
+            RelativeSizeAxes = Axes.Both,
             Masking = true,
             HueChanged = onHueChanged,
         };
 
-        hueBar.Add(new NonPositionalContainer
+        hueFrame = new Container
         {
-            RelativeSizeAxes = Axes.Both,
-            Child = hueMarker
-        });
+            Size = new Vector2(width, HueBarHeight),
+            Children = new Drawable[]
+            {
+                hueBar,
+                new NonPositionalContainer
+                {
+                    RelativeSizeAxes = Axes.Both,
+                    Child = hueMarker
+                }
+            }
+        };
 
-        var layout = new FlowContainer
+        layout = new FlowContainer
         {
             Direction = FlowDirection.Vertical,
             AutoSizeAxes = Axes.Both,
             Spacing = new Vector2(0, Spacing),
         };
 
-        layout.Add(svArea);
-        layout.Add(hueBar);
+        layout.Add(svFrame);
+        layout.Add(hueFrame);
 
         hexInput = CreateHexInput();
         preview = CreatePreview();
 
         if (hexInput != null || preview != null)
         {
-            var bottomRow = new FlowContainer
+            bottomRow = new FlowContainer
             {
                 Direction = FlowDirection.Horizontal,
                 AutoSizeAxes = Axes.Both,
@@ -258,14 +293,52 @@ public abstract partial class ColorPicker : Container, ITabStop
     {
         base.LoadComplete();
 
-        svArea.Size = SaturationValueAreaSize;
-        hueBar.Size = new Vector2(SaturationValueAreaSize.X, HueBarHeight);
+        // Re-applied here because init values are assigned after the constructor has already built
+        // the layout from the defaults.
+        svFrame.Size = SaturationValueAreaSize;
+        hueFrame.Size = new Vector2(SaturationValueAreaSize.X, HueBarHeight);
+        svArea.CornerRadius = SaturationValueCornerRadius;
+        hueBar.CornerRadius = HueBarCornerRadius;
+        layout.Spacing = new Vector2(0, Spacing);
+        if (bottomRow != null)
+            bottomRow.Spacing = new Vector2(Spacing, 0);
         if (hexInput != null)
             hexInput.Size = new Vector2(SaturationValueAreaSize.X - (preview?.Size.X ?? 0) - Spacing, HueBarHeight + 8);
+
+        applyContentWidth();
 
         // Derive the initial HSV from Current and paint everything once.
         deriveHsvFromCurrent(Current.Value);
         updateVisuals();
+    }
+
+    public override void Update()
+    {
+        base.Update();
+        applyContentWidth();
+    }
+
+    /// <summary>
+    /// While the picker is relatively sized on X, stretches the square, the hue bar, and the hex row to
+    /// its content width. A fixed width is otherwise all a picker can have. A fixed width placed
+    /// in a container that turns out narrower — a scroll area that insets its content for the
+    /// scrollbar, say — overflows it and is clipped down its right-hand side.
+    /// </summary>
+    private void applyContentWidth()
+    {
+        if ((RelativeSizeAxes & Axes.X) == 0)
+            return;
+
+        float width = ChildSize.X;
+
+        if (width <= 0 || Math.Abs(width - svFrame.Width) < 0.01f)
+            return;
+
+        svFrame.Width = width;
+        hueFrame.Width = width;
+
+        if (hexInput.IsNotNull())
+            hexInput.Width = Math.Max(0, width - (preview?.Size.X ?? 0) - Spacing);
     }
 
     /// <summary>
