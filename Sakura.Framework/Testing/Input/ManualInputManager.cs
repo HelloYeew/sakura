@@ -33,6 +33,7 @@ public partial class ManualInputManager : Container, IInputManagerProvider, IFoc
     public void BeginMouseDownFocusTracking() => InputManager.BeginMouseDownFocusTracking();
     public bool ChangeFocus(Drawable? potentialFocusTarget) => InputManager.ChangeFocus(potentialFocusTarget);
     public void TriggerFocusContention(Drawable? triggerSource) => InputManager.TriggerFocusContention(triggerSource);
+    public bool MoveFocusToNextTabStop(bool reverse = false) => InputManager.MoveFocusToNextTabStop(reverse);
 
     public ManualInputManager()
     {

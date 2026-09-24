@@ -72,7 +72,7 @@ public partial class InputDebugOverlay : Container
             AutoSizeAxes = Axes.Both,
             CornerRadius = 5,
             Masking = true,
-            Depth = float.MinValue,
+            Depth = float.MaxValue,
             Children = new Drawable[]
             {
                 new Box

@@ -3,10 +3,12 @@
 
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using System.Reflection;
 using NUnit.Framework;
+using NUnit.Framework.Interfaces;
 using Sakura.Framework.Configurations;
 using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Extensions.DrawableExtensions;
@@ -530,13 +532,45 @@ public partial class TestBrowserApp : App
             // [Test]
             if (testAttr != null && testCases.Length == 0 && testCaseSources.Length == 0)
             {
-                currentTest.AddLabel(method.Name);
-                currentTest.CurrentStepContext = StepContext.SetUp;
-                currentTest.RunSetUpMethods();
-                currentTest.CurrentStepContext = StepContext.Test;
-                method.Invoke(currentTest, null);
-                currentTest.CurrentStepContext = StepContext.TearDown;
-                currentTest.RunTearDownMethods();
+                var parameters = method.GetParameters();
+
+                if (parameters.Length == 0)
+                {
+                    currentTest.AddLabel(method.Name);
+                    currentTest.CurrentStepContext = StepContext.SetUp;
+                    currentTest.RunSetUpMethods();
+                    currentTest.CurrentStepContext = StepContext.Test;
+                    method.Invoke(currentTest, null);
+                    currentTest.CurrentStepContext = StepContext.TearDown;
+                    currentTest.RunTearDownMethods();
+                }
+                else
+                {
+                    // A [Test] whose parameters carry [Values] (or any other parameter data source),
+                    // run once per combination. Without this the method falls into the no-argument
+                    // path above and Invoke throws TargetParameterCountException, which takes the
+                    // whole browser down rather than failing the one test.
+                    object[][] combinations = BuildParameterCombinations(testSceneType, method, out string skipReason);
+
+                    if (combinations == null)
+                    {
+                        currentTest.AddLabel($"[Skipped] {method.Name} - {skipReason}");
+                        continue;
+                    }
+
+                    foreach (object[] args in combinations)
+                    {
+                        string argsString = string.Join(", ", args.Select(a => a?.ToString() ?? "null"));
+                        currentTest.AddLabel($"{method.Name}({argsString})");
+
+                        currentTest.CurrentStepContext = StepContext.SetUp;
+                        currentTest.RunSetUpMethods();
+                        currentTest.CurrentStepContext = StepContext.Test;
+                        method.Invoke(currentTest, args);
+                        currentTest.CurrentStepContext = StepContext.TearDown;
+                        currentTest.RunTearDownMethods();
+                    }
+                }
             }
 
             // [TestCase]
@@ -867,6 +901,71 @@ public partial class TestBrowserApp : App
         }, buttonColor);
 
         stepsFlow.Add(stepButton);
+    }
+
+    /// <summary>
+    /// Expands a parameterised <c>[Test]</c> into the cartesian product of its parameters' data
+    /// sources — <c>[Values]</c>, <c>[Range]</c>, <c>[Random]</c>, anything implementing NUnit's
+    /// <see cref="IParameterDataSource"/>. Returns null (after labeling the reason) when a parameter
+    /// carries no source, since there is nothing sensible to invoke it with.
+    /// </summary>
+    internal static object[][] BuildParameterCombinations(Type testSceneType, MethodInfo method, out string skipReason)
+    {
+        skipReason = null;
+
+        var parameters = method.GetParameters();
+
+        // NUnit's data sources describe a parameter through IParameterInfo rather than the reflection
+        // type directly; MethodWrapper is the supported way to obtain one.
+        var wrapper = new NUnit.Framework.Internal.MethodWrapper(testSceneType, method);
+        var wrapped = wrapper.GetParameters();
+
+        var perParameter = new List<object[]>();
+
+        for (int i = 0; i < parameters.Length; i++)
+        {
+            var source = parameters[i].GetCustomAttributes()
+                                      .OfType<IParameterDataSource>()
+                                      .FirstOrDefault();
+
+            if (source == null)
+            {
+                skipReason = $"parameter '{parameters[i].Name}' has no data source";
+                return null;
+            }
+
+            object[] values = source.GetData(wrapped[i]).Cast<object>().ToArray();
+
+            if (values.Length == 0)
+            {
+                skipReason = $"parameter '{parameters[i].Name}' supplied no values";
+                return null;
+            }
+
+            perParameter.Add(values);
+        }
+
+        var combinations = new List<object[]> { Array.Empty<object>() };
+
+        foreach (object[] values in perParameter)
+        {
+            var expanded = new List<object[]>(combinations.Count * values.Length);
+
+            foreach (object[] prefix in combinations)
+            {
+                foreach (object value in values)
+                {
+                    object[] next = new object[prefix.Length + 1];
+                    prefix.CopyTo(next, 0);
+                    next[prefix.Length] = value;
+                    expanded.Add(next);
+                }
+            }
+
+            combinations = expanded;
+        }
+
+        return combinations.ToArray();
     }
 
     private IEnumerable getTestCaseSourceData(Type type, string name, object instance)
