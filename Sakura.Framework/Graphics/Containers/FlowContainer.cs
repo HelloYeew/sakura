@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Generic;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Maths;
@@ -97,17 +98,44 @@ public partial class FlowContainer : Container
         base.Update();
     }
 
+    protected override void UpdateLayoutAfterChildren()
+    {
+        layoutPending |= (Invalidation & InvalidationFlags.DrawInfo) != 0;
+
+        if (!layoutPending || IsEffectivelyHidden)
+            return;
+
+        layoutPending = false;
+
+        Vector2 sizeBefore = Size;
+
+        PerformLayout();
+
+        if (Size != sizeBefore)
+            UpdateTransforms();
+    }
+
     protected override void UpdateAutoSize()
     {
         // Do nothing since PerformLayout will handle auto-sizing based on content size.
     }
 
     /// <summary>
-    /// Calculates and applies the position for each child.
+    /// Calculates and applies the position for each child. Reused between layout passes so filtering out hidden children costs no allocation per frame.
     /// </summary>
+    private readonly List<Drawable> presentChildren = new List<Drawable>();
+
     protected virtual void PerformLayout()
     {
-        var children = Children;
+        presentChildren.Clear();
+
+        foreach (var child in Children)
+        {
+            if (child.AlwaysPresent || child.Alpha > 0)
+                presentChildren.Add(child);
+        }
+
+        var children = presentChildren;
         int count = children.Count;
         if (count == 0)
         {

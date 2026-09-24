@@ -156,37 +156,31 @@ public partial class ScrollableContainer : Container
     public override void Load()
     {
         base.Load();
-        CreateVerticalScrollbar();
-        CreateHorizontalScrollbar();
+        verticalScrollbar.Child = CreateVerticalScrollbar();
+        horizontalScrollbar.Child = CreateHorizontalScrollbar();
     }
 
     public override void Clear(bool dispose = true) => ScrollContent.Clear(dispose);
 
-    protected virtual void CreateVerticalScrollbar()
+    protected virtual Drawable CreateVerticalScrollbar() => new Box()
     {
-        verticalScrollbar.Child = new Box()
-        {
-            Name = "VerticalScrollbarBox",
-            RelativeSizeAxes = Axes.Both,
-            Anchor = Anchor.TopLeft,
-            Origin = Anchor.TopLeft,
-            Size = new Vector2(1),
-            Color = Color.DeepPink
-        };
-    }
+        Name = "VerticalScrollbarBox",
+        RelativeSizeAxes = Axes.Both,
+        Anchor = Anchor.TopLeft,
+        Origin = Anchor.TopLeft,
+        Size = new Vector2(1),
+        Color = Color.DeepPink
+    };
 
-    protected virtual void CreateHorizontalScrollbar()
+    protected virtual Drawable CreateHorizontalScrollbar() => new Box()
     {
-        horizontalScrollbar.Child = new Box()
-        {
-            Name = "HorizontalScrollbarBox",
-            RelativeSizeAxes = Axes.Both,
-            Anchor = Anchor.TopLeft,
-            Origin = Anchor.TopLeft,
-            Size = new Vector2(1),
-            Color = Color.DeepPink
-        };
-    }
+        Name = "HorizontalScrollbarBox",
+        RelativeSizeAxes = Axes.Both,
+        Anchor = Anchor.TopLeft,
+        Origin = Anchor.TopLeft,
+        Size = new Vector2(1),
+        Color = Color.DeepPink
+    };
 
     public override void Add(Drawable drawable)
     {
@@ -252,8 +246,9 @@ public partial class ScrollableContainer : Container
     /// </summary>
     public void ScrollIntoView(Drawable d, bool animated = true)
     {
-        // For accurate offsets, we grab the raw position and size relative to the scroll content bounds.
-        Vector2 childPos = d.Position;
+        if (!tryGetOffsetWithinContent(d, out Vector2 childPos))
+            return;
+
         Vector2 childSize = d.DrawSize * d.Scale;
 
         Vector2 target = targetScroll;
@@ -278,6 +273,27 @@ public partial class ScrollableContainer : Container
         }
 
         ScrollTo(target, animated);
+    }
+
+    /// <summary>
+    /// Walks up from <paramref name="d"/> to <see cref="ScrollContent"/>, summing positions to get
+    /// its offset within the scrolled content. Returns false when <paramref name="d"/> is not
+    /// beneath this container at all, in which case there is nothing sensible to scroll to.
+    /// </summary>
+    private bool tryGetOffsetWithinContent(Drawable d, out Vector2 offset)
+    {
+        offset = Vector2.Zero;
+
+        for (var current = d; current != null; current = current.Parent)
+        {
+            if (ReferenceEquals(current, ScrollContent))
+                return true;
+
+            offset += current.Position;
+        }
+
+        offset = Vector2.Zero;
+        return false;
     }
 
     #endregion

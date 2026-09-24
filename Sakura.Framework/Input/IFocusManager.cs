@@ -30,6 +30,15 @@ public interface IFocusManager
     void TriggerFocusContention(Drawable? triggerSource);
 
     /// <summary>
+    /// Moves focus to the next (or previous) <see cref="ITabStop"/>, as Tab / Shift+Tab do.
+    /// Traversal is confined to the innermost enclosing <see cref="ITabStopScope"/> that is
+    /// currently trapping, and wraps around at either end.
+    /// </summary>
+    /// <param name="reverse">True to move to the previous stop (Shift+Tab).</param>
+    /// <returns>True if focus moved.</returns>
+    bool MoveFocusToNextTabStop(bool reverse = false);
+
+    /// <summary>
     /// Called by input dispatchers before processing a mouse-down event.
     /// Resets the internal "focus was claimed by this click" tracker.
     /// </summary>

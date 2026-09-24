@@ -36,5 +36,17 @@ public enum CursorState
     /// <summary>
     /// The cursor is a "not allowed" symbol (circle with a slash), typically used to indicate that an action is not allowed or cannot be performed.
     /// </summary>
-    NotAllowed
+    NotAllowed,
+
+    /// <summary>
+    /// An open hand, over content that can be dragged to pan — a map, or an image larger than its
+    /// viewport.
+    /// </summary>
+    Grab,
+
+    /// <summary>
+    /// A closed hand, while such a drag is actually in progress. Distinct from <see cref="Grab"/>
+    /// so that the grip visibly closes when the button goes down, which is the whole affordance.
+    /// </summary>
+    Grabbing
 }

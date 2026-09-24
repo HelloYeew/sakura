@@ -1,7 +1,6 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
-using System.Collections.Generic;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Graphics.Primitives;
@@ -39,22 +38,15 @@ public partial class TooltipContainer : Container, IRemoveFromDrawVisualiser
     private Vector2 lastMousePosition;
     private bool tooltipShown;
 
-    private readonly struct TimedPosition
-    {
-        public readonly double Time;
-        public readonly Vector2 Position;
-        public TimedPosition(double time, Vector2 pos) { Time = time; Position = pos; }
-    }
-
-    private readonly List<TimedPosition> recentPositions = new List<TimedPosition>();
-    private double lastRecordedTime;
+    private Vector2 stableAnchor;
+    private double stableSince;
 
     public TooltipContainer()
     {
         RelativeSizeAxes = Axes.Both;
         Size = new Vector2(1);
 
-        // The tooltip drawable lives as a direct internal child so it floats
+        // The tooltip drawable lives as a direct internal child, so it floats
         // above all content children but is not treated as user content.
         var concreteTooltip = CreateTooltip();
         tooltip = concreteTooltip;
@@ -77,7 +69,9 @@ public partial class TooltipContainer : Container, IRemoveFromDrawVisualiser
             RelativeSizeAxes = Axes.Both,
             Size = new Vector2(1),
         };
-        // Add before the tooltip so tooltip renders on top.
+
+        // Ordering is by Depth, not insertion: the tooltip carries float.MaxValue so it draws over
+        // this layer regardless of which was added first.
         AddInternal(layer);
         return layer;
     }
@@ -97,27 +91,25 @@ public partial class TooltipContainer : Container, IRemoveFromDrawVisualiser
             lastMousePosition = ToLocalSpace(manager.CurrentState.MousePosition);
 
         double now = Clock.CurrentTime;
-        double interval = AppearDelay / 10.0;
 
-        // Record position at fixed intervals.
-        if (now - lastRecordedTime >= interval)
-        {
-            lastRecordedTime = now;
-            recentPositions.Add(new TimedPosition(now, lastMousePosition));
-        }
+        // Restart the dwell whenever the cursor leaves the radius it settled in.
+        float dx = lastMousePosition.X - stableAnchor.X;
+        float dy = lastMousePosition.Y - stableAnchor.Y;
 
-        // Prune old positions.
-        for (int i = recentPositions.Count - 1; i >= 0; i--)
+        if (dx * dx + dy * dy > AppearRadius * AppearRadius)
         {
-            if (now - recentPositions[i].Time > AppearDelay)
-                recentPositions.RemoveAt(i);
+            stableAnchor = lastMousePosition;
+            stableSince = now;
         }
 
         var candidate = findTooltipTarget();
 
         if (candidate != lastCandidate)
         {
-            recentPositions.Clear();
+            // A new target starts its own dwell, so moving between two adjacent targets does not
+            // inherit the time already spent on the first one.
+            stableAnchor = lastMousePosition;
+            stableSince = now;
             lastCandidate = candidate;
         }
 
@@ -154,30 +146,10 @@ public partial class TooltipContainer : Container, IRemoveFromDrawVisualiser
         }
     }
 
-    private bool isCursorStable()
-    {
-        if (recentPositions.Count == 0)
-            return false;
-
-        // We need enough history spanning the full AppearDelay.
-        double earliest = recentPositions[0].Time;
-        double latest = recentPositions[^1].Time;
-        if (latest - earliest < AppearDelay - (AppearDelay / 10.0))
-            return false;
-
-        float radiusSq = AppearRadius * AppearRadius;
-        Vector2 anchor = recentPositions[0].Position;
-
-        foreach (var p in recentPositions)
-        {
-            float dx = p.Position.X - anchor.X;
-            float dy = p.Position.Y - anchor.Y;
-            if (dx * dx + dy * dy > radiusSq)
-                return false;
-        }
-
-        return true;
-    }
+    /// <summary>
+    /// Whether the cursor has dwelt within <see cref="AppearRadius"/> for <see cref="AppearDelay"/>.
+    /// </summary>
+    private bool isCursorStable() => Clock.CurrentTime - stableSince >= AppearDelay;
 
     private void showTooltip(IHasTooltip target)
     {
@@ -238,7 +210,12 @@ public partial class TooltipContainer : Container, IRemoveFromDrawVisualiser
 
     private IHasTooltip? searchDescendants(Container container, Drawable? skipDrawable = null)
     {
-        var sorted = container.Children;
+        // SortedChildren, not Children: "front-most first" is only true of insertion order when no
+        // child has been given a Depth, and a tooltip on a raised control would otherwise lose to one
+        // on a sibling that merely happens to have been added later. This mirrors what
+        // InputManager.buildPositional walks.
+        var sorted = container.SortedChildren;
+
         for (int i = sorted.Count - 1; i >= 0; i--)
         {
             var child = sorted[i];

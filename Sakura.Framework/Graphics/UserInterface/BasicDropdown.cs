@@ -7,12 +7,13 @@ using System.Linq;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
+using Sakura.Framework.Input;
 using Sakura.Framework.Reactive;
 using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Graphics.UserInterface;
 
-public partial class BasicDropdown<T> : Container
+public partial class BasicDropdown<T> : Container, ITabStopScope
 {
     private const float item_height = 30;
 
@@ -32,6 +33,100 @@ public partial class BasicDropdown<T> : Container
     /// The clickable header drawable that toggles the menu.
     /// </summary>
     public Drawable Header => header;
+
+    /// <summary>
+    /// Whether the menu is currently open. <see cref="Drawable.Show"/> / <see cref="Drawable.Hide"/>
+    /// set alpha outright rather than fading, so this flips in the same frame the menu is toggled.
+    /// </summary>
+    public bool IsMenuOpen => !menu.IsHidden;
+
+    /// <summary>
+    /// While the menu is open, Tab is confined to this dropdown, so it cannot walk off onto the
+    /// controls the menu is covering.
+    /// </summary>
+    public bool TrapsTabTraversal => IsMenuOpen;
+
+    public override bool OnKeyDown(KeyEvent e)
+    {
+        if (!IsMenuOpen)
+            return false;
+
+        switch (e.Key)
+        {
+            case Key.Escape:
+                CloseMenu();
+                return true;
+
+            case Key.Up:
+                return moveMenuFocus(-1);
+
+            case Key.Down:
+                return moveMenuFocus(1);
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// Opens the menu and moves focus onto the item matching <see cref="Current"/> (or the first
+    /// item), so Up/Down start from the current selection rather than the top of the list.
+    /// </summary>
+    public void OpenMenu()
+    {
+        menu.Show();
+
+        if (menuItems.Count == 0)
+            return;
+
+        int index = 0;
+        int i = 0;
+
+        foreach (var item in Items)
+        {
+            if (EqualityComparer<T>.Default.Equals(item, Current.Value))
+            {
+                index = i;
+                break;
+            }
+
+            i++;
+        }
+
+        ScrollItemIntoView(index);
+        GetContainingFocusManager()?.ChangeFocus(menuItems[index]);
+    }
+
+    /// <summary>
+    /// Closes the menu and hands focus back to the header, so the dropdown stays a single stop in
+    /// the tab order once it is shut.
+    /// </summary>
+    public void CloseMenu()
+    {
+        if (!IsMenuOpen)
+            return;
+
+        menu.Hide();
+        GetContainingFocusManager()?.ChangeFocus(header);
+    }
+
+    private bool moveMenuFocus(int delta)
+    {
+        var focusManager = GetContainingFocusManager();
+
+        if (focusManager == null || menuItems.Count == 0)
+            return false;
+
+        int current = focusManager.FocusedDrawable == null ? -1 : menuItems.IndexOf(focusManager.FocusedDrawable);
+
+        // Entering from the header (or from nothing) starts at whichever end the direction implies.
+        int next = current < 0
+            ? (delta > 0 ? 0 : menuItems.Count - 1)
+            : (current + delta + menuItems.Count) % menuItems.Count;
+
+        ScrollItemIntoView(next);
+        return focusManager.ChangeFocus(menuItems[next]);
+    }
 
     private float maxHeight = item_height * 5;
 
@@ -96,10 +191,10 @@ public partial class BasicDropdown<T> : Container
 
     private void toggleMenu()
     {
-        if (menu.IsHidden)
-            menu.Show();
+        if (IsMenuOpen)
+            CloseMenu();
         else
-            menu.Hide();
+            OpenMenu();
     }
 
     private void generateMenuItems()
@@ -121,7 +216,7 @@ public partial class BasicDropdown<T> : Container
                 Action = () =>
                 {
                     Current.Value = capturedItem;
-                    menu.Hide();
+                    CloseMenu();
                 },
                 TextAnchor = Anchor.CentreLeft
             };

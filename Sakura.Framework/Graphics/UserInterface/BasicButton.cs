@@ -55,9 +55,13 @@ public partial class BasicButton : Button
         }
     }
 
+    public Color FocusColor { get; set; } = Color.White;
+
     public BasicButton()
     {
         Size = new Vector2(100, 30);
+        Masking = true;
+        BorderColor = FocusColor;
 
         Children = new Drawable[]
         {
@@ -84,4 +88,12 @@ public partial class BasicButton : Button
     protected override void OnHoverLost() => background.Color = DefaultColor;
 
     protected override void OnEnabledChanged(bool enabled) => background.FadeToColor(enabled ? DefaultColor : DefaultColor.Darken(0.5f), 100, Easing.OutQuint);
+
+    protected override void OnFocusGained()
+    {
+        BorderColor = FocusColor;
+        BorderThickness = 2;
+    }
+
+    protected override void OnFocusLost() => BorderThickness = 0;
 }

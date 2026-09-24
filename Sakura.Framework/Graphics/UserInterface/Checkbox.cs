@@ -10,12 +10,18 @@ namespace Sakura.Framework.Graphics.UserInterface;
 /// <summary>
 /// Abstract base for checkbox controls.
 /// </summary>
-public abstract partial class Checkbox : ClickableContainer
+public abstract partial class Checkbox : ClickableContainer, ITabStop
 {
     /// <summary>
     /// The current checked state.
     /// </summary>
     public ReactiveBool Current { get; } = new ReactiveBool(false);
+
+    public override bool AcceptsFocus => Enabled.Value;
+
+    public virtual bool CanBeTabbedTo => Enabled.Value;
+
+    public virtual int TabOrder => 0;
 
     protected Checkbox()
     {
@@ -47,6 +53,30 @@ public abstract partial class Checkbox : ClickableContainer
         return base.OnHoverLost(e);
     }
 
+    public override bool OnKeyDown(KeyEvent e)
+    {
+        if (!HasFocus || !Enabled.Value)
+            return false;
+
+        if (e.Key != Key.Space)
+            return false;
+
+        Action?.Invoke();
+        return true;
+    }
+
+    public override void OnFocus(FocusEvent e)
+    {
+        base.OnFocus(e);
+        OnFocusGained();
+    }
+
+    public override void OnFocusLost(FocusLostEvent e)
+    {
+        base.OnFocusLost(e);
+        OnFocusLost();
+    }
+
     /// <summary>
     /// Called when the checked state changes. Override to animate visuals.
     /// </summary>
@@ -66,4 +96,14 @@ public abstract partial class Checkbox : ClickableContainer
     /// Called when <see cref="ClickableContainer.Enabled"/> changes.
     /// </summary>
     protected virtual void OnEnabledChanged(bool enabled) { }
+
+    /// <summary>
+    /// Called when the checkbox gains keyboard focus. Override to draw a focus indicator.
+    /// </summary>
+    protected virtual void OnFocusGained() { }
+
+    /// <summary>
+    /// Called when the checkbox loses keyboard focus. Override to remove the focus indicator.
+    /// </summary>
+    protected virtual void OnFocusLost() { }
 }

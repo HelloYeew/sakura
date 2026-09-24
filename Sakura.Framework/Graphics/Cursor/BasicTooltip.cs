@@ -23,7 +23,7 @@ public partial class BasicTooltip : VisibilityContainer, ITooltip
     public BasicTooltip()
     {
         AutoSizeAxes = Axes.Both;
-        Depth = float.MinValue;
+        Depth = float.MaxValue;
 
         Children = new Drawable[]
         {
@@ -42,7 +42,7 @@ public partial class BasicTooltip : VisibilityContainer, ITooltip
         };
     }
 
-    public void SetContent(string content) => label.Text = content;
+    public virtual void SetContent(string content) => label.Text = content;
 
     public void Move(Vector2 position) =>
         this.MoveTo(position, Alpha > 0 ? 100 : 0, Easing.OutQuint);

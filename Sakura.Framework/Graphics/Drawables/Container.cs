@@ -160,6 +160,12 @@ public partial class Container : Drawable
             Size = newSize;
     }
 
+    /// <summary>
+    /// Every child this container holds directly, including those added with
+    /// <see cref="AddInternal"/> and regardless of any <see cref="Content"/> override.
+    /// </summary>
+    public IReadOnlyList<Drawable> InternalChildren => children;
+
     public IReadOnlyList<Drawable> Children
     {
         get => Content == this ? children : Content.Children;
@@ -565,6 +571,27 @@ public partial class Container : Drawable
                 children[i].UpdateSubTree();
             }
         }
+
+        UpdateLayoutAfterChildren();
+    }
+
+    /// <summary>
+    /// Re-resolves this container's own layout now that its children have updated, so a nested
+    /// composition settles within one frame. Everything that sizes a container from its children
+    /// necessarily runs against stale values when it runs in <see cref="Update"/>, because children
+    /// update afterward; this is the corrective pass.
+    /// </summary>
+    protected virtual void UpdateLayoutAfterChildren()
+    {
+        if (AutoSizeAxes == Axes.None)
+            return;
+
+        Vector2 sizeBefore = Size;
+
+        UpdateAutoSize();
+
+        if (Size != sizeBefore)
+            UpdateTransforms();
     }
 
     protected virtual void UpdateSubTreeMasking()
@@ -660,13 +687,14 @@ public partial class Container : Drawable
         // Apply Padding of the container itself
         maxBound += Padding.Total;
 
-        // Apply to Size
+        Axes effectiveAutoSize = AutoSizeAxes & ~RelativeSizeAxes;
+
         Vector2 currentSize = Size;
 
-        if ((AutoSizeAxes & Axes.X) != 0)
+        if ((effectiveAutoSize & Axes.X) != 0)
             currentSize.X = maxBound.X;
 
-        if ((AutoSizeAxes & Axes.Y) != 0)
+        if ((effectiveAutoSize & Axes.Y) != 0)
             currentSize.Y = maxBound.Y;
 
         if (AutoSizeDuration <= 0)

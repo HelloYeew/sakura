@@ -373,7 +373,7 @@ public class SDLWindow : IWindow
         Logger.Verbose($"SDL Revision: {SDL_GetRevision()}");
         Logger.Verbose($"SDL Video Driver: {SDL_GetCurrentVideoDriver()}");
 
-        CursorState.ValueChanged += _ => updateSdlCursor();
+        CursorState.ValueChanged += _ => pendingCursorChange = true;
 
         initialized = true;
     }
@@ -437,6 +437,10 @@ public class SDLWindow : IWindow
 
         if (relativeMouseMode)
             SDL_SetWindowRelativeMouseMode(window, true);
+
+        // updateSdlCursor early-returns while there is no window, so any cursor state set before
+        // this point was silently dropped and never re-applied. Queue it now that there is one.
+        pendingCursorChange = true;
 
         updateSafeArea();
 
@@ -956,6 +960,13 @@ public class SDLWindow : IWindow
                     RenderRequested.Invoke();
                 break;
 
+            // DISPLAY_SCALE_CHANGED is the one SDL documents for this. It is the only one that
+            // necessarily fires when the density changes without the window moving or resizing — a
+            // scale change made in the OS display settings while the app is running. The other two are
+            // what actually fires in the common case of dragging between displays, and handleSizeChanged
+            // dedupes, so listening to all three costs nothing and covers cases none of them covers
+            // alone.
+            case SDL_EventType.SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
             case SDL_EventType.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
             case SDL_EventType.SDL_EVENT_WINDOW_RESIZED:
                 // The event watch usually handled this already mid-drag; handleSizeChanged
@@ -963,7 +974,7 @@ public class SDLWindow : IWindow
                 // didn't see and is a no-op for queued duplicates of watch-handled events.
                 handleSizeChanged();
                 // The safe area is reported relative to the window, so a resize (or moving
-                // between displays, e.g. onto a notched laptop screen) can change it.
+                // between displays, e.g., onto a notched laptop screen) can change it.
                 updateSafeArea();
                 break;
 
@@ -1212,6 +1223,13 @@ public class SDLWindow : IWindow
             applyRelativeMouseMode();
         }
 
+        // Same reason: the cursor shape is chosen while dispatching hover, on the update thread.
+        if (pendingCursorChange)
+        {
+            pendingCursorChange = false;
+            updateSdlCursor();
+        }
+
         bool? targetState;
         RectangleF? targetRect;
 
@@ -1438,6 +1456,19 @@ public class SDLWindow : IWindow
 
     public Reactive<SakuraCursorState> CursorState { get; } = new Reactive<SakuraCursorState>(SakuraCursorState.Default);
 
+    /// <summary>
+    /// Set when <see cref="CursorState"/> changes, and consumed on the main thread in
+    /// <see cref="PollEvents"/>.
+    /// </summary>
+    /// <remarks>
+    /// The cursor is driven by hovering, and hover is dispatched on the <em>update</em> thread —
+    /// <c>AppHost</c> drains its input queue there. SDL window calls must run on the main thread, so
+    /// applying the shape inline would put <c>SDL_CreateSystemCursor</c> and <c>SDL_SetCursor</c> on
+    /// the wrong one on every hover. Deferred exactly as <see cref="RelativeMouseMode"/> is, and for
+    /// the same reason. This was latent until something actually started setting the cursor.
+    /// </remarks>
+    private volatile bool pendingCursorChange;
+
     private unsafe void updateSdlCursor()
     {
         if (window == null)
@@ -1468,6 +1499,14 @@ public class SDLWindow : IWindow
 
                 case SakuraCursorState.NotAllowed:
                     sysCursor = SDL_SystemCursor.SDL_SYSTEM_CURSOR_NOT_ALLOWED;
+                    break;
+
+                case SakuraCursorState.Grab:
+                    sysCursor = SDL_SystemCursor.SDL_SYSTEM_CURSOR_GRAB;
+                    break;
+
+                case SakuraCursorState.Grabbing:
+                    sysCursor = SDL_SystemCursor.SDL_SYSTEM_CURSOR_GRABBING;
                     break;
 
                 default:

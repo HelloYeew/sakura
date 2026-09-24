@@ -17,8 +17,14 @@ namespace Sakura.Framework.Graphics.UserInterface;
 /// <summary>
 /// Abstract base for textbox
 /// </summary>
-public abstract partial class TextBox : Container
+public abstract partial class TextBox : Container, ITabStop, IHasCursor
 {
+    /// <summary>
+    /// An I-beam while the pointer is over the field. Stated by the framework rather than left to
+    /// each application.
+    /// </summary>
+    public virtual CursorState Cursor => CursorState.Text;
+
     /// <summary>
     /// Scrolling container that holds text, selection, caret, and IME overlay.
     /// </summary>
@@ -86,6 +92,10 @@ public abstract partial class TextBox : Container
     private IWindow window { get; set; } = null!;
 
     public override bool AcceptsFocus => true;
+
+    public virtual bool CanBeTabbedTo => true;
+
+    public virtual int TabOrder => 0;
 
     /// <summary>
     /// The current text value.

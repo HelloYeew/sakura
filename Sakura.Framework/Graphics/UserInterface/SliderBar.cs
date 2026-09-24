@@ -13,7 +13,7 @@ namespace Sakura.Framework.Graphics.UserInterface;
 /// <summary>
 /// Abstract base for slider/scrubber controls.
 /// </summary>
-public abstract partial class SliderBar<T> : Container, IHasTooltip where T : struct, INumber<T>, IMinMaxValue<T>
+public abstract partial class SliderBar<T> : Container, IHasTooltip, ITabStop where T : struct, INumber<T>, IMinMaxValue<T>
 {
     /// <summary>
     /// The current value. Assigning to <see cref="ReactiveNumber{T}.Value"/> (directly, via binding,
@@ -97,6 +97,10 @@ public abstract partial class SliderBar<T> : Container, IHasTooltip where T : st
 
     public override bool AcceptsFocus => Enabled.Value;
 
+    public virtual bool CanBeTabbedTo => Enabled.Value;
+
+    public virtual int TabOrder => 0;
+
     public virtual string? TooltipText => DecimalPlaces is int places && !Current.IsInteger
         ? Current.Value.ToString($"F{places}", null)
         : Current.Value.ToString();
@@ -129,11 +133,13 @@ public abstract partial class SliderBar<T> : Container, IHasTooltip where T : st
             if (rounded != e.NewValue)
             {
                 Current.Value = rounded;
-                return;
+
+                if (Current.Value != e.NewValue)
+                    return;
             }
         }
 
-        OnValueChanged(e.NewValue);
+        OnValueChanged(Current.Value);
     }
 
     public override void OnFocus(FocusEvent e)

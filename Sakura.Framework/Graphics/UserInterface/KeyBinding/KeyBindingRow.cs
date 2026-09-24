@@ -11,7 +11,7 @@ using Sakura.Framework.Input.Bindings;
 
 namespace Sakura.Framework.Graphics.UserInterface.KeyBinding;
 
-public abstract partial class KeyBindingRow<T> : Container where T : struct, Enum
+public abstract partial class KeyBindingRow<T> : Container, ITabStop where T : struct, Enum
 {
     /// <summary>
     /// The action this row rebinds.
@@ -55,6 +55,10 @@ public abstract partial class KeyBindingRow<T> : Container where T : struct, Enu
     protected virtual string UnboundText => "(unbound)";
 
     public override bool AcceptsFocus => true;
+
+    public virtual bool CanBeTabbedTo => true;
+
+    public virtual int TabOrder => 0;
 
     protected KeyBindingRow(T action, IEnumerable<KeyCombination> current, int slotCount)
     {

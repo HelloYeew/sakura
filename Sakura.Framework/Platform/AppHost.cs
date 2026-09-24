@@ -859,7 +859,12 @@ public abstract class AppHost : IDisposable
     private void onResize(int physicalWidth, int physicalHeight, int logicalWidth, int logicalHeight)
     {
         Renderer?.ScheduleToDrawThread(() => Renderer.Resize(physicalWidth, physicalHeight, logicalWidth, logicalHeight));
-        if (app != null) app.Size = new Vector2(logicalWidth, logicalHeight);
+
+        if (app == null)
+            return;
+
+        app.Size = new Vector2(logicalWidth, logicalHeight);
+        app.UpdateDpiScale(logicalWidth > 0 ? (float)physicalWidth / logicalWidth : 1.0f);
     }
 
     private void OnMouseDown(MouseButtonEvent e) => app?.OnMouseDown(e);

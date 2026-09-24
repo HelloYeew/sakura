@@ -16,7 +16,7 @@ namespace Sakura.Framework.Graphics.UserInterface;
 /// <summary>
 /// Abstract base for a color picker
 /// </summary>
-public abstract partial class ColorPicker : Container
+public abstract partial class ColorPicker : Container, ITabStop
 {
     /// <summary>
     /// The currently selected color. Assigning to it (directly, via binding, or via UI input)
@@ -53,6 +53,78 @@ public abstract partial class ColorPicker : Container
     /// The hex text input, or null if the picker was built without one.
     /// </summary>
     public TextBox? HexInput => hexInput;
+
+    /// <summary>
+    /// How far one arrow-key press moves hue / saturation / brightness, as a fraction of each
+    /// axis' full range. Hold Control for a 10x coarse step, as <see cref="SliderBar{T}"/> does.
+    /// </summary>
+    public float KeyboardStep { get; set; } = 0.01f;
+
+    public override bool AcceptsFocus => true;
+
+    public virtual bool CanBeTabbedTo => true;
+
+    public virtual int TabOrder => 0;
+
+    /// <summary>
+    /// Arrow keys move saturation (left/right) and brightness (up/down); with Shift they move hue
+    /// instead, so the whole picker is reachable without a pointing device. Home/End jump to the
+    /// ends of whichever axis is being driven.
+    /// </summary>
+    public override bool OnKeyDown(KeyEvent e)
+    {
+        if (!HasFocus)
+            return false;
+
+        // The hex box takes focus in its own right; while it has it, the keys belong to it.
+        if (hexInput?.HasFocus == true)
+            return false;
+
+        float step = (e.Modifiers & KeyModifiers.Control) > 0 ? KeyboardStep * 10f : KeyboardStep;
+        bool shift = (e.Modifiers & KeyModifiers.Shift) > 0;
+
+        switch (e.Key)
+        {
+            case Key.Left:
+                if (shift) hue = wrapHue(hue - step);
+                else saturation = Math.Clamp(saturation - step, 0f, 1f);
+                break;
+
+            case Key.Right:
+                if (shift) hue = wrapHue(hue + step);
+                else saturation = Math.Clamp(saturation + step, 0f, 1f);
+                break;
+
+            case Key.Down:
+                if (shift) hue = wrapHue(hue - step);
+                else brightness = Math.Clamp(brightness - step, 0f, 1f);
+                break;
+
+            case Key.Up:
+                if (shift) hue = wrapHue(hue + step);
+                else brightness = Math.Clamp(brightness + step, 0f, 1f);
+                break;
+
+            case Key.Home:
+                if (shift) hue = 0f;
+                else saturation = 0f;
+                break;
+
+            case Key.End:
+                if (shift) hue = 1f;
+                else saturation = 1f;
+                break;
+
+            default:
+                return false;
+        }
+
+        applyHsvToCurrent();
+        return true;
+    }
+
+    // Hue is circular, so stepping past either end comes back around.
+    private static float wrapHue(float value) => (value % 1f + 1f) % 1f;
 
     // Authoritative HSV state, each in [0, 1].
     private float hue;

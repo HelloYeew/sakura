@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using Sakura.Framework.Allocation;
 using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Colors;
@@ -11,6 +12,7 @@ using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
+using Sakura.Framework.Reactive;
 
 namespace Sakura.Framework.Graphics.Cursor;
 
@@ -29,8 +31,16 @@ public partial class CursorContainer : Container, IRemoveFromDrawVisualiser
     /// </summary>
     public bool HideWhenOutsideWindow { get; set; } = true;
 
+    /// <summary>
+    /// Whether the OS cursor is hidden while this container is drawing one of its own.
+    /// </summary>
+    public bool HideOsCursor { get; init; } = true;
+
     private Vector2 lastScreenSpaceMousePosition;
     private bool isCursorVisible = true;
+
+    private Action<ValueChangedEvent<CursorState>>? cursorStateChanged;
+    private bool hidOsCursor;
 
     public CursorContainer()
     {
@@ -45,11 +55,37 @@ public partial class CursorContainer : Container, IRemoveFromDrawVisualiser
     protected override void LoadComplete()
     {
         base.LoadComplete();
-        // TODO: This should be more centralized. Like add an interface for cursor drawable.
-        if (ActiveCursor is DefaultCursor defaultCursor)
+
+        if (ActiveCursor is ICursorDrawable cursorDrawable)
         {
-            window.CursorState.ValueChanged += state => defaultCursor.ChangeCursor(state.NewValue);
+            cursorDrawable.ChangeCursor(window.CursorState.Value);
+
+            cursorStateChanged = state => cursorDrawable.ChangeCursor(state.NewValue);
+            window.CursorState.ValueChanged += cursorStateChanged;
         }
+
+        if (HideOsCursor && window.CursorVisible)
+        {
+            window.CursorVisible = false;
+            hidOsCursor = true;
+        }
+    }
+
+    protected override void Dispose(bool isDisposing)
+    {
+        if (cursorStateChanged != null)
+        {
+            window.CursorState.ValueChanged -= cursorStateChanged;
+            cursorStateChanged = null;
+        }
+
+        if (hidOsCursor)
+        {
+            window.CursorVisible = true;
+            hidOsCursor = false;
+        }
+
+        base.Dispose(isDisposing);
     }
 
     public override void Update()
@@ -83,7 +119,7 @@ public partial class CursorContainer : Container, IRemoveFromDrawVisualiser
         ActiveCursor.Position = localPosition;
     }
 
-    private partial class DefaultCursor : Container
+    private partial class DefaultCursor : Container, ICursorDrawable
     {
         private readonly IconSprite iconSprite;
 
@@ -129,6 +165,12 @@ public partial class CursorContainer : Container, IRemoveFromDrawVisualiser
                     break;
                 case CursorState.NotAllowed:
                     iconSprite.Icon = IconUsage.Block;
+                    break;
+                case CursorState.Grab:
+                    iconSprite.Icon = IconUsage.BackHand;
+                    break;
+                case CursorState.Grabbing:
+                    iconSprite.Icon = IconUsage.PanTool;
                     break;
                 default:
                     iconSprite.Icon = IconUsage.ArrowSelectorTool;

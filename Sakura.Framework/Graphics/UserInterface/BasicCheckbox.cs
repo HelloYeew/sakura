@@ -45,9 +45,13 @@ public partial class BasicCheckbox : Checkbox
         set => hoverColor = value;
     }
 
+    public Color FocusColor { get; set; } = Color.White;
+
     public BasicCheckbox()
     {
         Size = new Vector2(20);
+        Masking = true;
+        BorderColor = FocusColor;
 
         Child = new Container
         {
@@ -84,4 +88,12 @@ public partial class BasicCheckbox : Checkbox
         background.FadeToColor(UncheckedColor, 100, Easing.OutQuint);
 
     protected override void OnEnabledChanged(bool enabled) => this.FadeTo(enabled ? 1 : 0.5f, 100, Easing.OutQuint);
+
+    protected override void OnFocusGained()
+    {
+        BorderColor = FocusColor;
+        BorderThickness = 2;
+    }
+
+    protected override void OnFocusLost() => BorderThickness = 0;
 }

@@ -2,6 +2,8 @@
 // See the LICENSE file for full license text.
 
 using System.Collections.Generic;
+using System.Linq;
+using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Input.Bindings;
 using Sakura.Framework.Logging;
@@ -25,14 +27,19 @@ public class InputManager : IFocusManager
 
     /// <summary>
     /// The most recently built non-positional input queue (front-to-back). Recomputed by
-    /// <see cref="BuildQueues"/>. Exposed for inspection and testing; not yet used for dispatch.
+    /// <see cref="BuildQueues(Drawable)"/>, and what key events are dispatched along.
     /// </summary>
     public IReadOnlyList<Drawable> NonPositionalInputQueue => nonPositionalQueue;
 
     /// <summary>
     /// The most recently built positional input queue (front-to-back) for the point passed to
-    /// <see cref="BuildQueues"/>. Exposed for inspection and testing; not yet used for dispatch.
+    /// <see cref="BuildQueues(Drawable)"/>, and what mouse events are dispatched along.
     /// </summary>
+    /// <remarks>
+    /// Index 0 is the front-most receiver: <see cref="buildPositional"/> adds each drawable after
+    /// recursing its children. Anything that needs to know "what is under the pointer, nearest
+    /// first" should read this rather than <see cref="HoveredDrawables"/>, which has no order.
+    /// </remarks>
     public IReadOnlyList<Drawable> PositionalInputQueue => positionalQueue;
 
     /// <summary>
@@ -170,6 +177,21 @@ public class InputManager : IFocusManager
                 LastNonPositionalHandler = drawable;
                 return true;
             }
+        }
+
+        // Tab is global navigation, but it is only claimed here once nothing in the queue wanted it.
+        // That ordering lets a control that needs literal tabs (a code editor, say) keep them simply
+        // by returning true from its own OnKeyDown.
+        //
+        // Shift is taken from the event OR the authoritative state: SDL populates KeyEvent.Modifiers
+        // in production, but synthesized input (ManualInputManager.PressKey without an explicit
+        // modifier argument) leaves it empty while the held Shift still shows up in CurrentState.
+        bool shiftHeld = (e.Modifiers & KeyModifiers.Shift) > 0 || (CurrentState.Modifiers & KeyModifiers.Shift) > 0;
+
+        if (e.Key == Key.Tab && MoveFocusToNextTabStop(shiftHeld))
+        {
+            LastNonPositionalHandler = null;
+            return true;
         }
 
         LastNonPositionalHandler = null;
@@ -343,6 +365,11 @@ public class InputManager : IFocusManager
 
     private readonly HashSet<Drawable> newlyHoveredScratch = new HashSet<Drawable>();
 
+    /// <remarks>
+    /// A set, not an ordering: it is filled by iterating a <see cref="HashSet{T}"/>, so the first
+    /// entry is not the front-most drawable. Use <see cref="PositionalInputQueue"/> when depth
+    /// order matters.
+    /// </remarks>
     public IReadOnlyList<Drawable> HoveredDrawables => hoveredDrawables;
 
     /// <summary>
@@ -689,7 +716,7 @@ public class InputManager : IFocusManager
             focusedDrawable.HasFocus = false;
             focusedDrawable.OnFocusLost(new FocusLostEvent());
 
-            if (!focusStack.Contains(focusedDrawable))
+            if (focusedDrawable.RequestsFocus && !focusStack.Contains(focusedDrawable))
             {
                 focusStack.Add(focusedDrawable);
             }
@@ -713,6 +740,133 @@ public class InputManager : IFocusManager
     {
         if (triggerSource != null && triggerSource.RequestsFocus)
             ChangeFocus(triggerSource);
+    }
+
+    public bool MoveFocusToNextTabStop(bool reverse = false)
+    {
+        var scope = resolveTabScope();
+
+        if (scope == null)
+            return false;
+
+        var stops = new List<Drawable>();
+        collectTabStops(scope, stops, isRoot: true);
+
+        if (stops.Count == 0)
+            return false;
+
+        // OrderBy/ThenBy is a stable sort, so equal TabOrder values (the default 0, i.e., nearly
+        // always) keep the document order collectTabStops produced.
+        if (stops.Exists(d => ((ITabStop)d).TabOrder != 0))
+        {
+            stops = stops
+                    .Select((drawable, index) => (drawable, order: ((ITabStop)drawable).TabOrder, index))
+                    .OrderBy(entry => entry.order)
+                    .ThenBy(entry => entry.index)
+                    .Select(entry => entry.drawable)
+                    .ToList();
+        }
+
+        int current = focusedDrawable == null ? -1 : stops.IndexOf(focusedDrawable);
+
+        // Nothing focused (or focus sits outside the scope): enter at whichever end the direction
+        // implies, so Shift+Tab from cold lands on the last stop rather than the first.
+        int next = current < 0
+            ? (reverse ? stops.Count - 1 : 0)
+            : (current + (reverse ? -1 : 1) + stops.Count) % stops.Count;
+
+        if (!ChangeFocus(stops[next]))
+            return false;
+
+        // Only keyboard traversal scrolls: a click lands on something the user can already see, and
+        // yanking the list under the cursor mid-click is disorienting.
+        scrollFocusIntoView(stops[next]);
+        return true;
+    }
+
+    /// <summary>
+    /// The subtree Tab traversal is confined to: the innermost trapping <see cref="ITabStopScope"/>
+    /// above the focused drawable, else the top-most trapping scope anywhere in the tree (so Tab
+    /// enters an open modal that has not taken focus yet), else the whole queue root.
+    /// </summary>
+    private Drawable? resolveTabScope()
+    {
+        if (lastQueueRoot == null)
+            return null;
+
+        for (var p = focusedDrawable; p != null; p = p.Parent)
+        {
+            if (p is ITabStopScope { TrapsTabTraversal: true })
+                return p;
+        }
+
+        if (focusedDrawable == null)
+        {
+            Drawable? trap = null;
+            findTrappingScope(lastQueueRoot, ref trap);
+
+            if (trap != null)
+                return trap;
+        }
+
+        return lastQueueRoot;
+    }
+
+    /// <summary>
+    /// Finds the last trapping scope in document order — the most recently added sibling, which is
+    /// the one drawn on top and so the one the user is actually looking at.
+    /// </summary>
+    private static void findTrappingScope(Drawable drawable, ref Drawable? found)
+    {
+        if (!drawable.IsLoaded || !drawable.IsAlive || drawable.IsEffectivelyHidden)
+            return;
+
+        if (drawable is ITabStopScope { TrapsTabTraversal: true })
+            found = drawable;
+
+        if (drawable is Container container)
+        {
+            var children = container.Children;
+
+            for (int i = 0; i < children.Count; i++)
+                findTrappingScope(children[i], ref found);
+        }
+    }
+
+    /// <summary>
+    /// Brings a keyboard-focused drawable into view inside every scroll container above it. Without
+    /// this, tabbing through a list taller than its viewport silently focuses off-screen controls.
+    /// </summary>
+    private static void scrollFocusIntoView(Drawable focused)
+    {
+        for (var p = focused.Parent; p != null; p = p.Parent)
+        {
+            if (p is ScrollableContainer scroll)
+                scroll.ScrollIntoView(focused);
+        }
+    }
+
+    /// <summary>
+    /// Walks <paramref name="drawable"/> depth-first in document order (self, then children in
+    /// index order), collecting every visible, focusable tab stop.
+    /// </summary>
+    private static void collectTabStops(Drawable drawable, List<Drawable> into, bool isRoot = false)
+    {
+        // The scope root is walked even when it is itself hidden-by-alpha (a fading-in overlay still
+        // owns its stops); descendants are filtered normally.
+        if (!drawable.IsLoaded || !drawable.IsAlive || (!isRoot && drawable.IsEffectivelyHidden))
+            return;
+
+        if (!isRoot && drawable is ITabStop { CanBeTabbedTo: true } && drawable.AcceptsFocus)
+            into.Add(drawable);
+
+        if (drawable is Container container)
+        {
+            var children = container.Children;
+
+            for (int i = 0; i < children.Count; i++)
+                collectTabStops(children[i], into);
+        }
     }
 
     #endregion
