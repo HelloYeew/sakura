@@ -206,7 +206,7 @@ public partial class TextureViewerDisplay : DebugWindow
     /// Shader for the video pool previews, shared by every preview card. Compiled once on the draw
     /// thread, written there and read on the update thread, same as <see cref="VideoSprite"/> does.
     /// </summary>
-    private IShader? videoShader;
+    private VideoShaderSet? videoShader;
 
     /// <summary>
     /// Whether the compiler of <see cref="videoShader"/> has already been scheduled, so a refresh while
@@ -939,7 +939,13 @@ public partial class TextureViewerDisplay : DebugWindow
     /// matched against exactly the string the card ends up showing.
     /// </summary>
     private static string videoCardTitle(IVideoTexture videoTexture, int index, int total)
-        => $"Video Pool Texture {index + 1}/{total} ({videoTexture.Width}x{videoTexture.Height}, {toMegabytes(NativeTextureMemory.BytesForVideoPlanes(videoTexture.Width, videoTexture.Height))})";
+        => $"Video Pool Texture {index + 1}/{total} ({videoTexture.Width}x{videoTexture.Height}, {videoSizeText(videoTexture.PlaneBytes)})";
+
+    /// <summary>
+    /// How a video texture's plane cost reads on a card. A zero-copy texture owns nothing, so a size in
+    /// megabytes would be a lie and a bare "0 MB" would look like a bug — it says what it actually is.
+    /// </summary>
+    private static string videoSizeText(long planeBytes) => planeBytes > 0 ? toMegabytes(planeBytes) : "borrowed";
 
     /// <summary>
     /// A card's background. Opaque and dark, so that what a label contrasts against is a known colour
@@ -995,7 +1001,7 @@ public partial class TextureViewerDisplay : DebugWindow
     /// <summary>
     /// A state line for one pooled video texture, describing whether its preview can show anything.
     /// </summary>
-    internal static (string Text, Color Color, float Alpha) DescribeVideoState(IVideoTexture videoTexture, IShader? shader)
+    internal static (string Text, Color Color, float Alpha) DescribeVideoState(IVideoTexture videoTexture, VideoShaderSet? shader)
     {
         if (shader == null)
             return ("compiling preview shader", Color.LightGray, 1);
@@ -1103,7 +1109,7 @@ internal partial class TextureViewerCard : Container
     private VideoTexturePreview? videoPreview;
 
     private CardEntry entry;
-    private IShader? shader;
+    private VideoShaderSet? shader;
     private int boundGeneration = -1;
     private int boundIndex = -1;
 
@@ -1177,7 +1183,7 @@ internal partial class TextureViewerCard : Container
     /// Points this card at an entry. Cheap to call every frame: an entry it is already showing only
     /// costs the two integer comparisons, which is what makes following the scroll affordable.
     /// </summary>
-    public void Bind(CardEntry newEntry, int generation, int index, IShader? videoShader)
+    public void Bind(CardEntry newEntry, int generation, int index, VideoShaderSet? videoShader)
     {
         bool sameEntry = generation == boundGeneration && index == boundIndex;
 
@@ -1342,15 +1348,25 @@ internal partial class VideoPoolInfoCard : Container
         boundIndex = index;
         pool = entry.Pool;
 
-        // The YUV planes, not width * height * 4: a video texture is three single-channel planes, so it
-        // costs 1.5 bytes per pixel. The same figure the "video" total in the native memory line is
-        // built from, so the two agree.
-        long bytes = NativeTextureMemory.BytesForVideoPlanes(entry.PoolWidth, entry.PoolHeight);
+        // Asked of a texture rather than derived from the pool's dimensions: since the Metal zero-copy
+        // path those no longer determine the cost, and a borrowed plane set costs nothing at all. This
+        // is the same figure the "video" total in the native memory line is built from, so the two
+        // agree — which they stopped doing when this was arithmetic on width and height.
         int total = pool?.Count ?? 0;
+        long bytes = pool is { Count: > 0 } ? pool[0].PlaneBytes : 0;
 
         dimensionsText.Text = $"{entry.PoolWidth}x{entry.PoolHeight},";
-        eachText.Text = $"{TextureViewerDisplay.ToMegabytes(bytes)} each";
-        poolText.Text = $"Pool: {total} ({TextureViewerDisplay.ToMegabytes(bytes * total)})";
+
+        if (bytes > 0)
+        {
+            eachText.Text = $"{TextureViewerDisplay.ToMegabytes(bytes)} each";
+            poolText.Text = $"Pool: {total} ({TextureViewerDisplay.ToMegabytes(bytes * total)})";
+        }
+        else
+        {
+            eachText.Text = "borrowed from the decoder";
+            poolText.Text = $"Pool: {total}";
+        }
 
         RefreshLiveLabels();
     }
