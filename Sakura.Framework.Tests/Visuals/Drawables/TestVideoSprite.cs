@@ -25,11 +25,15 @@ public partial class TestVideoSprite : TestScene
     [Resolved]
     private VideoStore videoStore { get; set; } = null!;
 
-    private void createVideo()
+    private const string nv12_video = "test-h264.mp4";
+
+    private void createVideo() => createVideo("test.avi");
+
+    private void createVideo(string name)
     {
-        AddStep("Add VideoSprite", () =>
+        AddStep($"Add VideoSprite ({name})", () =>
         {
-            videoSprite = new VideoSprite(videoStore.GetDecoder("test.avi"))
+            videoSprite = new VideoSprite(videoStore.GetDecoder(name))
             {
                 Anchor = Anchor.Centre,
                 Origin = Anchor.Centre,
@@ -260,5 +264,25 @@ public partial class TestVideoSprite : TestScene
 
         AddStep("Set FillMode to Tile", () => videoSprite.FillMode = TextureFillMode.Tile);
         AddWaitStep("Observe Tile mode", 500);
+    }
+
+    [Test]
+    public void TestNv12TextureFillModes()
+    {
+        createVideo(nv12_video);
+
+        AddWaitStep("Let a frame arrive", 500);
+
+        AddStep("Set FillMode to Stretch", () => videoSprite.FillMode = TextureFillMode.Stretch);
+        AddWaitStep("Observe Stretch mode", 500);
+
+        AddStep("Set FillMode to Fit", () => videoSprite.FillMode = TextureFillMode.Fit);
+        AddWaitStep("Observe Fit mode", 500);
+
+        AddStep("Set FillMode to Fill", () => videoSprite.FillMode = TextureFillMode.Fill);
+        AddWaitStep("Observe Fill mode", 500);
+
+        AddStep("Set FillMode to Tile", () => videoSprite.FillMode = TextureFillMode.Tile);
+        AddWaitStep("Observe Tile mode — edges must not bleed or wrap chroma", 1500);
     }
 }

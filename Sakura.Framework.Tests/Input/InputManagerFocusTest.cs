@@ -55,6 +55,18 @@ public class InputManagerFocusTest
         return box;
     }
 
+    /// <summary>
+    /// A drawable that actively requests focus (a modal / focused overlay). Only these are suspended
+    /// onto the focus stack for later restore -- see <see cref="InputManager.ChangeFocus"/>.
+    /// </summary>
+    private FocusBox addRequester()
+    {
+        var box = new FocusBox { AcceptsFocusValue = true, RequestsFocusValue = true, Size = new Vector2(50) };
+        root.Add(box);
+        settle();
+        return box;
+    }
+
     [Test]
     public void TestChangeFocusAcquiresAndNotifies()
     {
@@ -104,7 +116,25 @@ public class InputManagerFocusTest
     }
 
     [Test]
-    public void TestFocusTransferPushesPreviousOntoStack()
+    public void TestFocusTransferPushesPreviousRequesterOntoStack()
+    {
+        var first = addRequester();
+        var second = addFocusable();
+
+        manager.ChangeFocus(first);
+        manager.ChangeFocus(second);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(manager.FocusedDrawable, Is.SameAs(second));
+            Assert.That(first.HasFocus, Is.False);
+            Assert.That(second.HasFocus, Is.True);
+            Assert.That(manager.FocusStack, Does.Contain(first), "A focus REQUESTER is suspended onto the stack when covered.");
+        });
+    }
+
+    [Test]
+    public void TestFocusTransferDoesNotStackPlainFocusable()
     {
         var first = addFocusable();
         var second = addFocusable();
@@ -116,35 +146,57 @@ public class InputManagerFocusTest
         {
             Assert.That(manager.FocusedDrawable, Is.SameAs(second));
             Assert.That(first.HasFocus, Is.False);
-            Assert.That(second.HasFocus, Is.True);
-            Assert.That(manager.FocusStack, Does.Contain(first), "The previously focused drawable is pushed onto the stack.");
+            Assert.That(manager.FocusStack, Is.Empty, "Moving between two plain focusables leaves no suspended focus behind.");
         });
     }
 
     [Test]
-    public void TestReleaseRestoresPreviousFromStack()
+    public void TestReleaseRestoresSuspendedRequesterFromStack()
     {
-        var first = addFocusable();
+        var overlay = addRequester();
         var second = addFocusable();
 
-        manager.ChangeFocus(first);
+        manager.ChangeFocus(overlay);
         manager.ChangeFocus(second);
 
-        // Releasing the current focus restores the previous holder from the stack.
+        // Releasing the current focus restores the suspended requester (e.g. a dropdown closing
+        // hands focus back to the still-open overlay underneath it).
         manager.ChangeFocus(null);
 
         Assert.Multiple(() =>
         {
-            Assert.That(manager.FocusedDrawable, Is.SameAs(first), "Focus is restored to the previous drawable on release.");
-            Assert.That(first.HasFocus, Is.True);
-            Assert.That(manager.FocusStack, Does.Not.Contain(first));
+            Assert.That(manager.FocusedDrawable, Is.SameAs(overlay), "Focus is restored to the suspended requester on release.");
+            Assert.That(overlay.HasFocus, Is.True);
+            Assert.That(manager.FocusStack, Does.Not.Contain(overlay));
+        });
+    }
+
+    [Test]
+    public void TestReleaseAfterLateralMoveClearsFocusEntirely()
+    {
+        var first = addFocusable();
+        var second = addFocusable();
+
+        // Click text box A, then text box B, then empty space. Focus must end up on NOTHING --
+        // it must not bounce back to A.
+        manager.ChangeFocus(first);
+        manager.ChangeFocus(second);
+        manager.ChangeFocus(null);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(manager.FocusedDrawable, Is.Null, "Releasing focus after a lateral move leaves nothing focused.");
+            Assert.That(first.HasFocus, Is.False);
+            Assert.That(second.HasFocus, Is.False);
+            Assert.That(first.FocusCount, Is.EqualTo(1), "The first drawable is never re-focused.");
+            Assert.That(manager.FocusStack, Is.Empty);
         });
     }
 
     [Test]
     public void TestStackSkipsDeadDrawableOnRestore()
     {
-        var first = addFocusable();
+        var first = addRequester();
         var second = addFocusable();
 
         manager.ChangeFocus(first);

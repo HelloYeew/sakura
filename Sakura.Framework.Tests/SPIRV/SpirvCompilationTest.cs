@@ -19,6 +19,7 @@ public class SpirvCompilationTest
     private static string? shaderFrag;
     private static string? videoVert;
     private static string? videoFrag;
+    private static string? videoNv12Frag;
 
     [OneTimeSetUp]
     public void LoadFrameworkShaders()
@@ -29,8 +30,9 @@ public class SpirvCompilationTest
         {
             shaderVert = readShaderWithIncludes(shaderDir, "shader.vert");
             shaderFrag = readShaderWithIncludes(shaderDir, "shader.frag");
-            videoVert  = readShaderWithIncludes(shaderDir, "video.vert");
-            videoFrag  = readShaderWithIncludes(shaderDir, "video.frag");
+            videoVert = readShaderWithIncludes(shaderDir, "video.vert");
+            videoFrag = readShaderWithIncludes(shaderDir, "video.frag");
+            videoNv12Frag = readShaderWithIncludes(shaderDir, "video_nv12.frag");
         }
     }
 
@@ -140,6 +142,48 @@ public class SpirvCompilationTest
         Assert.That(result.FragmentShader, Does.Contain("SV_Target"));
 
         Console.WriteLine($"video shader → HLSL: vert={result.VertexShader.Length}b, frag={result.FragmentShader.Length}b");
+    }
+
+    /// <summary>
+    /// The NV12 variant differs from <c>video.frag</c> only in its fetch, but it is the fetch that the
+    /// cross-compilers have to agree about: two sampled images rather than three, and a two-channel
+    /// read from the second. A variant that compiled but landed its samplers at unexpected slots would
+    /// draw a picture, just not the right one.
+    /// </summary>
+    [Test]
+    public void FrameworkVideoNv12Shader_CompilesTo_AllTargets()
+    {
+        if (videoNv12Frag == null)
+            Assert.Ignore("Framework video shader files not found — skipping.");
+        if (!shadersAreSpirVCompatible(videoVert))
+            Assert.Ignore("Framework video shaders are not #version 450 yet.");
+
+        var glsl = compileVertexFragment(videoVert!, videoNv12Frag!, CrossCompileTarget.GLSL);
+        var msl = compileVertexFragment(videoVert!, videoNv12Frag!, CrossCompileTarget.MSL,
+            options: new CrossCompileOptions(fixClipSpaceZ: false, invertVertexOutputY: true));
+        var hlsl = compileVertexFragment(videoVert!, videoNv12Frag!, CrossCompileTarget.HLSL,
+            options: new CrossCompileOptions(fixClipSpaceZ: true, invertVertexOutputY: true));
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(glsl.FragmentShader, Does.Contain("void main"));
+            Assert.That(msl.FragmentShader, Does.Contain("#include <metal_stdlib>"));
+            Assert.That(hlsl.FragmentShader, Does.Contain("SV_Target"));
+
+            // Metal binds planes by slot in BindPlanes, so the two samplers must land at texture(0)
+            // and texture(1) — there is no name-based fallback on that backend to save a mismatch.
+            Assert.That(msl.FragmentShader, Does.Contain("texture(0)"));
+            Assert.That(msl.FragmentShader, Does.Contain("texture(1)"));
+            Assert.That(msl.FragmentShader, Does.Not.Contain("texture(2)"), "NV12 has two planes; a third sampler means the variant is sampling something that is never bound");
+
+            // Same on Direct3D 11, where BindPlanes fills t0/t1 and nothing else. Matched on the full
+            // register syntax: a bare "t2" also occurs inside every "float2" in the generated source.
+            Assert.That(hlsl.FragmentShader, Does.Contain("register(t0)"));
+            Assert.That(hlsl.FragmentShader, Does.Contain("register(t1)"));
+            Assert.That(hlsl.FragmentShader, Does.Not.Contain("register(t2)"));
+        }
+
+        Console.WriteLine($"video_nv12 → GLSL frag={glsl.FragmentShader.Length}b, MSL frag={msl.FragmentShader.Length}b, HLSL frag={hlsl.FragmentShader.Length}b");
     }
 
     #endregion

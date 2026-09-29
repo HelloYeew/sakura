@@ -80,7 +80,7 @@ public class ContainerMaskScaleTest
     [Test]
     public void TestCircularContainerStaysCircleUnderScale()
     {
-        CircularContainer circle = null!;
+        CircularContainer circle;
 
         var scaled = new Container
         {
@@ -116,7 +116,7 @@ public class ContainerMaskScaleTest
     [Test]
     public void TestCircularContainerStaysCircleUnderDownscale()
     {
-        CircularContainer circle = null!;
+        CircularContainer circle;
 
         var scaled = new Container
         {
@@ -177,7 +177,7 @@ public class ContainerMaskScaleTest
     [Test]
     public void TestBorderThicknessAndRadiusScaleTogether()
     {
-        Container bordered = null!;
+        Container bordered;
 
         var scaled = new Container
         {
@@ -294,8 +294,8 @@ public class ContainerMaskScaleTest
             public Color BorderColor { get; }
         }
 
-        public List<MaskCall> Pushes { get; } = new();
-        public List<MaskCall> Pops { get; } = new();
+        public List<MaskCall> Pushes { get; } = new List<MaskCall>();
+        public List<MaskCall> Pops { get; } = new List<MaskCall>();
 
         public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius)
             => Pushes.Add(new MaskCall(maskCenter, maskHalfSize, shearX, cornerRadius, 0f));
@@ -329,7 +329,8 @@ public class ContainerMaskScaleTest
         public void FlushBatch() { }
         public void RestoreMainShader() { }
         public IShader CreateShader(Storage storage, string vertexPath, string fragmentPath) => throw new NotSupportedException();
-        public INativeVideoTexture CreateVideoTexture(int width, int height) => throw new NotSupportedException();
+        public INativeVideoTexture CreateVideoTexture(int width, int height, VideoPlaneLayout layout, bool fromHardwareFrame = false) => throw new NotSupportedException();
+        public unsafe bool CanSampleHardwareFrame(FFmpeg.AutoGen.AVFrame* frame) => false;
         public INativeTexture CreateNativeTexture(int width, int height) => throw new NotSupportedException();
         public IFrameBuffer CreateFrameBuffer(int width, int height, bool pixelSnapping = false) => throw new NotSupportedException();
         public void BindFrameBuffer(IFrameBuffer frameBuffer, RectangleF sourceRect, Color clearColor = default) { }

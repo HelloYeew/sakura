@@ -134,6 +134,82 @@ public partial class TestTooltip : ManualInputManagerTestScene
         AddWaitStep("Tooltip should hide", 300);
     }
 
+    /// <summary>
+    /// The tooltip actually appears after the cursor dwells and hides again when it leaves.
+    /// </summary>
+    [Test]
+    public void TestTooltipAppearsAfterDwellAndHidesOnLeave()
+    {
+        ProbeTooltipContainer container = null!;
+        TooltipBox box = null!;
+
+        AddStep("Clear the default container", () => TestContent.Clear());
+        AddStep("Add a container we can observe", () => InputManager.Add(container = new ProbeTooltipContainer()));
+
+        AddStep("Add box", () =>
+        {
+            TestContent.Add(box = new TooltipBox("Hover me")
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                TooltipText = "Appeared.",
+                Size = new Vector2(160, 60),
+                Color = Color.SteelBlue
+            });
+        });
+
+        AddStep("Hover the box", () => InputManager.MoveMouseTo(box));
+        AddUntilStep("Tooltip appears", () => container.Tooltip.Alpha > 0);
+
+        AddStep("Move away", () => InputManager.MoveMouseTo(new Vector2(0, 0)));
+        AddUntilStep("Tooltip hides", () => container.Tooltip.Alpha == 0);
+    }
+
+    /// <summary>
+    /// Hovering must not be enough on its own — the cursor has to settle first.
+    /// </summary>
+    [Test]
+    public void TestTooltipDoesNotAppearWhileTheCursorKeepsMoving()
+    {
+        ProbeTooltipContainer container = null!;
+        TooltipBox box = null!;
+
+        AddStep("Clear the default container", () => TestContent.Clear());
+        AddStep("Add a container we can observe", () => InputManager.Add(container = new ProbeTooltipContainer()));
+
+        AddStep("Add a wide box", () =>
+        {
+            TestContent.Add(box = new TooltipBox("Sweep across me")
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                TooltipText = "Should not appear.",
+                Size = new Vector2(600, 200),
+                Color = Color.SteelBlue
+            });
+        });
+
+        // Each move is well beyond AppearRadius, so the dwell restarts every frame.
+        for (int i = 0; i < 20; i++)
+        {
+            int step = i;
+            AddStep($"Drag across, {step}", () =>
+                InputManager.MoveMouseTo(new Vector2(box.DrawRectangle.X + 20 + (step * 25), box.DrawRectangle.Y + 40)));
+        }
+
+        AddAssert("Still hidden", () => container.Tooltip.Alpha == 0);
+    }
+
+    /// <summary>
+    /// Keeps a reference to the tooltip, which the base container holds privately.
+    /// </summary>
+    private partial class ProbeTooltipContainer : TooltipContainer
+    {
+        public BasicTooltip Tooltip { get; private set; } = null!;
+
+        protected override BasicTooltip CreateTooltip() => Tooltip = base.CreateTooltip();
+    }
+
     [Test]
     public void TestNestedTooltip()
     {

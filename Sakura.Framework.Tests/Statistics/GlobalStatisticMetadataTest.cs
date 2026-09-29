@@ -72,6 +72,10 @@ public class GlobalStatisticMetadataTest
             var hz = GlobalStatistics.Get<double>("Metadata Test", "Rate", StatisticKind.Gauge, StatisticUnit.Hertz);
             hz.Value = 60;
             Assert.That(hz.DisplayValue, Is.EqualTo("60 Hz"));
+
+            var throughput = GlobalStatistics.Get<double>("Metadata Test", "Throughput", StatisticKind.Gauge, StatisticUnit.BytesPerSecond);
+            throughput.Value = 1536;
+            Assert.That(throughput.DisplayValue, Is.EqualTo("1.5 KB/s"));
         }
     }
 

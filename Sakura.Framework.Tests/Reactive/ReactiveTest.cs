@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using NUnit.Framework;
+using Sakura.Framework.Extensions.ReactiveExtensions;
 using Sakura.Framework.Reactive;
 using Sakura.Framework.Logging;
 
@@ -270,6 +271,68 @@ public class ReactiveTest
         reactive.Value = 7;
 
         Assert.That(seen, Is.EqualTo(new[] { 7 }));
+    }
+
+    #endregion
+
+    #region extension test
+
+    [Test]
+    public void TestBindBothWaysToAdoptsTheSourceValue()
+    {
+        var control = new Reactive<int>(7);
+        var config = new Reactive<int>(42);
+
+        control.BindBothWaysTo(config);
+
+        Assert.That(control.Value, Is.EqualTo(42));
+        Assert.That(config.Value, Is.EqualTo(42));
+    }
+
+    [Test]
+    public void TestBindBothWaysToPropagatesInBothDirections()
+    {
+        var control = new Reactive<int>(0);
+        var config = new Reactive<int>(1);
+
+        control.BindBothWaysTo(config);
+
+        control.Value = 5;
+        Assert.That(config.Value, Is.EqualTo(5), "a change on the target should reach the source");
+
+        config.Value = 9;
+        Assert.That(control.Value, Is.EqualTo(9), "a change on the source should reach the target");
+    }
+
+    /// <summary>
+    /// The pairing must not echo forever. Reactive ignores an incoming bound value it already holds,
+    /// which is what stops it after one hop; this counts the notifications to prove it.
+    /// </summary>
+    [Test]
+    public void TestBindBothWaysToDoesNotLoop()
+    {
+        var control = new Reactive<int>(0);
+        var config = new Reactive<int>(0);
+
+        control.BindBothWaysTo(config);
+
+        int controlChanges = 0;
+        int configChanges = 0;
+        control.ValueChanged += _ => controlChanges++;
+        config.ValueChanged += _ => configChanges++;
+
+        control.Value = 3;
+
+        Assert.That(controlChanges, Is.EqualTo(1));
+        Assert.That(configChanges, Is.EqualTo(1));
+    }
+
+    [Test]
+    public void TestBindBothWaysToRejectsNull()
+    {
+        var reactive = new Reactive<int>(0);
+
+        Assert.Throws<ArgumentNullException>(() => reactive.BindBothWaysTo(null!));
     }
 
     #endregion

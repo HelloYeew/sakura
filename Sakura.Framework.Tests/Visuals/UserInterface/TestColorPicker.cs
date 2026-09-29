@@ -207,4 +207,124 @@ public partial class TestColorPicker : ManualInputManagerTestScene
             return h > 0.25f && h < 0.42f;
         });
     }
+
+    /// <summary>
+    /// A marker at the edge of the square or the end of the hue bar is drawn whole. Both used to sit
+    /// inside their masked area, so pure red — full saturation and value, at the square's top-right
+    /// corner and the hue bar's left end — showed a quarter of one marker and half of the other. Every
+    /// fully bright colour sits on the square's top edge.
+    /// </summary>
+    [Test]
+    public void TestMarkersAreNotClippedByTheirArea()
+    {
+        MarkerProbePicker probe = null!;
+
+        AddStep("Add a rounded probe picker", () =>
+        {
+            TestContent.Clear();
+            TestContent.Add(probe = new MarkerProbePicker
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                SaturationValueCornerRadius = 8,
+                HueBarCornerRadius = 12,
+            });
+        });
+        AddUntilStep("Laid out", () => probe.HueSlider.DrawRectangle.Width > 0);
+        AddStep("Pure red", () => probe.Current.Value = Color.Red);
+
+        AddAssert("Nothing masks the square's marker", () => !maskedBetween(probe.SquareMarker, probe));
+        AddAssert("Nothing masks the hue marker", () => !maskedBetween(probe.HueMarker, probe));
+
+        // Still rounded: the gradients are clipped, only the markers are not.
+        AddAssert("The square still masks its gradients", () =>
+            probe.SaturationValueArea is Container { Masking: true, CornerRadius: 8 });
+        AddAssert("And so does the hue bar", () =>
+            probe.HueSlider is Container { Masking: true, CornerRadius: 12 });
+    }
+
+    /// <summary>
+    /// An initializer value for <see cref="ColorPicker.Spacing"/> is used. The layout was built from it
+    /// in the constructor, which runs before initializers are assigned, so it was silently ignored.
+    /// </summary>
+    [Test]
+    public void TestSpacingFromAnInitialiserIsUsed()
+    {
+        BasicColorPicker spaced = null!;
+
+        AddStep("Add a picker spaced at 30", () =>
+        {
+            TestContent.Clear();
+            TestContent.Add(spaced = new BasicColorPicker { Spacing = 30 });
+        });
+        AddUntilStep("Laid out", () => spaced.HueSlider.DrawRectangle.Width > 0);
+
+        AddAssert("30 between the square and the hue bar", () =>
+        {
+            float squareBottom = spaced.SaturationValueArea.ToScreenSpace(new Vector2(0, spaced.SaturationValueArea.DrawHeight)).Y;
+            float hueTop = spaced.HueSlider.ToScreenSpace(Vector2.Zero).Y;
+            return System.Math.Abs(hueTop - squareBottom - 30) < 0.5f;
+        });
+    }
+
+    /// <summary>
+    /// A picker relatively sized on X fills its container's width, square, hue bar and hex row alike,
+    /// and follows the container when it resizes. A fixed width was all a picker could have, and one
+    /// placed in a scroll area that insets its content for the scrollbar overflowed it and was clipped.
+    /// </summary>
+    [Test]
+    public void TestFillsItsWidthWhenRelativelySized()
+    {
+        Container frame = null!;
+        BasicColorPicker filling = null!;
+
+        AddStep("Add a filling picker in a 260-wide frame", () =>
+        {
+            TestContent.Clear();
+            TestContent.Add(frame = new Container
+            {
+                Width = 260,
+                AutoSizeAxes = Axes.Y,
+                Child = filling = new BasicColorPicker
+                {
+                    RelativeSizeAxes = Axes.X,
+                    AutoSizeAxes = Axes.Y,
+                },
+            });
+        });
+
+        AddUntilStep("The square fills it", () => System.Math.Abs(filling.SaturationValueArea.DrawWidth - 260) < 0.5f);
+        AddAssert("So does the hue bar", () => System.Math.Abs(filling.HueSlider.DrawWidth - 260) < 0.5f);
+        AddAssert("And the hex row ends where the square does", () => rightOf(filling.HexInput!.Parent!) <= rightOf(filling.SaturationValueArea) + 0.5f);
+
+        AddStep("Narrow the frame to 200", () => frame.Width = 200);
+        AddUntilStep("The square follows", () => System.Math.Abs(filling.SaturationValueArea.DrawWidth - 200) < 0.5f);
+        AddAssert("And the hex row still fits", () => rightOf(filling.HexInput!.Parent!) <= rightOf(filling.SaturationValueArea) + 0.5f);
+    }
+
+    private static float rightOf(Drawable d) => d.ToScreenSpace(new Vector2(d.DrawWidth, 0)).X;
+
+    private static bool maskedBetween(Drawable drawable, Drawable root)
+    {
+        for (var parent = drawable.Parent; parent != null && parent != root; parent = parent.Parent)
+        {
+            if (parent is Container { Masking: true })
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Keeps hold of the markers it creates, which the picker otherwise keeps private.
+    /// </summary>
+    private partial class MarkerProbePicker : BasicColorPicker
+    {
+        public Drawable SquareMarker { get; private set; } = null!;
+        public Drawable HueMarker { get; private set; } = null!;
+
+        protected override Drawable CreateSaturationValueMarker() => SquareMarker = base.CreateSaturationValueMarker();
+
+        protected override Drawable CreateHueMarker() => HueMarker = base.CreateHueMarker();
+    }
 }
