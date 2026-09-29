@@ -88,6 +88,25 @@ public partial class CursorContainer : Container, IRemoveFromDrawVisualiser
         base.Dispose(isDisposing);
     }
 
+    /// <summary>
+    /// Tells the cursor drawable about every press, and lets the press carry on to whatever is under
+    /// the pointer.
+    /// </summary>
+    /// <remarks>
+    /// The container, not the cursor drawable, because the container fills the window and sits in
+    /// front of everything else, so every press reaches it. The cursor used to flash from its own
+    /// <c>OnClick</c>, which only fired when the press happened to land inside its box: it is moved to
+    /// the pointer a frame late and its box starts at the tip, so a press made on the move — up or to
+    /// the left, or further than its own size — missed it and nothing flashed.
+    /// </remarks>
+    public override bool OnMouseDown(MouseButtonEvent e)
+    {
+        if (ActiveCursor is ICursorDrawable cursorDrawable)
+            cursorDrawable.ButtonPressed(e.Button);
+
+        return false;
+    }
+
     public override void Update()
     {
         base.Update();
@@ -123,6 +142,12 @@ public partial class CursorContainer : Container, IRemoveFromDrawVisualiser
     {
         private readonly IconSprite iconSprite;
 
+        /// <summary>
+        /// The cursor is not something the pointer points at. Left in the positional queue it could be
+        /// hovered, and left marked as dragged by the base mouse-down on every press it did land in.
+        /// </summary>
+        public override bool HandlePositionalInput => false;
+
         public DefaultCursor()
         {
             Size = new Vector2(25);
@@ -138,11 +163,7 @@ public partial class CursorContainer : Container, IRemoveFromDrawVisualiser
             });
         }
 
-        public override bool OnClick(MouseButtonEvent e)
-        {
-            iconSprite.FlashColor(Color.White, 300, Easing.OutQuint);
-            return base.OnClick(e);
-        }
+        public void ButtonPressed(MouseButton button) => iconSprite.FlashColor(Color.White, 300, Easing.OutQuint);
 
         public void ChangeCursor(CursorState state)
         {
