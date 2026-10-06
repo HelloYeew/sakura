@@ -34,7 +34,7 @@ public partial class CursorContainer : Container, IRemoveFromDrawVisualiser
     /// <summary>
     /// Whether the OS cursor is hidden while this container is drawing one of its own.
     /// </summary>
-    public bool HideOsCursor { get; init; } = true;
+    public bool HideOsCursor { get; init; }
 
     private Vector2 lastScreenSpaceMousePosition;
     private bool isCursorVisible = true;
