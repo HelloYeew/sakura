@@ -40,7 +40,7 @@ public partial class CursorContainer : Container, IRemoveFromDrawVisualiser
     private bool isCursorVisible = true;
 
     private Action<ValueChangedEvent<CursorState>>? cursorStateChanged;
-    private bool hidOsCursor;
+    private bool hideOsCursor;
 
     public CursorContainer()
     {
@@ -67,7 +67,7 @@ public partial class CursorContainer : Container, IRemoveFromDrawVisualiser
         if (HideOsCursor && window.CursorVisible)
         {
             window.CursorVisible = false;
-            hidOsCursor = true;
+            hideOsCursor = true;
         }
     }
 
@@ -79,10 +79,10 @@ public partial class CursorContainer : Container, IRemoveFromDrawVisualiser
             cursorStateChanged = null;
         }
 
-        if (hidOsCursor)
+        if (hideOsCursor)
         {
             window.CursorVisible = true;
-            hidOsCursor = false;
+            hideOsCursor = false;
         }
 
         base.Dispose(isDisposing);
