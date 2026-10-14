@@ -4,6 +4,7 @@
 #include "sakura_audio.h"
 #include "sakura_atomic.h"
 
+#include <limits.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,6 +47,11 @@ static uint32_t handle_generation(SakuraAudioHandle handle) { return ((uint32_t)
 #define SOURCE_STATIC 1u
 #define SOURCE_STREAM 2u
 
+// Fields written by different threads are kept at least this far apart, so a store on one thread does
+// not evict a line another thread is reading. 128 rather than 64: Apple silicon's lines are 128 bytes,
+// and x86's adjacent-line prefetcher fetches in pairs, so 64 would still share on both.
+#define CACHE_LINE_BYTES 128
+
 // ---------------------------------------------------------------------------------------------
 // Metering constants, matched to the managed AmplitudeTap so both backends' visualisers behave the
 // same. 64 frames folded into one peak-hold segment, 16 segments in the window: ~21 ms at 48 kHz,
@@ -69,29 +75,52 @@ static uint32_t handle_generation(SakuraAudioHandle handle) { return ((uint32_t)
 // Commands drained per callback. Bounded, like every other loop on this thread.
 #define COMMANDS_PER_CALLBACK 256
 
+// The most audio handed to SDL in one put. A device callback asks for its whole period at once, and
+// every put takes SDL's stream lock and walks its queue, so the period is mixed block by block into
+// one buffer and handed over in a single call. Only a request larger than this is split.
+#define PUT_CHUNK_FRAMES 4096
+
+// Biquad state below this is flushed to zero once per block. Well under anything audible (-300 dB),
+// and well above the subnormal range, where x86 takes a microcode assist on every multiply. A filter
+// left running on a silent input otherwise decays into exactly that range and stays there.
+#define FILTER_STATE_FLOOR 1e-15
+
 // ---------------------------------------------------------------------------------------------
 // Ring buffer
 //
 // SPSC, one writer thread per voice, drained by the audio thread. Positions are monotonic 64-bit
-// counters masked into the storage, so neither side ever has to reason about wraparound.
+// counters reduced modulo the capacity, so neither side ever has to reason about wraparound, and the
+// capacity is a whole number of frames, so a frame never straddles the end of the storage and the
+// audio thread can read straight out of it.
 //
 // The discard-on-seek protocol is the only interesting part. The writer cannot move the read cursor
 // -- it does not know where the audio thread is, and moving it under a callback that is mid-copy is
 // how a seek becomes a click -- so the writer posts a flush (a target position and an epoch bump)
 // and the audio thread performs it, jumping its read cursor to the target. Until it has, the writer
 // must not write: sakura_audio_stream_flush_pending is what it waits on.
+//
+// The two positions are the classic acquire/release pairing: each side publishes its own position
+// with a release store once it is done with the floats behind it, and reads the other side's with an
+// acquire load before touching any. The epochs and the flush target stay sequentially consistent;
+// they move once per seek.
 
 typedef struct Ring
 {
     float *data;
-    uint64_t capacity; // floats, a power of two
+    uint64_t capacity; // floats, a whole number of frames
 
-    sakura_atomic_u64 writePosition; // writer-owned
-    sakura_atomic_u64 readPosition;  // audio-thread-owned
+    // Writer-owned. The decode thread stores to these on every write.
+    sakura_atomic_u64 writePosition;
     sakura_atomic_u64 flushTarget;
-    sakura_atomic_u32 writeEpoch; // writer-owned
-    sakura_atomic_u32 readEpoch;  // audio-thread-owned
+    sakura_atomic_u32 writeEpoch;
     sakura_atomic_u32 drained;
+
+    char writerPadding[CACHE_LINE_BYTES];
+
+    // Audio-thread-owned. On a line of their own, so the writer's stores above never evict the cursor
+    // the callback is advancing.
+    sakura_atomic_u64 readPosition;
+    sakura_atomic_u32 readEpoch;
 } Ring;
 
 static uint64_t ring_available(const Ring *ring)
@@ -107,25 +136,27 @@ static int ring_flush_pending(const Ring *ring)
 }
 
 // Audio thread: applies any posted discard. Run for every live streaming voice at the top of a
-// callback, playing or not -- a paused voice's seek has to complete too.
-static void ring_sync(Ring *ring)
+// callback once a flush has been posted, playing or not -- a paused voice's seek has to complete too.
+static int ring_sync(Ring *ring)
 {
     uint32_t writeEpoch = sakura_atomic_load_u32(&ring->writeEpoch);
 
     if (writeEpoch == sakura_atomic_load_u32(&ring->readEpoch))
-        return;
+        return 0;
 
     sakura_atomic_store_u64(&ring->readPosition, sakura_atomic_load_u64(&ring->flushTarget));
     sakura_atomic_store_u32(&ring->readEpoch, writeEpoch);
+    return 1;
 }
 
+// Writer thread.
 static int ring_write(Ring *ring, const float *source, int count)
 {
     if (count <= 0 || ring_flush_pending(ring))
         return 0;
 
-    uint64_t write = sakura_atomic_load_u64(&ring->writePosition);
-    uint64_t read = sakura_atomic_load_u64(&ring->readPosition);
+    uint64_t write = sakura_atomic_load_u64_relaxed(&ring->writePosition); // our own
+    uint64_t read = sakura_atomic_load_u64_acquire(&ring->readPosition);   // pairs with ring_consume
     uint64_t free = ring->capacity - (write - read);
 
     int writable = (uint64_t)count < free ? count : (int)free;
@@ -133,7 +164,7 @@ static int ring_write(Ring *ring, const float *source, int count)
     if (writable <= 0)
         return 0;
 
-    uint64_t offset = write & (ring->capacity - 1);
+    uint64_t offset = write % ring->capacity;
     uint64_t firstChunk = ring->capacity - offset;
 
     if (firstChunk > (uint64_t)writable)
@@ -144,43 +175,54 @@ static int ring_write(Ring *ring, const float *source, int count)
     if ((uint64_t)writable > firstChunk)
         memcpy(ring->data, source + firstChunk, (size_t)((uint64_t)writable - firstChunk) * sizeof(float));
 
-    sakura_atomic_store_u64(&ring->writePosition, write + (uint64_t)writable);
+    // Release: the floats above are visible to the audio thread before the position that covers them.
+    sakura_atomic_store_u64_release(&ring->writePosition, write + (uint64_t)writable);
     return writable;
 }
 
-static int ring_read(Ring *ring, float *destination, int count)
+// Audio thread: the frames that can be read in one contiguous run, without consuming them.
+static int ring_peek(const Ring *ring, int channels, const float **frames)
 {
-    if (count <= 0)
-        return 0;
+    uint64_t read = sakura_atomic_load_u64_relaxed(&ring->readPosition); // our own
+    uint64_t available = sakura_atomic_load_u64_acquire(&ring->writePosition) - read; // pairs with ring_write
 
-    uint64_t read = sakura_atomic_load_u64(&ring->readPosition);
-    uint64_t available = sakura_atomic_load_u64(&ring->writePosition) - read;
+    uint64_t offset = read % ring->capacity;
+    uint64_t contiguous = ring->capacity - offset;
 
-    int readable = (uint64_t)count < available ? count : (int)available;
+    if (available > contiguous)
+        available = contiguous;
 
-    if (readable <= 0)
-        return 0;
+    *frames = ring->data + offset;
+    return (int)(available / (uint64_t)channels);
+}
 
-    uint64_t offset = read & (ring->capacity - 1);
-    uint64_t firstChunk = ring->capacity - offset;
-
-    if (firstChunk > (uint64_t)readable)
-        firstChunk = (uint64_t)readable;
-
-    memcpy(destination, ring->data + offset, (size_t)firstChunk * sizeof(float));
-
-    if ((uint64_t)readable > firstChunk)
-        memcpy(destination + firstChunk, ring->data, (size_t)((uint64_t)readable - firstChunk) * sizeof(float));
-
-    sakura_atomic_store_u64(&ring->readPosition, read + (uint64_t)readable);
-    return readable;
+// Audio thread. Release: the writer may reuse these floats only once it sees the new position.
+static void ring_consume(Ring *ring, int floats)
+{
+    uint64_t read = sakura_atomic_load_u64_relaxed(&ring->readPosition);
+    sakura_atomic_store_u64_release(&ring->readPosition, read + (uint64_t)floats);
 }
 
 // ---------------------------------------------------------------------------------------------
 // Nodes
 
+typedef struct Buffer
+{
+    sakura_atomic_u32 slotState;
+    uint32_t generation;
+    sakura_atomic_u64 references;
+    float *data;
+    int64_t frames;
+} Buffer;
+
+// Grouped by which thread writes each field, with padding between the groups, so that the control
+// thread setting a volume, the decode thread advancing its ring and the device callback advancing its
+// cursor never contend for one cache line. The spectrum capture, six kilobytes per node, lives in its
+// own array (see SakuraAudioEngine.captureStorage): inline, it made every node 6.8 KB and spread the
+// handful of fields the callback actually touches across that much memory.
 typedef struct Node
 {
+    // --- Identity and graph. Set when the slot is claimed and by graph commands.
     sakura_atomic_u32 slotState;
     uint32_t generation;
     int kind;
@@ -190,7 +232,7 @@ typedef struct Node
     SakuraAudioHandle nextSibling;
     SakuraAudioHandle parent;
 
-    // Parameters. Written by control threads as single atomic stores and read once per block, so
+    // --- Parameters. Written by control threads as single atomic stores and read once per block, so
     // the audio path never reads anything that could be half-updated.
     sakura_atomic_u32 volume;   // float bits
     sakura_atomic_u32 panLeft;  // float bits
@@ -205,21 +247,44 @@ typedef struct Node
     sakura_atomic_u32 filterCoefficients[2][5];
     sakura_atomic_u32 filterActiveSet;
 
+    // Metering runs while engine frames mixed are below this; read_spectrum pushes it a second ahead.
+    // Written by whichever thread reads the spectrum, so it sits with the other foreign writes.
+    sakura_atomic_u64 meterArmedUntil;
+
+    char parameterPadding[CACHE_LINE_BYTES];
+
+    // --- Source. The ring pads its writer half from its reader half itself.
+    sakura_atomic_u32 sourceKind;
+    Ring ring;
+
+    char sourcePadding[CACHE_LINE_BYTES];
+
+    // --- Audio-thread-owned state.
     sakura_atomic_u32 running;
 
-    // Source.
-    sakura_atomic_u32 sourceKind;
     SakuraAudioHandle buffer;
-    Ring ring;
-    int64_t cursor; // static sources only, in frames; audio-thread-owned
+    Buffer *bufferData; // resolved once when the buffer is set; the voice's reference keeps it alive
+    int64_t cursor;       // static sources, in frames
+    int64_t streamFrames; // streaming sources: frames pulled since the last seek
 
-    // DSP state, audio-thread-owned.
     float resamplerWindow[RESAMPLER_WINDOW_FRAMES * SAKURA_AUDIO_MAX_CHANNELS];
     double resamplerPosition;
     int resamplerPrimed;
     int resamplerDrainedFrames;
     double filterState[SAKURA_AUDIO_MAX_CHANNELS * 2];
+
+    // The per-side gain the last block ended on. A change ramps from here across the next block rather
+    // than stepping. A node that was not mixed in the block just gone -- stopped, starved of children,
+    // detached -- or that has just seeked snaps instead (gainPrimed cleared), so nothing ramps from a
+    // gain that belonged to audio no longer playing: a bus muted while it had nothing to mix must not
+    // let the first hit after it through for a block.
+    float appliedLeft;
+    float appliedRight;
+    int gainPrimed;
+    int64_t mixedUntil; // engine frames mixed at the end of the last block this node was mixed in
+
     int endHandled;
+    int meterActive;
 
     // Published state.
     sakura_atomic_u64 sourceFrames;
@@ -228,7 +293,7 @@ typedef struct Node
     sakura_atomic_u32 ended;
 
     // Metering.
-    float capture[CAPTURE_SLOTS][SAKURA_AUDIO_FFT_SIZE];
+    float *capture; // CAPTURE_SLOTS windows of SAKURA_AUDIO_FFT_SIZE floats
     int captureSlot;
     int captureWrite;
     sakura_atomic_u32 capturePublished; // slot index + 1; 0 until a full window exists
@@ -242,21 +307,14 @@ typedef struct Node
     float *scratch; // one mix block of this node's own output, before it is summed into its parent
 } Node;
 
-typedef struct Buffer
-{
-    sakura_atomic_u32 slotState;
-    uint32_t generation;
-    sakura_atomic_u64 references;
-    float *data;
-    int64_t frames;
-} Buffer;
-
 // ---------------------------------------------------------------------------------------------
 // Command queue
 //
-// Bounded MPSC. The reservation is a fetch-add, so several control threads can post without a lock;
-// in practice the framework posts from one update thread, and the multi-producer tolerance is there
-// so that a sample played from a loader thread is not a data race.
+// Bounded MPSC. A slot is reserved by compare-and-swap on the write sequence, and only while the queue
+// has room, so several control threads can post without a lock and a full queue refuses the newest
+// command instead of overwriting an unconsumed one. In practice the framework posts from one update
+// thread, and the multi-producer tolerance is there so that a sample played from a loader thread is
+// not a data race.
 //
 // The audio thread consumes without ever waiting: a slot that is reserved but not yet marked ready
 // stops the drain for this callback and is picked up on the next one.
@@ -303,14 +361,27 @@ struct SakuraAudioEngine
     CommandQueue commands;
     SakuraAudioHandle root;
 
-    float *nodeScratch; // nodeCount blocks, carved up across the nodes
-    float *mixBuffer;   // the block handed to SDL
+    float *nodeScratch;    // nodeCount blocks, carved up across the nodes
+    float *captureStorage; // nodeCount * CAPTURE_SLOTS spectrum windows, carved up the same way
+    float *putBuffer;      // what is handed to SDL, putChunkFrames long
+    int putChunkFrames;
 
     // FFT tables, built once at create time so a spectrum read does no trigonometry.
     float *fftWindow;
     int *fftReversal;
     float *twiddleReal;
     float *twiddleImaginary;
+
+    // Bumped by a writer posting a ring flush; the audio thread only walks the pool for flushes to
+    // apply when it has moved. Without it every callback scanned every node for the one flush a seek
+    // posts every few seconds.
+    sakura_atomic_u32 flushGeneration;
+    uint32_t flushGenerationSeen; // audio-thread-owned
+
+    // Bumped whenever a node or buffer slot is retired; maintain only walks the pools when it has
+    // moved. maintain is called from the manager's 1000 Hz audio update, almost always for nothing.
+    sakura_atomic_u32 retireGeneration;
+    uint32_t retireGenerationSeen; // owned by the thread that calls maintain
 
     sakura_atomic_u64 statCallbacks;
     sakura_atomic_u64 statFramesMixed;
@@ -320,6 +391,7 @@ struct SakuraAudioEngine
     sakura_atomic_u64 statCallbackMicroseconds;
     sakura_atomic_u32 statActiveVoices;
 
+    int64_t framesMixed;       // audio-thread-owned copy of statFramesMixed, for the metering check
     int activeVoicesThisBlock; // audio-thread-owned accumulator
 };
 
@@ -376,7 +448,8 @@ static Node *resolve_node(SakuraAudioEngine *engine, SakuraAudioHandle handle)
 
     Node *node = &engine->nodes[index];
 
-    if (sakura_atomic_load_u32(&node->slotState) != SLOT_LIVE)
+    // Acquire: pairs with the store that made the slot live, so the initialisation is visible.
+    if (sakura_atomic_load_u32_acquire(&node->slotState) != SLOT_LIVE)
         return NULL;
 
     return node->generation == handle_generation(handle) ? node : NULL;
@@ -394,7 +467,7 @@ static Buffer *resolve_buffer(SakuraAudioEngine *engine, SakuraAudioHandle handl
 
     Buffer *buffer = &engine->buffers[index];
 
-    if (sakura_atomic_load_u32(&buffer->slotState) != SLOT_LIVE)
+    if (sakura_atomic_load_u32_acquire(&buffer->slotState) != SLOT_LIVE)
         return NULL;
 
     return buffer->generation == handle_generation(handle) ? buffer : NULL;
@@ -405,15 +478,39 @@ static SakuraAudioHandle node_handle(SakuraAudioEngine *engine, Node *node)
     return handle_make((uint32_t)(node - engine->nodes), node->generation);
 }
 
+// A compare-and-swap increment. The generation counters are bumped from more than one thread -- a slot
+// is retired by the audio thread or by whoever drops a buffer's last reference, a flush is posted by
+// each voice's own writer -- and two bumps must never collapse into one, or the walk that should
+// follow the second is skipped until something else happens to bump it again.
+static void generation_bump(sakura_atomic_u32 *generation)
+{
+    for (;;)
+    {
+        uint32_t current = sakura_atomic_load_u32(generation);
+
+        if (sakura_atomic_compare_exchange_u32(generation, current, current + 1u) == current)
+            return;
+    }
+}
+
+// Marks a slot for sakura_audio_engine_maintain and tells maintain there is something to collect.
+static void retire_slot(SakuraAudioEngine *engine, sakura_atomic_u32 *slotState)
+{
+    sakura_atomic_store_u32(slotState, SLOT_RETIRED);
+
+    // After the state: a maintain that sees the new generation is guaranteed to see the slot retired.
+    generation_bump(&engine->retireGeneration);
+}
+
 // Drops one reference. Callable from the audio thread: it never frees, it only marks the slot for
 // sakura_audio_engine_maintain to collect.
-static void buffer_release_reference(Buffer *buffer)
+static void buffer_release_reference(SakuraAudioEngine *engine, Buffer *buffer)
 {
     if (buffer == NULL)
         return;
 
     if (sakura_atomic_add_i64(&buffer->references, -1) <= 0)
-        sakura_atomic_store_u32(&buffer->slotState, SLOT_RETIRED);
+        retire_slot(engine, &buffer->slotState);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -422,10 +519,17 @@ static void buffer_release_reference(Buffer *buffer)
 // The port of the managed AmplitudeTap, minus the FFT: peaks are trivial and are computed here, the
 // transform is deferred to whoever reads the spectrum. An FFT on this thread would be the single
 // most expensive thing in the callback and nothing needs it at audio rate.
+//
+// And only while somebody is reading. Every hitsound voice used to fold every frame into a peak and a
+// capture window that nothing ever looked at; now a node meters for a second after each
+// read_spectrum, and a node nobody reads costs nothing. That keeps the ABI as it was -- the managed
+// reader has always read the spectrum alongside the peaks -- at the price of the very first read
+// arming the meter rather than returning data.
 
 static void tap_reset(Node *node)
 {
-    memset(node->capture, 0, sizeof(node->capture));
+    // The capture windows themselves are not cleared: nothing is read out of one until it has been
+    // filled from the start and published, and capturePublished going to zero is what says none is.
     node->captureSlot = 0;
     node->captureWrite = 0;
     sakura_atomic_store_u32(&node->capturePublished, 0);
@@ -442,6 +546,21 @@ static void tap_reset(Node *node)
     node->segmentCurrentRight = 0.0f;
 }
 
+// Whether this node meters this block. Starting or stopping both begin from a clean tap, so a meter
+// that wakes up never reports what it saw a second ago.
+static int metering_update(SakuraAudioEngine *engine, Node *node)
+{
+    int armed = engine->framesMixed < (int64_t)sakura_atomic_load_u64_relaxed(&node->meterArmedUntil);
+
+    if (armed != node->meterActive)
+    {
+        tap_reset(node);
+        node->meterActive = armed;
+    }
+
+    return armed;
+}
+
 static void tap_feed(Node *node, const float *block, int frames, int channels)
 {
     if (frames <= 0)
@@ -454,6 +573,7 @@ static void tap_feed(Node *node, const float *block, int frames, int channels)
     float peakRight = node->segmentCurrentRight;
     int slot = node->captureSlot;
     int write = node->captureWrite;
+    float *capture = node->capture + (size_t)slot * SAKURA_AUDIO_FFT_SIZE;
 
     for (int frame = 0; frame < frames; frame++)
     {
@@ -478,7 +598,7 @@ static void tap_feed(Node *node, const float *block, int frames, int channels)
         }
 
         // Both channels folded into one spectrum, as BASS does unless asked for individual FFTs.
-        node->capture[slot][write] = (left + right) * 0.5f;
+        capture[write] = (left + right) * 0.5f;
 
         if (++write == SAKURA_AUDIO_FFT_SIZE)
         {
@@ -487,6 +607,7 @@ static void tap_feed(Node *node, const float *block, int frames, int channels)
             // at 44.1 kHz -- before the writer could come back around to it.
             sakura_atomic_store_u32(&node->capturePublished, (uint32_t)slot + 1u);
             slot = slot + 1 == CAPTURE_SLOTS ? 0 : slot + 1;
+            capture = node->capture + (size_t)slot * SAKURA_AUDIO_FFT_SIZE;
             write = 0;
         }
     }
@@ -506,38 +627,96 @@ static void tap_feed(Node *node, const float *block, int frames, int channels)
 
 // ---------------------------------------------------------------------------------------------
 // Sources
+//
+// Read in runs, not frames. A source hands out the longest stretch it can supply contiguously -- the
+// rest of a static buffer, or the ring up to its end -- and the resampler takes from that stretch
+// with plain memory reads, committing what it took once at the end. That is one ring acquire and one
+// release per run instead of a handful of sequentially consistent atomics per frame, and no buffer
+// lookup at all: the voice holds a reference, so the pointer resolved when the buffer was set cannot
+// go stale under it.
 
-static int source_pull_frame(SakuraAudioEngine *engine, Node *node, float *destination)
+typedef struct SourceRun
+{
+    uint32_t kind;
+    const float *frames;
+    int available; // frames in this run
+    int taken;     // of which the resampler has used this many
+} SourceRun;
+
+static int source_peek(SakuraAudioEngine *engine, Node *node, uint32_t kind, const float **frames)
 {
     int channels = engine->config.channels;
-    uint32_t kind = sakura_atomic_load_u32(&node->sourceKind);
 
     if (kind == SOURCE_STATIC)
     {
-        Buffer *buffer = resolve_buffer(engine, node->buffer);
+        const Buffer *buffer = node->bufferData;
 
         if (buffer == NULL || node->cursor >= buffer->frames)
             return 0;
 
-        memcpy(destination, buffer->data + node->cursor * channels, (size_t)channels * sizeof(float));
-        node->cursor++;
-        sakura_atomic_store_i64(&node->sourceFrames, node->cursor);
-        return 1;
+        int64_t left = buffer->frames - node->cursor;
+
+        *frames = buffer->data + node->cursor * channels;
+        return left > INT_MAX ? INT_MAX : (int)left;
     }
 
     if (kind == SOURCE_STREAM)
     {
-        if (node->ring.data == NULL || ring_available(&node->ring) < (uint64_t)channels)
+        if (node->ring.data == NULL)
             return 0;
 
-        if (ring_read(&node->ring, destination, channels) != channels)
-            return 0;
-
-        sakura_atomic_store_i64(&node->sourceFrames, sakura_atomic_load_i64(&node->sourceFrames) + 1);
-        return 1;
+        return ring_peek(&node->ring, channels, frames);
     }
 
     return 0;
+}
+
+static void run_commit(SakuraAudioEngine *engine, Node *node, SourceRun *run)
+{
+    if (run->taken > 0)
+    {
+        if (run->kind == SOURCE_STATIC)
+        {
+            node->cursor += run->taken;
+        }
+        else if (run->kind == SOURCE_STREAM)
+        {
+            ring_consume(&node->ring, run->taken * engine->config.channels);
+            node->streamFrames += run->taken;
+        }
+    }
+
+    run->frames = NULL;
+    run->available = 0;
+    run->taken = 0;
+}
+
+// Frames left in the current run, fetching the next one when it is used up.
+static int run_contiguous(SakuraAudioEngine *engine, Node *node, SourceRun *run)
+{
+    if (run->taken < run->available)
+        return run->available - run->taken;
+
+    run_commit(engine, node, run);
+    run->available = source_peek(engine, node, run->kind, &run->frames);
+    return run->available;
+}
+
+static int run_pull_frame(SakuraAudioEngine *engine, Node *node, SourceRun *run, float *destination)
+{
+    if (run_contiguous(engine, node, run) <= 0)
+        return 0;
+
+    int channels = engine->config.channels;
+    memcpy(destination, run->frames + (size_t)run->taken * channels, (size_t)channels * sizeof(float));
+    run->taken++;
+    return 1;
+}
+
+// The cursor as callers see it: absolute for a static buffer, frames since the last seek for a stream.
+static void publish_source_frames(Node *node, uint32_t kind)
+{
+    sakura_atomic_store_i64(&node->sourceFrames, kind == SOURCE_STATIC ? node->cursor : node->streamFrames);
 }
 
 static int source_ended(SakuraAudioEngine *engine, Node *node)
@@ -546,7 +725,7 @@ static int source_ended(SakuraAudioEngine *engine, Node *node)
 
     if (kind == SOURCE_STATIC)
     {
-        Buffer *buffer = resolve_buffer(engine, node->buffer);
+        const Buffer *buffer = node->bufferData;
         return buffer == NULL || node->cursor >= buffer->frames;
     }
 
@@ -586,13 +765,13 @@ static void resampler_reset(Node *node)
 
 // Fills the window for the first time. w0 is left silent: there is no frame before the start of the
 // source, and inventing one would be worse than starting from zero.
-static int resampler_prime(SakuraAudioEngine *engine, Node *node)
+static int resampler_prime(SakuraAudioEngine *engine, Node *node, SourceRun *run)
 {
     int channels = engine->config.channels;
 
     for (int i = 1; i < RESAMPLER_WINDOW_FRAMES; i++)
     {
-        if (!source_pull_frame(engine, node, node->resamplerWindow + i * channels))
+        if (!run_pull_frame(engine, node, run, node->resamplerWindow + i * channels))
         {
             // Nothing at all to play yet. Stay unprimed so the next block tries again rather than
             // treating a not-yet-decoded streaming source as an empty one.
@@ -611,7 +790,7 @@ static int resampler_prime(SakuraAudioEngine *engine, Node *node)
     return 1;
 }
 
-static int resampler_advance(SakuraAudioEngine *engine, Node *node)
+static int resampler_advance(SakuraAudioEngine *engine, Node *node, SourceRun *run)
 {
     int channels = engine->config.channels;
 
@@ -621,7 +800,7 @@ static int resampler_advance(SakuraAudioEngine *engine, Node *node)
 
     float *last = node->resamplerWindow + (RESAMPLER_WINDOW_FRAMES - 1) * channels;
 
-    if (source_pull_frame(engine, node, last))
+    if (run_pull_frame(engine, node, run, last))
     {
         node->resamplerDrainedFrames = 0;
         return 1;
@@ -634,7 +813,149 @@ static int resampler_advance(SakuraAudioEngine *engine, Node *node)
     return ++node->resamplerDrainedFrames < RESAMPLER_WINDOW_FRAMES;
 }
 
-static int resampler_read(SakuraAudioEngine *engine, Node *node, float *destination, int frameCount, double ratio)
+// Unity rate with the position on a frame boundary: the interpolation is the identity, so `count`
+// frames are a copy. Over the sequence X = w0 w1 w2 w3 s0 s1 ... the per-frame path outputs X[k + 1]
+// for frame k and pulls one source frame per output, leaving X[count .. count + 3] in the window --
+// which is exactly what this produces, so the two paths can hand over to each other at any frame and
+// a rate change mid-block continues from the same window.
+static void resampler_copy_run(Node *node, float *restrict destination, const float *restrict source, int count, int channels)
+{
+    float *window = node->resamplerWindow;
+    size_t frameBytes = (size_t)channels * sizeof(float);
+
+    if (count >= 3)
+    {
+        memcpy(destination, window + channels, 3 * frameBytes);                         // w1 w2 w3
+        memcpy(destination + 3 * channels, source, (size_t)(count - 3) * frameBytes);  // s0 ..
+        memcpy(window, destination + (size_t)(count - 1) * channels, frameBytes);      // the last frame out
+        memcpy(window + channels, source + (size_t)(count - 3) * channels, 3 * frameBytes);
+    }
+    else
+    {
+        memcpy(destination, window + channels, (size_t)count * frameBytes);
+        memmove(window, window + (size_t)count * channels, (size_t)(RESAMPLER_WINDOW_FRAMES - count) * frameBytes);
+        memcpy(window + (size_t)(RESAMPLER_WINDOW_FRAMES - count) * channels, source, (size_t)count * frameBytes);
+    }
+}
+
+// Every hitsound and every track at normal speed: whole runs copied straight out of the source while
+// the position sits on a frame boundary. Returns the new produced count.
+static int resampler_unity_runs(SakuraAudioEngine *engine, Node *node, SourceRun *run, float *destination, int produced, int frameCount)
+{
+    int channels = engine->config.channels;
+
+    while (produced < frameCount && node->resamplerPosition == 0.0)
+    {
+        int available = run_contiguous(engine, node, run);
+
+        if (available <= 0)
+            break;
+
+        int count = available < frameCount - produced ? available : frameCount - produced;
+
+        resampler_copy_run(node, destination + (size_t)produced * channels,
+                           run->frames + (size_t)run->taken * channels, count, channels);
+
+        run->taken += count;
+        produced += count;
+        node->resamplerDrainedFrames = 0;
+    }
+
+    return produced;
+}
+
+// Stereo at any other rate: the window held in locals and source frames read straight out of the run,
+// for as long as the run can supply every frame the next output needs. Computes exactly what the
+// per-frame path does -- the same interpolation of the same window at the same position, since
+// subtracting whole frames from the position is exact whether done one at a time or at once -- and
+// hands back to it at a run boundary or when the source runs dry.
+static int resampler_stereo_runs(SakuraAudioEngine *engine, Node *node, SourceRun *run, float *destination, int produced, int frameCount, double ratio)
+{
+    float *window = node->resamplerWindow;
+    float l0 = window[0], r0 = window[1], l1 = window[2], r1 = window[3];
+    float l2 = window[4], r2 = window[5], l3 = window[6], r3 = window[7];
+    double position = node->resamplerPosition;
+
+    while (produced < frameCount)
+    {
+        double next = position + ratio;
+        int advances = (int)next;
+        int available = run->available - run->taken;
+
+        if (advances > available && available == 0)
+            available = run_contiguous(engine, node, run);
+
+        if (advances > available)
+            break;
+
+        float t = (float)position;
+        float *frame = destination + (size_t)produced * 2;
+
+        frame[0] = interpolate(l0, l1, l2, l3, t);
+        frame[1] = interpolate(r0, r1, r2, r3, t);
+        produced++;
+
+        const float *source = run->frames + (size_t)run->taken * 2;
+
+        for (int i = 0; i < advances; i++)
+        {
+            l0 = l1; l1 = l2; l2 = l3; l3 = source[i * 2];
+            r0 = r1; r1 = r2; r2 = r3; r3 = source[i * 2 + 1];
+        }
+
+        if (advances > 0)
+        {
+            run->taken += advances;
+            node->resamplerDrainedFrames = 0;
+        }
+
+        position = next - (double)advances;
+    }
+
+    window[0] = l0; window[1] = r0; window[2] = l1; window[3] = r1;
+    window[4] = l2; window[5] = r2; window[6] = l3; window[7] = r3;
+    node->resamplerPosition = position;
+
+    return produced;
+}
+
+// One frame the long way: across a run boundary, for a channel count with no fast path, and for the
+// window playing out into silence once the source is dry. Returns 0 once the window has drained.
+static int resampler_step(SakuraAudioEngine *engine, Node *node, SourceRun *run, float *frame, double ratio)
+{
+    int channels = engine->config.channels;
+    const float *window = node->resamplerWindow;
+    float t = (float)node->resamplerPosition;
+
+    for (int channel = 0; channel < channels; channel++)
+    {
+        frame[channel] = interpolate(window[channel],
+                                     window[channels + channel],
+                                     window[2 * channels + channel],
+                                     window[3 * channels + channel],
+                                     t);
+    }
+
+    node->resamplerPosition += ratio;
+
+    while (node->resamplerPosition >= 1.0)
+    {
+        if (!resampler_advance(engine, node, run))
+        {
+            // Drained: the whole frames this step would have moved past do not exist, so they are not
+            // owed either. Left in the position they accumulated one per starved block, and a stream
+            // that recovered skipped that many of its first fresh frames -- ~8 ms after a 1 s stall.
+            node->resamplerPosition -= floor(node->resamplerPosition);
+            return 0;
+        }
+
+        node->resamplerPosition -= 1.0;
+    }
+
+    return 1;
+}
+
+static int resampler_read(SakuraAudioEngine *engine, Node *node, uint32_t kind, float *destination, int frameCount, double ratio)
 {
     if (frameCount <= 0)
         return 0;
@@ -644,37 +965,38 @@ static int resampler_read(SakuraAudioEngine *engine, Node *node, float *destinat
     if (ratio < RATIO_MIN) ratio = RATIO_MIN;
     if (ratio > RATIO_MAX) ratio = RATIO_MAX;
 
-    if (!node->resamplerPrimed && !resampler_prime(engine, node))
-        return 0;
-
+    SourceRun run = { kind, NULL, 0, 0 };
     int produced = 0;
 
-    while (produced < frameCount)
+    if (!node->resamplerPrimed && !resampler_prime(engine, node, &run))
     {
-        int offset = produced * channels;
-
-        for (int channel = 0; channel < channels; channel++)
-        {
-            float w0 = node->resamplerWindow[channel];
-            float w1 = node->resamplerWindow[channels + channel];
-            float w2 = node->resamplerWindow[2 * channels + channel];
-            float w3 = node->resamplerWindow[3 * channels + channel];
-
-            destination[offset + channel] = interpolate(w0, w1, w2, w3, (float)node->resamplerPosition);
-        }
-
-        produced++;
-        node->resamplerPosition += ratio;
-
-        while (node->resamplerPosition >= 1.0)
-        {
-            if (!resampler_advance(engine, node))
-                return produced;
-
-            node->resamplerPosition -= 1.0;
-        }
+        run_commit(engine, node, &run);
+        return 0;
     }
 
+    // Runs wherever the source allows, and a single frame the long way wherever it does not, which is
+    // also where a dry source plays its window out into silence exactly as before.
+    for (;;)
+    {
+        // Unity only copies from a frame boundary. A voice that went off unity and came back sits at a
+        // fractional position for good, so it takes the stereo path rather than the per-frame one.
+        if (ratio == 1.0 && node->resamplerPosition == 0.0)
+            produced = resampler_unity_runs(engine, node, &run, destination, produced, frameCount);
+        else if (channels == 2)
+            produced = resampler_stereo_runs(engine, node, &run, destination, produced, frameCount, ratio);
+
+        if (produced >= frameCount)
+            break;
+
+        int stillPlaying = resampler_step(engine, node, &run, destination + (size_t)produced * channels, ratio);
+        produced++;
+
+        if (!stillPlaying)
+            break;
+    }
+
+    run_commit(engine, node, &run);
+    publish_source_frames(node, kind);
     return produced;
 }
 
@@ -708,26 +1030,34 @@ static void filter_process(Node *node, float *block, int frames, int channels)
             block[frame * channels + channel] = (float)output;
         }
     }
+
+    for (int i = 0; i < channels * 2; i++)
+    {
+        if (fabs(node->filterState[i]) < FILTER_STATE_FLOOR)
+            node->filterState[i] = 0.0;
+    }
 }
 
-// Filter, then gain and pan, then metering, then sum into the parent's block. Filtering before gain
-// so that automating volume does not change the filter's behaviour; metering after gain so a
-// visualiser shows what is audible.
-static void apply_inserts_and_mix(SakuraAudioEngine *engine, Node *node, float *block, float *destination, int frames)
+// The per-side gain for frame `frame` of a block ramping from `from` to `to`: reaches `to` exactly on
+// the last frame, so the next block continues from where this one ended.
+static float ramp_gain(float from, float to, int frame, float inverseFrames)
 {
-    int channels = engine->config.channels;
+    return from + (to - from) * ((float)(frame + 1) * inverseFrames);
+}
 
-    if (sakura_atomic_load_u32(&node->filterEnabled))
-        filter_process(node, block, frames, channels);
-
-    float volume = sakura_atomic_load_f32(&node->volume);
-    float left = volume * sakura_atomic_load_f32(&node->panLeft);
-    float right = volume * sakura_atomic_load_f32(&node->panRight);
+// block *= gain, in place, for when the metering tap needs to see the post-gain block.
+static void gain_in_place(float *block, int frames, int channels, float fromLeft, float fromRight, float toLeft, float toRight)
+{
+    float inverseFrames = 1.0f / (float)frames;
+    int constant = fromLeft == toLeft && fromRight == toRight;
 
     if (channels == 2)
     {
         for (int frame = 0; frame < frames; frame++)
         {
+            float left = constant ? toLeft : ramp_gain(fromLeft, toLeft, frame, inverseFrames);
+            float right = constant ? toRight : ramp_gain(fromRight, toRight, frame, inverseFrames);
+
             block[frame * 2] *= left;
             block[frame * 2 + 1] *= right;
         }
@@ -735,50 +1065,155 @@ static void apply_inserts_and_mix(SakuraAudioEngine *engine, Node *node, float *
     else
     {
         // Panning is only meaningful in stereo; anything else just takes the volume.
-        for (int i = 0; i < frames * channels; i++)
-            block[i] *= volume;
+        for (int frame = 0; frame < frames; frame++)
+        {
+            float gain = constant ? toLeft : ramp_gain(fromLeft, toLeft, frame, inverseFrames);
+
+            for (int channel = 0; channel < channels; channel++)
+                block[frame * channels + channel] *= gain;
+        }
+    }
+}
+
+// destination += block * gain, in one pass, for the common case where nothing meters this node.
+static void gain_and_sum(const float *restrict block, float *restrict destination, int frames, int channels,
+                         float fromLeft, float fromRight, float toLeft, float toRight)
+{
+    float inverseFrames = 1.0f / (float)frames;
+
+    if (fromLeft == toLeft && fromRight == toRight)
+    {
+        if (channels == 2)
+        {
+            for (int frame = 0; frame < frames; frame++)
+            {
+                destination[frame * 2] += block[frame * 2] * toLeft;
+                destination[frame * 2 + 1] += block[frame * 2 + 1] * toRight;
+            }
+        }
+        else
+        {
+            for (int i = 0; i < frames * channels; i++)
+                destination[i] += block[i] * toLeft;
+        }
+
+        return;
     }
 
-    tap_feed(node, block, frames, channels);
+    if (channels == 2)
+    {
+        for (int frame = 0; frame < frames; frame++)
+        {
+            destination[frame * 2] += block[frame * 2] * ramp_gain(fromLeft, toLeft, frame, inverseFrames);
+            destination[frame * 2 + 1] += block[frame * 2 + 1] * ramp_gain(fromRight, toRight, frame, inverseFrames);
+        }
+    }
+    else
+    {
+        for (int frame = 0; frame < frames; frame++)
+        {
+            float gain = ramp_gain(fromLeft, toLeft, frame, inverseFrames);
 
-    for (int i = 0; i < frames * channels; i++)
-        destination[i] += block[i];
+            for (int channel = 0; channel < channels; channel++)
+                destination[frame * channels + channel] += block[frame * channels + channel] * gain;
+        }
+    }
+}
+
+// Filter, then gain and pan, then metering, then sum into the parent's block. Filtering before gain
+// so that automating volume does not change the filter's behaviour; metering after gain so a
+// visualiser shows what is audible.
+static void apply_inserts_and_mix(SakuraAudioEngine *engine, Node *node, float *restrict block, float *restrict destination, int frames)
+{
+    int channels = engine->config.channels;
+
+    if (sakura_atomic_load_u32(&node->filterEnabled))
+        filter_process(node, block, frames, channels);
+
+    float volume = sakura_atomic_load_f32(&node->volume);
+    float targetLeft = volume;
+    float targetRight = volume;
+
+    if (channels == 2)
+    {
+        targetLeft *= sakura_atomic_load_f32(&node->panLeft);
+        targetRight *= sakura_atomic_load_f32(&node->panRight);
+    }
+
+    if (node->mixedUntil != engine->framesMixed)
+        node->gainPrimed = 0;
+
+    node->mixedUntil = engine->framesMixed + frames;
+
+    if (!node->gainPrimed)
+    {
+        node->appliedLeft = targetLeft;
+        node->appliedRight = targetRight;
+        node->gainPrimed = 1;
+    }
+
+    float fromLeft = node->appliedLeft;
+    float fromRight = node->appliedRight;
+
+    node->appliedLeft = targetLeft;
+    node->appliedRight = targetRight;
+
+    if (metering_update(engine, node))
+    {
+        gain_in_place(block, frames, channels, fromLeft, fromRight, targetLeft, targetRight);
+        tap_feed(node, block, frames, channels);
+
+        for (int i = 0; i < frames * channels; i++)
+            destination[i] += block[i];
+    }
+    else
+    {
+        gain_and_sum(block, destination, frames, channels, fromLeft, fromRight, targetLeft, targetRight);
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
 // Transport, applied on the audio thread
 
-// Moves the cursor and clears every piece of state that still holds audio from the old position: the
-// interpolation window, the filter's delay line, and the metering capture.
+// Clears every piece of state that still holds audio from before a discontinuity: the interpolation
+// window, the filter's delay line, the gain ramp and the metering capture.
+static void reset_playback_state(Node *node)
+{
+    resampler_reset(node);
+    memset(node->filterState, 0, sizeof(node->filterState));
+    node->gainPrimed = 0;
+    tap_reset(node);
+
+    node->endHandled = 0;
+    sakura_atomic_store_u32(&node->ended, 0);
+}
+
+// Moves the cursor and clears everything that still holds audio from the old position.
 static void seek_internal(SakuraAudioEngine *engine, Node *node, int64_t frame)
 {
+    (void)engine;
+
     uint32_t kind = sakura_atomic_load_u32(&node->sourceKind);
 
     if (kind == SOURCE_STATIC)
     {
-        Buffer *buffer = resolve_buffer(engine, node->buffer);
-        int64_t limit = buffer != NULL ? buffer->frames : 0;
+        int64_t limit = node->bufferData != NULL ? node->bufferData->frames : 0;
 
         if (frame < 0) frame = 0;
         if (frame > limit) frame = limit;
 
         node->cursor = frame;
-        sakura_atomic_store_i64(&node->sourceFrames, frame);
     }
     else
     {
         // A streaming voice's position is the base the caller established plus what has been pulled
         // since, so seeking resets the count and the caller owns the base. What the decoder does is
         // the caller's business too -- see sakura_audio_node_seek.
-        sakura_atomic_store_i64(&node->sourceFrames, 0);
+        node->streamFrames = 0;
     }
 
-    resampler_reset(node);
-    memset(node->filterState, 0, sizeof(node->filterState));
-    tap_reset(node);
-
-    node->endHandled = 0;
-    sakura_atomic_store_u32(&node->ended, 0);
+    publish_source_frames(node, kind);
+    reset_playback_state(node);
 
     // Published last, so a caller that has seen the new epoch is guaranteed to see the reset cursor
     // that goes with it rather than the one it replaced.
@@ -907,15 +1342,16 @@ static void apply_command(SakuraAudioEngine *engine, const Command *command)
 
             node->firstChild = SAKURA_AUDIO_INVALID_HANDLE;
 
-            Buffer *buffer = resolve_buffer(engine, node->buffer);
+            Buffer *buffer = node->bufferData;
             node->buffer = SAKURA_AUDIO_INVALID_HANDLE;
+            node->bufferData = NULL;
             sakura_atomic_store_u32(&node->sourceKind, SOURCE_NONE);
             sakura_atomic_store_u32(&node->running, 0);
-            buffer_release_reference(buffer);
+            buffer_release_reference(engine, buffer);
 
             // Nothing is freed here. The slot, its ring and the PCM it referenced come back on the
             // next sakura_audio_engine_maintain, on a thread that is allowed to call free.
-            sakura_atomic_store_u32(&node->slotState, SLOT_RETIRED);
+            retire_slot(engine, &node->slotState);
             break;
         }
 
@@ -930,6 +1366,8 @@ static void apply_command(SakuraAudioEngine *engine, const Command *command)
                 seek_internal(engine, node, looping ? sakura_atomic_load_i64(&node->restartFrame) : 0);
             }
 
+            // No gain reset here: a voice that was stopped was not mixed in the last block, which is
+            // what makes its first block back snap rather than ramp (see apply_inserts_and_mix).
             node->endHandled = 0;
             sakura_atomic_store_u32(&node->running, 1);
             break;
@@ -950,21 +1388,20 @@ static void apply_command(SakuraAudioEngine *engine, const Command *command)
 
         case CMD_SET_BUFFER:
         {
-            Buffer *previous = resolve_buffer(engine, node->buffer);
+            Buffer *previous = node->bufferData;
 
+            // The reference this voice now holds was claimed by sakura_audio_voice_set_buffer before
+            // the command was posted, so the buffer is live and cannot be retired under us.
             node->buffer = command->aux;
+            node->bufferData = resolve_buffer(engine, command->aux);
             node->cursor = 0;
-            sakura_atomic_store_u32(&node->sourceKind, command->aux == SAKURA_AUDIO_INVALID_HANDLE ? SOURCE_NONE : SOURCE_STATIC);
+            sakura_atomic_store_u32(&node->sourceKind, node->bufferData == NULL ? SOURCE_NONE : SOURCE_STATIC);
             sakura_atomic_store_i64(&node->sourceFrames, 0);
 
-            resampler_reset(node);
-            memset(node->filterState, 0, sizeof(node->filterState));
-            tap_reset(node);
-            node->endHandled = 0;
-            sakura_atomic_store_u32(&node->ended, 0);
+            reset_playback_state(node);
             sakura_atomic_add_i64(&node->seekEpoch, 1);
 
-            buffer_release_reference(previous);
+            buffer_release_reference(engine, previous);
             break;
         }
 
@@ -976,24 +1413,27 @@ static void apply_command(SakuraAudioEngine *engine, const Command *command)
 static int enqueue_command(SakuraAudioEngine *engine, uint32_t type, SakuraAudioHandle target, SakuraAudioHandle aux, int64_t value)
 {
     CommandQueue *queue = &engine->commands;
+    uint64_t sequence;
 
-    uint64_t sequence = sakura_atomic_fetch_add_u64(&queue->writeSequence, 1);
-    uint64_t index = sequence & (queue->capacity - 1);
-
-    // Wait for the slot if the queue has wrapped all the way around. Bounded: on giving up the slot
-    // is written anyway, which loses whatever unconsumed command was in it, and is counted. With the
-    // default 4096 slots drained on every callback this is unreachable short of the audio thread
-    // having stopped entirely -- at which point a lost volume change is not the problem.
-    int dropped = 0;
-
-    for (uint32_t spin = 0; sequence - sakura_atomic_load_u64(&queue->readSequence) >= queue->capacity; spin++)
+    // Reserve a slot only while there is room. Refusing the newest command is the honest failure: the
+    // old version waited for room and then overwrote an unconsumed slot anyway, losing a command it had
+    // already accepted -- after up to a million spins on the calling thread. With the default 4096
+    // slots drained on every callback this is unreachable short of the audio thread having stopped.
+    for (;;)
     {
-        if (spin >= 1000000u)
+        sequence = sakura_atomic_load_u64(&queue->writeSequence);
+
+        if (sequence - sakura_atomic_load_u64(&queue->readSequence) >= queue->capacity)
         {
-            dropped = 1;
-            break;
+            sakura_atomic_add_i64(&engine->statCommandsDropped, 1);
+            return SAKURA_AUDIO_FULL;
         }
+
+        if (sakura_atomic_compare_exchange_u64(&queue->writeSequence, sequence, sequence + 1) == sequence)
+            break;
     }
+
+    uint64_t index = sequence & (queue->capacity - 1);
 
     queue->slots[index].type = type;
     queue->slots[index].target = target;
@@ -1001,13 +1441,6 @@ static int enqueue_command(SakuraAudioEngine *engine, uint32_t type, SakuraAudio
     queue->slots[index].value = value;
 
     sakura_atomic_store_u32(&queue->ready[index], 1);
-
-    if (dropped)
-    {
-        sakura_atomic_add_i64(&engine->statCommandsDropped, 1);
-        return SAKURA_AUDIO_FULL;
-    }
-
     return SAKURA_AUDIO_OK;
 }
 
@@ -1034,32 +1467,36 @@ static void process_commands(SakuraAudioEngine *engine)
 }
 
 // Applies posted ring discards. Every live streaming voice, not just the playing ones: a seek on a
-// paused track has to complete, or the writer waits forever.
+// paused track has to complete, or the writer waits forever. Only walks the pool when a writer has
+// posted something since the last walk.
 static void sync_streams(SakuraAudioEngine *engine)
 {
+    uint32_t generation = sakura_atomic_load_u32(&engine->flushGeneration);
+
+    if (generation == engine->flushGenerationSeen)
+        return;
+
+    // Recorded before the walk: a flush posted while it is running bumps the generation past this and
+    // gets another walk next callback, whether or not this one already caught it.
+    engine->flushGenerationSeen = generation;
+
     for (int i = 0; i < engine->nodeCount; i++)
     {
         Node *node = &engine->nodes[i];
 
-        if (sakura_atomic_load_u32(&node->slotState) != SLOT_LIVE)
+        if (sakura_atomic_load_u32_acquire(&node->slotState) != SLOT_LIVE)
             continue;
 
         if (sakura_atomic_load_u32(&node->sourceKind) != SOURCE_STREAM || node->ring.data == NULL)
             continue;
 
-        if (!ring_flush_pending(&node->ring))
+        if (!ring_sync(&node->ring))
             continue;
-
-        ring_sync(&node->ring);
 
         // The window still holds frames from before the seek, and three interpolated frames of the
         // old position bleeding into the new one is audible as a click. Clearing here as well as on
         // the seek command means the two do not have to arrive in a particular order.
-        resampler_reset(node);
-        memset(node->filterState, 0, sizeof(node->filterState));
-        tap_reset(node);
-        node->endHandled = 0;
-        sakura_atomic_store_u32(&node->ended, 0);
+        reset_playback_state(node);
     }
 }
 
@@ -1101,11 +1538,13 @@ static void mix_node(SakuraAudioEngine *engine, Node *node, float *destination, 
     }
     else
     {
-        if (sakura_atomic_load_u32(&node->sourceKind) == SOURCE_NONE)
+        uint32_t kind = sakura_atomic_load_u32(&node->sourceKind);
+
+        if (kind == SOURCE_NONE)
             return;
 
         double ratio = sakura_atomic_load_f64(&node->rate);
-        int produced = resampler_read(engine, node, block, frames, ratio);
+        int produced = resampler_read(engine, node, kind, block, frames, ratio);
 
         if (produced < frames)
         {
@@ -1149,8 +1588,26 @@ static void mix_block(SakuraAudioEngine *engine, float *destination, int frames)
         destination[i] = sample > 1.0f ? 1.0f : (sample < -1.0f ? -1.0f : sample);
     }
 
+    engine->framesMixed += frames;
+
     sakura_atomic_store_u32(&engine->statActiveVoices, (uint32_t)engine->activeVoicesThisBlock);
-    sakura_atomic_add_i64(&engine->statFramesMixed, frames);
+    sakura_atomic_store_i64(&engine->statFramesMixed, engine->framesMixed);
+}
+
+// Mixes `frames` frames as a run of mix blocks into `destination`.
+static void mix_frames(SakuraAudioEngine *engine, float *destination, int frames)
+{
+    int channels = engine->config.channels;
+    int written = 0;
+
+    while (written < frames)
+    {
+        int remaining = frames - written;
+        int block = remaining < engine->config.mixBlockFrames ? remaining : engine->config.mixBlockFrames;
+
+        mix_block(engine, destination + (size_t)written * channels, block);
+        written += block;
+    }
 }
 
 // The SDL_AudioStreamCallback SDL calls when the device wants more audio. Everything reachable from
@@ -1174,15 +1631,17 @@ static void stream_callback(void *userdata, void *stream, int additionalAmount, 
     int frameBytes = channels * (int)sizeof(float);
     int remaining = additionalAmount / frameBytes;
 
+    // Mixed block by block, handed over whole: one put per callback, unless the device asked for more
+    // than the put buffer holds.
     while (remaining > 0)
     {
-        int frames = remaining < engine->config.mixBlockFrames ? remaining : engine->config.mixBlockFrames;
+        int frames = remaining < engine->putChunkFrames ? remaining : engine->putChunkFrames;
 
-        mix_block(engine, engine->mixBuffer, frames);
+        mix_frames(engine, engine->putBuffer, frames);
 
         sakura_sdl_put_fn put = sdl_put;
 
-        if (put == NULL || !put(stream, engine->mixBuffer, frames * frameBytes))
+        if (put == NULL || !put(stream, engine->putBuffer, frames * frameBytes))
             sakura_atomic_add_i64(&engine->statPutFailures, 1);
 
         remaining -= frames;
@@ -1202,19 +1661,8 @@ int sakura_audio_engine_mix(SakuraAudioEngine *engine, float *destination, int f
     process_commands(engine);
     sync_streams(engine);
 
-    int channels = engine->config.channels;
-    int written = 0;
-
-    while (written < frames)
-    {
-        int remaining = frames - written;
-        int block = remaining < engine->config.mixBlockFrames ? remaining : engine->config.mixBlockFrames;
-
-        mix_block(engine, destination + (size_t)written * channels, block);
-        written += block;
-    }
-
-    return written;
+    mix_frames(engine, destination, frames);
+    return frames;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1227,22 +1675,45 @@ int sakura_audio_node_get_state(SakuraAudioEngine *engine, SakuraAudioHandle han
     if (node == NULL || state == NULL)
         return SAKURA_AUDIO_INVALID;
 
-    state->sourceFrames = sakura_atomic_load_i64(&node->sourceFrames);
+    // The epoch before the cursor, and the cursor again if a seek landed in between. The audio thread
+    // publishes the reset cursor and then the epoch, so reading in the same order could pair the old
+    // cursor with the new epoch -- precisely the jump the epoch exists to let a caller avoid. Bounded:
+    // a seek per callback is the most that can land, and losing this race four times running would
+    // take a seek landing between each pair of loads.
+    int64_t seekEpoch = sakura_atomic_load_i64(&node->seekEpoch);
+    int64_t sourceFrames = sakura_atomic_load_i64(&node->sourceFrames);
+
+    for (int attempt = 0; attempt < 4; attempt++)
+    {
+        int64_t confirmed = sakura_atomic_load_i64(&node->seekEpoch);
+
+        if (confirmed == seekEpoch)
+            break;
+
+        seekEpoch = confirmed;
+        sourceFrames = sakura_atomic_load_i64(&node->sourceFrames);
+    }
+
+    state->sourceFrames = sourceFrames;
+    state->seekEpoch = seekEpoch;
     state->endEpoch = sakura_atomic_load_i64(&node->endEpoch);
-    state->seekEpoch = sakura_atomic_load_i64(&node->seekEpoch);
     state->running = (int32_t)sakura_atomic_load_u32(&node->running);
     state->ended = (int32_t)sakura_atomic_load_u32(&node->ended);
 
     float peakLeft = 0.0f;
     float peakRight = 0.0f;
 
-    for (int i = 0; i < PEAK_SEGMENT_COUNT; i++)
+    // A node nobody has read the spectrum of recently is not metering, and its peaks are not live.
+    if ((int64_t)sakura_atomic_load_u64(&node->meterArmedUntil) > sakura_atomic_load_i64(&engine->statFramesMixed))
     {
-        float left = sakura_atomic_load_f32(&node->segmentPeakLeft[i]);
-        float right = sakura_atomic_load_f32(&node->segmentPeakRight[i]);
+        for (int i = 0; i < PEAK_SEGMENT_COUNT; i++)
+        {
+            float left = sakura_atomic_load_f32(&node->segmentPeakLeft[i]);
+            float right = sakura_atomic_load_f32(&node->segmentPeakRight[i]);
 
-        if (left > peakLeft) peakLeft = left;
-        if (right > peakRight) peakRight = right;
+            if (left > peakLeft) peakLeft = left;
+            if (right > peakRight) peakRight = right;
+        }
     }
 
     state->amplitudeLeft = peakLeft;
@@ -1258,6 +1729,11 @@ int sakura_audio_node_read_spectrum(SakuraAudioEngine *engine, SakuraAudioHandle
     if (node == NULL || bins == NULL || binCount <= 0)
         return SAKURA_AUDIO_INVALID;
 
+    // Keeps this node metering for another second of audio. A visualiser reads every frame or so; one
+    // that stops reading stops costing anything a second later.
+    sakura_atomic_store_u64(&node->meterArmedUntil,
+                            sakura_atomic_load_u64(&engine->statFramesMixed) + (uint64_t)engine->config.sampleRate);
+
     uint32_t published = sakura_atomic_load_u32(&node->capturePublished);
 
     if (published == 0)
@@ -1270,7 +1746,7 @@ int sakura_audio_node_read_spectrum(SakuraAudioEngine *engine, SakuraAudioHandle
     float real[SAKURA_AUDIO_FFT_SIZE];
     float imaginary[SAKURA_AUDIO_FFT_SIZE];
 
-    const float *capture = node->capture[published - 1];
+    const float *capture = node->capture + (size_t)(published - 1) * SAKURA_AUDIO_FFT_SIZE;
 
     memset(imaginary, 0, sizeof(imaginary));
 
@@ -1470,7 +1946,7 @@ SakuraAudioHandle sakura_audio_buffer_create(SakuraAudioEngine *engine, const fl
         memset(buffer->data, 0, count * sizeof(float));
 
     buffer->frames = frames;
-    sakura_atomic_store_u32(&buffer->slotState, SLOT_LIVE);
+    sakura_atomic_store_u32_release(&buffer->slotState, SLOT_LIVE);
 
     return handle_make((uint32_t)(buffer - engine->buffers), buffer->generation);
 }
@@ -1482,7 +1958,7 @@ int sakura_audio_buffer_release(SakuraAudioEngine *engine, SakuraAudioHandle han
     if (buffer == NULL)
         return SAKURA_AUDIO_INVALID;
 
-    buffer_release_reference(buffer);
+    buffer_release_reference(engine, buffer);
     return SAKURA_AUDIO_OK;
 }
 
@@ -1508,7 +1984,7 @@ int sakura_audio_voice_set_buffer(SakuraAudioEngine *engine, SakuraAudioHandle v
     int result = enqueue_command(engine, CMD_SET_BUFFER, voice, handle, 0);
 
     if (result != SAKURA_AUDIO_OK)
-        buffer_release_reference(buffer);
+        buffer_release_reference(engine, buffer);
 
     return result;
 }
@@ -1526,7 +2002,9 @@ int sakura_audio_voice_set_stream(SakuraAudioEngine *engine, SakuraAudioHandle v
     if (node->ring.data != NULL)
         return SAKURA_AUDIO_ERROR;
 
-    uint64_t capacity = round_up_power_of_two((uint64_t)capacityFrames * (uint64_t)engine->config.channels);
+    // Exactly the frames asked for: a whole number of frames is what lets the audio thread read a run
+    // straight out of the storage without a frame ever being split across its end.
+    uint64_t capacity = (uint64_t)capacityFrames * (uint64_t)engine->config.channels;
 
     node->ring.data = (float *)calloc((size_t)capacity, sizeof(float));
 
@@ -1617,6 +2095,9 @@ int sakura_audio_stream_flush_begin(SakuraAudioEngine *engine, SakuraAudioHandle
     sakura_atomic_store_u64(&node->ring.flushTarget, sakura_atomic_load_u64(&node->ring.writePosition));
     sakura_atomic_store_u32(&node->ring.writeEpoch, sakura_atomic_load_u32(&node->ring.writeEpoch) + 1u);
 
+    // And only then the engine-wide generation, which is what gets the audio thread to look at all.
+    generation_bump(&engine->flushGeneration);
+
     return SAKURA_AUDIO_OK;
 }
 
@@ -1631,6 +2112,8 @@ int sakura_audio_stream_flush_pending(SakuraAudioEngine *engine, SakuraAudioHand
 
 static void node_reset(SakuraAudioEngine *engine, Node *node, int kind)
 {
+    size_t index = (size_t)(node - engine->nodes);
+
     node->kind = kind;
     node->firstChild = SAKURA_AUDIO_INVALID_HANDLE;
     node->nextSibling = SAKURA_AUDIO_INVALID_HANDLE;
@@ -1644,6 +2127,7 @@ static void node_reset(SakuraAudioEngine *engine, Node *node, int kind)
     sakura_atomic_store_i64(&node->restartFrame, 0);
     sakura_atomic_store_u32(&node->filterEnabled, 0);
     sakura_atomic_store_u32(&node->filterActiveSet, 0);
+    sakura_atomic_store_u64(&node->meterArmedUntil, 0);
 
     for (int set = 0; set < 2; set++)
     {
@@ -1660,23 +2144,22 @@ static void node_reset(SakuraAudioEngine *engine, Node *node, int kind)
 
     sakura_atomic_store_u32(&node->sourceKind, SOURCE_NONE);
     node->buffer = SAKURA_AUDIO_INVALID_HANDLE;
+    node->bufferData = NULL;
     node->cursor = 0;
+    node->streamFrames = 0;
 
     memset(&node->ring, 0, sizeof(node->ring));
 
-    resampler_reset(node);
-    memset(node->filterState, 0, sizeof(node->filterState));
-    node->endHandled = 0;
+    node->capture = engine->captureStorage + index * CAPTURE_SLOTS * SAKURA_AUDIO_FFT_SIZE;
+    node->scratch = engine->nodeScratch + index * (size_t)engine->config.mixBlockFrames * (size_t)engine->config.channels;
+    node->meterActive = 0;
+    node->mixedUntil = -1;
+
+    reset_playback_state(node);
 
     sakura_atomic_store_i64(&node->sourceFrames, 0);
     sakura_atomic_store_i64(&node->endEpoch, 0);
     sakura_atomic_store_i64(&node->seekEpoch, 0);
-    sakura_atomic_store_u32(&node->ended, 0);
-
-    tap_reset(node);
-
-    node->scratch = engine->nodeScratch
-                    + (size_t)(node - engine->nodes) * (size_t)engine->config.mixBlockFrames * (size_t)engine->config.channels;
 }
 
 static SakuraAudioHandle claim_node(SakuraAudioEngine *engine, int kind)
@@ -1694,9 +2177,9 @@ static SakuraAudioHandle claim_node(SakuraAudioEngine *engine, int kind)
         node->generation = node->generation >= HANDLE_GENERATION_MASK ? 1 : node->generation + 1;
         node_reset(engine, node, kind);
 
-        // Published last. Until this store the audio thread cannot resolve the handle, so everything
-        // above is an ordinary single-threaded initialisation.
-        sakura_atomic_store_u32(&node->slotState, SLOT_LIVE);
+        // Published last, with release semantics: until this store the audio thread cannot resolve
+        // the handle, and once it can, it sees everything above.
+        sakura_atomic_store_u32_release(&node->slotState, SLOT_LIVE);
 
         return handle_make((uint32_t)i, node->generation);
     }
@@ -1784,10 +2267,14 @@ SakuraAudioEngine *sakura_audio_engine_create(const SakuraAudioConfig *config)
 
     size_t blockFloats = (size_t)config->mixBlockFrames * (size_t)config->channels;
 
+    // A whole number of mix blocks, so a full put buffer is never a block cut short.
+    engine->putChunkFrames = ((PUT_CHUNK_FRAMES + config->mixBlockFrames - 1) / config->mixBlockFrames) * config->mixBlockFrames;
+
     engine->nodes = (Node *)calloc((size_t)engine->nodeCount, sizeof(Node));
     engine->buffers = (Buffer *)calloc((size_t)engine->bufferCount, sizeof(Buffer));
     engine->nodeScratch = (float *)calloc((size_t)engine->nodeCount * blockFloats, sizeof(float));
-    engine->mixBuffer = (float *)calloc(blockFloats, sizeof(float));
+    engine->captureStorage = (float *)calloc((size_t)engine->nodeCount * CAPTURE_SLOTS * SAKURA_AUDIO_FFT_SIZE, sizeof(float));
+    engine->putBuffer = (float *)calloc((size_t)engine->putChunkFrames * (size_t)config->channels, sizeof(float));
 
     engine->commands.capacity = round_up_power_of_two((uint64_t)config->maxCommands);
     engine->commands.slots = (Command *)calloc((size_t)engine->commands.capacity, sizeof(Command));
@@ -1798,8 +2285,8 @@ SakuraAudioEngine *sakura_audio_engine_create(const SakuraAudioConfig *config)
     engine->twiddleReal = (float *)calloc(SAKURA_AUDIO_FFT_SIZE / 2, sizeof(float));
     engine->twiddleImaginary = (float *)calloc(SAKURA_AUDIO_FFT_SIZE / 2, sizeof(float));
 
-    if (engine->nodes == NULL || engine->buffers == NULL || engine->nodeScratch == NULL || engine->mixBuffer == NULL
-        || engine->commands.slots == NULL || engine->commands.ready == NULL || engine->fftWindow == NULL
+    if (engine->nodes == NULL || engine->buffers == NULL || engine->nodeScratch == NULL || engine->captureStorage == NULL
+        || engine->putBuffer == NULL || engine->commands.slots == NULL || engine->commands.ready == NULL || engine->fftWindow == NULL
         || engine->fftReversal == NULL || engine->twiddleReal == NULL || engine->twiddleImaginary == NULL)
     {
         sakura_audio_engine_destroy(engine);
@@ -1854,6 +2341,16 @@ void sakura_audio_engine_maintain(SakuraAudioEngine *engine)
     if (engine == NULL)
         return;
 
+    // Nothing retired since the last walk is the overwhelmingly common case: this is called a
+    // thousand times a second and a slot is retired a few times a second at most.
+    uint32_t generation = sakura_atomic_load_u32(&engine->retireGeneration);
+
+    if (generation == engine->retireGenerationSeen)
+        return;
+
+    // Recorded before the walk, so a slot retired while it runs gets another walk next time.
+    engine->retireGenerationSeen = generation;
+
     // The only place anything is freed. A slot reaches RETIRED only after the audio thread has
     // unlinked it from the graph, so nothing it owns can still be in use.
     for (int i = 0; i < engine->nodeCount; i++)
@@ -1905,7 +2402,8 @@ void sakura_audio_engine_destroy(SakuraAudioEngine *engine)
     free(engine->nodes);
     free(engine->buffers);
     free(engine->nodeScratch);
-    free(engine->mixBuffer);
+    free(engine->captureStorage);
+    free(engine->putBuffer);
     free(engine->commands.slots);
     free(engine->commands.ready);
     free(engine->fftWindow);

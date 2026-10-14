@@ -577,6 +577,11 @@ static void test_peak_metering(void)
 
     SakuraAudioHandle voice = attach_static_voice(engine, pcm, frames, NULL);
 
+    // Metering only runs for a node whose spectrum somebody reads, and a read is what arms it -- which
+    // is what the managed reader does on every poll.
+    float bins[SAKURA_AUDIO_BINS];
+    sakura_audio_node_read_spectrum(engine, voice, bins, SAKURA_AUDIO_BINS);
+
     float out[128 * CHANNELS];
 
     for (int i = 0; i < 8; i++)
@@ -604,6 +609,7 @@ static void test_peak_metering(void)
     sakura_audio_add_child(engine, sakura_audio_engine_root(engine), starved);
     sakura_audio_node_play(engine, starved);
     sakura_audio_stream_write(engine, starved, pcm, 512);
+    sakura_audio_node_read_spectrum(engine, starved, bins, SAKURA_AUDIO_BINS);
 
     for (int i = 0; i < 4; i++)
         sakura_audio_engine_mix(engine, out, 128);
@@ -920,10 +926,11 @@ static void test_device_callback(void)
     put_frames = 0;
     sakura_audio_set_sdl_put(fake_put);
 
-    // 512 frames asked for in one go, answered in 128-frame blocks.
+    // 512 frames asked for in one go: mixed in 128-frame blocks, handed to SDL in one put, since every
+    // put takes SDL's stream lock.
     callback(engine, NULL, 512 * CHANNELS * (int)sizeof(float), 512 * CHANNELS * (int)sizeof(float));
 
-    CHECK(put_calls == 4);
+    CHECK(put_calls == 1);
     CHECK(put_frames == 512);
 
     SakuraAudioStats stats;
@@ -938,7 +945,14 @@ static void test_device_callback(void)
     // A request for nothing, and a callback with no engine, are both no-ops rather than crashes.
     callback(engine, NULL, 0, 0);
     callback(NULL, NULL, 512, 512);
-    CHECK(put_calls == 4);
+    CHECK(put_calls == 1);
+
+    // Only a request larger than the put buffer (4096 frames) is split.
+    put_calls = 0;
+    put_frames = 0;
+    callback(engine, NULL, 5000 * CHANNELS * (int)sizeof(float), 5000 * CHANNELS * (int)sizeof(float));
+    CHECK(put_calls == 2);
+    CHECK(put_frames == 5000);
 
     // With no put function installed the mix still runs and the failure is counted, which is what
     // makes a missing handshake visible instead of silent.
@@ -948,6 +962,543 @@ static void test_device_callback(void)
     CHECK(stats.putFailures == 1);
 
     sakura_audio_set_sdl_put(fake_put);
+    sakura_audio_engine_destroy(engine);
+}
+
+// The unity path copies whole runs instead of interpolating each frame. It has to be a copy of exactly
+// the right frames, across block boundaries, and it has to leave the interpolation window where the
+// per-frame path would have, so that a rate change mid-stream carries straight on.
+static void test_unity_runs_and_rate_handover(void)
+{
+    SakuraAudioEngine *engine = make_engine(128);
+
+    const int frames = 1024;
+    float *pcm = (float *)malloc((size_t)frames * CHANNELS * sizeof(float));
+
+    for (int i = 0; i < frames; i++)
+    {
+        pcm[i * 2] = 0.0005f * (float)i;
+        pcm[i * 2 + 1] = -0.0005f * (float)i;
+    }
+
+    SakuraAudioHandle voice = attach_static_voice(engine, pcm, frames, NULL);
+
+    // Odd-sized requests, so blocks and runs never line up with anything.
+    static float out[1024 * CHANNELS];
+    int produced = 0;
+    int sizes[] = { 3, 1, 2, 77, 128, 50 };
+
+    for (int i = 0; i < 6; i++)
+    {
+        sakura_audio_engine_mix(engine, out + produced * CHANNELS, sizes[i]);
+        produced += sizes[i];
+    }
+
+    int mismatches = 0;
+
+    for (int i = 0; i < produced * CHANNELS; i++)
+    {
+        if (out[i] != pcm[i])
+            mismatches++;
+    }
+
+    CHECK(mismatches == 0);
+
+    // The window holds the three frames after the last one played, plus that one. Doubling the rate
+    // now must land on frame `produced` and then every other frame, exactly, as it would had the
+    // whole stream been interpolated frame by frame.
+    sakura_audio_node_set_rate(engine, voice, 2.0);
+
+    float doubled[8 * CHANNELS];
+    sakura_audio_engine_mix(engine, doubled, 8);
+
+    for (int i = 0; i < 8; i++)
+        CHECK_NEAR(doubled[i * 2], pcm[(produced + i * 2) * 2], 0.0);
+
+    free(pcm);
+    sakura_audio_engine_destroy(engine);
+}
+
+// The run-based resampler paths against the per-frame algorithm they replaced, reimplemented here
+// from its definition: a 4-frame Hermite window primed with silence then the first three frames, one
+// output per step, the position advanced by the ratio and the window shifted once per whole frame,
+// and a dry source shifting in silence until the window is all zeros. Same inputs, same arithmetic,
+// so the outputs must match to the bit -- at unity, off unity, across odd block sizes, and through a
+// rate change halfway through.
+typedef struct ReferenceResampler
+{
+    const float *pcm;
+    int frames;
+    int next;
+    float window[4 * CHANNELS];
+    double position;
+    int drained;
+} ReferenceResampler;
+
+static float reference_interpolate(float w0, float w1, float w2, float w3, float t)
+{
+    float c0 = w1;
+    float c1 = 0.5f * (w2 - w0);
+    float c2 = w0 - 2.5f * w1 + 2.0f * w2 - 0.5f * w3;
+    float c3 = 0.5f * (w3 - w0) + 1.5f * (w1 - w2);
+    return ((c3 * t + c2) * t + c1) * t + c0;
+}
+
+static int reference_advance(ReferenceResampler *r)
+{
+    memmove(r->window, r->window + CHANNELS, 3 * CHANNELS * sizeof(float));
+
+    if (r->next < r->frames)
+    {
+        memcpy(r->window + 3 * CHANNELS, r->pcm + r->next * CHANNELS, CHANNELS * sizeof(float));
+        r->next++;
+        r->drained = 0;
+        return 1;
+    }
+
+    memset(r->window + 3 * CHANNELS, 0, CHANNELS * sizeof(float));
+    return ++r->drained < 4;
+}
+
+// Produces up to `count` frames; returns how many before the window drained.
+static int reference_read(ReferenceResampler *r, float *out, int count, double ratio)
+{
+    for (int produced = 0; produced < count; produced++)
+    {
+        for (int c = 0; c < CHANNELS; c++)
+            out[produced * CHANNELS + c] = reference_interpolate(r->window[c], r->window[CHANNELS + c],
+                                                                 r->window[2 * CHANNELS + c], r->window[3 * CHANNELS + c],
+                                                                 (float)r->position);
+
+        r->position += ratio;
+
+        while (r->position >= 1.0)
+        {
+            if (!reference_advance(r))
+            {
+                r->position -= floor(r->position);
+                return produced + 1;
+            }
+
+            r->position -= 1.0;
+        }
+    }
+
+    return count;
+}
+
+static void test_resampler_paths_match_the_per_frame_algorithm(void)
+{
+    const int frames = 3000;
+    float *pcm = (float *)malloc((size_t)frames * CHANNELS * sizeof(float));
+
+    // Not periodic, not smooth, never zero: anything that took the wrong frame or the wrong position
+    // would show.
+    for (int i = 0; i < frames; i++)
+    {
+        pcm[i * 2] = 0.4f * (float)sin(0.0137 * i) + 0.1f * (float)sin(0.91 * i) + 0.001f;
+        pcm[i * 2 + 1] = 0.3f * (float)cos(0.0291 * i) - 0.2f * (float)sin(0.57 * i) - 0.001f;
+    }
+
+    // The last two schedules switch rate partway: 1.0 then 1.37 from output frame 700 on, and 1.37
+    // back to exactly 1.0 -- which leaves the position between frames for good, the case the copy path
+    // cannot take.
+    double ratios[] = { 1.0, 0.73, 1.37, 2.5, -1.0, -2.0 };
+    int sizes[] = { 128, 3, 1, 61, 128, 200, 7, 128 };
+
+    for (int schedule = 0; schedule < 6; schedule++)
+    {
+        SakuraAudioEngine *engine = make_engine(128);
+        SakuraAudioHandle voice = attach_static_voice(engine, pcm, frames, NULL);
+
+        ReferenceResampler reference = { pcm, frames, 0, { 0 }, 0.0, 0 };
+
+        for (int i = 1; i < 4; i++)
+        {
+            memcpy(reference.window + i * CHANNELS, pcm + reference.next * CHANNELS, CHANNELS * sizeof(float));
+            reference.next++;
+        }
+
+        static float actual[400 * CHANNELS];
+        static float expected[400 * CHANNELS];
+        int played = 0;
+        int mismatches = 0;
+
+        for (int round = 0; round < 24; round++)
+        {
+            double ratio = ratios[schedule] > 0 ? ratios[schedule]
+                           : ratios[schedule] == -1.0 ? (played < 700 ? 1.0 : 1.37)
+                                                      : (played < 700 ? 1.37 : 1.0);
+            int count = sizes[round % 8];
+
+            sakura_audio_node_set_rate(engine, voice, ratio);
+            sakura_audio_engine_mix(engine, actual, count);
+
+            int produced = reference_read(&reference, expected, count, ratio);
+
+            for (int i = 0; i < produced * CHANNELS; i++)
+            {
+                if (actual[i] != expected[i])
+                    mismatches++;
+            }
+
+            played += count;
+        }
+
+        CHECK(mismatches == 0);
+        sakura_audio_engine_destroy(engine);
+    }
+
+    free(pcm);
+}
+
+// A ring whose capacity is not a multiple of the mix block, written and drained in sizes that wrap it
+// at every offset: the audio thread reads runs straight out of the storage, so a frame split across
+// the end, or a run that miscounts the wrap, would show up as a wrong sample.
+static void test_stream_runs_across_the_wrap(void)
+{
+    SakuraAudioEngine *engine = make_engine(128);
+
+    SakuraAudioHandle voice = sakura_audio_create_voice(engine);
+    CHECK(sakura_audio_voice_set_stream(engine, voice, 300) == SAKURA_AUDIO_OK);
+    sakura_audio_add_child(engine, sakura_audio_engine_root(engine), voice);
+    sakura_audio_node_play(engine, voice);
+
+    float chunk[200 * CHANNELS];
+    float out[150 * CHANNELS];
+    int writtenFrames = 0;
+    int playedFrames = 0;
+    int mismatches = 0;
+
+    for (int round = 0; round < 40; round++)
+    {
+        int toWrite = 97 + (round * 31) % 100;
+        int space = sakura_audio_stream_space(engine, voice);
+
+        if (toWrite > space)
+            toWrite = space;
+
+        for (int i = 0; i < toWrite; i++)
+        {
+            chunk[i * 2] = 0.0001f * (float)((writtenFrames + i) % 9000);
+            chunk[i * 2 + 1] = -chunk[i * 2];
+        }
+
+        CHECK(sakura_audio_stream_write(engine, voice, chunk, toWrite) == toWrite);
+        writtenFrames += toWrite;
+
+        // Only ever ask for what is buffered beyond the window, so the voice never starves and every
+        // frame out is a frame that was written.
+        int request = 61 + (round * 17) % 89;
+        int ahead = writtenFrames - playedFrames - 3;
+
+        if (request > ahead)
+            request = ahead;
+
+        if (request <= 0)
+            continue;
+
+        sakura_audio_engine_mix(engine, out, request);
+
+        for (int i = 0; i < request; i++)
+        {
+            float expected = 0.0001f * (float)((playedFrames + i) % 9000);
+
+            if (out[i * 2] != expected || out[i * 2 + 1] != -expected)
+                mismatches++;
+        }
+
+        playedFrames += request;
+    }
+
+    CHECK(playedFrames > 2000);
+    CHECK(mismatches == 0);
+
+    sakura_audio_engine_destroy(engine);
+}
+
+// Nothing meters until something reads, a read arms it for a second of audio, and a meter nobody reads
+// any more stops -- which is what makes metering free for every hitsound voice nobody visualises.
+static void test_metering_runs_only_while_read(void)
+{
+    SakuraAudioEngine *engine = make_engine(128);
+
+    const int frames = SAMPLE_RATE * 3;
+    float *pcm = (float *)malloc((size_t)frames * CHANNELS * sizeof(float));
+
+    for (int i = 0; i < frames * CHANNELS; i++)
+        pcm[i] = 0.5f;
+
+    SakuraAudioHandle voice = attach_static_voice(engine, pcm, frames, NULL);
+
+    float out[128 * CHANNELS];
+    float bins[SAKURA_AUDIO_BINS];
+    SakuraAudioNodeState state;
+
+    for (int i = 0; i < 16; i++)
+        sakura_audio_engine_mix(engine, out, 128);
+
+    sakura_audio_node_get_state(engine, voice, &state);
+    CHECK_NEAR(state.amplitudeLeft, 0.0f, 0.0);
+
+    // The first read arms it and has nothing to report yet.
+    CHECK(sakura_audio_node_read_spectrum(engine, voice, bins, SAKURA_AUDIO_BINS) == 0);
+
+    for (int i = 0; i < 16; i++)
+        sakura_audio_engine_mix(engine, out, 128);
+
+    sakura_audio_node_get_state(engine, voice, &state);
+    CHECK_NEAR(state.amplitudeLeft, 0.5f, 1e-6);
+    CHECK(sakura_audio_node_read_spectrum(engine, voice, bins, SAKURA_AUDIO_BINS) == SAKURA_AUDIO_BINS);
+
+    // A little over a second of audio with no reads, and the meter has gone quiet rather than holding
+    // its last reading.
+    for (int i = 0; i < SAMPLE_RATE / 128 + 8; i++)
+        sakura_audio_engine_mix(engine, out, 128);
+
+    sakura_audio_node_get_state(engine, voice, &state);
+    CHECK(state.running == 1);
+    CHECK_NEAR(state.amplitudeLeft, 0.0f, 0.0);
+
+    free(pcm);
+    sakura_audio_engine_destroy(engine);
+}
+
+// A gain change ramps across the next block rather than stepping at its start, which on a fade is the
+// difference between a smooth curve and a 128-frame staircase you can hear as zipper noise.
+static void test_gain_change_ramps(void)
+{
+    SakuraAudioEngine *engine = make_engine(128);
+
+    const int frames = 1024;
+    float pcm[1024 * CHANNELS];
+
+    for (int i = 0; i < frames * CHANNELS; i++)
+        pcm[i] = 0.5f;
+
+    SakuraAudioHandle voice = attach_static_voice(engine, pcm, frames, NULL);
+
+    float out[128 * CHANNELS];
+    sakura_audio_engine_mix(engine, out, 128);
+    CHECK_NEAR(out[0], 0.5f, 0.0);
+
+    sakura_audio_node_set_gain(engine, voice, 0.0f, 1.0f, 1.0f);
+    sakura_audio_engine_mix(engine, out, 128);
+
+    // Linear from where the last block ended to the new gain, arriving on the last frame.
+    CHECK_NEAR(out[0], 0.5f * (1.0f - 1.0f / 128.0f), 1e-6);
+    CHECK_NEAR(out[63 * 2], 0.5f * (1.0f - 64.0f / 128.0f), 1e-6);
+    CHECK_NEAR(out[127 * 2], 0.0f, 1e-7);
+
+    int rising = 0;
+
+    for (int i = 1; i < 128; i++)
+    {
+        if (out[i * 2] > out[(i - 1) * 2])
+            rising++;
+    }
+
+    CHECK(rising == 0);
+
+    sakura_audio_engine_mix(engine, out, 128);
+    CHECK_NEAR(out[0], 0.0f, 0.0);
+
+    // A voice that starts, or seeks, snaps to its gain instead: there is no previous block of this
+    // audio to ramp from. (test_gain_and_pan pins the same thing from the first block.)
+    sakura_audio_node_set_gain(engine, voice, 1.0f, 1.0f, 1.0f);
+    sakura_audio_node_seek(engine, voice, 0);
+    sakura_audio_engine_mix(engine, out, 128);
+    CHECK_NEAR(out[0], 0.5f, 0.0);
+
+    sakura_audio_engine_destroy(engine);
+}
+
+// A full queue refuses the newest command and says so. It used to spin the calling thread for up to a
+// million iterations and then overwrite an unconsumed command anyway.
+static void test_full_command_queue_refuses(void)
+{
+    SakuraAudioConfig config;
+    sakura_audio_config_defaults(&config);
+    config.sampleRate = SAMPLE_RATE;
+    config.channels = CHANNELS;
+    config.maxCommands = 4;
+
+    SakuraAudioEngine *engine = sakura_audio_engine_create(&config);
+    CHECK(engine != NULL);
+
+    float out[8 * CHANNELS];
+    sakura_audio_engine_mix(engine, out, 8); // drains nothing; the engine was created with an empty queue
+
+    SakuraAudioHandle voice = sakura_audio_create_voice(engine);
+
+    for (int i = 0; i < 4; i++)
+        CHECK(sakura_audio_node_pause(engine, voice) == SAKURA_AUDIO_OK);
+
+    CHECK(sakura_audio_node_pause(engine, voice) == SAKURA_AUDIO_FULL);
+
+    SakuraAudioStats stats;
+    sakura_audio_engine_get_stats(engine, &stats);
+    CHECK(stats.commandsDropped == 1);
+
+    sakura_audio_engine_mix(engine, out, 8);
+    CHECK(sakura_audio_node_pause(engine, voice) == SAKURA_AUDIO_OK);
+
+    sakura_audio_engine_destroy(engine);
+}
+
+// A filter left running over silence decays to exactly zero instead of trailing off through ever
+// smaller values into the subnormal range, where every multiply on x86 takes a microcode assist. The
+// slow poles make the difference visible at the output: without the floor, 60 blocks in, the tail is
+// still around 1e-30 -- small, but a float, and nonzero.
+static void test_filter_state_settles_to_zero(void)
+{
+    SakuraAudioEngine *engine = make_engine(128);
+
+    // A silent stream keeps the voice, and so its filter, running after the audio is gone. Both poles
+    // at 0.99 (a1 = -1.98, a2 = 0.9801), so the tail is long.
+    SakuraAudioHandle voice = sakura_audio_create_voice(engine);
+    sakura_audio_voice_set_stream(engine, voice, 1024);
+    sakura_audio_node_set_filter(engine, voice, 1, 0.0001f, 0.0002f, 0.0001f, -1.98f, 0.9801f);
+    sakura_audio_add_child(engine, sakura_audio_engine_root(engine), voice);
+    sakura_audio_node_play(engine, voice);
+
+    float loud[128 * CHANNELS];
+
+    for (int i = 0; i < 128 * CHANNELS; i++)
+        loud[i] = 0.9f;
+
+    float silence[128 * CHANNELS] = { 0 };
+    float out[128 * CHANNELS];
+
+    sakura_audio_stream_write(engine, voice, loud, 128);
+    sakura_audio_engine_mix(engine, out, 128);
+
+    for (int i = 0; i < 60; i++)
+    {
+        sakura_audio_stream_write(engine, voice, silence, 128);
+        sakura_audio_engine_mix(engine, out, 128);
+    }
+
+    int nonzero = 0;
+
+    for (int i = 0; i < 128 * CHANNELS; i++)
+    {
+        if (out[i] != 0.0f)
+            nonzero++;
+    }
+
+    CHECK(nonzero == 0);
+
+    sakura_audio_engine_destroy(engine);
+}
+
+// A node that missed a block -- here a bus with nothing to mix while it was muted -- takes its gain
+// outright on the next block it mixes, rather than ramping from the gain it had before the gap: a
+// muted bus must not let a block of the next hit through on its way down to silence.
+static void test_gain_snaps_after_a_skipped_block(void)
+{
+    SakuraAudioEngine *engine = make_engine(128);
+
+    float pcm[128 * CHANNELS];
+
+    for (int i = 0; i < 128 * CHANNELS; i++)
+        pcm[i] = 0.5f;
+
+    SakuraAudioHandle bus = sakura_audio_create_mixer(engine);
+    sakura_audio_add_child(engine, sakura_audio_engine_root(engine), bus);
+
+    SakuraAudioHandle buffer = sakura_audio_buffer_create(engine, pcm, 128);
+    SakuraAudioHandle first = sakura_audio_create_voice(engine);
+    sakura_audio_voice_set_buffer(engine, first, buffer);
+    sakura_audio_add_child(engine, bus, first);
+    sakura_audio_node_play(engine, first);
+
+    float out[128 * CHANNELS];
+    sakura_audio_engine_mix(engine, out, 128);
+    CHECK_NEAR(out[0], 0.5f, 0.0);
+
+    // The hit is over and gone; the bus has nothing to mix, and is muted while it has nothing.
+    sakura_audio_destroy_node(engine, first);
+    sakura_audio_engine_mix(engine, out, 128);
+    sakura_audio_node_set_gain(engine, bus, 0.0f, 1.0f, 1.0f);
+    sakura_audio_engine_mix(engine, out, 128);
+
+    SakuraAudioHandle second = sakura_audio_create_voice(engine);
+    sakura_audio_voice_set_buffer(engine, second, buffer);
+    sakura_audio_add_child(engine, bus, second);
+    sakura_audio_node_play(engine, second);
+    sakura_audio_engine_mix(engine, out, 128);
+
+    int audible = 0;
+
+    for (int i = 0; i < 128 * CHANNELS; i++)
+    {
+        if (out[i] != 0.0f)
+            audible++;
+    }
+
+    CHECK(audible == 0);
+
+    sakura_audio_buffer_release(engine, buffer);
+    sakura_audio_engine_destroy(engine);
+}
+
+// A stream that starves long enough to drain its window, then recovers, plays its fresh audio from the
+// first new frame. It used to skip one frame per starved block, because the position kept advancing
+// over frames that never existed.
+static void test_stream_recovers_without_skipping(void)
+{
+    SakuraAudioEngine *engine = make_engine(128);
+
+    SakuraAudioHandle voice = sakura_audio_create_voice(engine);
+    sakura_audio_voice_set_stream(engine, voice, 4096);
+    sakura_audio_add_child(engine, sakura_audio_engine_root(engine), voice);
+    sakura_audio_node_play(engine, voice);
+
+    float pcm[64 * CHANNELS];
+
+    for (int i = 0; i < 64 * CHANNELS; i++)
+        pcm[i] = 0.25f;
+
+    float out[128 * CHANNELS];
+
+    sakura_audio_stream_write(engine, voice, pcm, 64);
+    sakura_audio_engine_mix(engine, out, 128);
+
+    for (int i = 0; i < 20; i++)
+        sakura_audio_engine_mix(engine, out, 128);
+
+    float fresh[64 * CHANNELS];
+
+    for (int i = 0; i < 64; i++)
+    {
+        fresh[i * 2] = 0.001f * (float)(i + 1);
+        fresh[i * 2 + 1] = -fresh[i * 2];
+    }
+
+    sakura_audio_stream_write(engine, voice, fresh, 64);
+    sakura_audio_engine_mix(engine, out, 128);
+
+    int first = -1;
+
+    for (int i = 0; i < 128; i++)
+    {
+        if (out[i * 2] != 0.0f)
+        {
+            first = i;
+            break;
+        }
+    }
+
+    CHECK(first >= 0);
+
+    if (first >= 0)
+    {
+        // The drained window plays out its silence, then the fresh audio arrives from its first frame.
+        CHECK_NEAR(out[first * 2], fresh[0], 0.0);
+        CHECK_NEAR(out[(first + 1) * 2], fresh[2], 0.0);
+    }
+
     sakura_audio_engine_destroy(engine);
 }
 
@@ -974,6 +1525,15 @@ int main(void)
     RUN(test_buffer_reference_counting);
     RUN(test_invalid_arguments);
     RUN(test_device_callback);
+    RUN(test_unity_runs_and_rate_handover);
+    RUN(test_resampler_paths_match_the_per_frame_algorithm);
+    RUN(test_stream_runs_across_the_wrap);
+    RUN(test_metering_runs_only_while_read);
+    RUN(test_gain_change_ramps);
+    RUN(test_gain_snaps_after_a_skipped_block);
+    RUN(test_stream_recovers_without_skipping);
+    RUN(test_full_command_queue_refuses);
+    RUN(test_filter_state_settles_to_zero);
 
     printf("\n%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;

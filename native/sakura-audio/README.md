@@ -51,6 +51,12 @@ stutter bug if broken:
 - no logging, no `printf`, no allocation-shaped error handling
 - no unbounded loops — the node pool, the graph depth and the commands drained per callback are all
   capped by a configured constant
+- no per-frame bookkeeping — sources are read in contiguous runs (the rest of a static buffer, the ring
+  up to its end) with one acquire and one release per run, unity rate is a copy, and the cursor is
+  published once per block. Per-frame atomics were most of the callback's cost before this
+- no work nobody asked for — a node meters only for a second after its spectrum was read, the pool is
+  walked for ring flushes only when a writer has posted one, and the device's whole period goes to SDL
+  in one `SDL_PutAudioStreamData`
 - **no FFT.** Spectrum reads are pulled, not pushed: the callback keeps a rolling window of recent
   mixed output per node, and `sakura_audio_node_read_spectrum` transforms it on the *calling* thread.
   Peak levels, being trivial, are computed in the callback into atomics.
@@ -79,6 +85,18 @@ request, the audio thread performs it, and the writer waits on
 caller's to do: it is the one place this library would otherwise need a sleep primitive, and there
 isn't a portable one.
 
+## Measuring
+
+`bench/sakura_audio_bench.c` builds alongside the tests as `sakura-audio-bench`. It mixes N voices
+offline and reports the share of a core real time would take, then times the control-side calls the
+managed side makes (warm and with the cache evicted). It asserts nothing; it is the before-and-after
+for a change to the mix path, and on Windows -- where the atomics compile to different instructions --
+the only measurement there is.
+
+```sh
+./build/sakura-audio-bench
+```
+
 ## Relationship to the managed mixer
 
 `Sakura.Framework/Audio/SdlEngine` contains a complete managed mixer, and it is not dead code. It is
@@ -95,7 +113,13 @@ Where behaviour is shared, the managed version is the source of truth:
 - **The pan law is computed managed-side**, next to the BASS backend's, and arrives here as two
   per-side gains.
 - Unity playback is bit-exact, not merely close: cubic Hermite at t = 0 collapses to the sample
-  itself, so normal playback is not quietly low-passed and needs no bypass path.
+  itself, so normal playback is not quietly low-passed. It is also a straight copy here, which is the
+  same output for a fraction of the work; `test_resampler_paths_match_the_per_frame_algorithm` pins
+  every fast path to the per-frame algorithm bit for bit.
+- Gain and pan changes ramp across one mix block on both sides, and snap on the first block after a
+  seek or after any block the node was not mixed in.
+- A starved stream resumes from its first fresh frame on both sides: a drained resampler keeps only
+  the fractional part of its position instead of accumulating frames that never existed.
 - The peak window is measured in audio, not in reads — 16 segments of 64 frames, about 21 ms at
   48 kHz, the same order as the fixed window `BASS_ChannelGetLevel` reports over. A peak computed per
   callback into an atomic has exactly the bug this avoids: a reader that lands between callbacks

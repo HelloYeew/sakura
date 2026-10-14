@@ -21,6 +21,12 @@ if(MSVC)
     add_compile_options(/W4)
 else()
     add_compile_options(-Wall -Wextra -Wpedantic)
+
+    # No fused multiply-adds the source did not write. GCC contracts across statements by default in
+    # its gnu11 mode, and clang within them, so the same arithmetic rounded differently per compiler and
+    # per inlining site -- which is what the bit-exact resampler tests, and parity with the managed
+    # mixer, are measuring. MSVC does not contract under its default /fp:precise.
+    add_compile_options(-ffp-contract=off)
 endif()
 
 # The Darwin cache variables below are the Apple leg only. They are still required there -- a
@@ -104,4 +110,22 @@ if(SAKURA_AUDIO_BUILD_TESTS)
     endif()
 
     add_test(NAME sakura-audio-test COMMAND sakura-audio-test)
+endif()
+
+# The benchmark is built wherever the tests are, so every leg that can run one can run the other. It
+# asserts nothing and is not registered with CTest; CI runs it for the numbers, which on Windows are the
+# only measurement of the MSVC atomics there is.
+option(SAKURA_AUDIO_BUILD_BENCH "Build the sakura-audio benchmark binary" ${SAKURA_AUDIO_BUILD_TESTS})
+
+if(SAKURA_AUDIO_BUILD_BENCH)
+    add_executable(sakura-audio-bench bench/sakura_audio_bench.c sakura_audio.c)
+    target_include_directories(sakura-audio-bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    if(SAKURA_AUDIO_HAVE_TIMESPEC_GET)
+        target_compile_definitions(sakura-audio-bench PRIVATE SAKURA_AUDIO_HAVE_TIMESPEC_GET=1)
+    endif()
+
+    if(NOT MSVC)
+        target_link_libraries(sakura-audio-bench m)
+    endif()
 endif()

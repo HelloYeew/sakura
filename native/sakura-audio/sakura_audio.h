@@ -130,7 +130,7 @@ typedef struct SakuraAudioStats
     int64_t framesMixed;          // output frames produced
     int64_t starvations;          // blocks where a running voice had less audio than was asked for
     int64_t putFailures;          // sakura_sdl_put_fn rejected a block
-    int64_t commandsDropped;      // control commands lost to a full queue; should always be zero
+    int64_t commandsDropped;      // control commands refused by a full queue; should always be zero
     int64_t callbackMicroseconds; // duration of the most recent callback; 0 where the platform's C
                                   // library has no timespec_get (Android below API 29)
     int32_t activeVoices;         // voices that produced audio in the most recent block
@@ -138,7 +138,7 @@ typedef struct SakuraAudioStats
 
 int sakura_audio_engine_get_stats(SakuraAudioEngine *engine, SakuraAudioStats *stats);
 
-// Mixes one block of `frames` output frames into `destination` (interleaved, config.channels wide),
+// Mixes `frames` output frames into `destination` (interleaved, config.channels wide), in mix blocks,
 // exactly as the device callback would, and returns the frames written. For tests, for offline
 // rendering, and for parity checks against the managed mixer -- not for use while a device is
 // running, which would race the callback.
@@ -165,7 +165,9 @@ int sakura_audio_remove_child(SakuraAudioEngine *engine, SakuraAudioHandle paren
 // --- Parameters ----------------------------------------------------------------------------------
 //
 // These take effect on the next block without going through the command queue: each is a single
-// atomic store that the audio thread reads once per block.
+// atomic store that the audio thread reads once per block. A gain or pan change ramps linearly across
+// that block rather than stepping, except on a node's first block after a seek or after any block it
+// was not mixed in (stopped, or a mixer with nothing to mix), which snaps to the gain set.
 
 // Linear volume, and the per-side pan gains. Split rather than passing a balance so that the pan law
 // stays on the managed side next to the BASS backend's, where it can be compared.
@@ -224,6 +226,8 @@ typedef struct SakuraAudioNodeState
     int32_t running;
     int32_t ended;
 
+    // Peak levels over the last ~21 ms. Zero unless this node's spectrum has been read within the last
+    // second of audio: metering runs only for nodes somebody is reading (see read_spectrum).
     float amplitudeLeft;
     float amplitudeRight;
 } SakuraAudioNodeState;
@@ -234,6 +238,11 @@ int sakura_audio_node_get_state(SakuraAudioEngine *engine, SakuraAudioHandle nod
 // `binCount` (at most SAKURA_AUDIO_BINS) magnitudes. Returns the bins written, or 0 when nothing has
 // passed through this node yet. Runs the transform on the calling thread -- never call it from the
 // audio callback.
+//
+// Also what turns metering on. A node meters -- peaks for get_state, windows for this -- for one second
+// of audio after each call, and not otherwise, so the hitsound voices nobody visualises cost nothing.
+// The first call on a node that was not metering therefore arms it and returns 0; a reader polling at
+// any ordinary rate keeps it armed.
 int sakura_audio_node_read_spectrum(SakuraAudioEngine *engine, SakuraAudioHandle node, float *bins, int binCount);
 
 // --- Sources -------------------------------------------------------------------------------------
@@ -248,8 +257,8 @@ int sakura_audio_buffer_release(SakuraAudioEngine *engine, SakuraAudioHandle buf
 
 int sakura_audio_voice_set_buffer(SakuraAudioEngine *engine, SakuraAudioHandle voice, SakuraAudioHandle buffer);
 
-// Gives a voice a ring buffer of `capacityFrames` for a writer thread to fill. Sized by the caller
-// from how far ahead it wants to decode, which has nothing to do with output latency.
+// Gives a voice a ring buffer of exactly `capacityFrames` for a writer thread to fill. Sized by the
+// caller from how far ahead it wants to decode, which has nothing to do with output latency.
 int sakura_audio_voice_set_stream(SakuraAudioEngine *engine, SakuraAudioHandle voice, int capacityFrames);
 
 // --- Streaming, writer side ----------------------------------------------------------------------
