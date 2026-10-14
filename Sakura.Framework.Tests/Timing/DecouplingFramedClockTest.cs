@@ -193,6 +193,68 @@ public class DecouplingFramedClockTest
     }
 
     [Test]
+    public void TestSourceThatRunsOutIsNotRestarted()
+    {
+        source.Length = 1000;
+        decoupled.Start();
+        decoupled.Seek(900);
+        decoupled.ProcessFrame();
+
+        // The track plays to just short of its reported end and stops by itself.
+        source.AdvanceBy(80);
+        reference.CurrentTime += 80;
+        decoupled.ProcessFrame();
+        int startsBefore = source.StartCount;
+        source.RunOut();
+
+        // Still inside the track's range for a frame (so a seek would succeed), then past its end.
+        for (int i = 0; i < 5; i++)
+        {
+            reference.CurrentTime += 10;
+            decoupled.ProcessFrame();
+        }
+
+        Assert.That(source.StartCount, Is.EqualTo(startsBefore), "a finished track isn't started again");
+        Assert.That(source.IsRunning, Is.False);
+        Assert.That(decoupled.IsDecoupled, Is.True);
+        Assert.That(decoupled.CurrentTime, Is.EqualTo(1030).Within(1), "time carries on past the end");
+    }
+
+    [Test]
+    public void TestSeekAfterSourceRanOutStartsItAgain()
+    {
+        source.Length = 1000;
+        decoupled.Start();
+        decoupled.Seek(990);
+        decoupled.ProcessFrame();
+        source.RunOut();
+        reference.CurrentTime += 50;
+        decoupled.ProcessFrame();
+
+        decoupled.Seek(200);
+        decoupled.ProcessFrame();
+
+        Assert.That(source.IsRunning, Is.True);
+        Assert.That(source.CurrentTime, Is.EqualTo(200).Within(1));
+    }
+
+    [Test]
+    public void TestSeekPastSourceEndDoesNotStartIt()
+    {
+        source.Length = 1000;
+        decoupled.Start();
+        decoupled.ProcessFrame();
+        source.Stop();
+
+        decoupled.Seek(1500);
+        reference.CurrentTime += 10;
+        decoupled.ProcessFrame();
+
+        Assert.That(source.IsRunning, Is.False);
+        Assert.That(decoupled.CurrentTime, Is.EqualTo(1510).Within(1));
+    }
+
+    [Test]
     public void TestStartFromNegativeTimeIncrementsCorrectlyWithRealClock()
     {
         // Use a real reference clock this time to test actual timing behaviour.

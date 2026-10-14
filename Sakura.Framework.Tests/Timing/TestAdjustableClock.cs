@@ -20,16 +20,36 @@ public class TestAdjustableClock : IAdjustableClock
 
     public int SeekCount { get; private set; }
 
-    public void Start() => IsRunning = true;
+    public int StartCount { get; private set; }
+
+    /// <summary>
+    /// The track's length, if it has one: like <c>TrackClock</c>, seeks outside [0, Length] are refused.
+    /// </summary>
+    public double? Length { get; set; }
+
+    public void Start()
+    {
+        IsRunning = true;
+        StartCount++;
+    }
 
     public void Stop() => IsRunning = false;
 
     public bool Seek(double position)
     {
+        if (Length is double length && (position < 0 || position > length))
+            return false;
+
         CurrentTime = position;
         SeekCount++;
         return true;
     }
+
+    /// <summary>
+    /// Simulates the track finishing by itself: it stops without being told to, its reported position
+    /// left wherever it last was (latency compensation can leave it short of the end).
+    /// </summary>
+    public void RunOut() => IsRunning = false;
 
     public void Reset()
     {

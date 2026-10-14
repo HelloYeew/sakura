@@ -13,6 +13,10 @@ namespace Sakura.Framework.Timing;
 /// before an audio track starts), the clock continues running from an internal real-time
 /// reference. When the decoupled time re-enters the source's valid range, the source is
 /// sought to the current time and started automatically.
+/// A source that stops by itself while this clock is following it (a track reaching its end) is
+/// left stopped, and the time carries on decoupled; it is only started again by an explicit
+/// <see cref="Start"/> or <see cref="Seek"/>. Restarting it would replay a finished track from the
+/// beginning.
 /// </summary>
 public class DecouplingFramedClock : IFrameBasedClock, IAdjustableClock, ISourceChangeableClock
 {
@@ -21,6 +25,13 @@ public class DecouplingFramedClock : IFrameBasedClock, IAdjustableClock, ISource
     private double lastReferenceTime;
     private bool isRunning;
     private double rate = 1.0;
+
+    // Whether the last running frame took its time from the source.
+    private bool followingSource;
+
+    // Set when the source stopped on its own while being followed; blocks the automatic hand-over
+    // until an explicit Start/Seek/ChangeSource.
+    private bool sourceStoppedItself;
 
     public IClock Source => source;
 
@@ -64,6 +75,7 @@ public class DecouplingFramedClock : IFrameBasedClock, IAdjustableClock, ISource
 
         source = adjustable;
         CurrentTime = adjustable.CurrentTime;
+        clearSourceStop();
         // Reset the reference baseline so no stale elapsed from the old source
         // leaks into the first ProcessFrame with the new source.
         lastReferenceTime = reference.CurrentTime;
@@ -74,12 +86,12 @@ public class DecouplingFramedClock : IFrameBasedClock, IAdjustableClock, ISource
         if (isRunning) return;
 
         isRunning = true;
+        clearSourceStop();
 
-        if (CurrentTime >= 0)
-        {
-            source.Seek(CurrentTime);
+        // Only a source that accepted the position is started: a track can't seek past its end, and
+        // starting one sitting at its end replays it from the beginning.
+        if (CurrentTime >= 0 && source.Seek(CurrentTime))
             source.Start();
-        }
         // If we're in negative (lead-in) time, ProcessFrame runs decoupled and will
         // start the source automatically when time crosses zero.
     }
@@ -95,11 +107,11 @@ public class DecouplingFramedClock : IFrameBasedClock, IAdjustableClock, ISource
     public bool Seek(double position)
     {
         CurrentTime = position;
+        clearSourceStop();
 
         if (position >= 0)
         {
-            source.Seek(position);
-            if (isRunning && !source.IsRunning)
+            if (source.Seek(position) && isRunning && !source.IsRunning)
                 source.Start();
         }
         else
@@ -142,22 +154,34 @@ public class DecouplingFramedClock : IFrameBasedClock, IAdjustableClock, ISource
             // Source-driven: report the source's time directly.
             CurrentTime = source.CurrentTime;
             IsDecoupled = false;
+            followingSource = true;
         }
         else
         {
+            // We were following the source and it stopped without being told to: it ran out.
+            if (followingSource)
+            {
+                followingSource = false;
+                sourceStoppedItself = true;
+            }
+
             // Decoupled: advance from the real-time reference at our rate.
             CurrentTime += referenceElapsed * rate;
             IsDecoupled = true;
 
-            // Crossed into the source's valid range — hand over to the source.
-            if (Precision.AlmostBigger(CurrentTime, 0))
-            {
-                source.Seek(Math.Max(0, CurrentTime));
+            // In the source's valid range (e.g. lead-in time crossing zero) — hand over to the source,
+            // if it takes the position. Not to one that ran out: starting a finished track replays it.
+            if (!sourceStoppedItself && Precision.AlmostBigger(CurrentTime, 0) && source.Seek(Math.Max(0, CurrentTime)))
                 source.Start();
-            }
         }
 
         ElapsedFrameTime = CurrentTime - lastTime;
+    }
+
+    private void clearSourceStop()
+    {
+        followingSource = false;
+        sourceStoppedItself = false;
     }
 
     public override string ToString() => $"DecouplingFramedClock: {CurrentTime:F2}ms (decoupled: {IsDecoupled}, running: {isRunning})";
