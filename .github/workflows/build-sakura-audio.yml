@@ -44,6 +44,9 @@ jobs:
           # The universal build makes a universal test binary too, so the runner can execute it.
           ctest --test-dir "$BUILD_DIR" --output-on-failure
 
+          # Numbers for the log, not a gate: see AUDIO_PERF_PLAN.md for what they are compared against.
+          "$BUILD_DIR/sakura-audio-bench" || echo "::warning::sakura-audio-bench did not complete."
+
           mkdir -p out
           cp "$BUILD_DIR/libsakura-audio.dylib" out/libsakura-audio.dylib
 
@@ -233,6 +236,14 @@ jobs:
           ctest --test-dir $env:BUILD_DIR -C Release --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
+      # Informational, and the reason the benchmark exists: MSVC compiles the atomics to different
+      # instructions from every other leg, and this is the only place they are measured.
+      - name: Benchmark
+        if: ${{ matrix.can_run_tests }}
+        continue-on-error: true
+        run: |
+          & "$env:BUILD_DIR/Release/sakura-audio-bench.exe"
+
       - name: Verify architecture
         run: |
           $ErrorActionPreference = 'Stop'
@@ -375,6 +386,11 @@ jobs:
       - name: Test
         if: ${{ matrix.can_run_tests }}
         run: ctest --test-dir "$BUILD_DIR" --output-on-failure
+
+      - name: Benchmark
+        if: ${{ matrix.can_run_tests }}
+        continue-on-error: true
+        run: '"$BUILD_DIR/sakura-audio-bench"'
 
       - name: Verify architecture and dependencies
         run: |

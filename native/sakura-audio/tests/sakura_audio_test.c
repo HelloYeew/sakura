@@ -1152,6 +1152,15 @@ static void test_resampler_paths_match_the_per_frame_algorithm(void)
     free(pcm);
 }
 
+// A counter as audio: frame n carries (n mod 9000) / 16384. An integer times a power of two, so it is
+// exact in a float and in any wider precision, which keeps an exact comparison exact on a compiler that
+// holds intermediates in 80-bit x87 registers -- a value computed for comparison and one that went
+// through memory as a float would otherwise differ in the last bits.
+static float counter_sample(int frame)
+{
+    return (float)(frame % 9000) * (1.0f / 16384.0f);
+}
+
 // A ring whose capacity is not a multiple of the mix block, written and drained in sizes that wrap it
 // at every offset: the audio thread reads runs straight out of the storage, so a frame split across
 // the end, or a run that miscounts the wrap, would show up as a wrong sample.
@@ -1180,7 +1189,7 @@ static void test_stream_runs_across_the_wrap(void)
 
         for (int i = 0; i < toWrite; i++)
         {
-            chunk[i * 2] = 0.0001f * (float)((writtenFrames + i) % 9000);
+            chunk[i * 2] = counter_sample(writtenFrames + i);
             chunk[i * 2 + 1] = -chunk[i * 2];
         }
 
@@ -1202,7 +1211,7 @@ static void test_stream_runs_across_the_wrap(void)
 
         for (int i = 0; i < request; i++)
         {
-            float expected = 0.0001f * (float)((playedFrames + i) % 9000);
+            float expected = counter_sample(playedFrames + i);
 
             if (out[i * 2] != expected || out[i * 2 + 1] != -expected)
                 mismatches++;

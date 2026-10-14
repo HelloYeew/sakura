@@ -27,6 +27,22 @@ else()
     # per inlining site -- which is what the bit-exact resampler tests, and parity with the managed
     # mixer, are measuring. MSVC does not contract under its default /fp:precise.
     add_compile_options(-ffp-contract=off)
+
+    # 32-bit x86 does its float maths on the x87 unit unless told otherwise, holding intermediates at
+    # 80 bits for as long as they stay in registers -- so the same expression rounds differently
+    # depending on where the compiler spills, and the library would mix differently from every other
+    # target. SSE2 is in every x86 CPU .NET runs on. Asked of the compiler itself rather than read off
+    # CMAKE_SYSTEM_PROCESSOR, which says x86_64 for a native `-m32` build on an x64 host.
+    include(CheckCSourceCompiles)
+    check_c_source_compiles("
+        #if !defined(__i386__)
+        #error not 32-bit x86
+        #endif
+        int main(void) { return 0; }" SAKURA_AUDIO_TARGET_X86_32)
+
+    if(SAKURA_AUDIO_TARGET_X86_32)
+        add_compile_options(-msse2 -mfpmath=sse)
+    endif()
 endif()
 
 # The Darwin cache variables below are the Apple leg only. They are still required there -- a
