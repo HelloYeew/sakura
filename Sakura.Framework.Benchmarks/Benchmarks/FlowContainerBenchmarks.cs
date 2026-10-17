@@ -15,10 +15,12 @@ public class FlowContainerBenchmarks
 {
     /// <summary>
     /// Child counts to sweep. Small = typical UI (a row of buttons / stat labels),
-    /// large = stress (e.g. a long scrolling list re-flowed every frame).
+    /// large = stress (e.g., a long scrolling list re-flowed every frame).
     /// </summary>
     [Params(4, 50, 500)]
     public int ChildCount;
+
+    private bool flip;
 
     private Container singleLineRoot = null!;
     private ManualClock singleLineClock = null!;
@@ -85,7 +87,9 @@ public class FlowContainerBenchmarks
     [Benchmark(Baseline = true)]
     public void Layout_Horizontal_SingleLine()
     {
-        singleLineFlow.Invalidate(InvalidationFlags.DrawInfo);
+        // A child resizing is what makes a flow lay out again.
+        flip = !flip;
+        singleLineFlow.Children[0].Width = flip ? 41 : 40;
         singleLineClock.CurrentTime += BenchmarkTree.FRAME_STEP_MS;
         singleLineRoot.UpdateSubTree();
     }
@@ -97,7 +101,9 @@ public class FlowContainerBenchmarks
     [Benchmark]
     public void Layout_Horizontal_Wrapping()
     {
-        wrappingFlow.Invalidate(InvalidationFlags.DrawInfo);
+        // A child resizing is what makes a flow lay out again.
+        flip = !flip;
+        wrappingFlow.Children[0].Width = flip ? 41 : 40;
         wrappingClock.CurrentTime += BenchmarkTree.FRAME_STEP_MS;
         wrappingRoot.UpdateSubTree();
     }
@@ -108,7 +114,9 @@ public class FlowContainerBenchmarks
     [Benchmark]
     public void Layout_Vertical_Column()
     {
-        verticalFlow.Invalidate(InvalidationFlags.DrawInfo);
+        // A child resizing is what makes a flow lay out again.
+        flip = !flip;
+        verticalFlow.Children[0].Width = flip ? 41 : 40;
         verticalClock.CurrentTime += BenchmarkTree.FRAME_STEP_MS;
         verticalRoot.UpdateSubTree();
     }
