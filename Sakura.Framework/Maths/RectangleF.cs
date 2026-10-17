@@ -3,7 +3,7 @@
 
 namespace Sakura.Framework.Maths;
 
-public struct RectangleF
+public record struct RectangleF
 {
     public float X;
     public float Y;
