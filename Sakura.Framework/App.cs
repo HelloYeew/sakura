@@ -411,6 +411,17 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
         return InputManager.DispatchMouseUp(e);
     }
 
+    public void ReleaseHeldInput()
+    {
+        var state = InputManager.CurrentState;
+
+        foreach (var button in state.PressedMouseButtons.ToArray())
+            OnMouseUp(new MouseButtonEvent(new MouseState { Position = state.MousePosition }, button, 1));
+
+        foreach (var key in state.PressedKeys.ToArray())
+            OnKeyUp(new KeyEvent(key, state.Modifiers, false));
+    }
+
     public override bool OnMouseMove(MouseEvent e)
     {
         InputManager.HandleMouseMove(e.MouseState.Position);

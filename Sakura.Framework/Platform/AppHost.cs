@@ -115,6 +115,7 @@ public abstract class AppHost : IDisposable
         GamepadConnected,
         GamepadDisconnected,
         ExitRequested,
+        ReleaseHeldInput,
     }
 
     /// <summary>
@@ -162,7 +163,8 @@ public abstract class AppHost : IDisposable
                 break;
 
             case PendingInputType.MouseUp:
-                if (!isFileDialogOpen)
+                // ignore when a native file dialog is open since the state got stuck
+                if (!isFileDialogOpen || app?.InputManager.CurrentState.IsPressed(input.MouseButton.Button) == true)
                     OnMouseUp(input.MouseButton);
                 break;
 
@@ -218,6 +220,10 @@ public abstract class AppHost : IDisposable
 
             case PendingInputType.ExitRequested:
                 handleExitRequested();
+                break;
+
+            case PendingInputType.ReleaseHeldInput:
+                app?.ReleaseHeldInput();
                 break;
         }
     }
@@ -494,6 +500,12 @@ public abstract class AppHost : IDisposable
                 Type = PendingInputType.ExitRequested
             });
             Window.FocusLost += updateTargetUpdateHz;
+
+            // Whatever is let go of in another window never reaches this one, so release it here.
+            Window.FocusLost += () => inputQueue.Enqueue(new PendingInput
+            {
+                Type = PendingInputType.ReleaseHeldInput
+            });
             Window.FocusGained += updateTargetUpdateHz;
             Window.Minimized += updateTargetUpdateHz;
             Window.Restored += updateTargetUpdateHz;
@@ -1000,6 +1012,7 @@ public abstract class AppHost : IDisposable
         ScheduleToMainThread(() => show(window, result => updateScheduler.Add(() =>
         {
             isFileDialogOpen = false;
+            app?.ReleaseHeldInput();
             callback?.Invoke(result);
         })));
     }
