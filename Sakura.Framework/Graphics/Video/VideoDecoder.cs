@@ -148,6 +148,10 @@ public unsafe class VideoDecoder : IDisposable
     // where a sending can block on the codec's internal thread pool.
     private long pendingSendTicks;
 
+    // The decode loop's packet, which still holds data when the codec turned it away (EAGAIN) and
+    // it is waiting to be sent again. Decode-thread only.
+    private AVPacket* decodePacket;
+
     private Task? decodeTask;
     private CancellationTokenSource? cts;
     private readonly ConcurrentQueue<Action> decoderCommands = new ConcurrentQueue<Action>();
@@ -298,7 +302,20 @@ public unsafe class VideoDecoder : IDisposable
             // readDecodedFrames — keeping the two consistent is what makes seeks land precisely.
             long startTime = avStream->start_time != ffmpeg.AV_NOPTS_VALUE ? avStream->start_time : 0;
             long ts = (long)(targetMs / timeBaseInSeconds / 1000.0) + startTime;
-            ffmpeg.av_seek_frame(formatContext, avStream->index, ts, ffmpeg.AVSEEK_FLAG_BACKWARD);
+
+            // A file can have no keyframe at or before the target: an AVI whose first frames are
+            // empty indexes its first keyframe a few frames in, so a seek to 0 fails. Unchecked, the
+            // read position stayed where it was and the old position's frames came out under the new
+            // generation, so the sprite took them for the target. The first keyframe after the target
+            // is the next best place to land.
+            if (ffmpeg.av_seek_frame(formatContext, avStream->index, ts, ffmpeg.AVSEEK_FLAG_BACKWARD) < 0
+                && ffmpeg.av_seek_frame(formatContext, avStream->index, ts, 0) < 0)
+                Logger.Warning($"[VideoDecoder] Seek to {targetMs:F0} ms failed; decoding continues from the current position.");
+
+            // A packet the codec turned away (EAGAIN) is kept to be sent again, but it was read
+            // before the seek: sent now, it would decode the old position into the new generation.
+            if (decodePacket != null)
+                ffmpeg.av_packet_unref(decodePacket);
 
             // Seek with BACKWARD lands on the keyframe at or before the target. We want to skip
             // the frames between that keyframe and the target so playback resumes at the right
@@ -803,6 +820,7 @@ public unsafe class VideoDecoder : IDisposable
     {
         var packet = ffmpeg.av_packet_alloc();
         var receiveFrame = ffmpeg.av_frame_alloc();
+        decodePacket = packet;
 
         try
         {
@@ -868,6 +886,7 @@ public unsafe class VideoDecoder : IDisposable
         }
         finally
         {
+            decodePacket = null;
             ffmpeg.av_packet_free(&packet);
             ffmpeg.av_frame_free(&receiveFrame);
             if (State != DecoderState.Faulted)
