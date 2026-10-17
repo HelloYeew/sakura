@@ -9,7 +9,6 @@ using Sakura.Framework.Graphics.Rendering.Vertex;
 using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Maths;
-using Sakura.Framework.Platform;
 
 namespace Sakura.Framework.Graphics.Drawables;
 
@@ -62,6 +61,7 @@ public partial class SpriteText : Drawable
             {
                 text = value;
                 layoutInvalidated = true;
+                MarkSizesChanged();
                 Invalidate(InvalidationFlags.DrawInfo);
             }
         }
@@ -90,6 +90,7 @@ public partial class SpriteText : Drawable
 
             truncate = value;
             layoutInvalidated = true;
+            MarkSizesChanged();
             Invalidate(InvalidationFlags.DrawInfo);
         }
     }
@@ -107,6 +108,7 @@ public partial class SpriteText : Drawable
 
             maxWidth = value;
             layoutInvalidated = true;
+            MarkSizesChanged();
             Invalidate(InvalidationFlags.DrawInfo);
         }
     }
@@ -127,6 +129,7 @@ public partial class SpriteText : Drawable
 
             ellipsis = value;
             layoutInvalidated = true;
+            MarkSizesChanged();
             Invalidate(InvalidationFlags.DrawInfo);
         }
     }
@@ -211,6 +214,7 @@ public partial class SpriteText : Drawable
             {
                 fontUsage = value;
                 layoutInvalidated = true;
+                MarkSizesChanged();
                 Invalidate(InvalidationFlags.DrawInfo);
             }
         }
@@ -223,6 +227,7 @@ public partial class SpriteText : Drawable
             lastCacheVersion = fontStore.CacheVersion;
             lastDpiScaleVersion = fontStore.DpiScaleVersion;
             layoutInvalidated = true;
+            MarkSizesChanged();
             shapedText = null;
             Invalidate(InvalidationFlags.DrawInfo);
         }
@@ -247,7 +252,7 @@ public partial class SpriteText : Drawable
         try
         {
             float dpiScale = fontStore.DpiScale;
-            
+
             lastDpiScaleVersion = fontStore.DpiScaleVersion;
 
             // Shaped through the store rather than by resolving a Font and calling ProcessText: the store
@@ -321,8 +326,10 @@ public partial class SpriteText : Drawable
         // recolored by the drawable's tint, only alpha (for fades) should still apply to them.
         var colorGlyphDrawColor = new Vector4(1f, 1f, 1f, DrawAlpha);
 
+        // Glyphs are placed through the matrix, so in the size it was built for.
+        Vector2 drawSize = AppliedDrawSize;
         Vector2 originRelative = GetAnchorOriginVector(Origin);
-        Vector2 availableSpace = DrawSize - contentSize;
+        Vector2 availableSpace = drawSize - contentSize;
 
         Vector2 textOffset = new Vector2(
             availableSpace.X * originRelative.X,
@@ -330,8 +337,8 @@ public partial class SpriteText : Drawable
         );
 
         Vector2 safeDrawSize = new Vector2(
-            DrawSize.X > 0 ? DrawSize.X : 1,
-            DrawSize.Y > 0 ? DrawSize.Y : 1
+            drawSize.X > 0 ? drawSize.X : 1,
+            drawSize.Y > 0 ? drawSize.Y : 1
         );
         Vector2 normalizationScale = new Vector2(1.0f / safeDrawSize.X, 1.0f / safeDrawSize.Y);
 

@@ -88,6 +88,12 @@ public abstract partial class TextBox : Container, ITabStop, IHasCursor
     /// </summary>
     private bool isComposing;
 
+    /// <summary>
+    /// Whether an IME composition is in progress. Enter and Escape then belong to the IME, so a subclass
+    /// that handles them itself should leave them to the base while this is true.
+    /// </summary>
+    public bool IsComposing => isComposing;
+
     [Resolved]
     private IWindow window { get; set; } = null!;
 
@@ -118,6 +124,9 @@ public abstract partial class TextBox : Container, ITabStop, IHasCursor
     public int? LengthLimit { get; set; }
 
     private double caretBlinkDuration = 750;
+
+    // When the caret last moved (or focus arrived), the start of the default blink cycle.
+    private double caretBlinkStart;
 
     /// <summary>
     /// Duration in milliseconds of a single caret fade (i.e. half of a full blink cycle: the time
@@ -290,15 +299,68 @@ public abstract partial class TextBox : Container, ITabStop, IHasCursor
         PlaceholderSprite.Alpha = showPlaceholder ? 0.4f : 0f;
     }
 
+    /// <summary>
+    /// How far the caret is into its blink, in milliseconds: fully lit at 0, faded out at
+    /// <see cref="CaretBlinkDuration"/>, lit again at twice that, and so on. By default the time since
+    /// the caret last moved, so typing relights it. Override to drive the blink from somewhere else,
+    /// such as a song's position, to blink in time with music.
+    /// </summary>
+    protected virtual double CaretBlinkTime => Clock.CurrentTime - caretBlinkStart;
+
     private void resetCaretBlink()
     {
-        Caret.ClearTransforms();
-        Caret.Alpha = 1;
+        caretBlinkStart = Clock.CurrentTime;
+        updateCaretBlink();
+    }
 
+    /// <summary>
+    /// Sets the caret's alpha from where <see cref="CaretBlinkTime"/> is in the cycle: fading out over
+    /// the first half, back in over the second. Worked out each frame rather than looped as transforms,
+    /// so the blink can follow any time source, and both halves repeat.
+    /// </summary>
+    private void updateCaretBlink()
+    {
         if (caretBlinkDuration <= 0)
+        {
+            Caret.Alpha = 1;
             return;
+        }
 
-        Caret.FadeTo(0, caretBlinkDuration).Then().FadeTo(1, caretBlinkDuration).Loop();
+        Caret.Alpha = Math.Clamp(GetCaretAlpha(CaretBlinkTime, caretBlinkDuration), 0, 1);
+    }
+
+    /// <summary>
+    /// The caret's alpha at <paramref name="blinkTime"/> into its blink (<see cref="CaretBlinkTime"/>), where
+    /// each fade takes <paramref name="blinkDuration"/> (<see cref="CaretBlinkDuration"/>, always above 0
+    /// here). By default it glides out over one fade and back in over the next. Override to shape the
+    /// blink differently, such as a flash that lands on a beat and dies away.
+    /// </summary>
+    protected virtual float GetCaretAlpha(double blinkTime, double blinkDuration)
+    {
+        double cycle = 2 * blinkDuration;
+        double time = ((blinkTime % cycle) + cycle) % cycle;
+
+        return time < blinkDuration
+            ? (float)(1 - time / blinkDuration)
+            : (float)((time - blinkDuration) / blinkDuration);
+    }
+
+    public override void Update()
+    {
+        base.Update();
+
+        if (HasFocus)
+            updateCaretBlink();
+    }
+
+    /// <summary>
+    /// Selects all the text, as Ctrl+A does, so whatever is typed next replaces it.
+    /// </summary>
+    public void SelectAll()
+    {
+        selectionStart = 0;
+        caretIndex = Text.Value.Length;
+        caretMoved();
     }
 
     private void caretMoved()
@@ -542,9 +604,7 @@ public abstract partial class TextBox : Container, ITabStop, IHasCursor
         {
             if (e.Key == Key.A)
             {
-                selectionStart = 0;
-                caretIndex = Text.Value.Length;
-                caretMoved();
+                SelectAll();
                 return true;
             }
 
@@ -811,9 +871,11 @@ public abstract partial class TextBox : Container, ITabStop, IHasCursor
 
             if (window != null)
             {
-                float normalizedX = DrawSize.X > 0 ? (TextContainer.X + caretTargetX) / DrawSize.X : 0;
+                // Through the matrix, so in the size it was built for.
+                Vector2 size = AppliedDrawSize;
+                float normalizedX = size.X > 0 ? (TextContainer.X + caretTargetX) / size.X : 0;
                 var screenPos = Vector2.Transform(new Vector2(normalizedX, 0), ModelMatrix);
-                window.SetTextInputRect(new RectangleF(screenPos.X, screenPos.Y, 0, DrawSize.Y));
+                window.SetTextInputRect(new RectangleF(screenPos.X, screenPos.Y, 0, size.Y));
             }
         }
     }

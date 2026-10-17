@@ -44,7 +44,7 @@ public class ContainerDrawNode : DrawNode
         BorderThickness = container.BorderThickness;
         BorderColor = container.BorderColor;
         ShearX = container.Shear.X;
-        DrawSize = container.DrawSize;
+        DrawSize = container.AppliedDrawSize;
         ModelMatrix = container.ModelMatrix;
         EdgeEffect = container.EdgeEffect;
     }
@@ -80,6 +80,12 @@ public class ContainerDrawNode : DrawNode
         float borderThicknessScreen = BorderThickness * uniformScale;
 
         bool hasEdgeEffect = EdgeEffect.Type != EdgeEffectType.None && EdgeEffect.Color.A > 0;
+
+        // The container's own drawing (its shadow, its border) is in its own blending. The renderer is
+        // otherwise still in whatever the last drawable left it in: after an additive sibling a shadow
+        // added nothing and vanished, and a border lit up (a clicked button's flash whitened the ring of
+        // the clock in front of it).
+        renderer.SetBlendMode(Blending);
 
         // Shadows render behind the container's contents.
         if (hasEdgeEffect && EdgeEffect.Type == EdgeEffectType.Shadow)
@@ -121,6 +127,8 @@ public class ContainerDrawNode : DrawNode
             if (DrawAlpha < 1f)
                 borderColor = Color.FromArgb((int)Math.Clamp(borderColor.A * DrawAlpha, 0f, 255f), borderColor);
 
+            // Again: the children drawn since may have left it in theirs.
+            renderer.SetBlendMode(Blending);
             renderer.PopMask(screenCenter, screenHalfSize, ShearX, cornerRadiusScreen, borderThicknessScreen, borderColor, Vertices);
         }
 
@@ -145,21 +153,24 @@ public class ContainerDrawNode : DrawNode
 
         Vector2 offsetScreen = new Vector2(EdgeEffect.Offset.X * scaleX, EdgeEffect.Offset.Y * scaleY);
 
-        // Inflate the half-size by the falloff radius so the quad covers the soft edge.
+        // Inflate the half-size by the falloff radius so the quad covers the soft edge. Across a slanted
+        // side the falloff reaches further horizontally than the radius (by 1/cos of the slant).
         Vector2 expandedHalf = new Vector2(
-            screenHalfSize.X + edgeRadiusScreen,
+            screenHalfSize.X + edgeRadiusScreen * MathF.Sqrt(1 + ShearX * ShearX),
             screenHalfSize.Y + edgeRadiusScreen
         );
 
         Vector2 quadCenter = screenCenter + offsetScreen;
 
-        // Account for shear when laying out the corners (matches the masking shape's shear handling).
+        // Lean the quad the way the container leans: a shear moves x by ShearX * y, so the top edge
+        // (y = -half) shifts by -skew and the bottom by +skew, as the shader's shape does. Leaning the
+        // other way cut the effect off at two corners.
         float skew = ShearX * expandedHalf.Y;
 
-        Vector2 tl = new Vector2(quadCenter.X - expandedHalf.X + skew, quadCenter.Y - expandedHalf.Y);
-        Vector2 tr = new Vector2(quadCenter.X + expandedHalf.X + skew, quadCenter.Y - expandedHalf.Y);
-        Vector2 br = new Vector2(quadCenter.X + expandedHalf.X - skew, quadCenter.Y + expandedHalf.Y);
-        Vector2 bl = new Vector2(quadCenter.X - expandedHalf.X - skew, quadCenter.Y + expandedHalf.Y);
+        Vector2 tl = new Vector2(quadCenter.X - expandedHalf.X - skew, quadCenter.Y - expandedHalf.Y);
+        Vector2 tr = new Vector2(quadCenter.X + expandedHalf.X - skew, quadCenter.Y - expandedHalf.Y);
+        Vector2 br = new Vector2(quadCenter.X + expandedHalf.X + skew, quadCenter.Y + expandedHalf.Y);
+        Vector2 bl = new Vector2(quadCenter.X - expandedHalf.X + skew, quadCenter.Y + expandedHalf.Y);
 
         Span<Vertex.Vertex> quad = stackalloc Vertex.Vertex[4];
         quad[0] = new Vertex.Vertex { Position = tl, TexCoords = new Vector2(0, 0), Color = new Vector4(1, 1, 1, 1) };

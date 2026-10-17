@@ -110,8 +110,8 @@ public partial class Path : Drawable
         var calculatedColor = new Vector4(rLinear, gLinear, bLinear, DrawAlpha * (Color.A / 255f));
 
         var finalMatrix = ModelMatrix;
-        float w = DrawSize.X > 0 ? DrawSize.X : 1;
-        float h = DrawSize.Y > 0 ? DrawSize.Y : 1;
+        float w = AppliedDrawSize.X > 0 ? AppliedDrawSize.X : 1;
+        float h = AppliedDrawSize.Y > 0 ? AppliedDrawSize.Y : 1;
 
         Vector2[] p = new Vector2[vertices.Count];
         for (int i = 0; i < vertices.Count; i++)

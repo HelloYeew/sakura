@@ -120,17 +120,80 @@ public partial class Container : Drawable
         }
     }
 
+    private Axes autoSizeAxes;
+
     /// <summary>
-    /// Control which axes that this container automatically sized based on its children's sizes.
+    /// The axes on which this container sizes itself to fit its children. Each child counts as placed
+    /// by its own anchor, origin, position, scale and margins, so a centred child grows the container
+    /// evenly both ways and a right-anchored one from the right (as osu!framework's auto-size does).
+    /// Children sized relative to this container on an auto-sized axis, positioned relatively on one,
+    /// or bypassing it (<see cref="Drawable.BypassAutoSizeAxes"/>) don't count on that axis.
     /// </summary>
-    public Axes AutoSizeAxes { get; set; } = Axes.None;
+    /// <remarks>
+    /// The size is worked out when read as well as on update, so it's right straight after a child
+    /// changes. Rotation and shear of children aren't accounted for.
+    /// </remarks>
+    public Axes AutoSizeAxes
+    {
+        get => autoSizeAxes;
+        set
+        {
+            if (autoSizeAxes == value) return;
+            autoSizeAxes = value;
+            InvalidateChildLayout();
+        }
+    }
+
+    private Vector2 autoSizeMinimum;
+
+    /// <summary>
+    /// The smallest an auto-sized axis gets, padding included. Zero (no minimum) by default.
+    /// </summary>
+    public Vector2 AutoSizeMinimum
+    {
+        get => autoSizeMinimum;
+        set
+        {
+            if (autoSizeMinimum == value) return;
+            autoSizeMinimum = value;
+            InvalidateChildLayout();
+        }
+    }
+
+    private Vector2 autoSizeMaximum = new Vector2(float.PositiveInfinity);
+
+    /// <summary>
+    /// The largest an auto-sized axis gets, padding included. Unbounded by default.
+    /// </summary>
+    public Vector2 AutoSizeMaximum
+    {
+        get => autoSizeMaximum;
+        set
+        {
+            if (autoSizeMaximum == value) return;
+            autoSizeMaximum = value;
+            InvalidateChildLayout();
+        }
+    }
 
     /// <summary>
     /// The duration (in milliseconds) over which the container animates toward a new auto-size target.
     /// When 0 (the default), the container snaps to its computed size instantly.
     /// Only meaningful when <see cref="AutoSizeAxes"/> is not <see cref="Axes.None"/>.
     /// </summary>
-    public double AutoSizeDuration { get; set; }
+    public double AutoSizeDuration
+    {
+        get => autoSizeDuration;
+        set
+        {
+            if (autoSizeDuration == value) return;
+            autoSizeDuration = value;
+            // Turned off mid-animation, it snaps to where it was going.
+            InvalidateChildLayout();
+        }
+    }
+
+    private double autoSizeDuration;
 
     /// <summary>
     /// The easing function used when animating toward a new auto-size target.
@@ -156,8 +219,169 @@ public partial class Container : Drawable
     /// </summary>
     internal void ApplyAutoSize(Vector2 newSize)
     {
-        if (Size != newSize)
-            Size = newSize;
+        if (base.Size != newSize)
+            base.Size = newSize;
+    }
+
+    /// <summary>
+    /// This container's size. While it auto-sizes, reading it first brings that layout up to date if a
+    /// child (or anything else it depends on) changed, so it's never a frame behind; mid-animation
+    /// (<see cref="AutoSizeDuration"/>) it's the size the animation has reached.
+    /// </summary>
+    public override Vector2 Size
+    {
+        get
+        {
+            if (autoSizeAxes != Axes.None)
+                EnsureChildLayout();
+
+            return base.Size;
+        }
+        set => base.Size = value;
+    }
+
+    /// <summary>Whether the layout that depends on the children has to run again (see <see cref="EnsureChildLayout"/>).</summary>
+    private bool childLayoutPending = true;
+
+    /// <summary>
+    /// Whether a child's own layout is pending, so its size may be about to change. The child is settled
+    /// first, and only if its size really changes does this container lay out again.
+    /// </summary>
+    private bool childLayoutMaybe;
+
+    private bool childLayoutRunning;
+
+    /// <summary>
+    /// Whether this container's layout depends on its children: it auto-sizes, or (a flow) arranges them.
+    /// Only then does a child's change make it lay out again.
+    /// </summary>
+    protected virtual bool LaysOutAroundChildren => autoSizeAxes != Axes.None;
+
+    /// <summary>
+    /// Whether something the layout used other than the children has changed since it last ran, such as a
+    /// flow's own width. Only asked when <see cref="ChildLayoutTracksOwnSize"/> is set.
+    /// </summary>
+    protected virtual bool IsChildLayoutStale() => false;
+
+    /// <summary>
+    /// Set (in the constructor) by a container whose child layout depends on its own size, so
+    /// <see cref="IsChildLayoutStale"/> is asked every update. Others skip the question entirely.
+    /// </summary>
+    protected bool ChildLayoutTracksOwnSize { get; init; }
+
+    /// <summary>Whether <see cref="EnsureChildLayout"/> could have anything to do: the per-frame fast path.</summary>
+    private bool mayNeedChildLayout => childLayoutPending || childLayoutMaybe || ChildLayoutTracksOwnSize;
+
+    /// <summary>
+    /// Marks the layout that depends on the children (auto-size, a flow's arrangement) as needing to run
+    /// again, and this container as needing an update for it.
+    /// </summary>
+    protected void InvalidateChildLayout()
+    {
+        InvalidateLayout();
+
+        // Already pending: whatever depends on us was told then, and hasn't read us since (a read
+        // would have run the layout).
+        if (childLayoutPending)
+            return;
+
+        childLayoutPending = true;
+
+        // Our size follows our children, so it may be about to change: cached sizes can't be trusted,
+        // and whatever lays out around us has to settle us before trusting ours.
+        if (autoSizeAxes != Axes.None)
+        {
+            MarkSizesChanged();
+            Parent?.onChildLayoutPending();
+        }
+    }
+
+    /// <summary>A child's layout is pending, so its size may change when it runs (see <see cref="childLayoutMaybe"/>).</summary>
+    private void onChildLayoutPending()
+    {
+        if (!LaysOutAroundChildren || childLayoutPending || childLayoutMaybe)
+            return;
+
+        childLayoutMaybe = true;
+        InvalidateLayout();
+
+        if (autoSizeAxes != Axes.None)
+            Parent?.onChildLayoutPending();
+    }
+
+    /// <summary>
+    /// Runs the pending layout of each child that might resize. Any that does tells this container (as any
+    /// resize does), which makes its own layout pending; the rest leave it as it was.
+    /// </summary>
+    private void settleChildren()
+    {
+        foreach (var child in children)
+        {
+            if (child is not Container container || container.autoSizeAxes == Axes.None)
+                continue;
+
+            if (!container.childLayoutPending && !container.childLayoutMaybe)
+                continue;
+
+            if (!child.AlwaysPresent && child.Alpha <= 0)
+                continue;
+
+            container.EnsureChildLayout();
+        }
+    }
+
+    /// <summary>
+    /// Runs the layout that depends on the children (<see cref="PerformChildLayout"/>) now, if anything it
+    /// depends on changed since it last ran. It runs by itself when this container updates (while
+    /// visible) and when its size is read while auto-sizing.
+    /// </summary>
+    /// <remarks>
+    /// Re-entrant reads (a layout that reads this container's own size, as a flow does for children sized
+    /// relative to it) get the current size rather than starting the layout again. Changes the layout makes
+    /// itself, like moving a child into place, don't mark it pending again.
+    /// </remarks>
+    protected void EnsureChildLayout()
+    {
+        if (childLayoutRunning || !mayNeedChildLayout)
+            return;
+
+        // Guarded from the first check: settling a child or checking our own space can read our size
+        // back, which must get the current size rather than come round here again.
+        childLayoutRunning = true;
+
+        try
+        {
+            if (!childLayoutPending && ChildLayoutTracksOwnSize && IsChildLayoutStale())
+                childLayoutPending = true;
+
+            if (childLayoutMaybe)
+            {
+                childLayoutMaybe = false;
+
+                if (!childLayoutPending)
+                    settleChildren();
+            }
+
+            if (!childLayoutPending)
+                return;
+
+            PerformChildLayout();
+            childLayoutPending = false;
+        }
+        finally
+        {
+            childLayoutRunning = false;
+        }
+    }
+
+    /// <summary>
+    /// The layout that depends on the children: here, auto-size. A flow arranges its children here too.
+    /// Call <see cref="EnsureChildLayout"/> rather than this.
+    /// </summary>
+    protected virtual void PerformChildLayout()
+    {
+        if (autoSizeAxes != Axes.None)
+            UpdateAutoSize();
     }
 
     /// <summary>
@@ -184,14 +408,17 @@ public partial class Container : Drawable
         set => Children = new[] { value };
     }
 
-    public Vector2 ChildSize
-    {
-        get
-        {
-            var containerSize = DrawSize;
-            return new Vector2(containerSize.X - Padding.Total.X, containerSize.Y - Padding.Total.Y);
-        }
-    }
+    /// <summary>
+    /// The size of the space children are laid out in, as it is now: <see cref="Drawable.DrawSize"/> less
+    /// <see cref="Drawable.Padding"/>.
+    /// </summary>
+    public Vector2 ChildSize => DrawSize - Padding.Total;
+
+    /// <summary>
+    /// <see cref="ChildSize"/> as of the last layout (<see cref="Drawable.AppliedDrawSize"/>), which this
+    /// container's matrix is for, so children's matrices nest into it.
+    /// </summary>
+    internal Vector2 AppliedChildSize => AppliedDrawSize - Padding.Total;
 
     private Vector2 relativeChildSize = Vector2.One;
 
@@ -210,6 +437,7 @@ public partial class Container : Drawable
                 throw new ArgumentException($"{nameof(RelativeChildSize)} must be non-zero on both axes.", nameof(value));
 
             relativeChildSize = value;
+            MarkSizesChanged();
 
             // The relative coordinate space changed, so every child's resolved geometry is stale.
             Invalidate(InvalidationFlags.DrawInfo);
@@ -240,14 +468,12 @@ public partial class Container : Drawable
     /// Conversion multiplier that maps a child's relative coordinate (0..1 across <see cref="RelativeChildSize"/>)
     /// into the container's pixel content space. Equal to <see cref="ChildSize"/> divided by <see cref="RelativeChildSize"/>.
     /// </summary>
-    internal Vector2 RelativeToAbsoluteFactor
-    {
-        get
-        {
-            var childSize = ChildSize;
-            return new Vector2(childSize.X / relativeChildSize.X, childSize.Y / relativeChildSize.Y);
-        }
-    }
+    internal Vector2 RelativeToAbsoluteFactor => toRelativeFactor(ChildSize);
+
+    /// <summary><see cref="RelativeToAbsoluteFactor"/> as of the last layout (see <see cref="AppliedChildSize"/>).</summary>
+    internal Vector2 AppliedRelativeToAbsoluteFactor => toRelativeFactor(AppliedChildSize);
+
+    private Vector2 toRelativeFactor(Vector2 childSize) => new Vector2(childSize.X / relativeChildSize.X, childSize.Y / relativeChildSize.Y);
 
     public Container()
     {
@@ -443,8 +669,26 @@ public partial class Container : Drawable
     /// </summary>
     protected internal virtual void OnChildGeometryInvalidated()
     {
-        if (AutoSizeAxes != Axes.None)
-            InvalidateLayout();
+        if (LaysOutAroundChildren)
+            InvalidateChildLayout();
+    }
+
+    protected internal override void OnLayoutInputChanged()
+    {
+        base.OnLayoutInputChanged();
+        InvalidateChildLayout();
+    }
+
+    protected internal override void OnTransformsCleared()
+    {
+        base.OnTransformsCleared();
+
+        // An auto-size animation went with the rest: forget it and size afresh, from where it stopped.
+        if (autoSizeTransform != null)
+        {
+            autoSizeTransform = null;
+            InvalidateChildLayout();
+        }
     }
 
     internal void InvalidateTopology()
@@ -493,14 +737,12 @@ public partial class Container : Drawable
 
     public override void Update()
     {
-        // Check whether our layout was dirty before base.Update() is called, as it will clear our invalidation flags.
-        bool layoutWasInvalidated = (Invalidation & InvalidationFlags.DrawInfo) != 0;
+        // Check before base.Update() is called, as it will clear our invalidation flags.
         bool colorWasInvalidated = (Invalidation & InvalidationFlags.Color) != 0;
 
-        if (AutoSizeAxes != Axes.None && layoutWasInvalidated)
-        {
-            UpdateAutoSize();
-        }
+        // Hidden, the layout waits until it's shown, or until something reads the size.
+        if (mayNeedChildLayout && !IsEffectivelyHidden)
+            EnsureChildLayout();
 
         // Captured after auto-size so a size change resulting from layout is included.
         // Children only need re-invalidation when our own geometry changed — a child merely
@@ -583,14 +825,14 @@ public partial class Container : Drawable
     /// </summary>
     protected virtual void UpdateLayoutAfterChildren()
     {
-        if (AutoSizeAxes == Axes.None)
+        if (!(childLayoutPending || childLayoutMaybe) || IsEffectivelyHidden)
             return;
 
-        Vector2 sizeBefore = Size;
+        Vector2 sizeBefore = base.Size;
 
-        UpdateAutoSize();
+        EnsureChildLayout();
 
-        if (Size != sizeBefore)
+        if (base.Size != sizeBefore)
             UpdateTransforms();
     }
 
@@ -637,66 +879,104 @@ public partial class Container : Drawable
         }
     }
 
+    /// <summary>
+    /// Sizes this container around its children on <see cref="AutoSizeAxes"/> (see there for what counts),
+    /// clamped to <see cref="AutoSizeMinimum"/>/<see cref="AutoSizeMaximum"/>, snapping or animating per
+    /// <see cref="AutoSizeDuration"/>. Children are read through <see cref="Drawable.Size"/>, which
+    /// measures text and resolves nested auto-size on demand, so the result is current.
+    /// </summary>
     protected virtual void UpdateAutoSize()
     {
-        Vector2 maxBound = Vector2.Zero;
+        Axes axes = autoSizeAxes & ~RelativeSizeAxes;
+        Vector2 required = Vector2.Zero;
 
         foreach (var child in children)
         {
             if (!child.AlwaysPresent && child.Alpha <= 0)
                 continue;
 
-            // Calculate the child's size in pixels
-            // We cannot rely on child.DrawSize here because that might be from the previous frame.
-            // We must calculate it based on the current state.
-            Vector2 childSize = child.Size;
+            Vector2 size = child.Size * child.Scale;
+            Vector2 position = child.Position;
+            Vector2 margin = child.Margin.Total;
 
-            // Note : If a child is RelativeSize on the same axis we are AutoSizing,
-            // we must ignore it to prevent circular dependency (or endless expansion).
-            // e.g., Parent (AutoSize X) -> Child (Relative X) -> Paradox.
+            // The common case, placed from the top-left corner both ways: just where it reaches to.
+            if (child.Anchor == Anchor.TopLeft && child.Origin == Anchor.TopLeft && child.RelativePositionAxes == Axes.None)
+            {
+                if ((axes & Axes.X) != 0 && countsOn(child, Axes.X))
+                    required.X = Math.Max(required.X, position.X + size.X + margin.X);
 
-            if ((AutoSizeAxes & Axes.X) != 0 && (child.RelativeSizeAxes & Axes.X) != 0)
-                childSize.X = 0; // Ignore relative width for auto-width calculation
+                if ((axes & Axes.Y) != 0 && countsOn(child, Axes.Y))
+                    required.Y = Math.Max(required.Y, position.Y + size.Y + margin.Y);
 
-            if ((AutoSizeAxes & Axes.Y) != 0 && (child.RelativeSizeAxes & Axes.Y) != 0)
-                childSize.Y = 0; // Ignore relative height for auto-height calculation
+                continue;
+            }
 
-            // Apply Scale
-            Vector2 scaledSize = childSize * child.Scale;
+            Vector2 anchor = GetAnchorOriginVector(child.Anchor);
+            Vector2 origin = GetAnchorOriginVector(child.Origin);
 
-            // Determine position.
-            // Note: For advanced auto-sizing (handling rotations/shears), we would need full matrix bounding boxes.
-            // For this implementation, we assume standard AABB flow (Position + Size + Margin).
-            Vector2 childPos = child.Position;
+            if ((axes & Axes.X) != 0 && countsOn(child, Axes.X))
+            {
+                float x = (child.RelativePositionAxes & Axes.X) != 0 ? 0 : position.X;
+                required.X = Math.Max(required.X, RequiredExtent(x, size.X, margin.X, anchor.X, origin.X));
+            }
 
-            // If child is relatively positioned, it technically positions based on us.
-            // But since we are determining our size, we treat relative positioning as 0 or ignore it
-            // to avoid stability issues, unless we implement a multi-pass layout solver.
-            // For simplicity: We use the raw local position.
-            float right = childPos.X + child.Margin.Left + scaledSize.X + child.Margin.Right;
-            float bottom = childPos.Y + child.Margin.Top + scaledSize.Y + child.Margin.Bottom;
-
-            // Also account for origin offsets if necessary, but standard implementation
-            // usually assumes TopLeft origin for simple flow calculations.
-            // If you use Center anchors, you might need to subtract the anchor offset.
-            // For now, simple bounding box extension:
-            if (right > maxBound.X) maxBound.X = right;
-            if (bottom > maxBound.Y) maxBound.Y = bottom;
+            if ((axes & Axes.Y) != 0 && countsOn(child, Axes.Y))
+            {
+                float y = (child.RelativePositionAxes & Axes.Y) != 0 ? 0 : position.Y;
+                required.Y = Math.Max(required.Y, RequiredExtent(y, size.Y, margin.Y, anchor.Y, origin.Y));
+            }
         }
 
-        // Apply Padding of the container itself
-        maxBound += Padding.Total;
+        Vector2 currentSize = base.Size;
 
-        Axes effectiveAutoSize = AutoSizeAxes & ~RelativeSizeAxes;
+        if ((axes & Axes.X) != 0)
+            currentSize.X = ClampAutoSize(required.X + Padding.Total.X, Axes.X);
 
-        Vector2 currentSize = Size;
+        if ((axes & Axes.Y) != 0)
+            currentSize.Y = ClampAutoSize(required.Y + Padding.Total.Y, Axes.Y);
 
-        if ((effectiveAutoSize & Axes.X) != 0)
-            currentSize.X = maxBound.X;
+        ApplyAutoSizeTarget(currentSize);
+    }
 
-        if ((effectiveAutoSize & Axes.Y) != 0)
-            currentSize.Y = maxBound.Y;
+    /// <summary>Whether <paramref name="child"/> sizes this container on <paramref name="axis"/>.</summary>
+    private static bool countsOn(Drawable child, Axes axis) =>
+        (child.RelativeSizeAxes & axis) == 0 && (child.BypassAutoSizeAxes & axis) == 0;
 
+    /// <summary>
+    /// How big a parent's content has to be on one axis for a child to fit in it, placed at
+    /// <paramref name="anchor"/> (0 start, 0.5 centre, 1 end) with its <paramref name="origin"/> at
+    /// <paramref name="position"/>, at <paramref name="size"/> (scaled), with <paramref name="margin"/>
+    /// (both sides) around it. It has to reach neither past the far edge nor before the near one: for a
+    /// start anchor and origin that's just position, size and margin.
+    /// </summary>
+    protected internal static float RequiredExtent(float position, float size, float margin, float anchor, float origin)
+    {
+        float need = float.NegativeInfinity;
+
+        if (anchor < 1)
+            need = Math.Max(need, (position + (1 - origin) * size) / (1 - anchor));
+
+        if (anchor > 0)
+            need = Math.Max(need, (origin * size - position) / anchor);
+
+        return margin + need;
+    }
+
+    /// <summary>Clamps an auto-sized <paramref name="axis"/> to <see cref="AutoSizeMinimum"/>/<see cref="AutoSizeMaximum"/>.</summary>
+    protected float ClampAutoSize(float value, Axes axis)
+    {
+        float min = axis == Axes.X ? autoSizeMinimum.X : autoSizeMinimum.Y;
+        float max = axis == Axes.X ? autoSizeMaximum.X : autoSizeMaximum.Y;
+
+        return Math.Clamp(Math.Max(0, value), min, Math.Max(min, max));
+    }
+
+    /// <summary>
+    /// Takes <paramref name="target"/> as this container's size: at once, or animated over
+    /// <see cref="AutoSizeDuration"/> (re-aiming one already running rather than starting over).
+    /// </summary>
+    protected void ApplyAutoSizeTarget(Vector2 target)
+    {
         if (AutoSizeDuration <= 0)
         {
             if (autoSizeTransform != null)
@@ -705,34 +985,34 @@ public partial class Container : Drawable
                 autoSizeTransform = null;
             }
 
-            if (Size != currentSize)
-                Size = currentSize;
+            if (base.Size != target)
+                base.Size = target;
 
             return;
         }
 
-        if (autoSizeTransform == null || autoSizeTarget != currentSize)
+        if (autoSizeTransform != null && autoSizeTarget == target)
+            return;
+
+        if (autoSizeTransform == null && base.Size == target)
+            return;
+
+        if (autoSizeTransform != null)
+            RemoveTransform(autoSizeTransform);
+
+        autoSizeTarget = target;
+        double startTime = Clock.CurrentTime;
+
+        autoSizeTransform = new AutoSizeTransform
         {
-            if (autoSizeTransform == null && Size == currentSize)
-                return;
+            StartValue = base.Size,
+            EndValue = target,
+            Easing = AutoSizeEasing,
+            StartTime = startTime,
+            EndTime = startTime + AutoSizeDuration
+        };
 
-            if (autoSizeTransform != null)
-                RemoveTransform(autoSizeTransform);
-
-            autoSizeTarget = currentSize;
-            double startTime = Clock.CurrentTime;
-
-            autoSizeTransform = new AutoSizeTransform
-            {
-                StartValue = Size,
-                EndValue = currentSize,
-                Easing = AutoSizeEasing,
-                StartTime = startTime,
-                EndTime = startTime + AutoSizeDuration
-            };
-
-            AddTransform(autoSizeTransform);
-        }
+        AddTransform(autoSizeTransform);
     }
 
     protected override DrawNode CreateDrawNode() => new ContainerDrawNode();

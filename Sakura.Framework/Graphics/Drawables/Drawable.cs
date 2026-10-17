@@ -56,6 +56,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
         {
             if (parent == value) return;
             parent = value;
+            MarkSizesChanged();
             OnParentChanged();
         }
     }
@@ -298,6 +299,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
         {
             if (size == value) return;
             size = value;
+            MarkSizesChanged();
             Invalidate(InvalidationFlags.DrawInfo);
         }
     }
@@ -351,7 +353,26 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
                 size.X = 1;
             if ((relativeSizeAxes & Axes.Y) != 0 && size.Y == 0)
                 size.Y = 1;
+            MarkSizesChanged();
             Invalidate(InvalidationFlags.DrawInfo);
+            OnLayoutInputChanged();
+        }
+    }
+
+    private Axes bypassAutoSizeAxes;
+
+    /// <summary>
+    /// The axes on which this drawable doesn't count toward an auto-sizing parent's size. It's still laid
+    /// out (a flow still gives it a slot) and drawn; the parent just doesn't grow to fit it.
+    /// </summary>
+    public Axes BypassAutoSizeAxes
+    {
+        get => bypassAutoSizeAxes;
+        set
+        {
+            if (bypassAutoSizeAxes == value) return;
+            bypassAutoSizeAxes = value;
+            Parent?.OnChildGeometryInvalidated();
         }
     }
 
@@ -435,6 +456,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
         {
             if (margin.Equals(value)) return;
             margin = value;
+            MarkSizesChanged();
             Invalidate(InvalidationFlags.DrawInfo);
         }
     }
@@ -446,8 +468,19 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
         {
             if (padding.Equals(value)) return;
             padding = value;
+            MarkSizesChanged();
             Invalidate(InvalidationFlags.DrawInfo);
+            OnLayoutInputChanged();
         }
+    }
+
+    /// <summary>
+    /// Called when one of this drawable's own inputs to laying out its children changes
+    /// (<see cref="Padding"/>, <see cref="RelativeSizeAxes"/>). A container that sizes itself around its
+    /// children redoes that layout.
+    /// </summary>
+    protected internal virtual void OnLayoutInputChanged()
+    {
     }
 
     /// <summary>
@@ -538,10 +571,83 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
     public bool IsHidden => Alpha <= 0f;
 
     public RectangleF DrawRectangle { get; protected set; }
-    public Vector2 DrawSize { get; private set; }
+
+    /// <summary>
+    /// This drawable's size in its own pixels as it is now: <see cref="Size"/>, with any relative axes
+    /// resolved against the parent's current <see cref="Container.ChildSize"/> (less margins). It's worked
+    /// out when read, so it's right straight after a change (new text in a <see cref="SpriteText"/>, a new
+    /// child in an auto-sizing container) and while hidden, not a frame later.
+    /// </summary>
+    /// <remarks>
+    /// The <see cref="ModelMatrix"/>, <see cref="DrawRectangle"/> and vertices are built once per update,
+    /// for <see cref="AppliedDrawSize"/>. Use that one where something has to agree with them (mapping
+    /// between local and screen space, generating vertices); use this one for layout.
+    /// </remarks>
+    public Vector2 DrawSize
+    {
+        get
+        {
+            long version = Volatile.Read(ref sizeVersion);
+            if (cachedDrawSizeVersion == version)
+                return cachedDrawSize;
+
+            Vector2 drawSize = ResolveDrawSize(Size);
+
+            // Reading Size can lay things out, which can change sizes: keep only an answer nothing
+            // changed under.
+            if (Volatile.Read(ref sizeVersion) == version)
+            {
+                cachedDrawSize = drawSize;
+                cachedDrawSizeVersion = version;
+            }
+
+            return drawSize;
+        }
+    }
+
+    /// <summary>
+    /// Counts changes to anything a <see cref="DrawSize"/> can depend on, anywhere (sizes, relative axes,
+    /// margins, padding, parents, text, pending auto-size). A cached <see cref="DrawSize"/> is good for as
+    /// long as this hasn't moved, which spares re-walking a relative chain on every read. Shared by every
+    /// tree, so it only ever errs towards working a size out again.
+    /// </summary>
+    private static long sizeVersion;
+
+    private long cachedDrawSizeVersion = -1;
+    private Vector2 cachedDrawSize;
+
+    /// <summary>Marks every cached <see cref="DrawSize"/> as possibly out of date (see <see cref="sizeVersion"/>).</summary>
+    internal static void MarkSizesChanged() => Interlocked.Increment(ref sizeVersion);
 
     public float DrawWidth => DrawSize.X;
     public float DrawHeight => DrawSize.Y;
+
+    /// <summary>
+    /// The size the current <see cref="ModelMatrix"/>, <see cref="DrawRectangle"/> and vertices were built
+    /// for, by the last <see cref="UpdateTransforms"/>. <see cref="DrawSize"/> runs ahead of it between a
+    /// change and the next update.
+    /// </summary>
+    protected internal Vector2 AppliedDrawSize { get; private set; }
+
+    /// <summary>
+    /// <paramref name="size"/> (a <see cref="Size"/>) with relative axes resolved against the parent as it is now.
+    /// </summary>
+    private protected Vector2 ResolveDrawSize(Vector2 size) =>
+        Parent == null || RelativeSizeAxes == Axes.None ? size : resolveDrawSize(size, Parent.RelativeToAbsoluteFactor);
+
+    /// <summary>
+    /// <paramref name="size"/> with relative axes resolved by <paramref name="relativeToAbsolute"/> (the
+    /// parent's child-space factor), less margins.
+    /// </summary>
+    private Vector2 resolveDrawSize(Vector2 size, Vector2 relativeToAbsolute)
+    {
+        if ((RelativeSizeAxes & Axes.X) != 0)
+            size.X = Math.Max(0, relativeToAbsolute.X * size.X - Margin.Total.X);
+        if ((RelativeSizeAxes & Axes.Y) != 0)
+            size.Y = Math.Max(0, relativeToAbsolute.Y * size.Y - Margin.Total.Y);
+
+        return size;
+    }
 
     /// <summary>
     /// The affine screen-space transform of this drawable. 2D rendering never needs a full
@@ -580,40 +686,27 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
             m *= Matrix3x2.CreateTranslation(Position.X, Position.Y); // Translate to final position
 
             ModelMatrix = m;
-
-            DrawSize = finalDrawSize;
         }
         else
         {
             // This is a child drawable
 
-            // Final pixel size of the parent's content area.
-            Vector2 parentChildSize = Parent.ChildSize;
-            Vector2 parentDrawSize = Parent.DrawSize;
+            // The parent as its own matrix was built: this matrix is normalised into the parent's
+            // 0..1 space and multiplied by Parent.ModelMatrix, so it must use the size that matrix is for.
+            Vector2 parentChildSize = Parent.AppliedChildSize;
+            Vector2 parentDrawSize = Parent.AppliedDrawSize;
 
-            Vector2 relativeToAbsolute = Parent.RelativeToAbsoluteFactor;
+            Vector2 relativeToAbsolute = Parent.AppliedRelativeToAbsoluteFactor;
             Vector2 relativeChildOffset = Parent.RelativeChildOffset;
 
-            // prevent division by zero for drawables with no area.
-            if (parentChildSize.X == 0)
-                parentChildSize.X = 1;
-            if (parentChildSize.Y == 0)
-                parentChildSize.Y = 1;
+            // Prevent division by zero (below) for a parent with no area. A relative child of one has
+            // no area either: the size itself still uses the real factor.
             if (parentDrawSize.X == 0)
                 parentDrawSize.X = 1;
             if (parentDrawSize.Y == 0)
                 parentDrawSize.Y = 1;
 
-            if (relativeToAbsolute.X == 0)
-                relativeToAbsolute.X = 1;
-            if (relativeToAbsolute.Y == 0)
-                relativeToAbsolute.Y = 1;
-
-            finalDrawSize = Size;
-            if ((RelativeSizeAxes & Axes.X) != 0)
-                finalDrawSize.X = Math.Max(0, relativeToAbsolute.X * Size.X - Margin.Total.X);
-            if ((RelativeSizeAxes & Axes.Y) != 0)
-                finalDrawSize.Y = Math.Max(0, relativeToAbsolute.Y * Size.Y - Margin.Total.Y);
+            finalDrawSize = resolveDrawSize(Size, relativeToAbsolute);
 
             // Calculate position relative to parent. The offset shifts the relative-space origin,
             // so a child at Position == RelativeChildOffset resolves to pixel (0,0).
@@ -656,7 +749,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
             ModelMatrix = localMatrix * Parent.ModelMatrix;
         }
 
-        DrawSize = finalDrawSize;
+        AppliedDrawSize = finalDrawSize;
 
         GenerateVertices();
 
@@ -700,10 +793,10 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
         Vector2 drawBottomRight = Vector2.One;
 
         // Apply fill mode logic if we have a texture
-        if (Texture != null && DrawSize.X > 0 && DrawSize.Y > 0)
+        if (Texture != null && AppliedDrawSize.X > 0 && AppliedDrawSize.Y > 0)
         {
             float textureAspect = (float)Texture.Width / Texture.Height;
-            float drawAspect = DrawSize.X / DrawSize.Y;
+            float drawAspect = AppliedDrawSize.X / AppliedDrawSize.Y;
 
             switch (FillMode)
             {
@@ -751,8 +844,8 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
 
                 case TextureFillMode.Tile:
                     // Expand UVs > 1.0 to repeat
-                    float repeatX = DrawSize.X / Texture.Width;
-                    float repeatY = DrawSize.Y / Texture.Height;
+                    float repeatX = AppliedDrawSize.X / Texture.Width;
+                    float repeatY = AppliedDrawSize.Y / Texture.Height;
 
                     uvBottomRight.X = uvTopLeft.X + (uvRect.Width * repeatX);
                     uvBottomRight.Y = uvTopLeft.Y + (uvRect.Height * repeatY);
@@ -800,8 +893,8 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
             // Allow half a pixel of leniency so edge coordinates (e.g. X + Width, which the
             // inclusive AABB accepts) aren't rejected by floating-point error in the
             // round-trip through the inverse transform.
-            float epsX = DrawSize.X > 0 ? 0.5f / DrawSize.X : 0.001f;
-            float epsY = DrawSize.Y > 0 ? 0.5f / DrawSize.Y : 0.001f;
+            float epsX = AppliedDrawSize.X > 0 ? 0.5f / AppliedDrawSize.X : 0.001f;
+            float epsY = AppliedDrawSize.Y > 0 ? 0.5f / AppliedDrawSize.Y : 0.001f;
 
             return local.X >= -epsX && local.X <= 1 + epsX &&
                    local.Y >= -epsY && local.Y <= 1 + epsY;
@@ -812,8 +905,8 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
     }
 
     /// <summary>
-    /// Converts a screen-space position into this drawable's local pixel space.
-    /// The result is in the same coordinate system as <see cref="Position"/> and <see cref="DrawSize"/>.
+    /// Converts a screen-space position into this drawable's local pixel space, as it was last laid out
+    /// (<see cref="AppliedDrawSize"/>, which the matrix is for).
     /// Falls back to a simple AABB offset when the transform is non-invertible.
     /// </summary>
     public Vector2 ToLocalSpace(Vector2 screenSpacePos)
@@ -821,19 +914,20 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
         if (Matrix3x2.Invert(ModelMatrix, out var inverse))
         {
             var normalised = Vector2.Transform(screenSpacePos, inverse);
-            return new Vector2(normalised.X * DrawSize.X, normalised.Y * DrawSize.Y);
+            return new Vector2(normalised.X * AppliedDrawSize.X, normalised.Y * AppliedDrawSize.Y);
         }
 
         return screenSpacePos - new Vector2(DrawRectangle.X, DrawRectangle.Y);
     }
 
     /// <summary>
-    /// Converts a local pixel-space position into screen space.
+    /// Converts a local pixel-space position (as last laid out, see <see cref="ToLocalSpace"/>) into screen space.
     /// </summary>
     public Vector2 ToScreenSpace(Vector2 localPos)
     {
-        var normalised = DrawSize.X > 0 && DrawSize.Y > 0
-            ? new Vector2(localPos.X / DrawSize.X, localPos.Y / DrawSize.Y)
+        Vector2 size = AppliedDrawSize;
+        var normalised = size.X > 0 && size.Y > 0
+            ? new Vector2(localPos.X / size.X, localPos.Y / size.Y)
             : localPos;
 
         return Vector2.Transform(normalised, ModelMatrix);
@@ -1434,12 +1528,21 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
     {
         transforms?.Clear();
         TimeUntilTransformsCanStart = 0;
+        OnTransformsCleared();
 
         if (propagateToChildren && this is Container c)
         {
             foreach (var child in c.Children)
                 child.ClearTransforms(true);
         }
+    }
+
+    /// <summary>
+    /// Called after every transform was dropped at once (<see cref="ClearTransforms"/>,
+    /// <see cref="FinishTransforms"/>), so anything tracking one of its own can let go of it.
+    /// </summary>
+    protected internal virtual void OnTransformsCleared()
+    {
     }
 
     internal void LoopLatestTransforms(int count = 0, double pause = 0)
@@ -1474,6 +1577,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
 
         transforms?.Clear();
         TimeUntilTransformsCanStart = 0;
+        OnTransformsCleared();
 
         if (propagateToChildren && this is Container c)
         {

@@ -28,7 +28,7 @@ public partial class Circle : Drawable
             base.ApplyState(source);
             DrawRectangle = source.DrawRectangle;
             ShearX = source.Shear.X;
-            DrawSize = source.DrawSize;
+            DrawSize = source.AppliedDrawSize;
             ModelMatrix = source.ModelMatrix;
             Radius = Math.Min(DrawSize.X, DrawSize.Y) / 2f;
         }

@@ -514,13 +514,15 @@ public abstract partial class ColorPicker : Container, ITabStop
 
         private void report(Vector2 screenSpacePos)
         {
-            if (DrawSize.X <= 0 || DrawSize.Y <= 0)
+            // ToLocalSpace answers in the size last laid out, so divide by that one.
+            Vector2 size = AppliedDrawSize;
+            if (size.X <= 0 || size.Y <= 0)
                 return;
 
             var local = ToLocalSpace(screenSpacePos);
             PositionChanged?.Invoke(new Vector2(
-                Math.Clamp(local.X / DrawSize.X, 0f, 1f),
-                Math.Clamp(local.Y / DrawSize.Y, 0f, 1f)));
+                Math.Clamp(local.X / size.X, 0f, 1f),
+                Math.Clamp(local.Y / size.Y, 0f, 1f)));
         }
     }
 
@@ -577,11 +579,12 @@ public abstract partial class ColorPicker : Container, ITabStop
 
         private void report(Vector2 screenSpacePos)
         {
-            if (DrawSize.X <= 0)
+            float width = AppliedDrawSize.X;
+            if (width <= 0)
                 return;
 
             float localX = ToLocalSpace(screenSpacePos).X;
-            HueChanged?.Invoke(Math.Clamp(localX / DrawSize.X, 0f, 1f));
+            HueChanged?.Invoke(Math.Clamp(localX / width, 0f, 1f));
         }
     }
 

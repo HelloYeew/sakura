@@ -702,8 +702,8 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
 
             protected override void GenerateVertices()
             {
-                float w = DrawSize.X > 0 ? DrawSize.X : 1;
-                float h = DrawSize.Y > 0 ? DrawSize.Y : 1;
+                float w = AppliedDrawSize.X > 0 ? AppliedDrawSize.X : 1;
+                float h = AppliedDrawSize.Y > 0 ? AppliedDrawSize.Y : 1;
 
                 // Runs once per committed bar, so it must stay cheap. The model matrix is affine, so
                 // decompose it once: p' = origin + x * basisX + y * basisY, two multiply-adds per vertex

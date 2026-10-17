@@ -105,8 +105,8 @@ public partial class BezierCurve : Drawable
         var finalMatrix = ModelMatrix;
 
         // Prevent division by zero
-        float w = DrawSize.X > 0 ? DrawSize.X : 1;
-        float h = DrawSize.Y > 0 ? DrawSize.Y : 1;
+        float w = AppliedDrawSize.X > 0 ? AppliedDrawSize.X : 1;
+        float h = AppliedDrawSize.Y > 0 ? AppliedDrawSize.Y : 1;
 
         // Normalize the points into the 0.0 -> 1.0 space expected by ModelMatrix
         var t0 = Vector2.Transform(new Vector2(p0.X / w, p0.Y / h), finalMatrix);

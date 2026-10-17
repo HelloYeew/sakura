@@ -75,8 +75,8 @@ public partial class Line : Drawable
 
         var finalMatrix = ModelMatrix;
 
-        float w = DrawSize.X > 0 ? DrawSize.X : 1;
-        float h = DrawSize.Y > 0 ? DrawSize.Y : 1;
+        float w = AppliedDrawSize.X > 0 ? AppliedDrawSize.X : 1;
+        float h = AppliedDrawSize.Y > 0 ? AppliedDrawSize.Y : 1;
 
         // Map pixel coordinates to the 0.0 -> 1.0 space, then transform
         var p1 = Vector2.Transform(new Vector2(startPoint.X / w, startPoint.Y / h), finalMatrix);

@@ -19,6 +19,7 @@ public partial class CircularContainer : Container
     public override void Update()
     {
         base.Update();
-        CornerRadius = Math.Min(DrawSize.X, DrawSize.Y) / 2f;
+        // The corners are drawn for the size the matrix is built for.
+        CornerRadius = Math.Min(AppliedDrawSize.X, AppliedDrawSize.Y) / 2f;
     }
 }
