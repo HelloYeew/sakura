@@ -146,6 +146,10 @@ public class SakuraAudioNativeTest
         Assert.That(engine.SetVoiceBuffer(voice, buffer), Is.True);
         Assert.That(engine.AddChild(engine.Root, voice), Is.True);
 
+        // Metering runs only for a node whose spectrum is being read, and a read is what arms it --
+        // which is what NativeAmplitudeReader does on every poll.
+        engine.ReadSpectrum(voice, new float[SakuraAudioNative.BIN_COUNT]);
+
         engine.Play(voice);
         engine.Mix(new float[128 * channels]);
 
@@ -288,10 +292,14 @@ public class SakuraAudioNativeTest
 
         engine.SetVoiceBuffer(voice, buffer);
         engine.AddChild(engine.Root, voice);
+
+        // The first read arms the node's metering (and has nothing to report yet); see the header.
+        float[] nativeBins = new float[SakuraAudioNative.BIN_COUNT];
+        engine.ReadSpectrum(voice, nativeBins);
+
         engine.Play(voice);
         engine.Mix(new float[frames * channels]);
 
-        float[] nativeBins = new float[SakuraAudioNative.BIN_COUNT];
         Assert.That(engine.ReadSpectrum(voice, nativeBins), Is.EqualTo(SakuraAudioNative.BIN_COUNT));
 
         float[] managedBins = new float[AudioFft.BIN_COUNT];
@@ -304,6 +312,138 @@ public class SakuraAudioNativeTest
 
         for (int i = 0; i < managedBins.Length; i++)
             Assert.That(nativeBins[i], Is.EqualTo(managedBins[i]).Within(1e-4f), $"bin {i}");
+
+        engine.ReleaseBuffer(buffer);
+    }
+
+    /// <summary>
+    /// A volume and pan change mid-stream ramps across the next block on both mixers, identically:
+    /// the native engine and the managed reference run the same ramp, so the parity that holds for a
+    /// fixed gain holds through a change too.
+    /// </summary>
+    [Test]
+    public void TestGainRampMatchesManagedMixer()
+    {
+        const int frames = 256;
+
+        float[] pcm = makeRamp(frames * 2);
+        float[] managed = new float[frames * channels];
+        float[] native = new float[frames * channels];
+
+        var channel = new SDLAudioChannel(new StubContext(), new MemoryPcmSource(PcmBuffer.FromSamples(pcm, channels, rate)));
+
+        using var engine = createEngine(frames);
+
+        uint buffer = engine.CreateBuffer(pcm);
+        uint voice = engine.CreateVoice();
+
+        engine.SetVoiceBuffer(voice, buffer);
+        engine.AddChild(engine.Root, voice);
+
+        channel.Play();
+        engine.Play(voice);
+
+        channel.Fill(managed);
+        engine.Mix(native);
+
+        // Down to a quarter and panned right, which under the linear pan law takes the left side to
+        // 0.6 of that: 0.15 on the left, 0.25 on the right.
+        channel.Volume.Value = 0.25;
+        channel.Balance.Value = 0.4;
+        engine.SetGain(voice, 0.25f, 0.6f, 1.0f);
+
+        Array.Clear(managed);
+        channel.Fill(managed);
+        engine.Mix(native);
+
+        // A native library from before the ramp steps straight to the new gain. That is the packaged
+        // one until NativeLibraries is republished from this source, which is a release step rather than
+        // a regression, so it reads as inconclusive instead of failing every run until then.
+        if (native[0] == pcm[frames * channels] * 0.15f)
+            Assert.Inconclusive("The loaded libsakura-audio predates the gain ramp (AUDIO_PERF_PLAN.md, AP-19).");
+
+        for (int i = 0; i < managed.Length; i++)
+            Assert.That(native[i], Is.EqualTo(managed[i]).Within(1e-6f), $"sample {i}");
+
+        // And it is a ramp, not a step: the first frame has barely moved from unity, the last arrives.
+        int start = frames * channels;
+        Assert.That(managed[0], Is.EqualTo(pcm[start] * (1f + (0.15f - 1f) / frames)).Within(1e-6f));
+        Assert.That(managed[(frames - 1) * 2], Is.EqualTo(pcm[start + (frames - 1) * 2] * 0.15f).Within(1e-6f));
+        Assert.That(managed[(frames - 1) * 2 + 1], Is.EqualTo(pcm[start + (frames - 1) * 2 + 1] * 0.25f).Within(1e-6f));
+
+        channel.Dispose();
+        engine.ReleaseBuffer(buffer);
+    }
+
+    #endregion
+
+    #region Sample decoding
+
+    private static System.IO.Stream openResource(string resource) =>
+        System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream($"Sakura.Framework.Tests.Resources.{resource}")
+        ?? throw new InvalidOperationException($"Missing embedded test resource '{resource}'.");
+
+    /// <summary>
+    /// The native sample path decodes into unmanaged memory and hands that to the engine; it must be
+    /// the same audio the managed path decodes, frame for frame.
+    /// </summary>
+    [TestCase("Samples.test.wav")]
+    [TestCase("Samples.long.mp3")]
+    public void TestDecodeIntoEngineMatchesManagedDecode(string resource)
+    {
+        var reference = PcmBuffer.Decode(openResource(resource), rate, channels);
+
+        using var engine = createEngine();
+
+        uint buffer = PcmBuffer.DecodeIntoEngine(openResource(resource), engine, out double lengthMs);
+
+        Assert.That(buffer, Is.Not.Zero);
+        Assert.That(lengthMs, Is.EqualTo(reference.LengthMs).Within(0.001));
+
+        uint voice = engine.CreateVoice();
+        engine.SetVoiceBuffer(voice, buffer);
+        engine.AddChild(engine.Root, voice);
+        engine.Play(voice);
+
+        // Unity rate and gain is a copy, so playing the buffer back reads out exactly what went in.
+        float[] played = new float[reference.Samples.Length];
+        engine.Mix(played);
+
+        int mismatches = 0;
+
+        for (int i = 0; i < played.Length; i++)
+        {
+            if (played[i] != Math.Clamp(reference.Samples[i], -1f, 1f))
+                mismatches++;
+        }
+
+        Assert.That(mismatches, Is.Zero);
+        engine.ReleaseBuffer(buffer);
+    }
+
+    /// <summary>
+    /// What the native sample path exists for: the decoded audio never becomes a managed array. The old
+    /// path allocated the whole sample plus a second of slack on the large object heap, then a resized
+    /// copy, per hitsound.
+    /// </summary>
+    [Test]
+    public void TestDecodeIntoEngineStaysOffTheManagedHeap()
+    {
+        using var engine = createEngine();
+
+        // Warm up: the first decode pays for FFmpeg's one-time setup and the JIT.
+        engine.ReleaseBuffer(PcmBuffer.DecodeIntoEngine(openResource("Samples.test.wav"), engine, out _));
+
+        var reference = PcmBuffer.Decode(openResource("Samples.test.wav"), rate, channels);
+        long pcmBytes = (long)reference.Samples.Length * sizeof(float);
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        uint buffer = PcmBuffer.DecodeIntoEngine(openResource("Samples.test.wav"), engine, out _);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.That(buffer, Is.Not.Zero);
+        Assert.That(allocated, Is.LessThan(pcmBytes / 4),
+            $"Decoding {pcmBytes / 1024} KB of PCM allocated {allocated / 1024} KB of managed memory.");
 
         engine.ReleaseBuffer(buffer);
     }

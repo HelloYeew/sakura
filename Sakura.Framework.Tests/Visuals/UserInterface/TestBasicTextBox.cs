@@ -164,6 +164,25 @@ public partial class TestBasicTextBox : ManualInputManagerTestScene
     }
 
     [Test]
+    public void TestSelectAllFromCode()
+    {
+        AddStep("Focus and type initial string", () =>
+        {
+            InputManager.MoveMouseTo(textBox);
+            InputManager.Click(MouseButton.Left);
+            InputManager.TypeText("Hello World");
+        });
+
+        AddStep("Select all from code", () => textBox.SelectAll());
+        AddStep("Type 'Sakura'", () => InputManager.TypeText("Sakura"));
+        AddAssert("Typing replaced everything", () => textBox.Text.Value == "Sakura");
+
+        AddStep("Select all with Ctrl+A", () => InputManager.PressKey(Key.A, KeyModifiers.Control));
+        AddStep("Press Delete", () => InputManager.PressKey(Key.Delete));
+        AddAssert("Ctrl+A still selects everything", () => textBox.Text.Value == "");
+    }
+
+    [Test]
     public void TestMouseSelectionAndClipboard()
     {
         AddStep("Focus and type", () =>

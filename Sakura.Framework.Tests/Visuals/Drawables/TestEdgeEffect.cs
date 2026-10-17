@@ -100,6 +100,29 @@ public partial class TestEdgeEffect : TestScene
     }
 
     [Test]
+    public void TestShearedEdgeEffect()
+    {
+        // The effect leans with the container, all the way round: none of it cut off at two corners.
+        AddStep("Shear the container", () => target.Shear = new Vector2(-0.66f, 0));
+        AddStep("Apply a coloured halo", () => target.EdgeEffect = new EdgeEffectParameters
+        {
+            Type = EdgeEffectType.Shadow,
+            Color = Color.FromArgb(160, Color.Coral),
+            Radius = 30,
+        });
+        AddStep("Lean the other way", () => target.Shear = new Vector2(0.66f, 0));
+        AddStep("As a glow", () => target.EdgeEffect = new EdgeEffectParameters
+        {
+            Type = EdgeEffectType.Glow,
+            Color = Color.FromArgb(160, Color.Coral),
+            Radius = 30,
+        });
+        AddStep("Straight again", () => target.Shear = Vector2.Zero);
+
+        AddAssert("Edge effect is a glow", () => target.EdgeEffect.Type == EdgeEffectType.Glow);
+    }
+
+    [Test]
     public void TestFadeEdgeEffect()
     {
         AddStep("Apply opaque shadow", () => target.EdgeEffect = new EdgeEffectParameters

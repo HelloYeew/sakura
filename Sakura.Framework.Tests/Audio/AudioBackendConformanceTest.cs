@@ -332,6 +332,102 @@ public class AudioBackendConformanceTest
             + $"wall clock; {expected:F0} ms was expected.");
     }
 
+    [TestCase(Backend.Bass, 2.0)]
+    [TestCase(Backend.Bass, 0.5)]
+    [TestCase(Backend.SdlNative, 2.0)]
+    [TestCase(Backend.SdlNative, 0.5)]
+    [TestCase(Backend.SdlManaged, 2.0)]
+    [TestCase(Backend.SdlManaged, 0.5)]
+    public void TempoScalesHowFastThePositionMoves(Backend backend, double tempo)
+    {
+        using var manager = (IDisposable)create(backend);
+        var audio = (IAudioManager)manager;
+
+        var channel = audio.CreateTrackFromFile(writeTempCopy("Tracks.test.mp3")).GetChannel();
+
+        channel.Tempo.Value = tempo;
+        channel.Play();
+
+        waitUntil(audio, () => channel.CurrentTime > 200);
+
+        double startPosition = channel.CurrentTime;
+        var wall = Stopwatch.StartNew();
+
+        waitUntil(audio, () => wall.ElapsedMilliseconds > 1000, 3000);
+
+        double advanced = channel.CurrentTime - startPosition;
+        double expected = wall.Elapsed.TotalMilliseconds * tempo;
+
+        Assert.That(advanced, Is.EqualTo(expected).Within(30).Percent,
+            $"At tempo {tempo} the position advanced {advanced:F0} ms over {wall.Elapsed.TotalMilliseconds:F0} ms of "
+            + $"wall clock; {expected:F0} ms was expected.");
+    }
+
+    /// <summary>
+    /// A change of tempo mid-play must not move the position, and from then on the position moves at
+    /// the new tempo. The SDL engines restart their stretch from where the audio is, so this is what
+    /// catches that restart landing somewhere else.
+    /// </summary>
+    /// <remarks>
+    /// The speed is compared with the speed before the change rather than with the wall clock: the
+    /// dummy SDL driver these tests run on drains its buffer measurably faster than real time, which a
+    /// ratio cancels out.
+    /// </remarks>
+    [Test]
+    public void ChangingTempoWhilePlayingKeepsThePosition([Values] Backend backend)
+    {
+        using var manager = (IDisposable)create(backend);
+        var audio = (IAudioManager)manager;
+
+        var channel = audio.CreateTrackFromFile(writeTempCopy("Tracks.test.mp3")).GetChannel();
+
+        channel.Tempo.Value = 1.5;
+        channel.Play();
+
+        waitUntil(audio, () => channel.CurrentTime > 300);
+
+        double speedBefore = measureSpeed(audio, channel, 600);
+
+        double maximumJump = 0;
+        double last = channel.CurrentTime;
+
+        channel.Tempo.Value = 0.75;
+
+        // Long enough for the old speed's audio to leave the device queue.
+        var settling = Stopwatch.StartNew();
+
+        waitUntil(audio, () =>
+        {
+            double now = channel.CurrentTime;
+            maximumJump = Math.Max(maximumJump, Math.Abs(now - last));
+            last = now;
+            return settling.ElapsedMilliseconds > 400;
+        }, 3000);
+
+        double speedAfter = measureSpeed(audio, channel, 600);
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(maximumJump, Is.LessThan(position_tolerance_ms),
+                $"The position jumped {maximumJump:F0} ms in one poll around the tempo change.");
+            Assert.That(speedAfter / speedBefore, Is.EqualTo(0.5).Within(20).Percent,
+                $"Going from tempo 1.5 to 0.75 should halve the speed; it went from {speedBefore:F2} to {speedAfter:F2}.");
+        }
+    }
+
+    /// <summary>
+    /// How fast the position moves against the wall clock, over <paramref name="durationMs"/>.
+    /// </summary>
+    private static double measureSpeed(IAudioManager manager, IAudioChannel channel, int durationMs)
+    {
+        double start = channel.CurrentTime;
+        var wall = Stopwatch.StartNew();
+
+        waitUntil(manager, () => wall.ElapsedMilliseconds > durationMs, durationMs * 3);
+
+        return (channel.CurrentTime - start) / wall.Elapsed.TotalMilliseconds;
+    }
+
     #endregion
 
     #region Mixing and polyphony

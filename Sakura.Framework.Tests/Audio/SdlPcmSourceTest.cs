@@ -218,6 +218,37 @@ public class SdlPcmSourceTest
 
     #region Memory source
 
+    /// <summary>
+    /// A file already in the device's format skips the converter entirely, so the decoded buffer is
+    /// exactly what the decoder produced: no resampler passes over it, not even an identity one.
+    /// </summary>
+    [Test]
+    public void Memory_FileInTheDeviceFormatIsNotConverted()
+    {
+        float[] direct;
+        int fileRate;
+        int fileChannels;
+
+        using (var decoder = new FFmpegAudioDecoder(open("Samples.test.wav")))
+        {
+            fileRate = decoder.SampleRate;
+            fileChannels = decoder.Channels;
+
+            var collected = new System.Collections.Generic.List<float>();
+            float[] chunk = new float[4096];
+            int read;
+
+            while ((read = decoder.Read(chunk)) > 0)
+                collected.AddRange(chunk.AsSpan(0, read).ToArray());
+
+            direct = collected.ToArray();
+        }
+
+        var buffer = PcmBuffer.Decode(open("Samples.test.wav"), fileRate, fileChannels);
+
+        Assert.That(buffer.Samples, Is.EqualTo(direct));
+    }
+
     [Test]
     public void Memory_DecodesToDeviceFormatAndPlaysThrough()
     {

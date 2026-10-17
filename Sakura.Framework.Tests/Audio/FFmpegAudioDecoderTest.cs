@@ -111,6 +111,106 @@ public class FFmpegAudioDecoderTest
         Assert.That(decoder.Read(buffer), Is.GreaterThan(0), "Decoder produced nothing after seeking back to the start.");
     }
 
+    /// <summary>
+    /// A seek must land on the requested sample, not on the packet before it: every caller reports the
+    /// requested time as its position, so audio from short of it plays behind the clock.
+    /// </summary>
+    /// <remarks>
+    /// Measured rather than assumed: the audio after the seek is slid along a straight decode of the
+    /// whole file until it matches, and the offset it matches at is where the seek really landed. The
+    /// comparison window starts a few MP3 frames in, past the bit reservoir and filterbank state a cold
+    /// decoder has to rebuild, after which the two decodes agree to the bit.
+    /// </remarks>
+    [TestCase("Tracks.test.mp3", 1000.0)]
+    [TestCase("Tracks.test.mp3", 1234.5)]
+    [TestCase("Tracks.test.mp3", 2017.3)]
+    [TestCase("Samples.long.mp3", 777.7)]
+    [TestCase("Samples.test.wav", 123.4)]
+    public void SeekLandsOnTheRequestedSample(string resource, double targetMs)
+    {
+        float[] reference = decodeAll(resource, out int channels, out int sampleRate);
+
+        using var decoder = new FFmpegAudioDecoder(open(resource));
+        decoder.Seek(targetMs);
+
+        const int settle_frames = 4096;
+        const int window_frames = 2048;
+        const int search_frames = 3000;
+
+        float[] afterSeek = new float[(settle_frames + window_frames) * channels];
+        int filled = 0;
+
+        while (filled < afterSeek.Length)
+        {
+            int read = decoder.Read(afterSeek.AsSpan(filled));
+
+            if (read == 0)
+                break;
+
+            filled += read;
+        }
+
+        Assert.That(filled, Is.EqualTo(afterSeek.Length), "Not enough audio after the seek to compare.");
+
+        long expected = (long)Math.Round(targetMs / 1000.0 * sampleRate);
+        long best = long.MinValue;
+        double bestError = double.MaxValue;
+
+        for (long candidate = expected - search_frames; candidate <= expected + search_frames; candidate++)
+        {
+            long start = (candidate + settle_frames) * channels;
+
+            if (start < 0 || start + window_frames * channels > reference.Length)
+                continue;
+
+            double error = 0;
+
+            for (int i = 0; i < window_frames * channels; i++)
+            {
+                double difference = afterSeek[settle_frames * channels + i] - reference[start + i];
+                error += difference * difference;
+            }
+
+            if (error < bestError)
+            {
+                bestError = error;
+                best = candidate;
+            }
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(best, Is.EqualTo(expected), $"Seek to {targetMs} ms landed {best - expected} frames off.");
+            Assert.That(bestError, Is.LessThan(1e-6), "The audio after the seek does not match the file at any offset.");
+        });
+    }
+
+    private static float[] decodeAll(string resource, out int channels, out int sampleRate)
+    {
+        using var decoder = new FFmpegAudioDecoder(open(resource));
+
+        channels = decoder.Channels;
+        sampleRate = decoder.SampleRate;
+
+        float[] buffer = new float[8192];
+        float[] all = new float[(int)(decoder.Duration / 1000.0 * decoder.SampleRate + decoder.SampleRate) * decoder.Channels];
+        int total = 0;
+
+        int read;
+
+        while ((read = decoder.Read(buffer)) > 0)
+        {
+            if (total + read > all.Length)
+                Array.Resize(ref all, Math.Max(all.Length * 2, total + read));
+
+            buffer.AsSpan(0, read).CopyTo(all.AsSpan(total));
+            total += read;
+        }
+
+        Array.Resize(ref all, total);
+        return all;
+    }
+
     [Test]
     public void RejectsANonAudioSource()
     {

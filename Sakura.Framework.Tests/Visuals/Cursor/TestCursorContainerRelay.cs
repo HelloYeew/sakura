@@ -62,29 +62,32 @@ public partial class TestCursorContainerRelay : TestScene
     }
 
     /// <summary>
-    /// A software cursor replaces the hardware one. Nothing used to hide it, so adding a container
-    /// drew two cursors: the container's own, and the OS arrow underneath.
+    /// A software cursor can replace the hardware one. Asked to, it hides the OS arrow, so the window
+    /// doesn't draw two cursors, and gives it back when it goes.
     /// </summary>
     [Test]
     public void TestTheOsCursorIsHiddenWhileDrawingOurOwn()
     {
+        AddStep("Rebuild hiding the OS cursor", () =>
+        {
+            Clear();
+            window.CursorVisible = true;
+            Add(container = new ProbeCursorContainer { HideOsCursor = true });
+        });
+        AddUntilStep("Loaded", () => container.IsLoaded);
         AddAssert("OS cursor hidden", () => !window.CursorVisible);
 
         AddStep("Remove the container", () => Clear());
         AddUntilStep("OS cursor restored", () => window.CursorVisible);
     }
 
+    /// <summary>
+    /// Hiding the OS cursor is opt-in (since 889c0a9): a cursor container on its own leaves it alone, so
+    /// one added for a tooltip or a test doesn't take the arrow away.
+    /// </summary>
     [Test]
-    public void TestHidingTheOsCursorCanBeDeclined()
+    public void TestTheOsCursorIsLeftAloneByDefault()
     {
-        AddStep("Rebuild opting out", () =>
-        {
-            Clear();
-            window.CursorVisible = true;
-            Add(container = new ProbeCursorContainer { HideOsCursor = false });
-        });
-
-        AddUntilStep("Loaded", () => container.IsLoaded);
         AddAssert("OS cursor left alone", () => window.CursorVisible);
     }
 
