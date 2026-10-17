@@ -10,7 +10,7 @@ namespace Sakura.Framework.Audio.SdlEngine;
 
 /// <summary>
 /// Safe managed wrapper over libsakura-audio that owns the native engine's lifetime and turns its
-/// handles, pointers and result codes into ordinary C#.
+/// handles, pointers, and result codes into ordinary C#.
 /// </summary>
 [SuppressMessage("ReSharper", "InconsistentNaming")]
 internal sealed class SakuraAudioEngine : IDisposable

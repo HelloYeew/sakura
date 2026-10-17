@@ -14,10 +14,16 @@ namespace Sakura.Framework.Audio.SdlEngine;
 internal sealed class AudioDecodeScheduler : IDisposable
 {
     /// <summary>
-    /// How long to idle when no source wanted work. Short relative to the buffer being maintained,
-    /// so the buffer never gets close to empty through scheduling alone.
+    /// How long to idle when no source wanted work.
     /// </summary>
-    private static readonly TimeSpan idle_delay = TimeSpan.FromMilliseconds(5);
+    /// <remarks>
+    /// Sized against the buffers being kept, not as a reflex. Both kinds of source hold 500 ms and ask
+    /// for a refill once they are down to 400 ms, so a source that started wanting work just after a
+    /// poll waits at most this long, and is still holding 375 ms when it is served — at double speed,
+    /// 350. Everything that needs the thread sooner wakes it instead of waiting: a new source, a seek,
+    /// playback starting. At the old 5 ms the thread woke 200 times a second to find every ring full.
+    /// </remarks>
+    private static readonly TimeSpan idle_delay = TimeSpan.FromMilliseconds(25);
 
     /// <summary>
     /// How long to wait when a source wanted work but could not do it yet.

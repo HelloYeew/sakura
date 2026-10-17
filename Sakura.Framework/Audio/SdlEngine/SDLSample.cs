@@ -55,27 +55,30 @@ internal sealed class SDLSample : ISample, IHasActiveChannels, IDisposable
 
         try
         {
-            var decoded = PcmBuffer.Decode(open(), manager.SampleRate, manager.Channels);
-
-            Length = decoded.LengthMs;
+            long decodedBytes;
 
             if (manager.UsesNativeMixEngine)
             {
-                // Handed over and then dropped: the engine copies the PCM into memory the audio thread
-                // can read without touching anything managed, so keeping the managed array as well
-                // would double the cost of every loaded sample for nothing.
-                nativeBuffer = manager.NativeEngine!.CreateBuffer(decoded.Samples);
+                // Decoded straight into unmanaged memory and copied into the engine's pool: the audio
+                // thread reads it without touching anything managed, and no managed array of it is ever
+                // made, so a beatmap's worth of hitsounds no longer lands on the large object heap.
+                nativeBuffer = PcmBuffer.DecodeIntoEngine(open(), manager.NativeEngine!, out double lengthMs);
 
                 if (nativeBuffer == 0)
                     throw new InvalidOperationException("The native mix engine would not take the decoded sample.");
+
+                Length = lengthMs;
+                decodedBytes = (long)(lengthMs / 1000.0 * manager.SampleRate) * manager.Channels * sizeof(float);
             }
             else
             {
-                buffer = decoded;
+                buffer = PcmBuffer.Decode(open(), manager.SampleRate, manager.Channels);
+                Length = buffer.LengthMs;
+                decodedBytes = (long)buffer.Samples.Length * sizeof(float);
             }
 
             GlobalStatistics.Get<int>("Audio", "Loaded Samples", StatisticKind.Cumulative).Value++;
-            Logger.Verbose($"🔈 Sample decoded to PCM ({decoded.Samples.Length * sizeof(float) / 1024} KB, {decoded.LengthMs:F0}ms)");
+            Logger.Verbose($"🔈 Sample decoded to PCM ({decodedBytes / 1024} KB, {Length:F0}ms)");
         }
         catch (Exception e)
         {

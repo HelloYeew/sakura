@@ -75,6 +75,18 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     private const int fallback_sample_rate = 44100;
     private const int output_channels = 2;
 
+    /// <summary>
+    /// How often the native engine re-reads the stream's queue depth for <see cref="OutputLatencyMs"/>.
+    /// </summary>
+    /// <remarks>
+    /// Not every update: <c>SDL_GetAudioStreamQueued</c> takes the stream's lock, which SDL holds for
+    /// the whole of our device callback, so polling it at the audio thread's 1000 Hz both waited on the
+    /// callback and made the callback wait on us. On the native engine the queue is all but empty by
+    /// design (SDL pulls exactly what it needs), so the figure barely moves; the managed mixer's queue
+    /// is its whole latency and is still read every update.
+    /// </remarks>
+    private const double native_latency_sample_interval_ms = 100;
+
     public int SampleRate { get; }
 
     public int Channels => output_channels;
@@ -188,6 +200,20 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     private volatile int deviceBufferMicroseconds;
 
     private double sinceDeviceCheckMs;
+
+    private double sinceLatencySampleMs = double.MaxValue;
+
+    private GlobalStatistic<long>? statCallback;
+    private GlobalStatistic<long>? statVoiceStarvations;
+    private GlobalStatistic<long>? statPutFailures;
+    private GlobalStatistic<int>? statActiveVoices;
+    private GlobalStatistic<int>? statDeviceBufferFrames;
+    private GlobalStatistic<double>? statOutputLatency;
+    private GlobalStatistic<long>? statUnderruns;
+    private GlobalStatistic<double>? statStarved;
+    private GlobalStatistic<double>? statLongestMixGap;
+    private GlobalStatistic<long>? statMixBlock;
+    private GlobalStatistic<double>? statQueued;
 
     private readonly UnderrunWatchdog underrunWatchdog = new UnderrunWatchdog();
 
@@ -442,8 +468,18 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     /// <summary>
     /// Re-reads the queue depth so every channel in this frame compensates by the same figure.
     /// </summary>
-    private void sampleOutputLatency()
+    private void sampleOutputLatency(double frameTime)
     {
+        if (nativeEngine != null)
+        {
+            sinceLatencySampleMs += frameTime;
+
+            if (sinceLatencySampleMs < native_latency_sample_interval_ms)
+                return;
+
+            sinceLatencySampleMs = 0;
+        }
+
         int bytes = SDL_GetAudioStreamQueued(deviceStream);
         outputLatencyFrames = bytes <= 0 ? 0 : bytes / (sizeof(float) * output_channels);
     }
@@ -908,9 +944,13 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     /// </summary>
     internal ISDLChannel CreateChannel(IPcmSource source, IAudioMixer mixer, bool streaming)
     {
-        var channel = new SDLAudioChannel(this, source);
+        var decodeSource = streaming ? source as IDecodeSource : null;
 
-        register(channel, mixer, streaming ? source as IDecodeSource : null);
+        // Tracks get a tempo stage and samples don't, the same line the BASS backend draws: a hitsound
+        // is over before a time-stretch would have produced its first sequence.
+        var channel = new SDLAudioChannel(this, streaming ? new TempoPcmSource(source, SampleRate, Channels) : source);
+
+        register(channel, mixer, decodeSource);
 
         return channel;
     }
@@ -1071,7 +1111,7 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
         // Before PollEvents, because a channel that reads its position while handling an end or a
         // loop should see this frame's figure rather than the last one's.
-        sampleOutputLatency();
+        sampleOutputLatency(frameTime);
         checkForDeviceChange(frameTime);
 
         if (nativeEngine != null)
@@ -1088,19 +1128,19 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             var stats = nativeEngine.GetStats();
 
             // "Callback", not "Mix Block": there is a real device callback to time now.
-            GlobalStatistics.Get<long>("Audio", "SDL Callback", StatisticKind.Gauge, StatisticUnit.Microseconds).Value = stats.CallbackMicroseconds;
+            (statCallback ??= GlobalStatistics.Get<long>("Audio", "SDL Callback", StatisticKind.Gauge, StatisticUnit.Microseconds)).Value = stats.CallbackMicroseconds;
 
             // Named for what it is. This counts blocks in which a voice had less audio than the mixer
             // asked for — a decoder that fell behind, most often a seek — and not the device failing
             // to be served, which is what "underrun" reads as and what the watchdog acts on.
-            GlobalStatistics.Get<long>("Audio", "SDL Voice Starvations").Value = stats.Starvations;
+            (statVoiceStarvations ??= GlobalStatistics.Get<long>("Audio", "SDL Voice Starvations")).Value = stats.Starvations;
 
             Interlocked.Exchange(ref lastPublishedUnderruns, stats.Starvations);
             handleSustainedUnderruns(observeNativeCallback(stats), frameTime);
-            GlobalStatistics.Get<long>("Audio", "SDL Put Failures").Value = stats.PutFailures;
-            GlobalStatistics.Get<int>("Audio", "SDL Active Voices").Value = stats.ActiveVoices;
-            GlobalStatistics.Get<int>("Audio", "SDL Device Buffer (frames)").Value = deviceBufferFrames;
-            GlobalStatistics.Get<double>("Audio", "SDL Output Latency", StatisticKind.Gauge, StatisticUnit.Milliseconds).Value = Math.Round(OutputLatencyMs, 2);
+            (statPutFailures ??= GlobalStatistics.Get<long>("Audio", "SDL Put Failures")).Value = stats.PutFailures;
+            (statActiveVoices ??= GlobalStatistics.Get<int>("Audio", "SDL Active Voices")).Value = stats.ActiveVoices;
+            (statDeviceBufferFrames ??= GlobalStatistics.Get<int>("Audio", "SDL Device Buffer (frames)")).Value = deviceBufferFrames;
+            (statOutputLatency ??= GlobalStatistics.Get<double>("Audio", "SDL Output Latency", StatisticKind.Gauge, StatisticUnit.Milliseconds)).Value = Math.Round(OutputLatencyMs, 2);
             return;
         }
 
@@ -1111,16 +1151,16 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         long managedUnderruns = starvation.CountIn(blockMs);
 
         Interlocked.Exchange(ref lastPublishedUnderruns, managedUnderruns);
-        GlobalStatistics.Get<long>("Audio", "SDL Underruns").Value = managedUnderruns;
-        GlobalStatistics.Get<double>("Audio", "SDL Starved", StatisticKind.Gauge, StatisticUnit.Milliseconds).Value = Math.Round(starvation.StarvedMilliseconds, 1);
-        GlobalStatistics.Get<double>("Audio", "SDL Longest Mix Gap", StatisticKind.Gauge, StatisticUnit.Milliseconds).Value = Math.Round(starvation.LongestGapMilliseconds, 1);
-        GlobalStatistics.Get<long>("Audio", "SDL Mix Block", StatisticKind.Gauge, StatisticUnit.Microseconds).Value = mixMicroseconds;
+        (statUnderruns ??= GlobalStatistics.Get<long>("Audio", "SDL Underruns")).Value = managedUnderruns;
+        (statStarved ??= GlobalStatistics.Get<double>("Audio", "SDL Starved", StatisticKind.Gauge, StatisticUnit.Milliseconds)).Value = Math.Round(starvation.StarvedMilliseconds, 1);
+        (statLongestMixGap ??= GlobalStatistics.Get<double>("Audio", "SDL Longest Mix Gap", StatisticKind.Gauge, StatisticUnit.Milliseconds)).Value = Math.Round(starvation.LongestGapMilliseconds, 1);
+        (statMixBlock ??= GlobalStatistics.Get<long>("Audio", "SDL Mix Block", StatisticKind.Gauge, StatisticUnit.Microseconds)).Value = mixMicroseconds;
 
         handleSustainedUnderruns(observeManagedQueue(), frameTime);
-        GlobalStatistics.Get<int>("Audio", "SDL Active Voices").Value = runningVoices();
-        GlobalStatistics.Get<double>("Audio", "SDL Queued", StatisticKind.Gauge, StatisticUnit.Milliseconds).Value = Math.Round(queuedMilliseconds, 1);
-        GlobalStatistics.Get<int>("Audio", "SDL Device Buffer (frames)").Value = deviceBufferFrames;
-        GlobalStatistics.Get<double>("Audio", "SDL Output Latency", StatisticKind.Gauge, StatisticUnit.Milliseconds).Value = Math.Round(OutputLatencyMs, 2);
+        (statActiveVoices ??= GlobalStatistics.Get<int>("Audio", "SDL Active Voices")).Value = runningVoices();
+        (statQueued ??= GlobalStatistics.Get<double>("Audio", "SDL Queued", StatisticKind.Gauge, StatisticUnit.Milliseconds)).Value = Math.Round(queuedMilliseconds, 1);
+        (statDeviceBufferFrames ??= GlobalStatistics.Get<int>("Audio", "SDL Device Buffer (frames)")).Value = deviceBufferFrames;
+        (statOutputLatency ??= GlobalStatistics.Get<double>("Audio", "SDL Output Latency", StatisticKind.Gauge, StatisticUnit.Milliseconds)).Value = Math.Round(OutputLatencyMs, 2);
     }
 
     public void StopAll()

@@ -105,7 +105,13 @@ internal sealed class CubicResampler
             while (position >= 1.0)
             {
                 if (!advance(source))
+                {
+                    // drained since the whole frames this step would have moved past do not exist, so they
+                    // are not owed either. Left in the position they accumulated one per starved block,
+                    // and a stream that recovered skipped that many of its first fresh frames.
+                    position -= Math.Floor(position);
                     return produced;
+                }
 
                 position -= 1.0;
             }

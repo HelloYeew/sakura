@@ -49,8 +49,8 @@ internal class SDLAudioChannel : ISDLChannel
     public Reactive<double> Balance { get; } = new Reactive<double>(0.0);
 
     /// <summary>
-    /// Pitch-preserving speed. A no-op on this backend, as <see cref="IAudioChannel.Tempo"/> permits
-    /// for backends without a tempo DSP — a WSOLA implementation is a later item.
+    /// Pitch-preserving speed, through the <see cref="TempoPcmSource"/> a track's source is wrapped in.
+    /// A no-op on a sample, as on the BASS backend.
     /// </summary>
     public Reactive<double> Tempo { get; } = new Reactive<double>(1.0);
 
@@ -82,6 +82,26 @@ internal class SDLAudioChannel : ISDLChannel
     private volatile float gainLeft = 1f;
     private volatile float gainRight = 1f;
     private double frequency = 1.0;
+
+    /// <summary>
+    /// The per-side gain the last block ended on, which the next gain change ramps from. Mix-thread-owned.
+    /// </summary>
+    private float appliedLeft = 1f;
+
+    private float appliedRight = 1f;
+
+    /// <summary>
+    /// Set when the next block should take its gain outright instead of ramping to it: the first block,
+    /// the first after a seek, and the first after any block this node was not mixed in (stopped, or a
+    /// mixer with nothing to mix), where there is no previous block of this audio to ramp from.
+    /// </summary>
+    private volatile bool gainSnapPending = true;
+
+    /// <summary>
+    /// For a <see cref="Fill"/> that returns without mixing: the next block it does mix snaps to its
+    /// gain, as the native engine does for a node that missed a block.
+    /// </summary>
+    protected void MarkBlockSkipped() => gainSnapPending = true;
 
     private SDLLowPassFilter? filter;
 
@@ -129,8 +149,37 @@ internal class SDLAudioChannel : ISDLChannel
         Volume.ValueChanged += e => volume = (float)Math.Max(0, e.NewValue);
         Balance.ValueChanged += _ => updateBalance();
         Frequency.ValueChanged += e => frequency = e.NewValue;
+        Tempo.ValueChanged += e => Context.EnqueueAction(() => applyTempo(e.NewValue));
 
         updateBalance();
+    }
+
+    /// <summary>
+    /// The tempo the source is producing at, for scaling the latency compensation: 1 for a sample.
+    /// </summary>
+    private double sourceTempo => (source as TempoPcmSource)?.Tempo ?? 1;
+
+    private void applyTempo(double tempo)
+    {
+        if (isDisposed || source is not TempoPcmSource tempoSource)
+            return;
+
+        double previousRate = Frequency.Value * tempoSource.Tempo;
+
+        // A change while already stretching moves the source back to the mix cursor, and everything
+        // downstream holding audio from the old timeline has to go, exactly as for a seek.
+        if (tempoSource.SetTempo(tempo))
+        {
+            resampler?.Reset();
+            filter?.ClearState();
+            gainSnapPending = true;
+            Tap.Reset();
+            Context.WakeDecoder();
+        }
+
+        // Either way the position carries on from the mix cursor, but the device queue in front of it
+        // was mixed at the old speed and plays out at it.
+        latency.BeginRateTransition(previousRate);
     }
 
     private void updateBalance()
@@ -172,7 +221,10 @@ internal class SDLAudioChannel : ISDLChannel
     public virtual void Fill(Span<float> destination)
     {
         if (isDisposed || !IsRunning.Value || source == null || resampler == null)
+        {
+            MarkBlockSkipped();
             return;
+        }
 
         int channels = Context.Channels;
         int frames = destination.Length / channels;
@@ -222,23 +274,64 @@ internal class SDLAudioChannel : ISDLChannel
 
     private void applyGain(Span<float> block, int channels)
     {
-        float left = volume * gainLeft;
-        float right = volume * gainRight;
+        // Panning is only meaningful in stereo; anything else just takes the volume.
+        float targetLeft = channels == 2 ? volume * gainLeft : volume;
+        float targetRight = channels == 2 ? volume * gainRight : volume;
 
-        if (channels == 2)
+        if (gainSnapPending)
         {
-            for (int i = 0; i + 1 < block.Length; i += 2)
+            gainSnapPending = false;
+            appliedLeft = targetLeft;
+            appliedRight = targetRight;
+        }
+
+        float fromLeft = appliedLeft;
+        float fromRight = appliedRight;
+
+        appliedLeft = targetLeft;
+        appliedRight = targetRight;
+
+        int frames = block.Length / channels;
+
+        if (fromLeft == targetLeft && fromRight == targetRight)
+        {
+            if (channels == 2)
             {
-                block[i] *= left;
-                block[i + 1] *= right;
+                for (int i = 0; i + 1 < block.Length; i += 2)
+                {
+                    block[i] *= targetLeft;
+                    block[i + 1] *= targetRight;
+                }
+
+                return;
             }
+
+            for (int i = 0; i < block.Length; i++)
+                block[i] *= targetLeft;
 
             return;
         }
 
-        // Panning is only meaningful in stereo; anything else just takes the volume.
-        for (int i = 0; i < block.Length; i++)
-            block[i] *= volume;
+        // A change ramps linearly across the block, arriving on its last frame, rather than stepping at
+        // its start: stepped once a block, a fade is a staircase, and the edges are audible as zipper
+        // noise. The same arithmetic as the native engine's, so the two stay comparable.
+        float inverseFrames = 1f / frames;
+
+        for (int frame = 0; frame < frames; frame++)
+        {
+            float progress = (frame + 1) * inverseFrames;
+            float left = fromLeft + (targetLeft - fromLeft) * progress;
+
+            if (channels == 2)
+            {
+                block[frame * 2] *= left;
+                block[frame * 2 + 1] *= fromRight + (targetRight - fromRight) * progress;
+                continue;
+            }
+
+            for (int channel = 0; channel < channels; channel++)
+                block[frame * channels + channel] *= left;
+        }
     }
 
     /// <summary>
@@ -337,6 +430,7 @@ internal class SDLAudioChannel : ISDLChannel
         source?.Seek(milliseconds);
         resampler?.Reset();
         filter?.ClearState();
+        gainSnapPending = true;
         Tap.Reset();
         latency.Reset();
         Context.WakeDecoder();
@@ -366,7 +460,7 @@ internal class SDLAudioChannel : ISDLChannel
             if (pending >= 0)
                 return pending / 1000.0;
 
-            return latency.Compensate(source.PositionMs, Context.OutputLatencyMs, Frequency.Value);
+            return latency.Compensate(source.PositionMs, Context.OutputLatencyMs, Frequency.Value * sourceTempo);
         }
         set
         {

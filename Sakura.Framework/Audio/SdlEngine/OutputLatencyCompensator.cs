@@ -2,12 +2,13 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 
 namespace Sakura.Framework.Audio.SdlEngine;
 
 /// <summary>
-/// Turns a channel's mix cursor into the position a listener is actually hearing, and keeps that
+/// Turns a channel's mix cursor into the position a listener is actually hearing and keeps that
 /// answer moving forwards.
 /// </summary>
 [SuppressMessage("ReSharper", "InconsistentNaming")]
@@ -22,6 +23,39 @@ internal sealed class OutputLatencyCompensator
     private double lastReported;
     private bool primed;
 
+    private readonly Func<double> clock;
+
+    /// <summary>
+    /// The rate the queued audio was mixed at before a <see cref="BeginRateTransition"/>, and when
+    /// that was, or null outside a transition.
+    /// </summary>
+    private double? transitionFromRate;
+
+    private double transitionStartMs;
+
+    /// <param name="clock">Milliseconds of real time, for timing a rate transition. Defaults to a stopwatch.</param>
+    public OutputLatencyCompensator(Func<double>? clock = null)
+    {
+        this.clock = clock ?? (() => Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency);
+    }
+
+    /// <summary>
+    /// Says the rate is about to change without the position moving, so the queue still holds a
+    /// latency's worth of audio mixed at <paramref name="fromRate"/>.
+    /// </summary>
+    /// <remarks>
+    /// Without this a change applies to the whole window at once: a slow-down makes the position leap
+    /// forward by (old − new) × latency, and the clock chain hears that as a skip. With it, the window
+    /// moves from the old rate to the new one as the queue drains, which is what the listener hears.
+    /// Opt-in, used for <see cref="IAudioChannel.Tempo"/>, because the hold in <see cref="Compensate"/>
+    /// already covers the small steps a continuously changing frequency makes.
+    /// </remarks>
+    public void BeginRateTransition(double fromRate)
+    {
+        transitionFromRate = fromRate;
+        transitionStartMs = clock();
+    }
+
     /// <summary>
     /// The audible position for a channel whose mix cursor is at <paramref name="rawMs"/>.
     /// </summary>
@@ -30,7 +64,7 @@ internal sealed class OutputLatencyCompensator
     /// <param name="rate">The channel's playback rate, as <see cref="IAudioChannel.Frequency"/>.</param>
     public double Compensate(double rawMs, double latencyMs, double rate)
     {
-        double window = Math.Max(0, latencyMs) * Math.Max(0, rate);
+        double window = Math.Max(0, latencyMs) * Math.Max(0, transitionRate(latencyMs, rate));
         double audible = Math.Max(0, rawMs - window);
 
         if (!primed)
@@ -49,6 +83,26 @@ internal sealed class OutputLatencyCompensator
 
         lastReported = audible;
         return audible;
+    }
+
+    /// <summary>
+    /// The rate the queued window is effectively at: the old rate for the part mixed before a
+    /// transition began, the new one for the rest.
+    /// </summary>
+    private double transitionRate(double latencyMs, double rate)
+    {
+        if (transitionFromRate is not { } from)
+            return rate;
+
+        double elapsed = clock() - transitionStartMs;
+
+        if (latencyMs <= 0 || elapsed >= latencyMs)
+        {
+            transitionFromRate = null;
+            return rate;
+        }
+
+        return from + (rate - from) * (elapsed / latencyMs);
     }
 
     /// <summary>

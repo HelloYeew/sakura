@@ -88,7 +88,7 @@ public class HeadlessAudioChannel : IAudioChannel
     {
         if (!IsRunning.Value) return;
 
-        CurrentTime += elapsedMs * Frequency.Value;
+        CurrentTime += elapsedMs * Frequency.Value * Tempo.Value;
 
         if (CurrentTime >= Length)
         {

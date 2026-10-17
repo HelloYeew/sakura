@@ -37,10 +37,13 @@ internal sealed class NativeAmplitudeReader
 
         lastReadTick = now;
 
+        // The spectrum first: reading it is what keeps the native node metering (it meters only for a
+        // second after each read), so on the very first poll this arms it and the peaks read next
+        // start filling from here rather than one poll later.
+        int bins = engine.ReadSpectrum(node, rawBins);
+
         if (!engine.TryGetState(node, out var state))
             return cached;
-
-        int bins = engine.ReadSpectrum(node, rawBins);
 
         if (bins == 0)
         {

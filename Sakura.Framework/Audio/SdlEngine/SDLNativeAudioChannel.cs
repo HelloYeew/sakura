@@ -41,8 +41,9 @@ internal class SDLNativeAudioChannel : ISDLChannel
     public Reactive<double> Balance { get; } = new Reactive<double>(0.0);
 
     /// <summary>
-    /// Pitch-preserving speed. A no-op on this backend, as <see cref="IAudioChannel.Tempo"/> permits
-    /// for backends without a tempo DSP — a WSOLA implementation is a later item.
+    /// Pitch-preserving speed, stretched by the <see cref="NativeStreamFeeder"/> on its way into the
+    /// ring. A no-op on a sample, whose shared buffer is mixed straight out of native memory, as on the
+    /// BASS backend.
     /// </summary>
     public Reactive<double> Tempo { get; } = new Reactive<double>(1.0);
 
@@ -92,7 +93,11 @@ internal class SDLNativeAudioChannel : ISDLChannel
     /// </summary>
     private readonly NativeStreamFeeder? feeder;
 
-    private readonly NativeAmplitudeReader amplitudes = new NativeAmplitudeReader();
+    /// <summary>
+    /// Created on the first amplitude read. Most channels are hitsounds nobody visualises, and the
+    /// reader carries two 256-bin arrays — on every channel, that was 2 KB of garbage per hitsound.
+    /// </summary>
+    private NativeAmplitudeReader? amplitudes;
 
     private SDLLowPassFilter? filter;
 
@@ -124,6 +129,14 @@ internal class SDLNativeAudioChannel : ISDLChannel
 
     private long lastEndEpoch;
 
+    /// <summary>
+    /// The tempo asked for, and the one the audio since the last seek was stretched at. Every ring frame
+    /// played is this many frames of the song.
+    /// </summary>
+    private double requestedTempo = 1;
+
+    private double ringTempo = 1;
+
     public double Length { get; }
 
     public SDLNativeAudioChannel(ISDLAudioContext context, SakuraAudioEngine engine, uint node, double lengthMs, NativeStreamFeeder? feeder = null)
@@ -143,8 +156,28 @@ internal class SDLNativeAudioChannel : ISDLChannel
         Volume.ValueChanged += _ => publishGain();
         Balance.ValueChanged += _ => publishGain();
         Frequency.ValueChanged += e => Engine.SetRate(Node, e.NewValue);
+        Tempo.ValueChanged += e => applyTempo(e.NewValue);
 
         publishGain();
+    }
+
+    private void applyTempo(double tempo)
+    {
+        if (isDisposed || feeder == null)
+            return;
+
+        tempo = Math.Clamp(tempo, TimeStretcher.MIN_TEMPO, TimeStretcher.MAX_TEMPO);
+
+        if (tempo == requestedTempo)
+            return;
+
+        // The ring holds up to half a second already stretched at the old speed, so rather than let
+        // that play out, start again from where the listener is: a seek in place, at the new speed.
+        double position = CurrentTime;
+
+        requestedTempo = tempo;
+        feeder.SetTempo(tempo);
+        seekInternal(position);
     }
 
     private void publishGain()
@@ -261,7 +294,7 @@ internal class SDLNativeAudioChannel : ISDLChannel
         armSeekReport(milliseconds);
 
         feeder?.Seek(milliseconds);
-        amplitudes.Reset();
+        amplitudes?.Reset();
 
         // A seek empties the ring, so every block until the decode thread refills it is silence out
         // of a running voice. Without this the seek waits out the scheduler's idle delay before it is
@@ -277,6 +310,7 @@ internal class SDLNativeAudioChannel : ISDLChannel
     {
         latency.Reset();
         baseMs = feeder != null ? Math.Max(0, milliseconds) : 0;
+        ringTempo = feeder != null ? requestedTempo : 1;
         seekTargetMs = Math.Max(0, milliseconds);
         seekPostedAtEpoch = Engine.TryGetState(Node, out var state) ? state.SeekEpoch : 0;
     }
@@ -295,9 +329,9 @@ internal class SDLNativeAudioChannel : ISDLChannel
             if (state.SeekEpoch == seekPostedAtEpoch)
                 return seekTargetMs;
 
-            double raw = baseMs + state.SourceFrames / (double)Engine.SampleRate * 1000.0;
+            double raw = baseMs + state.SourceFrames / (double)Engine.SampleRate * 1000.0 * ringTempo;
 
-            return latency.Compensate(raw, Context.OutputLatencyMs, Frequency.Value);
+            return latency.Compensate(raw, Context.OutputLatencyMs, Frequency.Value * ringTempo);
         }
         set
         {
@@ -321,7 +355,7 @@ internal class SDLNativeAudioChannel : ISDLChannel
             if (isDisposed || !IsRunning.Value)
                 return ChannelAmplitudes.Empty;
 
-            return amplitudes.Read(Engine, Node);
+            return (amplitudes ??= new NativeAmplitudeReader()).Read(Engine, Node);
         }
     }
 
@@ -375,11 +409,15 @@ internal class SDLNativeAudioChannel : ISDLChannel
             filter = null;
         }
 
+        // The writer goes first. Disposing the feeder waits out any decode pass in flight and refuses
+        // every later one, so once it returns nothing writes into this voice's ring again. The other
+        // order left a window where the decode thread had already resolved the voice, the device
+        // callback retired it, maintain() freed the ring, and the write landed in freed memory.
+        feeder?.Dispose();
+
         // The engine unlinks the voice from the graph on its own thread and only then marks the slot
         // reclaimable, so nothing here has to wait for a callback to finish.
         Engine.DestroyNode(Node);
-
-        feeder?.Dispose();
 
         IsRunning.Value = false;
         OnStart = null!;

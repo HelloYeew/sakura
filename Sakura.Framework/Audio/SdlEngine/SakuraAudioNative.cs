@@ -178,6 +178,13 @@ internal static class SakuraAudioNative
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern int sakura_audio_abi_version();
 
+    // [SuppressGCTransition] below marks the entry points that are a handful of atomic loads and stores
+    // and nothing else: no lock, no wait, no allocation, no loop that depends on another thread, in this
+    // library and in every shipped version of it. Those are called per channel per audio update (1000
+    // times a second) and per decode pass, and skipping the GC transition makes each one a plain call.
+    // Nothing that enqueues a command carries it: an older library spins on a full command queue, and a
+    // thread that spins without a GC transition holds up every collection while it does.
+
     #region SDL handshake
 
     /// <summary>
@@ -219,6 +226,7 @@ internal static class SakuraAudioNative
     public static extern void sakura_audio_engine_maintain(nint engine);
 
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    [SuppressGCTransition]
     public static extern unsafe int sakura_audio_engine_get_stats(nint engine, SakuraAudioStats* stats);
 
     /// <summary>
@@ -252,12 +260,15 @@ internal static class SakuraAudioNative
     #region Parameters
 
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    [SuppressGCTransition]
     public static extern int sakura_audio_node_set_gain(nint engine, uint node, float volume, float panLeft, float panRight);
 
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    [SuppressGCTransition]
     public static extern int sakura_audio_node_set_rate(nint engine, uint node, double ratio);
 
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    [SuppressGCTransition]
     public static extern int sakura_audio_node_set_loop(nint engine, uint node, int looping, long restartFrame);
 
     /// <summary>
@@ -265,6 +276,7 @@ internal static class SakuraAudioNative
     /// <see cref="SDLLowPassFilter"/> so the cutoff maths has one home and one set of tests.
     /// </summary>
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    [SuppressGCTransition]
     public static extern int sakura_audio_node_set_filter(nint engine, uint node, int enabled, float b0, float b1, float b2, float a1, float a2);
 
     #endregion
@@ -288,6 +300,7 @@ internal static class SakuraAudioNative
     #region Published state
 
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    [SuppressGCTransition]
     public static extern unsafe int sakura_audio_node_get_state(nint engine, uint node, SakuraAudioNodeState* state);
 
     /// <summary>
@@ -317,12 +330,15 @@ internal static class SakuraAudioNative
     public static extern unsafe int sakura_audio_stream_write(nint engine, uint voice, float* interleaved, int frames);
 
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    [SuppressGCTransition]
     public static extern int sakura_audio_stream_space(nint engine, uint voice);
 
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    [SuppressGCTransition]
     public static extern int sakura_audio_stream_buffered(nint engine, uint voice);
 
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    [SuppressGCTransition]
     public static extern int sakura_audio_stream_set_drained(nint engine, uint voice, int drained);
 
     /// <summary>
@@ -334,6 +350,7 @@ internal static class SakuraAudioNative
     public static extern int sakura_audio_stream_flush_begin(nint engine, uint voice);
 
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    [SuppressGCTransition]
     public static extern int sakura_audio_stream_flush_pending(nint engine, uint voice);
 
     #endregion

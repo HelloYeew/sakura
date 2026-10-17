@@ -61,8 +61,10 @@ public interface IAudioChannel : IDisposable, IHasAmplitudes
 
     /// <summary>
     /// Gets or sets the playback tempo as a multiplier (1.0 is normal, 2.0 is twice as fast,
-    /// 0.5 is half speed). Unlike <see cref="Frequency"/>, this preserves pitch.
-    /// Backends without a tempo DSP treat this as a no-op.
+    /// 0.5 is half speed). Unlike <see cref="Frequency"/>, this preserves pitch. The two combine: the
+    /// audio advances at <c>Frequency × Tempo</c>.
+    /// Applies to tracks on every backend. Samples ignore it, since they are over before a
+    /// time-stretch would have produced anything.
     /// </summary>
     Reactive<double> Tempo { get; }
 

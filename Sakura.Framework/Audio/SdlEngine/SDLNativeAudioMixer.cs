@@ -25,15 +25,28 @@ internal sealed class SDLNativeAudioMixer : SDLNativeAudioChannel, ISDLMixer
     private readonly List<IAudioChannel> channels = new List<IAudioChannel>();
 
     /// <summary>
-    /// Immutable view of <see cref="channels"/>, rebuilt only when membership changes.
+    /// Immutable view of <see cref="channels"/>, or null when membership has changed since it was
+    /// last built.
     /// </summary>
     /// <remarks>
-    /// Rebuilt on mutation rather than copied on read because <see cref="ActiveChannels"/> is polled
-    /// by <see cref="Graphics.Performance.AudioMixerVisualiser"/> every 100ms while it is open, and
-    /// a per-read copy would add allocation churn to a backend whose whole premise is not provoking
-    /// the GC.
+    /// Rebuilt on the first read after a change, not on the change itself. Every hitsound adds itself
+    /// here and removes itself a moment later, so rebuilding on mutation copied the whole list twice
+    /// per hitsound for a view that only <see cref="Graphics.Performance.AudioMixerVisualiser"/>
+    /// reads, every 100 ms, while it is open. Not copied on every read either, which would add the
+    /// same churn from the other side.
     /// </remarks>
-    private volatile IAudioChannel[] snapshot = Array.Empty<IAudioChannel>();
+    private volatile IAudioChannel[]? snapshot = Array.Empty<IAudioChannel>();
+
+    private IAudioChannel[] currentSnapshot()
+    {
+        var current = snapshot;
+
+        if (current != null)
+            return current;
+
+        lock (sync)
+            return snapshot ??= channels.ToArray();
+    }
 
     public SDLNativeAudioMixer(ISDLAudioContext context, SakuraAudioEngine engine, uint node)
         : base(context, engine, node, 0)
@@ -49,7 +62,7 @@ internal sealed class SDLNativeAudioMixer : SDLNativeAudioChannel, ISDLMixer
     /// live backing list and happens to work because callers lock the same object — this does not
     /// reproduce that arrangement.
     /// </remarks>
-    public IEnumerable<IAudioChannel> ActiveChannels => snapshot;
+    public IEnumerable<IAudioChannel> ActiveChannels => currentSnapshot();
 
     public void AddChannel(IAudioChannel channel)
     {
@@ -67,7 +80,7 @@ internal sealed class SDLNativeAudioMixer : SDLNativeAudioChannel, ISDLMixer
                 return;
 
             channels.Add(channel);
-            snapshot = channels.ToArray();
+            snapshot = null;
         }
     }
 
@@ -81,7 +94,7 @@ internal sealed class SDLNativeAudioMixer : SDLNativeAudioChannel, ISDLMixer
             if (channel is SDLNativeAudioChannel native)
                 Engine.RemoveChild(Node, native.Node);
 
-            snapshot = channels.ToArray();
+            snapshot = null;
         }
     }
 
@@ -92,7 +105,7 @@ internal sealed class SDLNativeAudioMixer : SDLNativeAudioChannel, ISDLMixer
     {
         get
         {
-            var current = snapshot;
+            var current = currentSnapshot();
             int count = 0;
 
             foreach (var channel in current)

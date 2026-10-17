@@ -19,7 +19,12 @@ namespace Sakura.Framework.Audio.SdlEngine;
 /// </remarks>
 internal sealed unsafe class FFmpegAudioDecoder : IDisposable
 {
-    private const int io_buffer_size = 4096;
+    /// <summary>
+    /// Bytes FFmpeg reads through <see cref="readPacket"/> at a time. Every read is a native-to-managed
+    /// transition and a <see cref="Stream.Read(Span{byte})"/>, so 4 KB meant thousands of each for one
+    /// track; 32 KB is the size FFmpeg's own file protocol uses.
+    /// </summary>
+    private const int io_buffer_size = 32768;
 
     /// <summary>
     /// The sample rate of the decoded output in Hz. This is the file's own rate.
@@ -62,6 +67,18 @@ internal sealed unsafe class FFmpegAudioDecoder : IDisposable
     private int audioStreamIndex = -1;
     private double timeBaseInSeconds;
     private bool inputOpened;
+
+    /// <summary>
+    /// The timestamp of the first decoded sample, in stream time base. Position 0 means this, not pts 0:
+    /// an MP3 with an encoder-delay header starts at about 25 ms of pts, because the delay is trimmed.
+    /// </summary>
+    private long startTimestamp;
+
+    /// <summary>
+    /// Where the last <see cref="Seek"/> asked to land, in seconds from the first sample, while decoded
+    /// audio before it is still being discarded; null once the target has been reached.
+    /// </summary>
+    private double? trimToSeconds;
 
     /// <summary>
     /// Samples decoded from the current frame that did not fit in the caller's buffer, carried over
@@ -139,6 +156,7 @@ internal sealed unsafe class FFmpegAudioDecoder : IDisposable
 
         var avStream = formatContext->streams[audioStreamIndex];
         timeBaseInSeconds = avStream->time_base.num / (double)avStream->time_base.den;
+        startTimestamp = avStream->start_time != ffmpeg.AV_NOPTS_VALUE ? avStream->start_time : 0;
 
         codecContext = ffmpeg.avcodec_alloc_context3(codec);
 
@@ -147,6 +165,11 @@ internal sealed unsafe class FFmpegAudioDecoder : IDisposable
 
         if (ffmpeg.avcodec_parameters_to_context(codecContext, avStream->codecpar) < 0)
             throw new InvalidDataException("Could not copy audio codec parameters.");
+
+        // Not copied by avcodec_parameters_to_context, and libavcodec needs it to move a frame's pts
+        // when it trims encoder delay. Without it the first frame of every MP3 carries a pts ~25 ms
+        // early, which is exactly the error the post-seek trim below would then faithfully reproduce.
+        codecContext->pkt_timebase = avStream->time_base;
 
         int codecOpenResult = ffmpeg.avcodec_open2(codecContext, codec, null);
 
@@ -231,8 +254,18 @@ internal sealed unsafe class FFmpegAudioDecoder : IDisposable
 
             if (receiveResult == 0)
             {
+                // Read before convertFrame, while the frame still carries its timestamp.
+                int discard = trimToSeconds.HasValue ? framesBeforeSeekTarget() : 0;
+
                 convertFrame();
                 ffmpeg.av_frame_unref(frame);
+
+                if (discard > 0)
+                {
+                    int discardFloats = Math.Min(pendingCount, discard * Channels);
+                    pendingOffset += discardFloats;
+                    pendingCount -= discardFloats;
+                }
 
                 // A frame carrying no samples is legal, keep pulling rather than reporting silence.
                 if (pendingCount > 0)
@@ -315,7 +348,8 @@ internal sealed unsafe class FFmpegAudioDecoder : IDisposable
     private void convertFrame()
     {
         int samples = frame->nb_samples;
-        int channels = frame->ch_layout.nb_channels;
+        int frameChannels = frame->ch_layout.nb_channels;
+        int channels = frameChannels;
 
         if (samples <= 0 || channels <= 0)
         {
@@ -339,94 +373,105 @@ internal sealed unsafe class FFmpegAudioDecoder : IDisposable
 
         var format = (AVSampleFormat)frame->format;
         bool planar = ffmpeg.av_sample_fmt_is_planar(format) != 0;
-        var output = pending.AsSpan(0, total);
+        int outputChannels = Channels;
 
-        // Any channel the frame does not carry stays silent rather than repeating another channel.
-        if (channels < Channels)
-            output.Clear();
-
-        for (int ch = 0; ch < channels; ch++)
+        fixed (float* output = pending)
         {
-            // extended_data rather than data[]: the latter only covers the first 8 planes.
-            byte* plane = planar ? frame->extended_data[ch] : frame->extended_data[0];
-            int stride = planar ? 1 : channels;
-            int start = planar ? 0 : ch;
+            // Any channel the frame does not carry stays silent rather than repeating another channel.
+            if (channels < outputChannels)
+                new Span<float>(output, total).Clear();
 
-            switch (format)
+            // Pointers rather than span indexing: these loops run over every decoded sample, and the
+            // per-element bounds checks were most of their cost.
+            for (int ch = 0; ch < channels; ch++)
             {
-                case AVSampleFormat.AV_SAMPLE_FMT_U8:
-                case AVSampleFormat.AV_SAMPLE_FMT_U8P:
-                    for (int i = 0; i < samples; i++)
-                        output[i * Channels + ch] = (plane[start + i * stride] - 128) / 128f;
-                    break;
+                // extended_data rather than data[]: the latter only covers the first 8 planes.
+                byte* plane = planar ? frame->extended_data[ch] : frame->extended_data[0];
+                // The frame's own channel count, not the folded one: interleaved samples are laid out
+                // by what the frame carries, whatever subset of it is kept.
+                int stride = planar ? 1 : frameChannels;
+                int start = planar ? 0 : ch;
+                float* destination = output + ch;
 
-                case AVSampleFormat.AV_SAMPLE_FMT_S16:
-                case AVSampleFormat.AV_SAMPLE_FMT_S16P:
+                switch (format)
                 {
-                    short* data = (short*)plane;
-                    for (int i = 0; i < samples; i++)
-                        output[i * Channels + ch] = data[start + i * stride] / 32768f;
-                    break;
-                }
+                    case AVSampleFormat.AV_SAMPLE_FMT_U8:
+                    case AVSampleFormat.AV_SAMPLE_FMT_U8P:
+                        for (int i = 0; i < samples; i++)
+                            destination[i * outputChannels] = (plane[start + i * stride] - 128) / 128f;
+                        break;
 
-                case AVSampleFormat.AV_SAMPLE_FMT_S32:
-                case AVSampleFormat.AV_SAMPLE_FMT_S32P:
-                {
-                    int* data = (int*)plane;
-                    for (int i = 0; i < samples; i++)
-                        output[i * Channels + ch] = data[start + i * stride] / 2147483648f;
-                    break;
-                }
+                    case AVSampleFormat.AV_SAMPLE_FMT_S16:
+                    case AVSampleFormat.AV_SAMPLE_FMT_S16P:
+                    {
+                        short* data = (short*)plane;
+                        for (int i = 0; i < samples; i++)
+                            destination[i * outputChannels] = data[start + i * stride] / 32768f;
+                        break;
+                    }
 
-                case AVSampleFormat.AV_SAMPLE_FMT_S64:
-                case AVSampleFormat.AV_SAMPLE_FMT_S64P:
-                {
-                    long* data = (long*)plane;
-                    for (int i = 0; i < samples; i++)
-                        output[i * Channels + ch] = (float)(data[start + i * stride] / 9223372036854775808.0);
-                    break;
-                }
+                    case AVSampleFormat.AV_SAMPLE_FMT_S32:
+                    case AVSampleFormat.AV_SAMPLE_FMT_S32P:
+                    {
+                        int* data = (int*)plane;
+                        for (int i = 0; i < samples; i++)
+                            destination[i * outputChannels] = data[start + i * stride] / 2147483648f;
+                        break;
+                    }
 
-                case AVSampleFormat.AV_SAMPLE_FMT_FLT:
-                case AVSampleFormat.AV_SAMPLE_FMT_FLTP:
-                {
-                    float* data = (float*)plane;
-                    for (int i = 0; i < samples; i++)
-                        output[i * Channels + ch] = data[start + i * stride];
-                    break;
-                }
+                    case AVSampleFormat.AV_SAMPLE_FMT_S64:
+                    case AVSampleFormat.AV_SAMPLE_FMT_S64P:
+                    {
+                        long* data = (long*)plane;
+                        for (int i = 0; i < samples; i++)
+                            destination[i * outputChannels] = (float)(data[start + i * stride] / 9223372036854775808.0);
+                        break;
+                    }
 
-                case AVSampleFormat.AV_SAMPLE_FMT_DBL:
-                case AVSampleFormat.AV_SAMPLE_FMT_DBLP:
-                {
-                    double* data = (double*)plane;
-                    for (int i = 0; i < samples; i++)
-                        output[i * Channels + ch] = (float)data[start + i * stride];
-                    break;
-                }
+                    case AVSampleFormat.AV_SAMPLE_FMT_FLT:
+                    case AVSampleFormat.AV_SAMPLE_FMT_FLTP:
+                    {
+                        float* data = (float*)plane;
+                        for (int i = 0; i < samples; i++)
+                            destination[i * outputChannels] = data[start + i * stride];
+                        break;
+                    }
 
-                default:
-                    Logger.Error($"[FFmpegAudioDecoder] Unsupported sample format {format}; emitting silence.");
-                    output.Clear();
-                    return;
+                    case AVSampleFormat.AV_SAMPLE_FMT_DBL:
+                    case AVSampleFormat.AV_SAMPLE_FMT_DBLP:
+                    {
+                        double* data = (double*)plane;
+                        for (int i = 0; i < samples; i++)
+                            destination[i * outputChannels] = (float)data[start + i * stride];
+                        break;
+                    }
+
+                    default:
+                        Logger.Error($"[FFmpegAudioDecoder] Unsupported sample format {format}; emitting silence.");
+                        new Span<float>(output, total).Clear();
+                        return;
+                }
             }
         }
     }
 
     /// <summary>
     /// Seeks to <paramref name="milliseconds"/> and discards any buffered output, so the next
-    /// <see cref="Read"/> returns audio from the new position.
+    /// <see cref="Read"/> returns audio from exactly the new position.
     /// </summary>
     /// <remarks>
-    /// Lands on the keyframe at or before the requested time; for compressed formats the true
-    /// position may be slightly earlier. Callers needing sample accuracy must discard the difference.
+    /// The demuxer lands on the packet at or before the requested time, which for compressed formats is
+    /// up to a packet early (an MP3 frame is ~26 ms, and a VBR seek table is coarser). Every caller then
+    /// reports the requested time as its position, so the decoded audio before it is discarded here
+    /// rather than played: otherwise the audio lags the clock by however far short the seek landed.
     /// </remarks>
     public void Seek(double milliseconds)
     {
         if (!CanSeek || formatContext == null || codecContext == null)
             return;
 
-        long timestamp = (long)(Math.Max(0, milliseconds) / 1000.0 / timeBaseInSeconds);
+        double target = Math.Max(0, milliseconds) / 1000.0;
+        long timestamp = startTimestamp + (long)(target / timeBaseInSeconds);
 
         int result = ffmpeg.av_seek_frame(formatContext, audioStreamIndex, timestamp, ffmpeg.AVSEEK_FLAG_BACKWARD);
 
@@ -442,6 +487,44 @@ internal sealed unsafe class FFmpegAudioDecoder : IDisposable
         pendingCount = 0;
         flushed = false;
         EndOfStream = false;
+        trimToSeconds = target;
+    }
+
+    /// <summary>
+    /// How many of the current frame's samples fall before the pending seek target, and whether the
+    /// trim is finished once they are dropped.
+    /// </summary>
+    private int framesBeforeSeekTarget()
+    {
+        long timestamp = frame->best_effort_timestamp;
+
+        if (timestamp == ffmpeg.AV_NOPTS_VALUE)
+            timestamp = frame->pts;
+
+        // Without a timestamp there is nothing to measure against. Play from where the demuxer
+        // landed, which is what happened before the trim existed.
+        if (timestamp == ffmpeg.AV_NOPTS_VALUE || frame->nb_samples <= 0)
+        {
+            trimToSeconds = null;
+            return 0;
+        }
+
+        double frameStart = (timestamp - startTimestamp) * timeBaseInSeconds;
+        long early = (long)Math.Round((trimToSeconds!.Value - frameStart) * SampleRate);
+
+        // A frame that starts at or after the target ends the trim. One that starts after it means the
+        // demuxer overshot, which cannot be undone from here; it is played as it is.
+        if (early <= 0)
+        {
+            trimToSeconds = null;
+            return 0;
+        }
+
+        if (early >= frame->nb_samples)
+            return frame->nb_samples;
+
+        trimToSeconds = null;
+        return (int)early;
     }
 
     private static int readPacket(void* opaque, byte* buffer, int bufferSize)

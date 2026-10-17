@@ -98,12 +98,18 @@ internal sealed class SDLAudioMixer : SDLAudioChannel, ISDLMixer
     public override void Fill(Span<float> destination)
     {
         if (IsDisposed || !IsRunning.Value)
+        {
+            MarkBlockSkipped();
             return;
+        }
 
         var current = snapshot;
 
         if (current.Length == 0)
+        {
+            MarkBlockSkipped();
             return;
+        }
 
         if (scratch.Length < destination.Length)
             scratch = new float[destination.Length];
