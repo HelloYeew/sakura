@@ -29,6 +29,7 @@ public enum TransformMember
     Color,
     EdgeEffectColor,
     EdgeEffectRadius,
+    BorderColor,
 }
 
 public abstract class Transform : ITransform
@@ -363,6 +364,41 @@ public class EdgeEffectColorTransform : Transform
         var ee = container.EdgeEffect;
         ee.Color = ColorExtensions.Lerp(StartValue, EndValue, (float)GetEasedProgress(time));
         container.EdgeEffect = ee;
+    }
+}
+
+/// <summary>
+/// Animates a <see cref="Container"/>'s <see cref="Container.BorderColor"/>. The border's own transform,
+/// applied in the container's update before it draws, so a ring recolours with no frame of lag, even on
+/// the first frame it comes back from being masked away.
+/// </summary>
+public class BorderColorTransform : Transform
+{
+    private bool valueCaptured;
+    public Color StartValue;
+    public Color EndValue;
+
+    public override TransformMember Member => TransformMember.BorderColor;
+
+    public override bool TryRetargetFrom(Transform incoming)
+    {
+        if (incoming is not BorderColorTransform b) return false;
+        EndValue = b.EndValue;
+        Easing = b.Easing;
+        return true;
+    }
+
+    public override void Apply(Drawable drawable, double time)
+    {
+        var container = (Container)drawable;
+
+        if (!valueCaptured)
+        {
+            StartValue = container.BorderColor;
+            valueCaptured = true;
+        }
+
+        container.BorderColor = ColorExtensions.Lerp(StartValue, EndValue, (float)GetEasedProgress(time));
     }
 }
 

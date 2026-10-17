@@ -238,6 +238,19 @@ public static class TransformExtensions
     }
 
     /// <summary>
+    /// Animates the container's <see cref="Container.BorderColor"/> to a specific color over a duration.
+    /// </summary>
+    public static T FadeBorderColorTo<T>(this T container, Color newColor, double duration = 0, EasingFunction easing = default) where T : Container
+    {
+        container.addTransform(new BorderColorTransform
+        {
+            EndValue = newColor,
+            Easing = easing
+        }, duration);
+        return container;
+    }
+
+    /// <summary>
     /// Animates the container's edge-effect color to a specific color over a duration.
     /// </summary>
     public static T FadeEdgeEffectTo<T>(this T container, Color newColor, double duration = 0, EasingFunction easing = default) where T : Container
