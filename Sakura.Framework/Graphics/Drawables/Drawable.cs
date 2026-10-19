@@ -1630,11 +1630,13 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
 
         bool handled = false;
 
+        // A multi-click nobody handles falls back to the next lower one, down to a plain click, so a
+        // button still fires on every press of a fast burst (the OS keeps counting 2, 3, 4...).
         if (e.Clicks >= 3)
             handled = OnTripleClick(e);
-        else if (e.Clicks == 2)
+        if (!handled && e.Clicks >= 2)
             handled = OnDoubleClick(e);
-        else if (e.Clicks == 1)
+        if (!handled && e.Clicks >= 1)
             handled = OnClick(e);
 
         if (e.Button == MouseButton.Left)

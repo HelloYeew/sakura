@@ -41,6 +41,12 @@ public partial class Container : Drawable
     /// </summary>
     internal IReadOnlyList<Drawable> SortedChildren => getSortedChildren();
 
+    /// <summary>
+    /// <see cref="Children"/> sorted by depth (back-to-front draw order), following any
+    /// <see cref="Content"/> override the way <see cref="Children"/> does.
+    /// </summary>
+    internal IReadOnlyList<Drawable> SortedContentChildren => Content == this ? getSortedChildren() : Content.SortedContentChildren;
+
     private List<Drawable> getSortedChildren()
     {
         if (sortedChildrenVersion != TopologyVersion)
@@ -125,7 +131,7 @@ public partial class Container : Drawable
     /// <summary>
     /// The axes on which this container sizes itself to fit its children. Each child counts as placed
     /// by its own anchor, origin, position, scale and margins, so a centred child grows the container
-    /// evenly both ways and a right-anchored one from the right (as osu!framework's auto-size does).
+    /// evenly both ways and a right-anchored one from the right.
     /// Children sized relative to this container on an auto-sized axis, positioned relatively on one,
     /// or bypassing it (<see cref="Drawable.BypassAutoSizeAxes"/>) don't count on that axis.
     /// </summary>

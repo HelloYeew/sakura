@@ -65,6 +65,15 @@ public partial class TestBasicButton : ManualInputManagerTestScene
     }
 
     [Test]
+    public void TestSpamClick()
+    {
+        AddStep("Move mouse to button", () => InputManager.MoveMouseTo(button));
+
+        AddStep("Click five times fast", () => InputManager.MultiClick(MouseButton.Left, 5));
+        AddAssert("Every click fired", () => clickCount == 5);
+    }
+
+    [Test]
     public void TestDisable()
     {
         AddStep("Move mouse to button", () => InputManager.MoveMouseTo(button));
