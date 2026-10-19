@@ -3,7 +3,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Reflection;
 using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Extensions.IconUsageExtensions;
@@ -93,6 +92,11 @@ public partial class DrawVisualiser : DebugWindow
     private Drawable? selectedDrawable;
     private Drawable? lastSelectedDrawable;
 
+    /// <summary>
+    /// A drawable whose row the tree pane scrolls to once the tree has been rebuilt with it in.
+    /// </summary>
+    private Drawable? pendingReveal;
+
     private PropertyInfo[]? cachedProperties;
     private FieldInfo[]? cachedFields;
     private SpriteText? loadStateText;
@@ -123,8 +127,9 @@ public partial class DrawVisualiser : DebugWindow
             {
                 treeSearch?.Text.Value = string.Empty;
 
-                SetTreeRoot(picked);
+                SetTreeRoot(ReferenceEquals(picked, absoluteRoot) ? picked : picked.Parent ?? picked);
                 SelectDrawable(picked);
+                pendingReveal = picked;
                 SetInspecting(false);
             }
         };
@@ -378,6 +383,11 @@ public partial class DrawVisualiser : DebugWindow
     public Drawable? TreeRoot => targetRoot;
 
     /// <summary>
+    /// What the property pane is showing, or null while nothing is selected.
+    /// </summary>
+    public Drawable? SelectedDrawable => selectedDrawable;
+
+    /// <summary>
     /// The tree pane's search box. Matched case-insensitively against
     /// <see cref="Drawable.GetDisplayName"/>, so it covers both a drawable's name and its type.
     /// </summary>
@@ -447,6 +457,7 @@ public partial class DrawVisualiser : DebugWindow
         {
             nextTreeRefresh = Clock.CurrentTime + tree_interval;
             refreshTree();
+            revealPendingRow();
         }
 
         updateTreeViewport();
@@ -527,6 +538,37 @@ public partial class DrawVisualiser : DebugWindow
         return false;
     }
 
+    private void syncTreeContentHeight()
+    {
+        float contentHeight = cachedTreeStructure.Count * entry_height;
+
+        if (!Precision.AlmostEquals(contentHeight, lastTreeContentHeight))
+        {
+            treeContent.Height = contentHeight;
+            lastTreeContentHeight = contentHeight;
+        }
+    }
+
+    /// <summary>
+    /// Scrolls the tree pane so <see cref="pendingReveal"/>'s row sits mid-pane. Called straight after
+    /// a rebuild, which a pick asks for on the next frame.
+    /// </summary>
+    private void revealPendingRow()
+    {
+        if (pendingReveal == null)
+            return;
+
+        int index = cachedTreeStructure.FindIndex(e => ReferenceEquals(e.Drawable, pendingReveal));
+        pendingReveal = null;
+
+        if (index < 0)
+            return;
+
+        // Sized first, so the scroll is clamped against the new tree rather than the old one.
+        syncTreeContentHeight();
+        treeScroll.ScrollTo(new Vector2(0, index * entry_height - (treeScroll.ChildSize.Y - entry_height) / 2), animated: false);
+    }
+
     /// <summary>
     /// Binds the pooled rows to the slice of the tree the pane can actually show.
     /// </summary>
@@ -534,13 +576,7 @@ public partial class DrawVisualiser : DebugWindow
     {
         int count = cachedTreeStructure.Count;
 
-        float contentHeight = count * entry_height;
-
-        if (!Precision.AlmostEquals(contentHeight, lastTreeContentHeight))
-        {
-            treeContent.Height = contentHeight;
-            lastTreeContentHeight = contentHeight;
-        }
+        syncTreeContentHeight();
 
         float viewport = treeScroll.ChildSize.Y;
         float scroll = treeScroll.CurrentScroll.Y;
@@ -808,15 +844,49 @@ public partial class DrawVisualiser : DebugWindow
 /// </remarks>
 public partial class DrawVisualiserInspectLayer : Container
 {
+    /// <summary>
+    /// How far the label sits from the cursor.
+    /// </summary>
+    private const float label_offset = 16;
+
     private readonly Drawable pickRoot;
     private readonly Box selectionHighlight;
     private readonly Box inspectHighlight;
+    private readonly Container hoverLabel;
+    private readonly SpriteText hoverLabelText;
+
+    /// <summary>
+    /// Everything that draws under the cursor, front to back.
+    /// </summary>
+    private readonly List<Drawable> candidates = new List<Drawable>();
+
+    private int candidateIndex;
+    private float scrollRemainder;
+    private Vector2 lastCursorPosition = new Vector2(float.NaN);
 
     private Drawable? hovered;
     private Drawable? lastFlashed;
 
     /// <summary>Called with the drawable the user clicked while inspecting.</summary>
     public Action<Drawable>? Picked { get; init; }
+
+    /// <summary>
+    /// What a click would pick right now: the front-most of <see cref="Candidates"/> until the scroll
+    /// wheel steps further back.
+    /// </summary>
+    public Drawable? Hovered => hovered;
+
+    /// <summary>
+    /// Everything that draws under the cursor, front to back. Empty containers (input catchers,
+    /// full-screen hosts) draw nothing, so they are never here; when nothing draws there at all, this
+    /// is the deepest container that holds something there instead.
+    /// </summary>
+    public IReadOnlyList<Drawable> Candidates => candidates;
+
+    /// <summary>
+    /// What the label beside the cursor says.
+    /// </summary>
+    internal string HoverLabelText => hoverLabelText.Text;
 
     private bool inspecting;
 
@@ -831,8 +901,13 @@ public partial class DrawVisualiserInspectLayer : Container
             inspecting = value;
             hovered = null;
             lastFlashed = null;
+            candidates.Clear();
+            candidateIndex = 0;
+            scrollRemainder = 0;
+            lastCursorPosition = new Vector2(float.NaN);
 
-            inspectHighlight.Alpha = value ? 0.5f : 0;
+            inspectHighlight.Alpha = 0;
+            hoverLabel.Alpha = 0;
         }
     }
 
@@ -861,6 +936,29 @@ public partial class DrawVisualiserInspectLayer : Container
             Color = Color.LimeGreen,
             Alpha = 0,
             Blending = BlendingMode.Additive
+        });
+
+        Add(hoverLabel = new Container
+        {
+            Anchor = Anchor.TopLeft,
+            Origin = Anchor.TopLeft,
+            AutoSizeAxes = Axes.Both,
+            Alpha = 0,
+            Children = new Drawable[]
+            {
+                new Box
+                {
+                    RelativeSizeAxes = Axes.Both,
+                    Size = new Vector2(1),
+                    Color = Color.FromArgb(220, 30, 30, 30)
+                },
+                hoverLabelText = new SpriteText
+                {
+                    Font = FontUsage.Default.With(size: 12),
+                    Color = Color.White,
+                    Margin = new MarginPadding(4, 6)
+                }
+            }
         });
     }
 
@@ -902,7 +1000,7 @@ public partial class DrawVisualiserInspectLayer : Container
         var manager = GetContainingInputManager();
 
         if (manager != null)
-            updateInspectHighlight(manager.CurrentState.MousePosition);
+            updateHovered(manager.CurrentState.MousePosition);
     }
 
     public override bool OnMouseMove(MouseEvent e)
@@ -910,7 +1008,32 @@ public partial class DrawVisualiserInspectLayer : Container
         if (!inspecting)
             return false;
 
-        updateInspectHighlight(e.ScreenSpaceMousePosition);
+        updateHovered(e.ScreenSpaceMousePosition);
+        return true;
+    }
+
+    /// <summary>
+    /// Steps through <see cref="Candidates"/>: down goes further back, up comes forward again, wrapping
+    /// at either end. A trackpad's small deltas add up to a step rather than each making one.
+    /// </summary>
+    public override bool OnScroll(ScrollEvent e)
+    {
+        if (!inspecting)
+            return false;
+
+        if (candidates.Count < 2)
+            return true;
+
+        scrollRemainder += e.ScrollDelta.Y;
+        int steps = (int)scrollRemainder;
+
+        if (steps == 0)
+            return true;
+
+        scrollRemainder -= steps;
+        candidateIndex = ((candidateIndex - steps) % candidates.Count + candidates.Count) % candidates.Count;
+        hovered = candidates[candidateIndex];
+        showHovered();
         return true;
     }
 
@@ -929,14 +1052,42 @@ public partial class DrawVisualiserInspectLayer : Container
 
     public override bool OnHover(MouseEvent e) => inspecting;
 
-    private void updateInspectHighlight(Vector2 screenSpaceMousePosition)
+    private void updateHovered(Vector2 screenSpaceMousePosition)
     {
-        hovered = findDrawableUnderMouse(pickRoot, screenSpaceMousePosition);
+        var previous = hovered;
 
+        candidates.Clear();
+        Drawable? fallback = null;
+        collectCandidates(pickRoot, screenSpaceMousePosition, ref fallback);
+
+        if (candidates.Count == 0 && fallback != null)
+            candidates.Add(fallback);
+
+        // A moved cursor starts again from the front. Content moving under a still one keeps whatever
+        // the wheel stepped to, for as long as that is still under it.
+        bool cursorMoved = screenSpaceMousePosition != lastCursorPosition;
+        lastCursorPosition = screenSpaceMousePosition;
+
+        candidateIndex = !cursorMoved && previous != null ? Math.Max(0, candidates.IndexOf(previous)) : 0;
+
+        if (cursorMoved)
+            scrollRemainder = 0;
+
+        hovered = candidates.Count > 0 ? candidates[candidateIndex] : null;
+        showHovered();
+    }
+
+    private void showHovered()
+    {
         if (hovered == null)
+        {
+            inspectHighlight.Alpha = 0;
+            hoverLabel.Alpha = 0;
             return;
+        }
 
         var rect = hovered.DrawRectangle;
+        inspectHighlight.Alpha = 0.5f;
         inspectHighlight.Position = new Vector2(rect.X, rect.Y);
         inspectHighlight.Size = new Vector2(rect.Width, rect.Height);
 
@@ -946,35 +1097,87 @@ public partial class DrawVisualiserInspectLayer : Container
             inspectHighlight.FlashColor(Color.White, 300, Easing.OutQuint);
             lastFlashed = hovered;
         }
+
+        hoverLabelText.Text = candidates.Count > 1
+            ? $"{hovered.GetDisplayName()}  ({candidateIndex + 1}/{candidates.Count}, scroll for the rest)"
+            : hovered.GetDisplayName();
+        hoverLabel.Alpha = 1;
+
+        // Beside the cursor, flipped to the other side of it rather than run off the screen.
+        var labelSize = hoverLabel.DrawSize;
+        float x = lastCursorPosition.X + label_offset;
+        float y = lastCursorPosition.Y + label_offset;
+
+        if (x + labelSize.X > DrawSize.X)
+            x = lastCursorPosition.X - label_offset - labelSize.X;
+        if (y + labelSize.Y > DrawSize.Y)
+            y = lastCursorPosition.Y - label_offset - labelSize.Y;
+
+        hoverLabel.Position = new Vector2(Math.Max(0, x), Math.Max(0, y));
     }
 
-    private Drawable? findDrawableUnderMouse(Drawable root, Vector2 mousePos)
+    /// <summary>
+    /// Adds everything under <paramref name="cursor"/> that draws, front to back:
+    /// what is under the cursor is what can be seen there, so a container that draws
+    /// nothing of its own is passed over and the search carries on behind it. Also finds the deepest,
+    /// front-most container holding anything under the cursor, for when nothing draws there at all.
+    /// </summary>
+    private void collectCandidates(Drawable d, Vector2 cursor, ref Drawable? fallback)
     {
         // The debug tools are not part of the app being inspected. The layer is marked, so this also
         // skips every window and this overlay itself in one check.
-        if (root is IRemoveFromDrawVisualiser)
-            return null;
+        if (d is IRemoveFromDrawVisualiser)
+            return;
 
-        // skip dead, hidden, or culled items
-        if (!root.IsAlive || !root.IsLoaded || root.IsHidden || root.IsMaskedAway && !root.AlwaysPresent || root.Alpha <= 0)
-            return null;
+        if (!d.IsAlive || !d.IsLoaded || d.IsHidden || d.IsMaskedAway && !d.AlwaysPresent)
+            return;
 
-        if (!root.Contains(mousePos))
-            return null;
+        bool containsCursor = d.Contains(cursor);
 
-        if (root is Container c)
+        if (d is not Container c)
         {
-            // Search children from front to back (reverse depth order) to catch the topmost UI element first
-            foreach (var child in c.Children.OrderBy(d => d.Depth).Reverse())
-            {
-                var found = findDrawableUnderMouse(child, mousePos);
+            if (containsCursor && isVisible(d.DrawAlpha, d.ColorInfo))
+                candidates.Add(d);
 
-                if (found != null)
-                    return found;
-            }
+            return;
         }
 
-        return root;
+        // Only a mask clips what is under it. Without one, children are free to sit outside their
+        // parent, so the search goes into a container the cursor is not over.
+        if (c.Masking && !containsCursor)
+            return;
+
+        var children = c.SortedContentChildren;
+
+        for (int i = children.Count - 1; i >= 0; i--)
+            collectCandidates(children[i], cursor, ref fallback);
+
+        if (!containsCursor)
+            return;
+
+        // Behind its children in the list even where it draws on top of them (a border, a glow): it
+        // is the bigger target, and the one more easily reached another way (Up (Parent)).
+        if (drawsItself(c))
+            candidates.Add(c);
+        else if (children.Count > 0)
+            fallback ??= c;
+    }
+
+    /// <summary>
+    /// Whether a container draws anything of its own: a border (only drawn while masking) or an edge
+    /// effect. Everything else about a container is its children.
+    /// </summary>
+    private static bool drawsItself(Container c)
+        => c.Masking && c.BorderThickness > 0 && isVisible(c.DrawAlpha, c.BorderColor)
+           || c.EdgeEffect.Type != EdgeEffectType.None && isVisible(c.DrawAlpha, c.EdgeEffect.Color);
+
+    /// <summary>
+    /// Whether colour at this alpha shows at all: at least one 8-bit step of opacity on screen.
+    /// </summary>
+    private static bool isVisible(float drawAlpha, ColorInfo color)
+    {
+        int alpha = Math.Max(Math.Max(color.TopLeft.A, color.TopRight.A), Math.Max(color.BottomLeft.A, color.BottomRight.A));
+        return drawAlpha * alpha >= 1;
     }
 }
 
@@ -1282,7 +1485,7 @@ public partial class VisualiserTreeItem : Container
             stateTag.Color = DrawableStateDisplay.ColorFor(State);
             stateTag.Alpha = 1;
         }
-        
+
         labelFlow.Alpha = tracked.DrawAlpha > 0 ? 1 : dim_alpha;
 
         if (tracked.IsDragged)
