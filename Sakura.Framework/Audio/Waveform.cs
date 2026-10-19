@@ -22,12 +22,6 @@ namespace Sakura.Framework.Audio;
 /// to finish. The decoding goes through FFmpeg directly rather than through whichever audio backend is
 /// playing, so it works the same on all of them and never takes a voice.
 /// </para>
-/// <para>
-/// The layout follows osu!framework's waveform, so a graph built for one reads the other: amplitude
-/// is the peak of each channel over the point, and the band intensities come from a spectrum taken
-/// every few milliseconds and summed over 20–100 Hz, 100–2000 Hz, and 2–12 kHz. Intensities are not
-/// normalized; a graph compares them against the loudest point.
-/// </para>
 /// </remarks>
 public class Waveform : IDisposable
 {

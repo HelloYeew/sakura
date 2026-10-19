@@ -287,7 +287,7 @@ public partial class WaveformGraph : Drawable
 
     /// <summary>
     /// The base colour pulled towards each band's colour by how strong that band is here, in
-    /// osu!framework's order: mids, then highs, then lows on top so kicks read clearly.
+    /// order: mids, then highs, then lows on top so kicks read clearly.
     /// </summary>
     private Color columnColor(Color baseColor, Waveform.Point point)
     {

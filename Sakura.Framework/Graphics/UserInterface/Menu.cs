@@ -26,7 +26,7 @@ public enum MenuState
 /// </summary>
 /// <remarks>
 /// <para>
-/// Modelled on osu!framework's menu. An open pop-up menu holds keyboard focus, and losing it is
+/// An open pop-up menu holds keyboard focus, and losing it is
 /// what closes it: a click anywhere that isn't on the menu either focuses something else or, since
 /// nothing claimed it, clears focus, and either way the whole chain of open menus closes. Opening a
 /// sub-menu moves focus into it, which its parent ignores.
