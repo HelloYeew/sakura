@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Sakura.Framework.Graphics.Containers;
@@ -198,6 +199,70 @@ public class InputManager : IFocusManager
         return false;
     }
 
+    /// <summary>
+    /// What took each held key's press: the drawable its repeats go to, or null when Tab navigation
+    /// took it (its repeats keep navigating). A key that isn't here wasn't taken by anything.
+    /// </summary>
+    private readonly Dictionary<Key, Drawable?> keyDownHandlers = new Dictionary<Key, Drawable?>();
+
+    /// <summary>
+    /// Dispatches a key-down as the app does: to the focused drawable first, then down the
+    /// non-positional queue (<see cref="DispatchKeyDown"/>).
+    /// </summary>
+    /// <remarks>
+    /// A repeat (the OS auto-repeating a held key) goes only to the drawable that took the press it
+    /// repeats, and only while that one still takes keys. Sent on like a fresh press, a key held through
+    /// whatever its press set off reached what came next: Enter holding a dialog's answer that left a
+    /// screen went on, as repeats, to the screen underneath, which took them as presses of its own.
+    /// </remarks>
+    public bool DispatchKeyDownWithFocus(KeyEvent e)
+    {
+        if (e.IsRepeat)
+            return dispatchKeyRepeat(e);
+
+        var focused = focusedDrawable;
+
+        if (focused != null && focused.IsLoaded && focused.IsAlive && focused.OnKeyDown(e))
+        {
+            keyDownHandlers[e.Key] = focused;
+            return true;
+        }
+
+        if (DispatchKeyDown(e))
+        {
+            keyDownHandlers[e.Key] = LastNonPositionalHandler;
+            return true;
+        }
+
+        keyDownHandlers.Remove(e.Key);
+        return false;
+    }
+
+    private bool dispatchKeyRepeat(KeyEvent e)
+    {
+        if (!keyDownHandlers.TryGetValue(e.Key, out var handler))
+        {
+            LastNonPositionalHandler = null;
+            return false;
+        }
+
+        if (handler == null)
+            return DispatchKeyDown(e);
+
+        // Still taking keys: focused, or in the queue just built (a screen in the background isn't).
+        bool takesKeys = handler.IsLoaded && handler.IsAlive &&
+                         (ReferenceEquals(handler, focusedDrawable) || nonPositionalQueue.Contains(handler) && !skipNonPositional(handler));
+
+        if (takesKeys && handler.OnKeyDown(e))
+        {
+            LastNonPositionalHandler = handler;
+            return true;
+        }
+
+        LastNonPositionalHandler = null;
+        return false;
+    }
+
     public bool DispatchKeyUp(KeyEvent e)
     {
         for (int i = 0; i < nonPositionalQueue.Count; i++)
@@ -373,11 +438,26 @@ public class InputManager : IFocusManager
     public IReadOnlyList<Drawable> HoveredDrawables => hoveredDrawables;
 
     /// <summary>
+    /// The drawable that handled the last mouse-down of each button (indexed by <see cref="MouseButton"/>),
+    /// or <c>null</c> when nothing did.
+    /// </summary>
+    private readonly Drawable?[] lastMouseDownHandlers = new Drawable?[(int)MouseButton.Button5 + 1];
+
+    /// <summary>
     /// Dispatches a mouse-down down the positional queue (front-to-back). The first entry that
     /// handles it becomes the drag-capture target (so subsequent moves/up stay with it).
     /// </summary>
+    /// <remarks>
+    /// The OS counts consecutive presses across the whole window, so clicking one button and then
+    /// quickly another would hand the second a double-click. Only the drawable that handled the
+    /// previous press of the same button sees the real count; everything else sees a single click.
+    /// </remarks>
     public bool DispatchMouseDown(MouseButtonEvent e)
     {
+        int buttonIndex = (int)e.Button;
+        var previousHandler = lastMouseDownHandlers[buttonIndex];
+        var singleClick = e.Clicks > 1 ? new MouseButtonEvent(e.MouseState, e.Button, 1, e.Timestamp) : e;
+
         for (int i = 0; i < positionalQueue.Count; i++)
         {
             var drawable = positionalQueue[i];
@@ -385,16 +465,18 @@ public class InputManager : IFocusManager
             if (!drawable.IsLoaded || !drawable.IsAlive || drawable.IsHidden || ReferenceEquals(drawable, lastQueueRoot))
                 continue;
 
-            if (drawable.OnMouseDown(e))
+            if (drawable.OnMouseDown(ReferenceEquals(drawable, previousHandler) ? e : singleClick))
             {
                 if (e.Button == MouseButton.Left)
                     dragCaptureTarget = drawable;
 
+                lastMouseDownHandlers[buttonIndex] = drawable;
                 LastPositionalHandler = drawable;
                 return true;
             }
         }
 
+        lastMouseDownHandlers[buttonIndex] = null;
         LastPositionalHandler = null;
         return false;
     }
@@ -579,6 +661,8 @@ public class InputManager : IFocusManager
     {
         CurrentState.Clear();
         dragCaptureTarget = null;
+        Array.Clear(lastMouseDownHandlers);
+        keyDownHandlers.Clear();
 
         foreach (var drawable in hoveredDrawables)
             drawable.IsHovered = false;
@@ -619,7 +703,11 @@ public class InputManager : IFocusManager
 
     public void HandleKeyDown(Key key) => CurrentState.SetKey(key, true);
 
-    public void HandleKeyUp(Key key) => CurrentState.SetKey(key, false);
+    public void HandleKeyUp(Key key)
+    {
+        CurrentState.SetKey(key, false);
+        keyDownHandlers.Remove(key);
+    }
 
     public void HandleGamepadButtonDown(int deviceId, GamepadButton button) => CurrentState.SetGamepadButton(deviceId, button, true);
 

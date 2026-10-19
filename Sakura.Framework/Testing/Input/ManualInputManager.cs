@@ -122,17 +122,7 @@ public partial class ManualInputManager : Container, IInputManagerProvider, IFoc
     /// Delivers a key-down to the focused drawable first (mirroring App), then down the non-positional
     /// queue. Assumes the queues are already built.
     /// </summary>
-    private bool dispatchKeyDownWithFocus(KeyEvent e)
-    {
-        var focused = InputManager.FocusedDrawable;
-        if (focused != null && focused.IsLoaded && focused.IsAlive)
-        {
-            if (focused.OnKeyDown(e))
-                return true;
-        }
-
-        return InputManager.DispatchKeyDown(e);
-    }
+    private bool dispatchKeyDownWithFocus(KeyEvent e) => InputManager.DispatchKeyDownWithFocus(e);
 
     /// <summary>
     /// Moves the synthetic mouse to the specified screen-space position.
@@ -162,22 +152,24 @@ public partial class ManualInputManager : Container, IInputManagerProvider, IFoc
     }
 
     /// <summary>
-    /// Synthesizes a double click at the current mouse position.
+    /// Synthesizes a double click at the current mouse position: a single click followed by one the
+    /// OS counts as the second, as real input delivers it.
     /// </summary>
-    public void DoubleClick(MouseButton button)
-    {
-        currentMouseState.SetPressed(button, true);
-        InputManager.HandleMouseDown(button, currentMouseState.Position);
-        rebuildQueues();
-        BeginMouseDownFocusTracking();
-        InputManager.DispatchMouseDown(new MouseButtonEvent(currentMouseState, button, 2));
-        if (!WasFocusClaimedByLastClick)
-            ChangeFocus(null);
+    public void DoubleClick(MouseButton button) => MultiClick(button, 2);
 
-        currentMouseState.SetPressed(button, false);
-        InputManager.HandleMouseUp(button, currentMouseState.Position);
-        rebuildQueues();
-        InputManager.DispatchMouseUp(new MouseButtonEvent(currentMouseState, button, 2));
+    /// <summary>
+    /// Synthesizes a fast burst of complete clicks at the current mouse position, counted 1, 2, 3...
+    /// the way the OS counts presses inside its double-click time (e.g. spamming a button).
+    /// </summary>
+    /// <param name="button">The mouse button to click.</param>
+    /// <param name="count">How many clicks the burst has.</param>
+    public void MultiClick(MouseButton button, int count)
+    {
+        for (int clicks = 1; clicks <= count; clicks++)
+        {
+            pressButton(button, clicks);
+            releaseButton(button, clicks);
+        }
     }
 
     /// <summary>
@@ -217,7 +209,9 @@ public partial class ManualInputManager : Container, IInputManagerProvider, IFoc
     /// Synthesizes a mouse button press at the current mouse position.
     /// </summary>
     /// <param name="button">The mouse button to press.</param>
-    public void PressButton(MouseButton button)
+    public void PressButton(MouseButton button) => pressButton(button, 1);
+
+    private void pressButton(MouseButton button, int clicks)
     {
         currentMouseState.SetPressed(button, true);
         InputManager.HandleMouseDown(button, currentMouseState.Position);
@@ -226,7 +220,7 @@ public partial class ManualInputManager : Container, IInputManagerProvider, IFoc
         // Begin focus tracking so we can detect whether a focusable claimed focus.
         BeginMouseDownFocusTracking();
 
-        InputManager.DispatchMouseDown(new MouseButtonEvent(currentMouseState, button, 1));
+        InputManager.DispatchMouseDown(new MouseButtonEvent(currentMouseState, button, clicks));
 
         // If nothing claimed focus during this click, clear focus — same logic as App.OnMouseDown.
         if (!WasFocusClaimedByLastClick)
@@ -237,12 +231,14 @@ public partial class ManualInputManager : Container, IInputManagerProvider, IFoc
     /// Synthesizes a mouse button release at the current mouse position.
     /// </summary>
     /// <param name="button">The mouse button to release.</param>
-    public void ReleaseButton(MouseButton button)
+    public void ReleaseButton(MouseButton button) => releaseButton(button, 1);
+
+    private void releaseButton(MouseButton button, int clicks)
     {
         currentMouseState.SetPressed(button, false);
         InputManager.HandleMouseUp(button, currentMouseState.Position);
         rebuildQueues();
-        InputManager.DispatchMouseUp(new MouseButtonEvent(currentMouseState, button, 1));
+        InputManager.DispatchMouseUp(new MouseButtonEvent(currentMouseState, button, clicks));
     }
 
     /// <summary>
@@ -269,6 +265,17 @@ public partial class ManualInputManager : Container, IInputManagerProvider, IFoc
         InputManager.HandleKeyDown(key);
         rebuildQueues();
         dispatchKeyDownWithFocus(new KeyEvent(key, modifiers, false));
+    }
+
+    /// <summary>
+    /// Synthesizes the OS auto-repeating a key held down with <see cref="PressKey"/>.
+    /// </summary>
+    /// <param name="key">The held key.</param>
+    /// <param name="modifiers">Optional key modifiers (e.g., Shift, Control).</param>
+    public void RepeatKey(Key key, KeyModifiers modifiers = KeyModifiers.None)
+    {
+        rebuildQueues();
+        dispatchKeyDownWithFocus(new KeyEvent(key, modifiers, true));
     }
 
     /// <summary>

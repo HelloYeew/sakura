@@ -418,6 +418,76 @@ public class InputManagerPositionalDispatchTest
         });
     }
 
+    private void click(Vector2 position, int clicks)
+    {
+        manager.BuildQueues(root, position);
+        manager.DispatchMouseDown(mouseDown(position, clicks: clicks));
+        manager.DispatchMouseUp(mouseUp(position));
+    }
+
+    [Test]
+    public void TestEveryPressOfAFastBurstClicks()
+    {
+        // The OS counts a fast burst 1, 2, 3...; a drawable that only handles OnClick must still see
+        // every press, not just the first.
+        var button = new ClickRecordingBox { Position = new Vector2(100, 100), Size = new Vector2(100) };
+        root.Add(button);
+        settle();
+
+        for (int clicks = 1; clicks <= 5; clicks++)
+            click(new Vector2(150, 150), clicks);
+
+        Assert.That(button.ClickCount, Is.EqualTo(5), "Unhandled double/triple clicks fall back to a click.");
+    }
+
+    [Test]
+    public void TestHandledDoubleClickReplacesClick()
+    {
+        var box = new ClickRecordingBox { Position = new Vector2(100, 100), Size = new Vector2(100), HandleDoubleClick = true };
+        root.Add(box);
+        settle();
+
+        for (int clicks = 1; clicks <= 3; clicks++)
+            click(new Vector2(150, 150), clicks);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(box.ClickCount, Is.EqualTo(1), "Only the first press is a plain click.");
+            Assert.That(box.DoubleClickCount, Is.EqualTo(2), "The unhandled triple click falls back to the double click.");
+        });
+    }
+
+    [Test]
+    public void TestMultiClickOnlyReachesPreviousHandler()
+    {
+        var first = new ClickRecordingBox { Position = new Vector2(100, 100), Size = new Vector2(100) };
+        var second = new ClickRecordingBox { Position = new Vector2(300, 100), Size = new Vector2(100) };
+        root.Add(first);
+        root.Add(second);
+        settle();
+
+        click(new Vector2(150, 150), 1);
+        click(new Vector2(350, 150), 2);
+        Assert.That(second.LastClicks, Is.EqualTo(1), "A press right after one on another drawable is a single click.");
+
+        click(new Vector2(350, 150), 3);
+        Assert.That(second.LastClicks, Is.EqualTo(3), "The drawable that took the previous press sees the real count.");
+    }
+
+    [Test]
+    public void TestUnhandledPressResetsMultiClick()
+    {
+        var box = new ClickRecordingBox { Position = new Vector2(100, 100), Size = new Vector2(100) };
+        root.Add(box);
+        settle();
+
+        click(new Vector2(150, 150), 1);
+        click(new Vector2(500, 500), 2);
+        click(new Vector2(150, 150), 3);
+
+        Assert.That(box.LastClicks, Is.EqualTo(1), "A press nothing handled breaks the chain.");
+    }
+
     private partial class RecordingBox : Box
     {
         public bool HandleMouseDown;
@@ -521,6 +591,41 @@ public class InputManagerPositionalDispatchTest
         {
             RelayedMoveCount++;
             LastRelayedPosition = e.ScreenSpaceMousePosition;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Takes every press through the base click routing, recording the click count it was given and
+    /// which of the click hooks fired.
+    /// </summary>
+    private partial class ClickRecordingBox : Box
+    {
+        public bool HandleDoubleClick;
+
+        public int LastClicks;
+        public int ClickCount;
+        public int DoubleClickCount;
+
+        public override bool OnMouseDown(MouseButtonEvent e)
+        {
+            LastClicks = e.Clicks;
+            base.OnMouseDown(e);
+            return true;
+        }
+
+        public override bool OnClick(MouseButtonEvent e)
+        {
+            ClickCount++;
+            return true;
+        }
+
+        public override bool OnDoubleClick(MouseButtonEvent e)
+        {
+            if (!HandleDoubleClick)
+                return false;
+
+            DoubleClickCount++;
             return true;
         }
     }

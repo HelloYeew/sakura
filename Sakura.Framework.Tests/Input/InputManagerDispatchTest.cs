@@ -374,9 +374,123 @@ public class InputManagerDispatchTest
         public override void OnGamepadDisconnected(GamepadDisconnectedEvent e) => GamepadDisconnectedCount++;
     }
 
+    private static KeyEvent repeat(Key k = Key.A) => new KeyEvent(k, KeyModifiers.None, true);
+
+    [Test]
+    public void TestRepeatGoesOnlyToWhatTookThePress()
+    {
+        var passedOver = new RecordingBox { Size = new Vector2(10) };
+        var taker = new RecordingBox { Size = new Vector2(10), HandleKeyDown = true };
+        root.Add(passedOver);
+        root.Add(taker);
+        settle();
+
+        manager.BuildQueues(root);
+        manager.DispatchKeyDownWithFocus(key());
+        bool handled = manager.DispatchKeyDownWithFocus(repeat());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(handled, Is.True);
+            Assert.That(taker.KeyDownCount, Is.EqualTo(2), "The press and its repeat.");
+            Assert.That(passedOver.KeyDownCount, Is.EqualTo(1), "Asked about the press, not about its repeat.");
+        });
+    }
+
+    /// <summary>
+    /// What took the press stops taking keys (a screen sent to the background, a dialog put away)
+    /// while the key is still held: its repeats go nowhere, not to whatever takes keys now.
+    /// </summary>
+    [Test]
+    public void TestRepeatDoesNotMoveOnWhenThePressTakerStopsTakingKeys()
+    {
+        var taker = new SwitchableBox { Size = new Vector2(10), HandleKeyDown = true };
+        var next = new RecordingBox { Size = new Vector2(10), HandleKeyDown = true };
+        root.Add(taker);
+        root.Add(next);
+        settle();
+
+        manager.BuildQueues(root);
+        manager.DispatchKeyDownWithFocus(key());
+
+        taker.TakesKeys = false;
+        manager.BuildQueues(root);
+        bool handled = manager.DispatchKeyDownWithFocus(repeat());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(handled, Is.False);
+            Assert.That(taker.KeyDownCount, Is.EqualTo(1));
+            Assert.That(next.KeyDownCount, Is.EqualTo(0), "The repeat isn't a press of its own for what comes next.");
+        });
+    }
+
+    [Test]
+    public void TestRepeatOfAPressNothingTookGoesNowhere()
+    {
+        manager.BuildQueues(root);
+        manager.DispatchKeyDownWithFocus(key());
+
+        var arrived = new RecordingBox { Size = new Vector2(10), HandleKeyDown = true };
+        root.Add(arrived);
+        settle();
+
+        manager.BuildQueues(root);
+        Assert.That(manager.DispatchKeyDownWithFocus(repeat()), Is.False);
+        Assert.That(arrived.KeyDownCount, Is.EqualTo(0));
+    }
+
+    [Test]
+    public void TestReleaseForgetsWhatTookThePress()
+    {
+        var taker = new RecordingBox { Size = new Vector2(10), HandleKeyDown = true };
+        root.Add(taker);
+        settle();
+
+        manager.BuildQueues(root);
+        manager.DispatchKeyDownWithFocus(key());
+        manager.HandleKeyUp(Key.A);
+
+        Assert.That(manager.DispatchKeyDownWithFocus(repeat()), Is.False, "A stray repeat after the release.");
+        Assert.That(taker.KeyDownCount, Is.EqualTo(1));
+    }
+
+    [Test]
+    public void TestFocusedDrawableGetsItsRepeats()
+    {
+        var focused = new FocusableBox { Size = new Vector2(10), HandleKeyDown = true };
+        var queued = new RecordingBox { Size = new Vector2(10), HandleKeyDown = true };
+        root.Add(queued);
+        root.Add(focused);
+        settle();
+
+        manager.BuildQueues(root);
+        manager.ChangeFocus(focused);
+        manager.DispatchKeyDownWithFocus(key());
+        manager.DispatchKeyDownWithFocus(repeat());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(focused.KeyDownCount, Is.EqualTo(2));
+            Assert.That(queued.KeyDownCount, Is.EqualTo(0));
+        });
+    }
+
     private partial class OptOutNonPositional : RecordingBox
     {
         public override bool HandleNonPositionalInput => false;
+    }
+
+    private partial class SwitchableBox : RecordingBox
+    {
+        public bool TakesKeys = true;
+
+        public override bool HandleNonPositionalInput => TakesKeys;
+    }
+
+    private partial class FocusableBox : RecordingBox
+    {
+        public override bool AcceptsFocus => true;
     }
 
     private partial class RecordingContainer : Container

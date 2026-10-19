@@ -367,14 +367,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
             return true;
         }
 
-        var focused = InputManager.FocusedDrawable;
-        if (focused != null && focused.IsLoaded && focused.IsAlive)
-        {
-            if (focused.OnKeyDown(e))
-                return true;
-        }
-
-        return InputManager.DispatchKeyDown(e);
+        return InputManager.DispatchKeyDownWithFocus(e);
     }
 
     public override bool OnKeyUp(KeyEvent e)
