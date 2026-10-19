@@ -10,8 +10,25 @@ namespace Sakura.Framework.Graphics.Drawables;
 /// <summary>
 /// A horizontally auto-scrolling ("marquee") single-line text
 /// </summary>
+/// <remarks>
+/// Its size is the line's, but the mask that cuts the scrolling text off at the sides reaches
+/// <see cref="clip_overhang"/> of the font size above and below it. A mask is a rectangle, and one the
+/// size of the line would cut off whatever a font draws past its line: Thai tone marks stacked on a vowel
+/// (ยี่) reach well above a Latin font's line, and the line is the primary font's.
+/// </remarks>
 public partial class ScrollingText : Container
 {
+    /// <summary>
+    /// How far the mask reaches above and below the line, as a share of the font size.
+    /// </summary>
+    private const float clip_overhang = 0.5f;
+
+    /// <summary>
+    /// The mask: as wide as this, and the line's height plus the overhang each way. Its margins take the
+    /// overhang back off, so this still sizes to the line.
+    /// </summary>
+    private readonly Container clip;
+
     private readonly SpriteText text;
 
     /// <summary>
@@ -70,6 +87,7 @@ public partial class ScrollingText : Container
         {
             text.Font = value;
             textCopy.Font = value;
+            updateOverhang();
             resetScroll();
         }
     }
@@ -92,17 +110,26 @@ public partial class ScrollingText : Container
 
     public ScrollingText()
     {
-        Masking = true;
         AutoSizeAxes = Axes.Y;
 
-        Add(text = new SpriteText
+        Add(clip = new Container
+        {
+            Anchor = Anchor.CentreLeft,
+            Origin = Anchor.CentreLeft,
+            RelativeSizeAxes = Axes.X,
+            Width = 1,
+            AutoSizeAxes = Axes.Y,
+            Masking = true
+        });
+
+        clip.Add(text = new SpriteText
         {
             Anchor = Anchor.CentreLeft,
             Origin = Anchor.CentreLeft,
             Color = Color
         });
 
-        Add(textCopy = new SpriteText
+        clip.Add(textCopy = new SpriteText
         {
             Anchor = Anchor.CentreLeft,
             Origin = Anchor.CentreLeft,
@@ -110,7 +137,18 @@ public partial class ScrollingText : Container
             Alpha = 0f
         });
 
+        updateOverhang();
         delayRemaining = StartDelay;
+    }
+
+    private void updateOverhang()
+    {
+        float overhang = text.Font.Size * clip_overhang;
+
+        // Padded out past the line, then the same taken back off as it's placed and measured: centred,
+        // equal negative margins neither move it nor count towards this container's height.
+        clip.Padding = new MarginPadding { Top = overhang, Bottom = overhang };
+        clip.Margin = new MarginPadding { Top = -overhang, Bottom = -overhang };
     }
 
     private void resetScroll()

@@ -1,11 +1,13 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System.Linq;
 using NUnit.Framework;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Text;
+using Sakura.Framework.Utilities;
 using Sakura.Framework.Testing;
 
 namespace Sakura.Framework.Tests.Visuals.Drawables;
@@ -82,6 +84,31 @@ public partial class TestScrollingText : TestScene
         AddWaitStep("Should stay still", 2000);
         AddAssert("Text pinned to left (offset == 0)", () => scrolling.ScrollOffset == 0);
     }
+
+    /// <summary>
+    /// Thai tone marks stacked on a vowel reach above the line, which comes from the primary font. The
+    /// mask that cuts the scroll off at the sides leaves them room above and below, while the text still
+    /// takes up only its line in layout.
+    /// </summary>
+    [Test]
+    public void TestStackedMarksAreNotCutOff()
+    {
+        AddStep("Set Thai with stacked marks", () => scrolling.Text = "ยี่ปุ่น ผู้ใหญ่ ปั๊มน้ำ ที่นี่ " + long_text);
+
+        AddAssert("Only the line in layout", () => Precision.AlmostEquals(scrolling.DrawSize.Y, line().DrawSize.Y));
+        AddAssert("Mask reaches half the font size past the line each way", () =>
+            Precision.AlmostEquals(mask().DrawSize.Y, line().DrawSize.Y + 18));
+        AddAssert("Mask centred on the line", () =>
+            Precision.AlmostEquals(mask().DrawRectangle.Y + mask().DrawRectangle.Height / 2, scrolling.DrawRectangle.Y + scrolling.DrawRectangle.Height / 2, 0.5f));
+
+        AddStep("Bigger font", () => scrolling.Font = FontUsage.Default.With(size: 36));
+        AddAssert("Mask follows the font size", () => Precision.AlmostEquals(mask().DrawSize.Y, line().DrawSize.Y + 36));
+        AddWaitStep("Watch", 4000);
+    }
+
+    private Container mask() => scrolling.InternalChildren.OfType<Container>().Single(c => c.Masking);
+
+    private SpriteText line() => mask().Children.OfType<SpriteText>().First();
 
     [Test]
     public void TestAdjustable()
