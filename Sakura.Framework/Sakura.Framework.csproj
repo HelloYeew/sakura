@@ -47,6 +47,7 @@
     <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
     <PackageReference Include="Vortice.D3DCompiler" Version="3.8.3" />
     <PackageReference Include="Vortice.Mathematics" Version="2.1.1" />
+    <PackageReference Include="Vortice.Vulkan" Version="3.3.0" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\icon.png" Pack="true" PackagePath="/" />

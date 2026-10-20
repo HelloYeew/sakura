@@ -11,4 +11,5 @@ public enum GraphicsSurfaceType
     OpenGL,
     Metal,
     Direct3D11,
+    Vulkan,
 }

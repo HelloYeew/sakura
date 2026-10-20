@@ -119,7 +119,7 @@ public class DesktopAppHost : AppHost
     }
 
     /// <summary>
-    /// Initialises the backend-specific context (GL context or Metal surface) after
+    /// Initialises the backend-specific context (GL context, or Metal/Win32/Vulkan surface) after
     /// the SDL window exists but before the renderer's <c>Initialize</c> call.
     /// </summary>
     protected override void InitializeGraphicsContext(IWindow window, IRenderer renderer)
@@ -134,6 +134,10 @@ public class DesktopAppHost : AppHost
 
             case RendererType.Direct3D11:
                 sdlWindow.InitializeWin32Surface();
+                break;
+
+            case RendererType.Vulkan:
+                sdlWindow.InitializeVulkanSurface();
                 break;
 
             default:

@@ -11,6 +11,7 @@ public enum RendererType
     Automatic,
     Metal,
     Direct3D11,
+    Vulkan,
 
     [SuppressMessage("ReSharper", "InconsistentNaming")]
     OpenGL
