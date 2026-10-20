@@ -161,9 +161,8 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     // two backends' bind figures aren't directly comparable.
     private ID3D11ShaderResourceView[] whiteSrvs;
 
-    // No-clip state injected into every vertex, PushMask/PopMask maintain the stack.
-    private ClipState currentClip = ClipState.None;
-    private readonly Stack<ClipState> clipStack = new();
+    // Clip state injected into every vertex, PushMask/PopMask maintain the stack.
+    private readonly ClipStack clips = new ClipStack();
 
     private MaskBlock maskState;
 
@@ -172,23 +171,6 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     private int currentViewportW;
     private int currentViewportH;
     private readonly Stack<FrameBufferState> frameBufferStack = new();
-
-    private readonly struct ClipState
-    {
-        public readonly Vector4 ClipData;
-        public readonly float ShearX;
-        public readonly float Radius;
-
-        public ClipState(Vector4 clipData, float shearX, float radius)
-        {
-            ClipData = clipData;
-            ShearX = shearX;
-            Radius = radius;
-        }
-
-        // (0,0,-1,-1) means "no active clip" to the fragment shader's applyClipping.
-        public static ClipState None => new ClipState(new Vector4(0, 0, -1, -1), 0, 0);
-    }
 
     private readonly struct FrameBufferState
     {
@@ -580,8 +562,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
         currentShader = mainShader;
         currentBlendMode = BlendingMode.Alpha;
-        currentClip = ClipState.None;
-        clipStack.Clear();
+        clips.Reset();
         maskState = default;
 
         rebindFrameState();
@@ -764,7 +745,8 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
         // The clip state is injected per-vertex on the way into the batch (the pixel shader's
         // applyClipping reads it from the interpolators), exactly as GL's batch does.
-        batch.AddRange(vertices, textureIndex, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
+        var clip = clips.Current;
+        batch.AddRange(vertices, textureIndex, clip.ClipData, clip.ShearX, clip.Radius);
     }
 
     public void DrawQuads(ReadOnlySpan<SakuraVertex> vertices, Texture texture)
@@ -773,9 +755,10 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
             return;
 
         float textureIndex = prepareTexture(texture);
+        var clip = clips.Current;
 
         for (int i = 0; i + 4 <= vertices.Length; i += 4)
-            batch.AddQuad(vertices.Slice(i, 4), textureIndex, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
+            batch.AddQuad(vertices.Slice(i, 4), textureIndex, clip.ClipData, clip.ShearX, clip.Radius);
     }
 
     public void DrawVerticesRaw(ReadOnlySpan<SakuraVertex> vertices)
@@ -928,58 +911,14 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         rebindFrameState();
     }
 
-    public void ApplyCurrentClip(Span<SakuraVertex> vertices)
-    {
-        for (int i = 0; i < vertices.Length; i++)
-        {
-            vertices[i].ClipData = currentClip.ClipData;
-            vertices[i].ClipShearX = currentClip.ShearX;
-            vertices[i].ClipRadius = currentClip.Radius;
-        }
-    }
+    public void ApplyCurrentClip(Span<SakuraVertex> vertices) => clips.ApplyTo(vertices);
 
     public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius)
-    {
-        clipStack.Push(currentClip);
-
-        // True AABB of this new mask, taking horizontal shear into account.
-        float skewOffset = Math.Abs(shearX * maskHalfSize.Y);
-        float left = maskCenter.X - maskHalfSize.X - skewOffset;
-        float right = maskCenter.X + maskHalfSize.X + skewOffset;
-        float top = maskCenter.Y - maskHalfSize.Y;
-        float bottom = maskCenter.Y + maskHalfSize.Y;
-
-        // If already inside a parent mask (Z > 0), intersect their bounding boxes.
-        if (currentClip.ClipData.Z > 0)
-        {
-            float parentSkew = Math.Abs(currentClip.ShearX * currentClip.ClipData.W);
-            float pLeft = currentClip.ClipData.X - currentClip.ClipData.Z - parentSkew;
-            float pRight = currentClip.ClipData.X + currentClip.ClipData.Z + parentSkew;
-            float pTop = currentClip.ClipData.Y - currentClip.ClipData.W;
-            float pBottom = currentClip.ClipData.Y + currentClip.ClipData.W;
-
-            left = Math.Max(left, pLeft);
-            right = Math.Min(right, pRight);
-            top = Math.Max(top, pTop);
-            bottom = Math.Min(bottom, pBottom);
-        }
-
-        var newCenter = new Vector2((left + right) / 2f, (top + bottom) / 2f);
-        var newHalfSize = new Vector2((right - left) / 2f, (bottom - top) / 2f);
-
-        // Collapsed intersection (child entirely outside parent) → shrink to ~zero so the shader
-        // discards every fragment.
-        if (left >= right || top >= bottom)
-            newHalfSize = new Vector2(0.0001f, 0.0001f);
-        else
-            newHalfSize.X = Math.Max(0.0001f, newHalfSize.X - skewOffset);
-
-        currentClip = new ClipState(new Vector4(newCenter.X, newCenter.Y, newHalfSize.X, newHalfSize.Y), shearX, cornerRadius);
-    }
+        => clips.Push(maskCenter, maskHalfSize, shearX, cornerRadius);
 
     public void PopMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<SakuraVertex> maskVertices = default)
     {
-        currentClip = clipStack.Count > 0 ? clipStack.Pop() : currentClip;
+        clips.Pop();
         drawBorder(maskCenter, maskHalfSize, shearX, cornerRadius, borderThickness, borderColor, maskVertices);
     }
 
@@ -1140,13 +1079,13 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         // Anything batched so far targets the previous render target — flush it there first.
         FlushBatch();
 
-        frameBufferStack.Push(new FrameBufferState(currentRtv, currentViewportW, currentViewportH, projectionMatrix, currentClip));
+        frameBufferStack.Push(new FrameBufferState(currentRtv, currentViewportW, currentViewportH, projectionMatrix, clips.Current));
 
         projectionMatrix = Matrix4x4.CreateOrthographicOffCenter(
             sourceRect.X, sourceRect.X + sourceRect.Width,
             sourceRect.Y + sourceRect.Height, sourceRect.Y,
             -1, 1);
-        currentClip = ClipState.None;
+        clips.Current = ClipState.None;
 
         setRenderTarget(fb.RenderTargetView, fb.Width, fb.Height);
         context.ClearRenderTargetView(fb.RenderTargetView, toColor4(clearColor));
@@ -1163,7 +1102,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
         var state = frameBufferStack.Pop();
         projectionMatrix = state.Projection;
-        currentClip = state.Clip;
+        clips.Current = state.Clip;
         setRenderTarget(state.Rtv, state.ViewportW, state.ViewportH);
         uploadProjection();
     }
