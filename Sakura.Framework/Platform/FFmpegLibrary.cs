@@ -36,20 +36,32 @@ internal static class FFmpegLibrary
             if (initialised)
                 return;
 
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-                ffmpeg.RootPath = resolveRootPath("osx");
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-                ffmpeg.RootPath = resolveRootPath($"win-{architectureSuffix()}");
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-                ffmpeg.RootPath = resolveRootPath($"linux-{architectureSuffix()}");
+            if (OperatingSystem.IsAndroid())
+            {
+                // The APK's native libraries live in a folder the dynamic linker already searches by
+                // bare name, so there is no directory to point at, and nothing to check for in one.
+                ffmpeg.RootPath = string.Empty;
+                DynamicallyLoadedBindings.FunctionResolver = new AndroidFunctionResolver();
 
-            Logger.Verbose($"Initialized FFmpeg with root path {ffmpeg.RootPath}");
+                Logger.Verbose("Initialized FFmpeg from the application's native library folder");
+            }
+            else
+            {
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                    ffmpeg.RootPath = resolveRootPath("osx");
+                else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                    ffmpeg.RootPath = resolveRootPath($"win-{architectureSuffix()}");
+                else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                    ffmpeg.RootPath = resolveRootPath($"linux-{architectureSuffix()}");
 
-            // FFmpeg.AutoGen resolves lazily, so a wrong root path is not an error here — it is a
-            // NotSupportedException from whatever calls into FFmpeg first, which reads as "this
-            // method is not supported" and says nothing about a missing directory. Check now, while
-            // there is still somewhere useful to point.
-            warnIfNoLibrariesPresent(ffmpeg.RootPath);
+                Logger.Verbose($"Initialized FFmpeg with root path {ffmpeg.RootPath}");
+
+                // FFmpeg.AutoGen resolves lazily, so a wrong root path is not an error here — it is a
+                // NotSupportedException from whatever calls into FFmpeg first, which reads as "this
+                // method is not supported" and says nothing about a missing directory. Check now, while
+                // there is still somewhere useful to point.
+                warnIfNoLibrariesPresent(ffmpeg.RootPath);
+            }
 
             DynamicallyLoadedBindings.Initialize();
 
@@ -78,6 +90,27 @@ internal static class FFmpegLibrary
         Architecture.X86 => "x86",
         _ => "x64"
     };
+
+    /// <summary>
+    /// Resolves FFmpeg on Android, where the libraries are unversioned (<c>libavcodec.so</c>) and sit in
+    /// the APK's native library folder rather than under a runtime-specific directory.
+    /// </summary>
+    /// <remarks>
+    /// FFmpeg.AutoGen's own Unix resolver cannot be used there. It appends the major version
+    /// (<c>libavcodec.so.62</c>), and it calls <c>dlopen</c> through <c>libdl.so.2</c>, a soname Android
+    /// does not have, so it fails before it ever looks for FFmpeg. <see cref="NativeLibrary"/> goes
+    /// through the runtime's own loader instead, which already knows where the APK's libraries are.
+    /// </remarks>
+    private sealed class AndroidFunctionResolver : FunctionResolverBase
+    {
+        protected override string GetNativeLibraryName(string libraryName, int version) => $"lib{libraryName}.so";
+
+        protected override IntPtr LoadNativeLibrary(string libraryName) =>
+            NativeLibrary.TryLoad(libraryName, out IntPtr handle) ? handle : IntPtr.Zero;
+
+        protected override IntPtr FindFunctionPointer(IntPtr nativeLibraryHandle, string functionName) =>
+            NativeLibrary.TryGetExport(nativeLibraryHandle, functionName, out IntPtr address) ? address : IntPtr.Zero;
+    }
 
     /// <summary>
     /// Logs a warning if <paramref name="rootPath"/> holds no FFmpeg libraries at all.
