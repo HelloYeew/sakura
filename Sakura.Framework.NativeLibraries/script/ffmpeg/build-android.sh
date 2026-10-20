@@ -70,6 +70,15 @@ bin_path="$toolchain_path/bin"
 FFMPEG_FLAGS+=(
     --enable-jni
 
+    # Android's hardware video decoders. FFmpeg exposes them as separate codecs rather than as a
+    # hardware device on the regular decoders, so they are listed here by name. With no Java VM
+    # registered, FFmpeg drives MediaCodec through the NDK (libmediandk), so the app needs no JNI setup.
+    # They decode into system memory unless an output surface is attached, and the framework attaches
+    # none, so their frames take the same upload path as software decoding. The list matches the
+    # software video decoders in common.sh that MediaCodec has a counterpart for.
+    --enable-mediacodec
+    --enable-decoder='h264_mediacodec,hevc_mediacodec,vp8_mediacodec,vp9_mediacodec'
+
     --enable-cross-compile
     --target-os=android
     --cpu=$cpu
