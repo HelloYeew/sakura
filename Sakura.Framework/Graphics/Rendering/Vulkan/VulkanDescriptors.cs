@@ -28,10 +28,31 @@ internal sealed unsafe class VulkanDescriptors : IDisposable
     public VkPipelineLayout TextureArrayPipelineLayout { get; }
 
     /// <summary>
+    /// Set 1 for shaders with single textures (effects, video, most game shaders): one combined image
+    /// sampler at each of bindings 0 to <see cref="VulkanShaderLayout.SINGLE_TEXTURE_COUNT"/> - 1.
+    /// </summary>
+    public VkDescriptorSetLayout SingleTextureLayout { get; }
+
+    public VkPipelineLayout SingleTexturePipelineLayout { get; }
+
+    /// <summary>
     /// Linear, trilinear between mip levels, repeating: how every regular texture is sampled, as on GL
     /// and Metal. Repeat because tiled fills rely on UVs past 1 wrapping around.
     /// </summary>
     public VkSampler TextureSampler { get; }
+
+    /// <summary>
+    /// Linear, clamped to the edge, no mip levels: how offscreen framebuffers are sampled. Clamped
+    /// because the blur reads past the buffer's edges and must see the edge texels there, not the
+    /// opposite side.
+    /// </summary>
+    public VkSampler RenderTargetSampler { get; }
+
+    /// <summary>
+    /// Nearest, clamped to the edge: framebuffers created with pixel snapping, which composite whole
+    /// texels instead of smoothing between them.
+    /// </summary>
+    public VkSampler PixelSnappingSampler { get; }
 
     public VulkanDescriptors(VulkanDevice device)
     {
@@ -76,6 +97,28 @@ internal sealed unsafe class VulkanDescriptors : IDisposable
         TextureArrayPipelineLayout = pipelineLayout;
         device.SetName(VkObjectType.PipelineLayout, pipelineLayout.Handle, "Texture array pipeline layout");
 
+        var singleBindings = stackalloc VkDescriptorSetLayoutBinding[(int)VulkanShaderLayout.SINGLE_TEXTURE_COUNT];
+
+        for (uint i = 0; i < VulkanShaderLayout.SINGLE_TEXTURE_COUNT; i++)
+        {
+            singleBindings[i] = new VkDescriptorSetLayoutBinding
+            {
+                binding = i,
+                descriptorType = VkDescriptorType.CombinedImageSampler,
+                descriptorCount = 1,
+                stageFlags = VkShaderStageFlags.Fragment,
+            };
+        }
+
+        SingleTextureLayout = createSetLayout(singleBindings, VulkanShaderLayout.SINGLE_TEXTURE_COUNT, "Single textures (set 1)");
+
+        // Set 0 is the same layout in both pipeline layouts, so it stays bound across a switch between
+        // a texture-array shader and a single-texture one.
+        setLayouts[1] = SingleTextureLayout;
+        VulkanDevice.Check(api.vkCreatePipelineLayout(&pipelineLayoutInfo, null, &pipelineLayout), "vkCreatePipelineLayout");
+        SingleTexturePipelineLayout = pipelineLayout;
+        device.SetName(VkObjectType.PipelineLayout, pipelineLayout.Handle, "Single texture pipeline layout");
+
         var samplerInfo = new VkSamplerCreateInfo
         {
             magFilter = VkFilter.Linear,
@@ -90,10 +133,18 @@ internal sealed unsafe class VulkanDescriptors : IDisposable
             borderColor = VkBorderColor.FloatTransparentBlack,
         };
 
-        VkSampler sampler;
-        VulkanDevice.Check(api.vkCreateSampler(&samplerInfo, null, &sampler), "vkCreateSampler");
-        TextureSampler = sampler;
-        device.SetName(VkObjectType.Sampler, sampler.Handle, "Texture sampler (trilinear, repeat)");
+        TextureSampler = createSampler(samplerInfo, "Texture sampler (trilinear, repeat)");
+
+        samplerInfo.mipmapMode = VkSamplerMipmapMode.Nearest;
+        samplerInfo.addressModeU = VkSamplerAddressMode.ClampToEdge;
+        samplerInfo.addressModeV = VkSamplerAddressMode.ClampToEdge;
+        samplerInfo.addressModeW = VkSamplerAddressMode.ClampToEdge;
+        samplerInfo.maxLod = 0f;
+        RenderTargetSampler = createSampler(samplerInfo, "Render target sampler (linear, clamp)");
+
+        samplerInfo.magFilter = VkFilter.Nearest;
+        samplerInfo.minFilter = VkFilter.Nearest;
+        PixelSnappingSampler = createSampler(samplerInfo, "Pixel snapping sampler (nearest, clamp)");
     }
 
     /// <summary>
@@ -164,6 +215,48 @@ internal sealed unsafe class VulkanDescriptors : IDisposable
         return set;
     }
 
+    /// <summary>
+    /// Allocates a set 1 for <paramref name="frame"/> holding <paramref name="views"/> at bindings 0 and
+    /// up.
+    /// </summary>
+    public VkDescriptorSet AllocateSingleTextureSet(VulkanFrameContext frame, ReadOnlySpan<VkImageView> views, ReadOnlySpan<VkSampler> samplers)
+    {
+        var set = frame.AllocateDescriptorSet(SingleTextureLayout);
+
+        var imageInfos = stackalloc VkDescriptorImageInfo[views.Length];
+        var writes = stackalloc VkWriteDescriptorSet[views.Length];
+
+        for (int i = 0; i < views.Length; i++)
+        {
+            imageInfos[i] = new VkDescriptorImageInfo
+            {
+                sampler = samplers[i],
+                imageView = views[i],
+                imageLayout = VkImageLayout.ShaderReadOnlyOptimal,
+            };
+
+            writes[i] = new VkWriteDescriptorSet
+            {
+                dstSet = set,
+                dstBinding = (uint)i,
+                descriptorCount = 1,
+                descriptorType = VkDescriptorType.CombinedImageSampler,
+                pImageInfo = &imageInfos[i],
+            };
+        }
+
+        device.Api.vkUpdateDescriptorSets((uint)views.Length, writes, 0, null);
+        return set;
+    }
+
+    private VkSampler createSampler(VkSamplerCreateInfo createInfo, string name)
+    {
+        VkSampler sampler;
+        VulkanDevice.Check(device.Api.vkCreateSampler(&createInfo, null, &sampler), "vkCreateSampler");
+        device.SetName(VkObjectType.Sampler, sampler.Handle, name);
+        return sampler;
+    }
+
     private VkDescriptorSetLayout createSetLayout(VkDescriptorSetLayoutBinding* bindings, uint count, string name)
     {
         var createInfo = new VkDescriptorSetLayoutCreateInfo
@@ -184,7 +277,11 @@ internal sealed unsafe class VulkanDescriptors : IDisposable
     public void Dispose()
     {
         var api = device.Api;
+        api.vkDestroySampler(PixelSnappingSampler, null);
+        api.vkDestroySampler(RenderTargetSampler, null);
         api.vkDestroySampler(TextureSampler, null);
+        api.vkDestroyPipelineLayout(SingleTexturePipelineLayout, null);
+        api.vkDestroyDescriptorSetLayout(SingleTextureLayout, null);
         api.vkDestroyPipelineLayout(TextureArrayPipelineLayout, null);
         api.vkDestroyDescriptorSetLayout(TextureArrayLayout, null);
         api.vkDestroyDescriptorSetLayout(UniformLayout, null);

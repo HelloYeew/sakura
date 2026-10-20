@@ -41,8 +41,14 @@ namespace Sakura.Framework.Graphics.Rendering.Vulkan;
 /// 16-entry table that becomes a second descriptor set whenever it changes.
 /// </para>
 /// <para>
-/// Offscreen framebuffers, custom shaders and video don't exist on this renderer yet: framebuffers are
-/// CPU-side placeholders whose texture samples white, and custom shader draws are skipped.
+/// Binding a framebuffer ends the current render pass and opens one on the framebuffer; unbinding ends
+/// it and marks the parent target to be reopened (with a pass that keeps its contents) the next time
+/// something is drawn into it, so a chain of offscreen passes doesn't open and close empty ones in
+/// between.
+/// </para>
+/// <para>
+/// Video doesn't exist on this renderer yet: video textures never become available, so video draws are
+/// skipped.
 /// </para>
 /// </remarks>
 public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
@@ -130,6 +136,28 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     private uint? currentImage;
     private bool renderPassOpen;
 
+    /// <summary>
+    /// The framebuffer draws go into, or null for the swapchain image.
+    /// </summary>
+    private VulkanFrameBuffer? currentTarget;
+
+    /// <summary>
+    /// Whether <see cref="currentTarget"/>'s pass was closed by a nested framebuffer and has to be
+    /// reopened before anything more is drawn into it.
+    /// </summary>
+    private bool targetNeedsReopen;
+
+    /// <summary>
+    /// The attachment format of the pass being recorded, which pipelines are chosen by.
+    /// </summary>
+    private VkFormat currentPassFormat;
+
+    private readonly Stack<TargetState> targetStack = new Stack<TargetState>();
+
+    private readonly record struct TargetState(VulkanFrameBuffer? FrameBuffer, Matrix4x4 Projection, ClipState Clip);
+
+    private VkFormat? offscreenFormat;
+
     private int drawableWidth;
     private int drawableHeight;
 
@@ -194,6 +222,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     private readonly VkImageView[] cachedSetViews = new VkImageView[texture_set_cache_size * texture_slot_count];
     private readonly VkSampler[] cachedSetSamplers = new VkSampler[texture_set_cache_size * texture_slot_count];
     private readonly VkDescriptorSet[] cachedSets = new VkDescriptorSet[texture_set_cache_size];
+    private readonly bool[] cachedSetIsArray = new bool[texture_set_cache_size];
     private int cachedSetCount;
     private int cachedSetNext;
 
@@ -239,7 +268,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         memory = new VulkanMemory(device);
         renderPasses = new VulkanRenderPasses(device);
         descriptors = new VulkanDescriptors(device);
-        pipelines = new VulkanPipelines(device, ShaderCache);
+        pipelines = new VulkanPipelines(device, renderPasses, ShaderCache);
         swapchain = new VulkanSwapchain(device, vulkanSurface, renderPasses, surface);
 
         var limits = device.Properties.limits;
@@ -326,10 +355,13 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
         currentShader = mainShader;
         currentBlendMode = BlendingMode.Alpha;
+        currentTarget = null;
+        targetNeedsReopen = false;
+        targetStack.Clear();
         resetTextureSlotsToWhite();
 
         if (currentImage is uint image)
-            beginSwapchainPass(frame, image);
+            beginPass(swapchain.RenderPass, swapchain.GetFramebuffer(image), swapchain.Format, swapchain.Extent.width, swapchain.Extent.height, clear_color);
     }
 
     public void SetRoot(DrawNode rootDrawNode) => rootNode = rootDrawNode;
@@ -377,11 +409,9 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         // After the final flush, so the batch's binds land in this frame's count.
         TextureBindTracker.EndFrame();
 
-        if (renderPassOpen)
-        {
-            device.Api.vkCmdEndRenderPass(frame.CommandBuffer);
-            renderPassOpen = false;
-        }
+        // Whatever pass is open ends here: the swapchain's leaves the image ready to present, and an
+        // offscreen one (a framebuffer left bound) its image ready to sample.
+        endPass();
 
         if (frame.HasUploads)
         {
@@ -540,7 +570,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         // Compiled now rather than the first time each blend mode is drawn, which would be a hitch in
         // the middle of a frame. After the first run these come straight from the pipeline cache.
         foreach (var blend in Enum.GetValues<BlendingMode>())
-            pipelines!.Get(mainShader!, blend, swapchain.RenderPass);
+            pipelines!.Get(mainShader!, blend, swapchain.Format);
 
         return true;
     }
@@ -551,34 +581,77 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         swapchain!.RecreateSurface();
     }
 
-    private void beginSwapchainPass(VulkanFrameContext frame, uint image)
+    /// <summary>
+    /// Opens a render pass into <paramref name="framebuffer"/>, clearing it to <paramref name="clear"/>
+    /// when the pass is a clearing one, and resets the state a draw has to bind again.
+    /// </summary>
+    private void beginPass(VkRenderPass renderPass, VkFramebuffer framebuffer, VkFormat format, uint width, uint height, VkClearColorValue clear)
     {
-        var chain = swapchain!;
-        var clearValue = new VkClearValue { color = clear_color };
+        var commandBuffer = currentFrame!.CommandBuffer;
+        var clearValue = new VkClearValue { color = clear };
 
         var beginInfo = new VkRenderPassBeginInfo
         {
-            renderPass = chain.RenderPass,
-            framebuffer = chain.GetFramebuffer(image),
-            renderArea = new VkRect2D(0, 0, chain.Extent.width, chain.Extent.height),
+            renderPass = renderPass,
+            framebuffer = framebuffer,
+            renderArea = new VkRect2D(0, 0, width, height),
             clearValueCount = 1,
             pClearValues = &clearValue,
         };
 
         var api = device!.Api;
-        api.vkCmdBeginRenderPass(frame.CommandBuffer, &beginInfo, VkSubpassContents.Inline);
+        api.vkCmdBeginRenderPass(commandBuffer, &beginInfo, VkSubpassContents.Inline);
         renderPassOpen = true;
+        currentPassFormat = format;
         stat_render_passes.Accumulator++;
 
-        var viewport = new VkViewport(0, 0, chain.Extent.width, chain.Extent.height, 0, 1);
-        var scissor = new VkRect2D(0, 0, chain.Extent.width, chain.Extent.height);
-        api.vkCmdSetViewport(frame.CommandBuffer, 0, 1, &viewport);
-        api.vkCmdSetScissor(frame.CommandBuffer, 0, 1, &scissor);
+        var viewport = new VkViewport(0, 0, width, height, 0, 1);
+        var scissor = new VkRect2D(0, 0, width, height);
+        api.vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+        api.vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
         boundPipeline = VkPipeline.Null;
         pipelineDirty = true;
         uniformsDirty = true;
         textureSetDirty = true;
+    }
+
+    private void endPass()
+    {
+        if (!renderPassOpen)
+            return;
+
+        device!.Api.vkCmdEndRenderPass(currentFrame!.CommandBuffer);
+        renderPassOpen = false;
+    }
+
+    /// <summary>
+    /// Makes sure a pass into the current target is open before something is drawn, reopening it with
+    /// its contents kept when a nested framebuffer closed it.
+    /// </summary>
+    /// <returns>False when there is nothing to draw into this frame (no swapchain image).</returns>
+    private bool ensurePassOpen()
+    {
+        if (renderPassOpen)
+            return true;
+
+        if (!targetNeedsReopen)
+            return false;
+
+        targetNeedsReopen = false;
+
+        if (currentTarget is VulkanFrameBuffer target)
+        {
+            beginPass(renderPasses!.Get(target.Format, VulkanPassKind.OffscreenLoad), target.Handle, target.Format, (uint)target.Width, (uint)target.Height, default);
+            return true;
+        }
+
+        if (currentImage is not uint image)
+            return false;
+
+        var chain = swapchain!;
+        beginPass(renderPasses!.Get(chain.Format, VulkanPassKind.SwapchainLoad), chain.GetFramebuffer(image), chain.Format, chain.Extent.width, chain.Extent.height, default);
+        return true;
     }
 
     private void submit(VulkanFrameContext frame)
@@ -797,10 +870,56 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
             batch.AddQuad(vertices.Slice(i, 4), textureIndex, clip.ClipData, clip.ShearX, clip.Radius);
     }
 
+    /// <summary>
+    /// Draws <paramref name="vertices"/> with whatever shader is in use, as they are: no clip is stamped
+    /// onto them and the texture table is whatever the caller bound. A four-vertex span is a quad (TL,
+    /// TR, BR, BL), anything else a triangle list.
+    /// </summary>
     public void DrawVerticesRaw(ReadOnlySpan<SakuraVertex> vertices)
     {
-        // Custom shaders (effects, video) don't exist on this renderer yet, so there is nothing to draw
-        // them with.
+        if (currentFrame == null || vertices.Length == 0)
+            return;
+
+        // This draws immediately, so anything still batched would end up behind it.
+        FlushBatch();
+
+        if (!ensurePassOpen())
+            return;
+
+        Span<SakuraVertex> quad = stackalloc SakuraVertex[6];
+        scoped ReadOnlySpan<SakuraVertex> triangles = vertices;
+
+        if (vertices.Length == 4)
+        {
+            quad[0] = vertices[0];
+            quad[1] = vertices[1];
+            quad[2] = vertices[2];
+            quad[3] = vertices[2];
+            quad[4] = vertices[3];
+            quad[5] = vertices[0];
+            triangles = quad;
+        }
+
+        var frame = currentFrame;
+        ulong bytes = (ulong)(triangles.Length * SakuraVertex.Size);
+        byte* destination = allocateStream(bytes, 16, out ulong offset);
+
+        fixed (SakuraVertex* source = triangles)
+            Buffer.MemoryCopy(source, destination, (long)bytes, (long)bytes);
+
+        var vertexBuffer = frame.Stream.Buffer;
+        var api = device!.Api;
+        api.vkCmdBindVertexBuffers(frame.CommandBuffer, 0, 1, &vertexBuffer, &offset);
+
+        bindState(frame);
+        api.vkCmdDraw(frame.CommandBuffer, (uint)triangles.Length, 1, 0, 0);
+
+        stat_draw_calls.Accumulator++;
+        stat_vertices_drawn.Accumulator += triangles.Length;
+
+        // The caller bound its own textures (an effect's source, the video planes), so the table no
+        // longer describes what the batch assigned.
+        resetTextureSlots();
     }
 
     /// <summary>
@@ -814,7 +933,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
             return;
 
         // Nothing to draw into this frame (minimised, or between swapchains).
-        if (!renderPassOpen)
+        if (!ensurePassOpen())
         {
             batch.Reset();
             return;
@@ -875,7 +994,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
         if (pipelineDirty)
         {
-            var pipeline = pipelines!.Get(shader, currentBlendMode, swapchain!.RenderPass);
+            var pipeline = pipelines!.Get(shader, currentBlendMode, currentPassFormat);
 
             if (pipeline != boundPipeline)
             {
@@ -912,16 +1031,20 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     }
 
     /// <summary>
-    /// A descriptor set holding the current texture table: one already written this frame when the
-    /// table is one seen recently, or a new one.
+    /// A descriptor set holding the current texture table in the current shader's set-1 layout: one
+    /// already written this frame when the table is one seen recently, or a new one. Entries nothing was
+    /// bound to hold the white pixel.
     /// </summary>
     private VkDescriptorSet currentTextureSet(VulkanFrameContext frame)
     {
         var white = whiteTexture!;
+        bool array = currentShader!.Layout.UsesTextureArray;
+        int count = array ? texture_slot_count : (int)VulkanShaderLayout.SINGLE_TEXTURE_COUNT;
 
+        // The unused tail stays white too, so a cached table is compared over its full length.
         for (int i = 0; i < texture_slot_count; i++)
         {
-            bool assigned = slotViews[i].IsNotNull;
+            bool assigned = i < count && slotViews[i].IsNotNull;
             setViews[i] = assigned ? slotViews[i] : white.View;
             setSamplers[i] = assigned ? slotSamplers[i] : white.Sampler;
         }
@@ -931,6 +1054,9 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
         for (int i = 0; i < cachedSetCount; i++)
         {
+            if (cachedSetIsArray[i] != array)
+                continue;
+
             var cachedViews = MemoryMarshal.Cast<VkImageView, ulong>(cachedSetViews.AsSpan(i * texture_slot_count, texture_slot_count));
             var cachedSamplers = MemoryMarshal.Cast<VkSampler, ulong>(cachedSetSamplers.AsSpan(i * texture_slot_count, texture_slot_count));
 
@@ -938,7 +1064,10 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
                 return cachedSets[i];
         }
 
-        var set = descriptors!.AllocateTextureArraySet(frame, setViews, setSamplers);
+        var set = array
+            ? descriptors!.AllocateTextureArraySet(frame, setViews, setSamplers)
+            : descriptors!.AllocateSingleTextureSet(frame, setViews.AsSpan(0, count), setSamplers.AsSpan(0, count));
+
         stat_descriptor_sets.Accumulator++;
 
         int entry = cachedSetNext;
@@ -948,6 +1077,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         setViews.CopyTo(cachedSetViews.AsSpan(entry * texture_slot_count));
         setSamplers.CopyTo(cachedSetSamplers.AsSpan(entry * texture_slot_count));
         cachedSets[entry] = set;
+        cachedSetIsArray[entry] = array;
 
         return set;
     }
@@ -1077,12 +1207,74 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
             SetBlendMode(previousBlend);
     }
 
+    /// <summary>
+    /// Redirects drawing into <paramref name="frameBuffer"/>, cleared to <paramref name="clearColor"/>.
+    /// The projection maps <paramref name="sourceRect"/> onto it, so draw nodes keep their screen-space
+    /// coordinates.
+    /// </summary>
     public void BindFrameBuffer(IFrameBuffer frameBuffer, RectangleF sourceRect, Color clearColor = default)
     {
+        if (currentFrame == null || frameBuffer is not VulkanFrameBuffer target)
+            return;
+
+        // Anything batched so far belongs to the previous target.
+        FlushBatch();
+
+        targetStack.Push(new TargetState(currentTarget, projectionMatrix, clips.Current));
+        endPass();
+
+        // The same matrix Metal uses offscreen. Vulkan's clip space points +Y down, so this puts the
+        // rect's top edge on the image's last row: the orientation GL leaves a framebuffer in, which the
+        // V-flipped texture coordinates BufferedContainer composites with expect.
+        projectionMatrix = Matrix4x4.CreateOrthographicOffCenter(
+            sourceRect.X, sourceRect.X + sourceRect.Width,
+            sourceRect.Y + sourceRect.Height, sourceRect.Y,
+            -1, 1);
+
+        var projection = new ProjectionBlock { Projection = projectionMatrix };
+        writeUniform(0, in projection);
+
+        // Content inside the buffer starts from a clean clip; the outer clip applies to the composited
+        // quad instead.
+        clips.Current = ClipState.None;
+
+        currentTarget = target;
+        targetNeedsReopen = false;
+
+        var clear = new VkClearColorValue(clearColor.R / 255f, clearColor.G / 255f, clearColor.B / 255f, clearColor.A / 255f);
+        beginPass(renderPasses!.Get(target.Format, VulkanPassKind.OffscreenClear), target.Handle, target.Format, (uint)target.Width, (uint)target.Height, clear);
+
+        // Sampled by whatever is drawn after this pass, once it has run.
+        target.ColorTexture.MarkRendered();
+
+        // The table may still hold this image from an earlier composite, and an image can't be sampled
+        // while it is the attachment being drawn into.
+        resetTextureSlotsToWhite();
     }
 
+    /// <summary>
+    /// Ends drawing into the most recently bound framebuffer and returns to the previous target, with its
+    /// projection and clip. The previous target's pass is reopened when something is next drawn into it.
+    /// </summary>
     public void UnbindFrameBuffer()
     {
+        if (targetStack.Count == 0)
+            throw new InvalidOperationException($"{nameof(UnbindFrameBuffer)} was called without a matching {nameof(BindFrameBuffer)}.");
+
+        FlushBatch();
+        endPass();
+
+        var state = targetStack.Pop();
+        currentTarget = state.FrameBuffer;
+        targetNeedsReopen = true;
+
+        projectionMatrix = state.Projection;
+        var projection = new ProjectionBlock { Projection = projectionMatrix };
+        writeUniform(0, in projection);
+
+        clips.Current = state.Clip;
+
+        resetTextureSlotsToWhite();
     }
 
     #endregion
@@ -1539,7 +1731,15 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     public INativeTexture CreateNativeTexture(int width, int height)
         => new VulkanTexture(this, device!, memory!, width, height, descriptors!.TextureSampler, mipmapsSupported && (width > 1 || height > 1));
 
-    public IShader CreateShader(Storage storage, string vertexPath, string fragmentPath) => new HeadlessShader();
+    /// <summary>
+    /// Compiles a shader pair to SPIR-V (cached in <see cref="ShaderCache"/>) and checks it against the
+    /// renderer's resource layout. Pipelines for it are compiled the first time it draws with each blend
+    /// mode.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The shader doesn't fit the resource layout; the
+    /// message lists every problem.</exception>
+    public IShader CreateShader(Storage storage, string vertexPath, string fragmentPath)
+        => new VulkanShader(this, device!, ShaderCompiler.GetOrCompileSpirv(storage, vertexPath, fragmentPath, ShaderCache, DebugUtils.IsDebugBuild), $"{vertexPath}+{fragmentPath}", descriptors!);
 
     /// <summary>
     /// Releases every pipeline built from <paramref name="shader"/> along with its modules, once the GPU
@@ -1559,42 +1759,77 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     }
 
     public INativeVideoTexture CreateVideoTexture(int width, int height, VideoPlaneLayout layout, bool fromHardwareFrame = false)
-        => new HeadlessNativeVideoTexture(width, height, layout);
+        => new PlaceholderVideoTexture(width, height, layout);
 
     public bool CanSampleHardwareFrame(FFmpeg.AutoGen.AVFrame* frame) => false;
 
-    public IFrameBuffer CreateFrameBuffer(int width, int height, bool pixelSnapping = false) => new PlaceholderFrameBuffer(width, height);
+    public IFrameBuffer CreateFrameBuffer(int width, int height, bool pixelSnapping = false)
+        => new VulkanFrameBuffer(this, device!, memory!, renderPasses!, chooseOffscreenFormat(), pixelSnapping ? descriptors!.PixelSnappingSampler : descriptors!.RenderTargetSampler, width, height);
 
     /// <summary>
-    /// Stands in for an offscreen target until this renderer has real ones. Its texture has no Vulkan
-    /// backing, so it samples white.
+    /// The format of every offscreen framebuffer: the swapchain's when it is an sRGB format that can be
+    /// rendered to, blended into and sampled, so offscreen and onscreen passes share one set of pipelines;
+    /// otherwise RGBA8 sRGB, which the spec requires to support all of that.
     /// </summary>
-    private sealed class PlaceholderFrameBuffer : IFrameBuffer
+    private VkFormat chooseOffscreenFormat()
     {
-        public Texture Texture { get; private set; }
-        public int Width { get; private set; }
-        public int Height { get; private set; }
+        if (offscreenFormat is VkFormat chosen)
+            return chosen;
 
-        public PlaceholderFrameBuffer(int width, int height)
+        var format = VkFormat.R8G8B8A8Srgb;
+        var swapchainFormat = swapchain!.Format;
+
+        if (swapchain.Handle.IsNotNull && swapchainFormat is VkFormat.B8G8R8A8Srgb or VkFormat.R8G8B8A8Srgb)
         {
-            Width = Math.Max(1, width);
-            Height = Math.Max(1, height);
-            Texture = new Texture(new HeadlessNativeTexture(Width, Height));
+            VkFormatProperties properties;
+            device!.InstanceApi.vkGetPhysicalDeviceFormatProperties(device.PhysicalDevice, swapchainFormat, &properties);
+
+            const VkFormatFeatureFlags needed = VkFormatFeatureFlags.ColorAttachment | VkFormatFeatureFlags.ColorAttachmentBlend
+                                                                                   | VkFormatFeatureFlags.SampledImage | VkFormatFeatureFlags.SampledImageFilterLinear;
+
+            if ((properties.optimalTilingFeatures & needed) == needed)
+                format = swapchainFormat;
         }
 
-        public void Resize(int width, int height)
+        offscreenFormat = format;
+        return format;
+    }
+
+    /// <summary>
+    /// Stands in for a video texture until this renderer can draw video. It never becomes available, so
+    /// video draws are skipped (and counted as such) rather than drawn with nothing bound.
+    /// </summary>
+    private sealed class PlaceholderVideoTexture : INativeVideoTexture
+    {
+        public int Width { get; }
+        public int Height { get; }
+        public long PlaneBytes => 0;
+        public VideoPlaneLayout Layout { get; }
+        public bool Available => false;
+        public TextureBindCounter Binds { get; } = new TextureBindCounter();
+
+        public PlaceholderVideoTexture(int width, int height, VideoPlaneLayout layout)
         {
-            if (Math.Max(1, width) == Width && Math.Max(1, height) == Height)
-                return;
-
-            Texture.Dispose();
-
-            Width = Math.Max(1, width);
-            Height = Math.Max(1, height);
-            Texture = new Texture(new HeadlessNativeTexture(Width, Height));
+            Width = width;
+            Height = height;
+            Layout = layout;
         }
 
-        public void Dispose() => Texture.Dispose();
+        public void BindPlanes(bool tiling)
+        {
+        }
+
+        public void Upload(FFmpeg.AutoGen.AVFrame* frame)
+        {
+        }
+
+        public void MarkAvailable()
+        {
+        }
+
+        public void Dispose()
+        {
+        }
     }
 
     #endregion

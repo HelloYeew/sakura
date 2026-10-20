@@ -13,7 +13,9 @@ using SakuraVertex = Sakura.Framework.Graphics.Rendering.Vertex.Vertex;
 namespace Sakura.Framework.Graphics.Rendering.Vulkan;
 
 /// <summary>
-/// Graphics pipelines, one per shader, blend mode and render pass they draw into, created on first use.
+/// Graphics pipelines, one per shader, blend mode and attachment format, created on first use. Every
+/// render pass of a format is compatible with every other (see <see cref="VulkanRenderPasses"/>), so a
+/// pipeline draws into the swapchain and offscreen framebuffers alike.
 /// </summary>
 /// <remarks>
 /// Compiling a pipeline is the slowest thing a Vulkan driver does, and a compile during a frame is a
@@ -30,16 +32,18 @@ internal sealed unsafe class VulkanPipelines : IDisposable
     private const int cache_header_size = 32;
 
     private readonly VulkanDevice device;
+    private readonly VulkanRenderPasses renderPasses;
     private readonly DiskCache? diskCache;
     private readonly string diskCacheKey;
     private readonly VkPipelineCache cache;
-    private readonly Dictionary<(VulkanShader Shader, BlendingMode Blend, VkRenderPass Pass), VkPipeline> pipelines = new Dictionary<(VulkanShader, BlendingMode, VkRenderPass), VkPipeline>();
+    private readonly Dictionary<(VulkanShader Shader, BlendingMode Blend, VkFormat Format), VkPipeline> pipelines = new Dictionary<(VulkanShader, BlendingMode, VkFormat), VkPipeline>();
 
     private bool cacheChanged;
 
-    public VulkanPipelines(VulkanDevice device, DiskCache? diskCache)
+    public VulkanPipelines(VulkanDevice device, VulkanRenderPasses renderPasses, DiskCache? diskCache)
     {
         this.device = device;
+        this.renderPasses = renderPasses;
         this.diskCache = diskCache;
 
         var properties = device.Properties;
@@ -62,16 +66,16 @@ internal sealed unsafe class VulkanPipelines : IDisposable
     }
 
     /// <summary>
-    /// The pipeline that draws with <paramref name="shader"/> into <paramref name="renderPass"/> (or any
-    /// pass compatible with it) using <paramref name="blend"/>.
+    /// The pipeline that draws with <paramref name="shader"/> into an attachment of
+    /// <paramref name="format"/> using <paramref name="blend"/>.
     /// </summary>
-    public VkPipeline Get(VulkanShader shader, BlendingMode blend, VkRenderPass renderPass)
+    public VkPipeline Get(VulkanShader shader, BlendingMode blend, VkFormat format)
     {
-        if (pipelines.TryGetValue((shader, blend, renderPass), out var pipeline))
+        if (pipelines.TryGetValue((shader, blend, format), out var pipeline))
             return pipeline;
 
-        pipeline = create(shader, blend, renderPass);
-        pipelines[(shader, blend, renderPass)] = pipeline;
+        pipeline = create(shader, blend, renderPasses.Get(format, VulkanPassKind.OffscreenClear));
+        pipelines[(shader, blend, format)] = pipeline;
         return pipeline;
     }
 
@@ -81,7 +85,7 @@ internal sealed unsafe class VulkanPipelines : IDisposable
     /// </summary>
     public void Release(VulkanShader shader, Action<VkPipeline> retire)
     {
-        var keys = new List<(VulkanShader, BlendingMode, VkRenderPass)>();
+        var keys = new List<(VulkanShader, BlendingMode, VkFormat)>();
 
         foreach (var key in pipelines.Keys)
         {

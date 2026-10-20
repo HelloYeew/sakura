@@ -39,10 +39,7 @@ public sealed unsafe class VulkanShader : IShader
 
         Layout = VulkanShaderLayout.Create(SpirvReflection.Parse(spirv.VertexForReflection), SpirvReflection.Parse(spirv.FragmentForReflection), name);
 
-        if (!Layout.UsesTextureArray && Layout.Samplers.Count > 0)
-            throw new NotSupportedException($"Shader '{name}' uses single textures, which this renderer can't bind yet.");
-
-        PipelineLayout = descriptors.TextureArrayPipelineLayout;
+        PipelineLayout = Layout.UsesTextureArray ? descriptors.TextureArrayPipelineLayout : descriptors.SingleTexturePipelineLayout;
 
         VertexModule = createModule(spirv.Vertex, $"{name} (vertex)");
         FragmentModule = createModule(spirv.Fragment, $"{name} (fragment)");

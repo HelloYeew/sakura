@@ -12,11 +12,20 @@ namespace Sakura.Framework.Graphics.Rendering.Vulkan;
 /// <summary>
 /// Routes validation-layer messages to <see cref="Logger"/>.
 /// </summary>
+/// <remarks>
+/// Messages about invalid usage (and synchronization hazards) are warnings or errors, and are counted
+/// in <c>Vulkan › Validation Messages</c>, which should always read zero. Performance hints are only
+/// advice about valid usage, so they are logged at debug level and counted separately; the effect
+/// passes produce one by design, pairing <c>shader.vert</c>, which writes every varying, with fragment
+/// shaders that read only two of them.
+/// </remarks>
 internal static unsafe class VulkanDebug
 {
     private static readonly GlobalStatistic<long> stat_validation_messages = GlobalStatistics.Get<long>("Vulkan", "Validation Messages", StatisticKind.Cumulative);
+    private static readonly GlobalStatistic<long> stat_performance_hints = GlobalStatistics.Get<long>("Vulkan", "Performance Hints", StatisticKind.Cumulative);
 
     private static long messageCount;
+    private static long hintCount;
 
     public static VkDebugUtilsMessengerCreateInfoEXT CreateMessengerInfo() => new VkDebugUtilsMessengerCreateInfoEXT
     {
@@ -34,10 +43,17 @@ internal static unsafe class VulkanDebug
         // An exception can't cross back into the driver, so nothing may escape this method.
         try
         {
-            stat_validation_messages.Value = Interlocked.Increment(ref messageCount);
-
             string message = Marshal.PtrToStringUTF8((nint)data->pMessage) ?? string.Empty;
             string text = $"Vulkan {types.ToString().ToLowerInvariant()}: {message}";
+
+            if (types == VkDebugUtilsMessageTypeFlagsEXT.Performance)
+            {
+                stat_performance_hints.Value = Interlocked.Increment(ref hintCount);
+                Logger.Debug(text);
+                return 0;
+            }
+
+            stat_validation_messages.Value = Interlocked.Increment(ref messageCount);
 
             if ((severity & VkDebugUtilsMessageSeverityFlagsEXT.Error) != 0)
                 Logger.Error(text);

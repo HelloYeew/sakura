@@ -166,7 +166,7 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
         Format = surfaceFormat.format;
         Extent = extent;
         PresentMode = presentMode;
-        RenderPass = renderPasses.GetSwapchainPass(Format);
+        RenderPass = renderPasses.Get(Format, VulkanPassKind.SwapchainClear);
 
         createImageResources();
 
