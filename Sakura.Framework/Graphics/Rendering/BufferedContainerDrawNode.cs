@@ -144,9 +144,8 @@ public class BufferedContainerDrawNode : ContainerDrawNode
         int targetWidth = Math.Max(1, (int)MathF.Ceiling(rect.Width * renderScale.X * frameBufferScale.X));
         int targetHeight = Math.Max(1, (int)MathF.Ceiling(rect.Height * renderScale.Y * frameBufferScale.Y));
 
-        // Effect passes require a raw vertex upload + manual binds, available on the GL, Metal and
-        // Direct3D11 backends. Headless has no effect support.
-        bool effectsActive = (blurActive || grayscaleActive) && renderer is IGLRenderer or Metal.IMetalRenderer or Direct3D11.ID3D11Renderer;
+        // Effect passes require a raw vertex upload + manual binds. Headless has no effect support.
+        var effectRenderer = blurActive || grayscaleActive ? renderer as ICustomShaderRenderer : null;
 
         bool needsRedraw = !cacheDrawnFrameBuffer || shared.RenderedVersion != AppliedSubtreeVersion;
 
@@ -177,8 +176,8 @@ public class BufferedContainerDrawNode : ContainerDrawNode
 
             renderer.UnbindFrameBuffer();
 
-            shared.FinalEffectBuffer = effectsActive
-                ? runEffectPasses(renderer, rect, targetWidth, targetHeight, renderScale)
+            shared.FinalEffectBuffer = effectRenderer != null
+                ? runEffectPasses(effectRenderer, rect, targetWidth, targetHeight, renderScale)
                 : null;
 
             shared.RenderedVersion = AppliedSubtreeVersion;
@@ -193,7 +192,7 @@ public class BufferedContainerDrawNode : ContainerDrawNode
     /// is left untouched (needed when <see cref="BufferedContainer.DrawOriginal"/> is set).
     /// </summary>
     /// <returns>The buffer holding the final effect result.</returns>
-    private IFrameBuffer runEffectPasses(IRenderer renderer, RectangleF rect, int targetWidth, int targetHeight, Vector2 renderScale)
+    private IFrameBuffer runEffectPasses(ICustomShaderRenderer renderer, RectangleF rect, int targetWidth, int targetHeight, Vector2 renderScale)
     {
         if (blurShader == null || !ReferenceEquals(shaderRenderer, renderer))
         {
@@ -255,7 +254,7 @@ public class BufferedContainerDrawNode : ContainerDrawNode
         }
     }
 
-    private void blurPass(IRenderer renderer, IFrameBuffer source, IFrameBuffer target, RectangleF rect, Vector2 direction, float sigmaTexels)
+    private void blurPass(ICustomShaderRenderer renderer, IFrameBuffer source, IFrameBuffer target, RectangleF rect, Vector2 direction, float sigmaTexels)
     {
         int radius = sigmaTexels > 0 ? Math.Min(max_blur_radius, (int)MathF.Ceiling(sigmaTexels * 3)) : 0;
 
@@ -268,7 +267,7 @@ public class BufferedContainerDrawNode : ContainerDrawNode
         });
     }
 
-    private void grayscalePass(IRenderer renderer, IFrameBuffer source, IFrameBuffer target, RectangleF rect)
+    private void grayscalePass(ICustomShaderRenderer renderer, IFrameBuffer source, IFrameBuffer target, RectangleF rect)
     {
         runShaderPass(renderer, source, target, rect, grayscaleShader!, "GrayscaleBlock", new Uniforms.GrayscaleBlock
         {
@@ -280,7 +279,7 @@ public class BufferedContainerDrawNode : ContainerDrawNode
     /// Draws a full-buffer quad from <paramref name="source"/> into <paramref name="target"/>
     /// using a custom shader, whose pass-specific uniform block is <paramref name="block"/>.
     /// </summary>
-    private static void runShaderPass<TBlock>(IRenderer renderer, IFrameBuffer source, IFrameBuffer target, RectangleF rect, IShader shader, string blockName, in TBlock block)
+    private static void runShaderPass<TBlock>(ICustomShaderRenderer renderer, IFrameBuffer source, IFrameBuffer target, RectangleF rect, IShader shader, string blockName, in TBlock block)
         where TBlock : unmanaged
     {
         renderer.BindFrameBuffer(target, rect);
@@ -301,32 +300,10 @@ public class BufferedContainerDrawNode : ContainerDrawNode
         Span<Vertex.Vertex> quad = stackalloc Vertex.Vertex[4];
         fillQuad(quad, rect, new Vector4(1, 1, 1, 1));
 
-        drawRaw(renderer, quad);
+        renderer.DrawVerticesRaw(quad);
         renderer.RestoreMainShader();
 
         renderer.UnbindFrameBuffer();
-    }
-
-    /// <summary>
-    /// Issues a raw vertex draw on whichever backend is active (GL or Metal). Both expose a
-    /// slot-management-free raw draw through their backend-specific renderer interface.
-    /// </summary>
-    private static void drawRaw(IRenderer renderer, ReadOnlySpan<Vertex.Vertex> vertices)
-    {
-        switch (renderer)
-        {
-            case IGLRenderer gl:
-                gl.DrawVerticesRaw(vertices);
-                break;
-
-            case Metal.IMetalRenderer metal:
-                metal.DrawVerticesRaw(vertices);
-                break;
-
-            case Direct3D11.ID3D11Renderer d3D11:
-                d3D11.DrawVerticesRaw(vertices);
-                break;
-        }
     }
 
     private void drawComposite(IRenderer renderer, RectangleF rect)
