@@ -166,4 +166,54 @@ public class ShaderCompilerTest
     }
 
     #endregion
+
+    #region SPIR-V (Vulkan)
+
+    [Test]
+    public void CompilesMinimalShader_ToSpirv()
+    {
+        if (!tryCompile(out Exception err))
+            Assert.Ignore($"SPIR-V native compiler unavailable on this platform: {err.Message}");
+
+        var pair = ShaderCompiler.GetOrCompileSpirvSource(minimal_vert_450, minimal_frag_450);
+
+        foreach (byte[] module in new[] { pair.Vertex, pair.Fragment, pair.VertexForReflection, pair.FragmentForReflection })
+            Assert.That(BitConverter.ToUInt32(module, 0), Is.EqualTo(0x07230203u), "SPIR-V magic number");
+    }
+
+    [Test]
+    public void SpirvSecondCall_HitsCache_AndReturnsSameBytes()
+    {
+        if (!tryCompile(out Exception err))
+            Assert.Ignore($"SPIR-V native compiler unavailable on this platform: {err.Message}");
+
+        var first = ShaderCompiler.GetOrCompileSpirvSource(minimal_vert_450, minimal_frag_450, cache);
+
+        string cacheDir = Path.Combine(tempDir, "cache");
+        Assert.That(Directory.GetFiles(cacheDir), Has.Length.EqualTo(1));
+
+        var second = ShaderCompiler.GetOrCompileSpirvSource(minimal_vert_450, minimal_frag_450, cache);
+
+        Assert.That(second.Vertex, Is.EqualTo(first.Vertex));
+        Assert.That(second.Fragment, Is.EqualTo(first.Fragment));
+        Assert.That(second.VertexForReflection, Is.EqualTo(first.VertexForReflection));
+        Assert.That(second.FragmentForReflection, Is.EqualTo(first.FragmentForReflection));
+        Assert.That(Directory.GetFiles(cacheDir), Has.Length.EqualTo(1));
+    }
+
+    [Test]
+    public void SpirvDebugAndOptimised_AndCrossCompiledOutput_AreSeparateCacheEntries()
+    {
+        if (!tryCompile(out Exception err))
+            Assert.Ignore($"SPIR-V native compiler unavailable on this platform: {err.Message}");
+
+        ShaderCompiler.GetOrCompileSpirvSource(minimal_vert_450, minimal_frag_450, cache, debug: false);
+        ShaderCompiler.GetOrCompileSpirvSource(minimal_vert_450, minimal_frag_450, cache, debug: true);
+        ShaderCompiler.GetOrCompileSource(minimal_vert_450, minimal_frag_450, CrossCompileTarget.GLSL, cache);
+
+        string cacheDir = Path.Combine(tempDir, "cache");
+        Assert.That(Directory.GetFiles(cacheDir), Has.Length.EqualTo(3));
+    }
+
+    #endregion
 }
