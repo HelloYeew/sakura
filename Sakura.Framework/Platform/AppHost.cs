@@ -10,7 +10,6 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Runtime;
 using System.Runtime.ExceptionServices;
-using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using JetBrains.Annotations;
@@ -628,11 +627,8 @@ public abstract class AppHost : IDisposable
 
             appLoopStopwatch.Start();
             long nextMainFrameTime = Stopwatch.GetTimestamp();
-            const double main_spin_guard_ms = 0.5;
 
-            INativeSleep mainNativeSleep = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-                ? new WindowsNativeSleep()
-                : UnixNativeSleep.IsAvailable ? new UnixNativeSleep() : null;
+            var mainWaiter = new FrameWaiter("MainThread");
 
             try
             {
@@ -707,30 +703,10 @@ public abstract class AppHost : IDisposable
                         if (now > nextMainFrameTime)
                             nextMainFrameTime = now;
 
-                        double remainingMs = (nextMainFrameTime - now) * ms_per_tick;
-
                         // Same spin policy as the app threads: skip precision spinning when
                         // disabled or while the window is inactive (battery savings).
                         bool mainPreciseTiming = Options.AllowThreadSpinning && Window?.IsActive != false;
-                        double mainGuardMs = mainPreciseTiming ? main_spin_guard_ms : 0;
-
-                        // Coarse phase: give the CPU back to the OS for the bulk of the wait.
-                        double sleepMs = remainingMs - mainGuardMs;
-                        if (sleepMs > 0)
-                        {
-                            var sleepSpan = TimeSpan.FromMilliseconds(sleepMs);
-                            if (mainNativeSleep?.Sleep(sleepSpan) != true)
-                                Thread.Sleep(sleepSpan);
-                        }
-
-                        // Fine phase: tight bounded spin (~main_spin_guard_ms) to land exactly on the
-                        // deadline. Thread.SpinWait issues a CPU pause hint without yielding to sleep,
-                        // which would overshoot a sub-millisecond deadline.
-                        if (mainPreciseTiming)
-                        {
-                            while (Stopwatch.GetTimestamp() < nextMainFrameTime)
-                                Thread.SpinWait(1);
-                        }
+                        mainWaiter.WaitUntil(nextMainFrameTime, mainPreciseTiming);
                     }
                     else
                     {
@@ -745,7 +721,7 @@ public abstract class AppHost : IDisposable
             }
             finally
             {
-                mainNativeSleep?.Dispose();
+                mainWaiter.Dispose();
             }
         }
         catch (Exception ex)
