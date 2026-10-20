@@ -19,17 +19,39 @@ public class HostOptions
     public bool PortableInstallation { get; set; }
 
     /// <summary>
+    /// What kind of application this is. <see cref="Platform.AppType.Application"/> trades the precise timing a
+    /// game needs for far less CPU, and makes <see cref="AllowThreadSpinning"/> and
+    /// <see cref="UseMultimediaClassScheduler"/> have no effect.
+    /// </summary>
+    public AppType AppType { get; set; } = AppType.Game;
+
+    /// <summary>
     /// Whether to limit the update thread FPS to maximum at 1000 FPS in order to prevent excessive CPU usage
     /// when the game is running with an unlimited update rate.
     /// </summary>
     public bool LimitUnlimitedUpdateRate { get; set; } = true;
 
     /// <summary>
-    /// Whether frame-pacing threads may busy-spin for the last ~0.5ms of each frame to land
-    /// exactly on their deadline. This gives the most precise frame timing on desktop, at the
-    /// cost of constant CPU usage. Disable on battery-constrained targets (e.g. mobile) to
-    /// trade sub-millisecond pacing jitter for power savings. Spinning is automatically
-    /// suspended while the window is inactive regardless of this setting.
+    /// Whether the update and draw threads (and the main loop, when single-threaded) may busy-spin the
+    /// last stretch of each frame to land exactly on their deadline. How long that stretch is depends
+    /// on how late the platform's sleep wakes, from tens of microseconds on macOS to over half a
+    /// millisecond on Windows. This gives the most precise frame timing on desktop, at the cost of
+    /// constant CPU usage. Disable on battery-constrained targets (e.g. mobile) to trade
+    /// sub-millisecond pacing jitter for power savings. Spinning is automatically suspended while the
+    /// window is inactive regardless of this setting, and the audio thread and multi-threaded input
+    /// loop never spin. Only applies to <see cref="Platform.AppType.Game"/>.
     /// </summary>
     public bool AllowThreadSpinning { get; set; } = true;
+
+    /// <summary>
+    /// Windows only. Whether to register the update and draw threads with the Multimedia Class
+    /// Scheduler Service as a "Games" task, which lifts them above ordinary threads so one woken by its
+    /// timer does not wait behind other work for a CPU. Only applies to <see cref="Platform.AppType.Game"/>.
+    /// </summary>
+    /// <remarks>
+    /// Off by default until measured. The service reserves a share of CPU for everything else (20% by
+    /// default) and drops registered threads to a low priority while they are over it, which these
+    /// threads' busy-spinning may trigger.
+    /// </remarks>
+    public bool UseMultimediaClassScheduler { get; set; }
 }

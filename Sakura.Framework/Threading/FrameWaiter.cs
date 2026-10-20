@@ -49,7 +49,8 @@ internal sealed class FrameWaiter : IDisposable
     private static readonly double timespan_ticks_per_stopwatch_tick = (double)TimeSpan.TicksPerSecond / Stopwatch.Frequency;
 
     private readonly INativeSleep? nativeSleep;
-    private readonly GlobalStatistic<double>? statGuard;
+    private readonly string? name;
+    private GlobalStatistic<double>? statGuard;
 
     /// <summary>
     /// How much of each precise wait is left to the spin, in stopwatch ticks.
@@ -60,7 +61,7 @@ internal sealed class FrameWaiter : IDisposable
     public FrameWaiter(string name)
         : this(CreateNativeSleep())
     {
-        statGuard = GlobalStatistics.Get<double>("Threading", $"{name} Sleep Guard", StatisticKind.Gauge, StatisticUnit.Milliseconds);
+        this.name = name;
 
         Logger.Debug($"FrameWaiter '{name}' initialized with native sleep: {(nativeSleep != null ? nativeSleep.GetType().Name : "none")}");
     }
@@ -76,8 +77,8 @@ internal sealed class FrameWaiter : IDisposable
     /// <param name="deadline">The timestamp to return at.</param>
     /// <param name="precise">
     /// Whether to spin the guard. When false the whole wait is slept and the OS's lateness accepted to save
-    /// CPU. Those wakes also leave the guard alone, since they come from an inactive window whose timers
-    /// may be throttled and are not the ones a focused window will see.
+    /// CPU. Those wakes also leave the guard alone: they come from a thread that never spins, or from an
+    /// inactive window whose timers may be throttled and are not the ones a focused window will see.
     /// </param>
     public void WaitUntil(long deadline, bool precise)
     {
@@ -117,8 +118,12 @@ internal sealed class FrameWaiter : IDisposable
 
         GuardTicks = Math.Clamp(guard, 0, max_guard_ticks);
 
-        if (statGuard != null)
-            statGuard.Value = GuardTicks / ticks_per_us / 1000;
+        if (name == null)
+            return;
+
+        // Registered on the first precise wait, so a thread that never spins does not list a guard it never uses.
+        statGuard ??= GlobalStatistics.Get<double>("Threading", $"{name} Sleep Guard", StatisticKind.Gauge, StatisticUnit.Milliseconds);
+        statGuard.Value = GuardTicks / ticks_per_us / 1000;
     }
 
     public void Dispose() => nativeSleep?.Dispose();

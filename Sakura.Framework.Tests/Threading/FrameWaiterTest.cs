@@ -7,6 +7,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using NUnit.Framework;
+using Sakura.Framework.Statistic;
 using Sakura.Framework.Threading;
 
 namespace Sakura.Framework.Tests.Threading;
@@ -120,6 +121,35 @@ public class FrameWaiterTest
             waiter.WaitUntil(Stopwatch.GetTimestamp() + ticks(1000), precise: false);
 
         Assert.That(waiter.GuardTicks, Is.EqualTo(before));
+    }
+
+    /// <summary>
+    /// The audio thread and the multi-threaded input loop never spin, so they should not list a guard
+    /// that would sit at its starting value forever and read as if it were in use.
+    /// </summary>
+    [Test]
+    public void TestGuardIsListedOnlyOnceTheThreadSpins()
+    {
+        const string name = "TestGuardListingThread";
+
+        using var waiter = new FrameWaiter(name);
+
+        waiter.WaitUntil(Stopwatch.GetTimestamp() + ticks(1000), precise: false);
+        Assert.That(isListed(), Is.False, "listed after an imprecise wait");
+
+        waiter.WaitUntil(Stopwatch.GetTimestamp() + ticks(2000), precise: true);
+        Assert.That(isListed(), Is.True, "not listed after a precise wait");
+
+        static bool isListed()
+        {
+            foreach (var stat in GlobalStatistics.GetStatistics())
+            {
+                if (stat.Group == "Threading" && stat.Name == $"{name} Sleep Guard")
+                    return true;
+            }
+
+            return false;
+        }
     }
 
     /// <summary>

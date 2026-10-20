@@ -379,7 +379,7 @@ public abstract class AppHost : IDisposable
     {
         Logger.Storage = Storage.GetStorageForDirectory("logs");
 
-        FrameworkConfigManager = new FrameworkConfigManager(Storage);
+        FrameworkConfigManager = new FrameworkConfigManager(Storage, Options.AppType);
         FrameworkConfigManager.Load();
     }
 
@@ -409,7 +409,8 @@ public abstract class AppHost : IDisposable
     {
         this.app = app;
 
-        if (RuntimeInfo.IsDesktop)
+        // Avoiding blocking collections lets the heap grow, which only a game's frame times are worth.
+        if (RuntimeInfo.IsDesktop && Options.AppType == AppType.Game)
         {
             GCSettings.LatencyMode = GCLatencyMode.SustainedLowLatency;
         }
@@ -533,20 +534,23 @@ public abstract class AppHost : IDisposable
             Window.GetPhysicalSize(out int initialPhysicalWidth, out int initialPhysicalHeight);
             onResize(initialPhysicalWidth, initialPhysicalHeight, Window.Width, Window.Height);
 
-            // Precision busy-spinning is only worthwhile while the window is focused (and may
+            // Precision busy-spinning is only worthwhile for a game while the window is focused (and may
             // be disabled entirely via HostOptions for battery-constrained targets).
-            Func<bool> usePreciseTiming = () => Options.AllowThreadSpinning && Window?.IsActive != false;
+            Func<bool> usePreciseTiming = () => allowSpinning && Window?.IsActive != false;
+            bool useMultimediaClassScheduler = Options.AppType == AppType.Game && Options.UseMultimediaClassScheduler;
 
             updateThread = new AppThread("UpdateThread", PerformUpdate, getUpdateTargetHz)
             {
                 GetDeadlineMilliseconds = GetPresentationDeadlineMs,
                 Priority = ThreadPriority.AboveNormal,
-                UsePreciseTiming = usePreciseTiming
+                UsePreciseTiming = usePreciseTiming,
+                UseMultimediaClassScheduler = useMultimediaClassScheduler
             };
             drawThread = new AppThread("DrawThread", PerformDraw, getDrawTargetHz)
             {
                 Priority = ThreadPriority.Normal,
                 UsePreciseTiming = usePreciseTiming,
+                UseMultimediaClassScheduler = useMultimediaClassScheduler,
                 GetBlockedMilliseconds = () => lastPresentMilliseconds,
                 GetDeadlineMilliseconds = GetPresentationDeadlineMs
             };
@@ -555,10 +559,10 @@ public abstract class AppHost : IDisposable
                 GetDeadlineMilliseconds = GetPresentationDeadlineMs,
                 Priority = ThreadPriority.Highest,
 
-                // Back to precise timing now that PerformSoundUpdate has work. It was dropped while the
-                // thread ran an empty method, where spinning half of every millisecond at the highest
-                // priority in the process bought nothing.
-                UsePreciseTiming = usePreciseTiming
+                // Never spins. The sound itself is mixed on the audio device's own thread, so this one only
+                // advances AudioManager state, which a tick landing a fraction of a millisecond late does not
+                // disturb. Spinning bought nothing but a core's worth of CPU.
+                UsePreciseTiming = static () => false
             };
 
             drawThread.OnInitialize = () => Window.MakeCurrent();
@@ -703,9 +707,11 @@ public abstract class AppHost : IDisposable
                         if (now > nextMainFrameTime)
                             nextMainFrameTime = now;
 
-                        // Same spin policy as the app threads: skip precision spinning when
-                        // disabled or while the window is inactive (battery savings).
-                        bool mainPreciseTiming = Options.AllowThreadSpinning && Window?.IsActive != false;
+                        // Multi-threaded, this loop only polls input, and the events carry their own timestamps,
+                        // so it sleeps rather than spins. Single-threaded it drives every frame, so it follows
+                        // the app threads' policy: spin unless disabled or the window is inactive.
+                        bool mainPreciseTiming = ExecutionMode.Value == Threading.ExecutionMode.SingleThread
+                                                 && allowSpinning && Window?.IsActive != false;
                         mainWaiter.WaitUntil(nextMainFrameTime, mainPreciseTiming);
                     }
                     else
@@ -1099,7 +1105,7 @@ public abstract class AppHost : IDisposable
     /// </summary>
     internal double GetPresentationDeadlineMs()
     {
-        double displayHz = Window?.DisplayHz > 0 ? Window.DisplayHz : 60;
+        double displayHz = getDisplayHz();
         double drawHz = getDrawTargetHz();
 
         // Unlimited (0) has no ceiling of its own, so the panel is the only thing left pacing us.
@@ -1108,13 +1114,29 @@ public abstract class AppHost : IDisposable
         return presentationHz > 0 ? 1000.0 / presentationHz : 0;
     }
 
-    private double getInputTargetHz() => Window != null && !Window.IsActive ? 60.0 : 1000.0;
-    private double getAudioTargetHz() => Window != null && !Window.IsActive ? 60.0 : 1000.0;
+    private bool allowSpinning => Options.AppType == AppType.Game && Options.AllowThreadSpinning;
+
+    private double getDisplayHz() => Window?.DisplayHz > 0 ? Window.DisplayHz : 60;
+
+    private double getInputTargetHz() => getPollingTargetHz();
+    private double getAudioTargetHz() => getPollingTargetHz();
+
+    /// <summary>
+    /// The rate input is polled and audio state advanced at. An application polls no faster than it can show
+    /// the result: input events carry their own timestamps, and nobody hears a click sound start a frame late.
+    /// </summary>
+    private double getPollingTargetHz()
+    {
+        if (Window != null && !Window.IsActive)
+            return 60;
+
+        return Options.AppType == AppType.Game ? 1000 : getDisplayHz();
+    }
 
     private double getDrawTargetHz()
     {
         // In headless mode, default to a sensible refresh rate for update calculations.
-        double refreshRate = Window?.DisplayHz > 0 ? Window.DisplayHz : 60;
+        double refreshRate = getDisplayHz();
 
         if (Window != null && !Window.IsActive)
             return 60;
@@ -1146,7 +1168,9 @@ public abstract class AppHost : IDisposable
         if (Window != null && !Window.IsActive)
             return 60;
 
-        double updateHz = drawHz * 2;
+        // A game updates between drawn frames for input and physics precision. An application's updates
+        // only matter once they are drawn.
+        double updateHz = Options.AppType == AppType.Game ? drawHz * 2 : drawHz;
 
         return Options.LimitUnlimitedUpdateRate ? Math.Min(updateHz, 1000) : updateHz;
     }
