@@ -141,11 +141,15 @@ jobs:
           # libpng and zlib come from vcpkg's static triplet and must be inside the library. A NEEDED
           # entry on libpng or libz would load on a developer machine that happens to have them and fail
           # on one that does not.
+          #
+          # ld-linux-aarch64.so.1 is glibc's own dynamic loader, present on every glibc system. It shows
+          # up because on aarch64 glibc keeps the stack-protector guard (__stack_chk_guard) in the loader
+          # rather than in thread-local storage, so any code built with -fstack-protector references it.
           readelf -d out/libfreetype.so | grep NEEDED
-          deps=$(readelf -d out/libfreetype.so | grep NEEDED | grep -Ev 'libc\.so\.6|libm\.so\.6' || true)
+          deps=$(readelf -d out/libfreetype.so | grep NEEDED | grep -Ev 'libc\.so\.6|libm\.so\.6|ld-linux-aarch64\.so\.1' || true)
 
           if [ -n "$deps" ]; then
-            echo "::error::libfreetype.so links more than libc and libm:"
+            echo "::error::libfreetype.so links more than glibc (libc, libm and the dynamic loader):"
             echo "$deps"
             exit 1
           fi
