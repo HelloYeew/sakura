@@ -1,0 +1,260 @@
+name: Build FreeType
+
+# FreeTypeSharp, the managed FreeType binding, ships libfreetype for linux-x64 but not for linux-arm64, so
+# text rendering fails there. Its loader already probes runtimes/linux-<arch>/native/libfreetype.so, which
+# is where this package's natives land, so supplying the library from here fills the gap without forking
+# the binding.
+#
+# The library is built from the same FreeType fork, commit and CMake options that FreeTypeSharp's own
+# binaries use, so every RID runs the same FreeType. Only add RIDs FreeTypeSharp itself lacks: two
+# packages carrying the same runtimes/<rid>/native file fail the consumer's publish with NETSDK1152.
+#
+# This is a stopgap while FreeTypeSharp (ryancheung/FreeTypeSharp) does not ship linux-arm64 itself;
+# no release has, up to and including 3.1.0. Its native binaries are built in ryancheung/freetype's
+# own CI and committed to FreeTypeSharp by hand, so linux-arm64 appears only once that fork's build
+# matrix gains it and a FreeTypeSharp release packs the result.
+#
+# The check-upstream job tells you which of two situations you are in, every time this runs, against
+# whichever FreeTypeSharp version Sakura.Framework.csproj references:
+#
+#   1. That FreeTypeSharp release ships linux-arm64 itself. Its library replaces this one:
+#        - delete this workflow, and
+#        - delete Sakura.Framework.NativeLibraries/runtimes/linux-arm64/native/libfreetype.so,
+#        - then release Sakura.Framework.NativeLibraries, so no package carries a second copy.
+#
+#   2. It still lacks linux-arm64, but builds from a different FreeType commit than FREETYPE_COMMIT
+#      (the usual case after bumping FreeTypeSharp). Keep this workflow and follow it:
+#        - set FREETYPE_COMMIT to the commit the job reports (that release's freetype submodule),
+#        - compare the CMake options in ryancheung/freetype's .github/workflows/main.yml at that commit
+#          against the Configure step below, and mirror any change, minus the Windows-only patch,
+#        - run this workflow, merge update-freetype-binaries, and release
+#          Sakura.Framework.NativeLibraries alongside the FreeTypeSharp bump.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # The commit FreeTypeSharp 3.1.0's freetype submodule points at: FreeType 2.13.2 plus that fork's
+  # vcpkg manifest, which pins libpng. Change it only together with the FreeTypeSharp version in
+  # Sakura.Framework.csproj, or the binding and this library drift apart.
+  FREETYPE_REPOSITORY: ryancheung/freetype
+  FREETYPE_COMMIT: 7d3c6bb04d0fdaa223dca25d20502acc29709972
+
+jobs:
+  check-upstream:
+    name: Check FreeTypeSharp still needs this
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Compare with the FreeTypeSharp version Sakura.Framework references
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          version=$(grep -oP '<PackageReference Include="FreeTypeSharp" Version="\K[^"]+' Sakura.Framework/Sakura.Framework.csproj)
+          echo "Sakura.Framework references FreeTypeSharp $version"
+
+          curl -fsSL -o freetypesharp.nupkg "https://api.nuget.org/v3-flatcontainer/freetypesharp/$version/freetypesharp.$version.nupkg"
+
+          if unzip -l freetypesharp.nupkg | grep -q 'runtimes/linux-arm64/native/'; then
+            echo "::error::FreeTypeSharp $version ships linux-arm64 itself, so this workflow is no longer needed. Delete it and Sakura.Framework.NativeLibraries/runtimes/linux-arm64/native/libfreetype.so, then release Sakura.Framework.NativeLibraries; keeping both fails publish with NETSDK1152."
+            exit 1
+          fi
+
+          # The package records the FreeTypeSharp commit it was packed from, and that commit's freetype
+          # submodule is the FreeType its binaries were built from.
+          packed_from=$(unzip -p freetypesharp.nupkg '*.nuspec' | grep -oP '<repository [^>]*commit="\K[0-9a-f]+')
+          upstream_freetype=$(gh api "repos/ryancheung/FreeTypeSharp/contents/freetype?ref=$packed_from" --jq .sha)
+
+          echo "FreeTypeSharp $version was packed from ryancheung/FreeTypeSharp@$packed_from, whose freetype submodule is $upstream_freetype"
+
+          if [ "$upstream_freetype" != "$FREETYPE_COMMIT" ]; then
+            echo "::error::FreeTypeSharp $version builds FreeType from ryancheung/freetype@$upstream_freetype, but this workflow builds $FREETYPE_COMMIT. Set FREETYPE_COMMIT to $upstream_freetype, mirror any change to the CMake options in that commit's .github/workflows/main.yml, then run again."
+            exit 1
+          fi
+
+          echo "FreeTypeSharp $version still lacks linux-arm64 and builds the same FreeType commit as this workflow."
+
+  build-linux-arm64:
+    name: Build linux-arm64
+    needs: [check-upstream]
+    # 22.04 rather than latest keeps the library's glibc floor at 2.35, so it still loads on older
+    # distributions. A native arm64 runner also lets the library be loaded and called below rather than
+    # only inspected.
+    runs-on: ubuntu-22.04-arm
+    env:
+      # vcpkg ships no prebuilt tool binaries for arm64 Linux and refuses to run without this.
+      VCPKG_FORCE_SYSTEM_BINARIES: 1
+    steps:
+      - name: Checkout FreeType
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ env.FREETYPE_REPOSITORY }}
+          ref: ${{ env.FREETYPE_COMMIT }}
+          path: freetype
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config curl zip unzip tar
+
+      - name: Setup vcpkg
+        run: |
+          # A full clone: the fork's vcpkg-configuration.json pins a baseline commit, which vcpkg can only
+          # resolve from history.
+          git clone https://github.com/microsoft/vcpkg.git
+          ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Configure
+        run: >
+          cmake -S freetype -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_SHARED_LIBS=1
+          -DFT_REQUIRE_PNG=ON
+          -DCMAKE_DISABLE_FIND_PACKAGE_HarfBuzz=1
+          -DCMAKE_DISABLE_FIND_PACKAGE_BZip2=1
+          -DCMAKE_DISABLE_FIND_PACKAGE_BrotliDec=1
+          -DVCPKG_TARGET_TRIPLET=arm64-linux
+          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+          -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-z,max-page-size=65536"
+
+      - name: Build
+        run: |
+          cmake --build build --config Release --parallel
+
+          # CMake produces libfreetype.so.6.x plus symlinks. FreeTypeSharp loads the file by the path
+          # runtimes/linux-arm64/native/libfreetype.so, so ship the real file under that name.
+          mkdir -p out
+          cp -L build/libfreetype.so out/libfreetype.so
+          strip --strip-unneeded out/libfreetype.so
+
+      - name: Assert no link dependency beyond the C library
+        run: |
+          set -euo pipefail
+
+          # libpng and zlib come from vcpkg's static triplet and must be inside the library. A NEEDED
+          # entry on libpng or libz would load on a developer machine that happens to have them and fail
+          # on one that does not.
+          readelf -d out/libfreetype.so | grep NEEDED
+          deps=$(readelf -d out/libfreetype.so | grep NEEDED | grep -Ev 'libc\.so\.6|libm\.so\.6' || true)
+
+          if [ -n "$deps" ]; then
+            echo "::error::libfreetype.so links more than libc and libm:"
+            echo "$deps"
+            exit 1
+          fi
+
+      - name: Assert page alignment and glibc floor
+        run: |
+          set -euo pipefail
+
+          # arm64 Linux kernels run with 4 KB, 16 KB (Apple Silicon under Asahi) or 64 KB pages, and a
+          # library whose LOAD segments are aligned below the running page size cannot be mapped.
+          for align in $(readelf -lW out/libfreetype.so | awk '$1 == "LOAD" { print $NF }'); do
+            if (( align < 0x10000 )); then
+              echo "::error::libfreetype.so has a LOAD segment aligned to $align, below the 64 KB some arm64 kernels need."
+              exit 1
+            fi
+          done
+
+          floor=$(objdump -T out/libfreetype.so | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -V | tail -1)
+          echo "glibc floor: $floor"
+
+          if [ "$(printf '%s\n' "$floor" 2.35 | sort -V | tail -1)" != "2.35" ]; then
+            echo "::error::libfreetype.so needs glibc $floor, newer than the 2.35 this build is meant to stay within."
+            exit 1
+          fi
+
+      - name: Load the library and call it
+        run: |
+          set -euo pipefail
+
+          # dlopen by path, as .NET's NativeLibrary.TryLoad does, then call into FreeType. This proves the
+          # library loads on arm64 and reports the expected version, not just that it is an ELF file.
+          cat > probe.c <<'EOF'
+          #include <dlfcn.h>
+          #include <stdio.h>
+
+          typedef int (*init_fn)(void **);
+          typedef void (*version_fn)(void *, int *, int *, int *);
+          typedef int (*done_fn)(void *);
+
+          int main(int argc, char **argv)
+          {
+              void *handle = dlopen(argv[1], RTLD_NOW);
+              if (!handle) { printf("dlopen failed: %s\n", dlerror()); return 1; }
+
+              init_fn init = (init_fn)dlsym(handle, "FT_Init_FreeType");
+              version_fn version = (version_fn)dlsym(handle, "FT_Library_Version");
+              done_fn done = (done_fn)dlsym(handle, "FT_Done_FreeType");
+              if (!init || !version || !done) { puts("missing export"); return 1; }
+
+              void *library;
+              if (init(&library)) { puts("FT_Init_FreeType failed"); return 1; }
+
+              int major, minor, patch;
+              version(library, &major, &minor, &patch);
+              printf("%d.%d.%d\n", major, minor, patch);
+
+              done(library);
+              return 0;
+          }
+          EOF
+
+          gcc probe.c -ldl -o probe
+          actual=$(./probe "$PWD/out/libfreetype.so")
+
+          header=freetype/include/freetype/freetype.h
+          expected="$(awk '/#define FREETYPE_MAJOR/ { print $3 }' $header).$(awk '/#define FREETYPE_MINOR/ { print $3 }' $header).$(awk '/#define FREETYPE_PATCH/ { print $3 }' $header)"
+
+          echo "loaded FreeType $actual, expected $expected"
+
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::The built library reports FreeType $actual, but the checked-out source is $expected."
+            exit 1
+          fi
+
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-arm64
+          path: out/libfreetype.so
+
+  deploy-pr:
+    name: Distribute and Push
+    runs-on: ubuntu-latest
+    needs: [build-linux-arm64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Distribute Binaries
+        run: |
+          mkdir -p Sakura.Framework.NativeLibraries/runtimes/linux-arm64/native
+          cp artifacts/linux-arm64/libfreetype.so Sakura.Framework.NativeLibraries/runtimes/linux-arm64/native/libfreetype.so
+
+      - name: Commit and Push to Repository
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout -b update-freetype-binaries
+
+          git add Sakura.Framework.NativeLibraries/runtimes/
+
+          if git diff --staged --quiet; then
+            echo "No changes in native libraries detected. Skipping push."
+          else
+            git commit -m "Update Native FreeType Binaries" -m "Co-authored-by: HelloYeew <68165621+HelloYeew@users.noreply.github.com>"
+            git push --force origin update-freetype-binaries
+          fi
