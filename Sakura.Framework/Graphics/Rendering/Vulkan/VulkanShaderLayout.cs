@@ -36,6 +36,13 @@ internal sealed class VulkanShaderLayout
     public const uint UNIFORM_SET = 0;
     public const uint TEXTURE_SET = 1;
     public const uint UNIFORM_BINDING_COUNT = 8;
+
+    /// <summary>
+    /// The bytes every uniform-block descriptor covers, and so the largest block a shader may declare.
+    /// Blocks are written at a fresh offset of the frame's stream buffer each time they change, and the
+    /// descriptor's range has to be fixed when the set is written.
+    /// </summary>
+    public const uint UNIFORM_BLOCK_RANGE = 256;
     public const uint TEXTURE_ARRAY_LENGTH = 16;
     public const uint SINGLE_TEXTURE_COUNT = 4;
 
@@ -124,6 +131,12 @@ internal sealed class VulkanShaderLayout
             if (block.Set != UNIFORM_SET || block.Binding >= UNIFORM_BINDING_COUNT)
             {
                 problems.Add($"uniform block '{block.Name}' is at set {block.Set}, binding {block.Binding}; uniform blocks must be in set {UNIFORM_SET}, bindings 0–{UNIFORM_BINDING_COUNT - 1}");
+                continue;
+            }
+
+            if (block.Size > UNIFORM_BLOCK_RANGE)
+            {
+                problems.Add($"uniform block '{block.Name}' is {block.Size} bytes; a uniform block may be at most {UNIFORM_BLOCK_RANGE} bytes");
                 continue;
             }
 

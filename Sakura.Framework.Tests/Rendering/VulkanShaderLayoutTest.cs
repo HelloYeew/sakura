@@ -259,6 +259,10 @@ public class VulkanShaderLayoutTest
         => assertRejected(plain_vert, fragment("layout(set = 0, binding = 8, std140) uniform GameBlock { vec4 u_Tint; };", "u_Tint"), "'GameBlock'", "binding 8");
 
     [Test]
+    public void UniformBlock_LargerThanTheDescriptorRange_IsRejected()
+        => assertRejected(plain_vert, fragment("layout(set = 0, binding = 5, std140) uniform GameBlock { vec4 u_Colours[17]; };", "u_Colours[16]"), "'GameBlock'", "272 bytes");
+
+    [Test]
     public void SingleTexture_PastBindingThree_IsRejected()
         => assertRejected(plain_vert, fragment("layout(set = 1, binding = 4) uniform sampler2D u_Extra;", "texture(u_Extra, vec2(0.5))"), "'u_Extra'", "binding 4");
 
