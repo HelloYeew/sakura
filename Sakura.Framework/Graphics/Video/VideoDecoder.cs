@@ -546,6 +546,7 @@ public unsafe class VideoDecoder : IDisposable
     ///   macOS  — VideoToolbox
     ///   Windows — D3D11VA > DXVA2 > CUDA
     ///   Linux   — VAAPI > VDPAU > CUDA
+    ///   Android — MediaCodec (a separate decoder rather than a device; see <see cref="tryOpenMediaCodec"/>)
     ///
     /// If every HW attempt fails, or if <see cref="AllowHardwareAcceleration"/> is
     /// false, the plain software codec is opened instead.
@@ -555,6 +556,17 @@ public unsafe class VideoDecoder : IDisposable
     {
         if (HardwareAcceleration.Value)
         {
+            // Android has no device list to walk since its hardware decoders are separate FFmpeg codecs.
+            if (OperatingSystem.IsAndroid())
+            {
+                if (tryOpenMediaCodec(codec))
+                    return;
+
+                Logger.Verbose("[VideoDecoder] No MediaCodec decoder available, falling back to software.");
+                openCodecSoftware(codec);
+                return;
+            }
+
             // Platform-preferred HW device types, tried in order.
             AVHWDeviceType[] candidates;
 
@@ -652,6 +664,47 @@ public unsafe class VideoDecoder : IDisposable
         }
 
         codecContext = ctx;
+        return true;
+    }
+
+    /// <summary>
+    /// Opens Android's MediaCodec decoder for <paramref name="codec"/>'s format, if the FFmpeg build has
+    /// one. FFmpeg exposes these as separate codecs (<c>h264_mediacodec</c>, <c>hevc_mediacodec</c>, ...)
+    /// rather than as a hardware device on the regular decoder, so they are found by name.
+    /// </summary>
+    /// <remarks>
+    /// No output surface is attached, so MediaCodec runs in buffer mode: decoded frames come back as
+    /// ordinary NV12 or YUV420P frames in system memory and take the same upload path as software
+    /// decoding. With no Java VM registered, FFmpeg drives MediaCodec through the NDK, so nothing on the
+    /// Java side has to be set up first. A device that cannot decode this stream (an unsupported
+    /// profile, or 10-bit content on older hardware) fails to open here, and the caller falls back to
+    /// software.
+    /// </remarks>
+    private bool tryOpenMediaCodec(AVCodec* codec)
+    {
+        string name = $"{Marshal.PtrToStringAnsi((IntPtr)codec->name)}_mediacodec";
+        AVCodec* mediaCodec = ffmpeg.avcodec_find_decoder_by_name(name);
+
+        if (mediaCodec == null)
+            return false;
+
+        var ctx = ffmpeg.avcodec_alloc_context3(mediaCodec);
+        if (ctx == null) return false;
+
+        ctx->pkt_timebase = avStream->time_base;
+        ffmpeg.avcodec_parameters_to_context(ctx, avStream->codecpar);
+
+        if (ffmpeg.avcodec_open2(ctx, mediaCodec, null) < 0)
+        {
+            ffmpeg.avcodec_free_context(&ctx);
+            Logger.Verbose($"[VideoDecoder] Failed to open {name}");
+            return false;
+        }
+
+        codecContext = ctx;
+        ActiveHardwareDevice = AVHWDeviceType.AV_HWDEVICE_TYPE_MEDIACODEC;
+        Logger.Verbose($"[VideoDecoder] Hardware decoding active: {name}");
+        GlobalStatistics.Get<string>("Video", "HW Decoder").Value = "MediaCodec";
         return true;
     }
 
