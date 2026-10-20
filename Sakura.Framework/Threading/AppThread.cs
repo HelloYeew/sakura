@@ -53,6 +53,12 @@ public class AppThread
     /// </summary>
     public Func<bool> UsePreciseTiming { get; set; } = static () => true;
 
+    /// <summary>
+    /// Whether to register this thread with the Windows Multimedia Class Scheduler Service while it runs
+    /// multi-threaded. Ignored on other platforms. See <see cref="Platform.HostOptions.UseMultimediaClassScheduler"/>.
+    /// </summary>
+    public bool UseMultimediaClassScheduler { get; set; }
+
     private Thread? internalThread;
     private readonly ManualResetEventSlim pauseEvent = new ManualResetEventSlim(true);
     private volatile bool isRunning;
@@ -170,6 +176,11 @@ public class AppThread
         // stops and later restarts the loop. A waiter disposed by the previous run would keep a closed
         // timer handle on Windows, failing every sleep over to Thread.Sleep.
         using var waiter = new FrameWaiter(Name);
+
+        // Registration applies to the calling thread, so it can only happen here, on the thread itself.
+        using var multimediaScheduler = UseMultimediaClassScheduler && OperatingSystem.IsWindows()
+            ? WindowsMultimediaScheduler.Register(Name)
+            : null;
 
         // Absolute next-frame deadline, expressed in stopwatch ticks. We advance it by exactly one
         // frame quantum each iteration so cadence is locked to wall-clock time rather than drifting
