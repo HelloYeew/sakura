@@ -191,21 +191,12 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
                 VideoStore = new VideoStore(embeddedResourceStorage.GetStorageForDirectory("Videos"), Host.Renderer, TextureManager);
                 break;
 
-            case MetalRenderer:
-                TextureManager = new MetalTextureManager(Host.Renderer, embeddedResourceStorage.GetStorageForDirectory("Textures"), imageLoader);
+            case MetalRenderer or D3D11Renderer:
+                TextureManager = new NativeTextureManager(Host.Renderer, embeddedResourceStorage.GetStorageForDirectory("Textures"), imageLoader);
                 FontStore = new RendererFontStore(Host.Renderer);
-                var metalFrameworkFontStorage = Host.FrameworkStorage.GetStorageForDirectory("Fonts");
-                var metalFontStorage = new CompositeStorage(metalFrameworkFontStorage, embeddedResourceStorage.GetStorageForDirectory("Fonts"));
-                FontStore.LoadDefaultFont(metalFontStorage);
-                VideoStore = new VideoStore(embeddedResourceStorage.GetStorageForDirectory("Videos"), Host.Renderer, TextureManager);
-                break;
-
-            case D3D11Renderer:
-                TextureManager = new D3D11TextureManager(Host.Renderer, embeddedResourceStorage.GetStorageForDirectory("Textures"), imageLoader);
-                FontStore = new RendererFontStore(Host.Renderer);
-                var d3D11FrameworkFontStorage = Host.FrameworkStorage.GetStorageForDirectory("Fonts");
-                var d3D11FontStorage = new CompositeStorage(d3D11FrameworkFontStorage, embeddedResourceStorage.GetStorageForDirectory("Fonts"));
-                FontStore.LoadDefaultFont(d3D11FontStorage);
+                var nativeFrameworkFontStorage = Host.FrameworkStorage.GetStorageForDirectory("Fonts");
+                var nativeFontStorage = new CompositeStorage(nativeFrameworkFontStorage, embeddedResourceStorage.GetStorageForDirectory("Fonts"));
+                FontStore.LoadDefaultFont(nativeFontStorage);
                 VideoStore = new VideoStore(embeddedResourceStorage.GetStorageForDirectory("Videos"), Host.Renderer, TextureManager);
                 break;
 
