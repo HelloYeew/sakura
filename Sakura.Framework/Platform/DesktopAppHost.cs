@@ -13,6 +13,7 @@ using Sakura.Framework.Extensions;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Rendering.Direct3D11;
 using Sakura.Framework.Graphics.Rendering.Metal;
+using Sakura.Framework.Graphics.Rendering.Vulkan;
 using Sakura.Framework.Logging;
 
 namespace Sakura.Framework.Platform;
@@ -66,6 +67,9 @@ public class DesktopAppHost : AppHost
 
             case RendererType.Direct3D11:
                 return RuntimeInfo.IsWindows && D3D11Renderer.IsSupported() ? new D3D11Renderer() : null;
+
+            case RendererType.Vulkan:
+                return VulkanRenderer.IsSupported() ? new VulkanRenderer() : null;
 
             default:
                 return null;

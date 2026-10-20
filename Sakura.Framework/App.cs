@@ -18,6 +18,7 @@ using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Rendering.Direct3D11;
 using Sakura.Framework.Graphics.Rendering.Metal;
+using Sakura.Framework.Graphics.Rendering.Vulkan;
 using Sakura.Framework.Graphics.Text;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Graphics.Video;
@@ -191,7 +192,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
                 VideoStore = new VideoStore(embeddedResourceStorage.GetStorageForDirectory("Videos"), Host.Renderer, TextureManager);
                 break;
 
-            case MetalRenderer or D3D11Renderer:
+            case MetalRenderer or D3D11Renderer or VulkanRenderer:
                 TextureManager = new NativeTextureManager(Host.Renderer, embeddedResourceStorage.GetStorageForDirectory("Textures"), imageLoader);
                 FontStore = new RendererFontStore(Host.Renderer);
                 var nativeFrameworkFontStorage = Host.FrameworkStorage.GetStorageForDirectory("Fonts");
