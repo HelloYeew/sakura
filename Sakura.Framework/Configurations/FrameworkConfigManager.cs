@@ -11,14 +11,17 @@ namespace Sakura.Framework.Configurations;
 
 public class FrameworkConfigManager : ConfigManager<FrameworkSetting>
 {
-    public FrameworkConfigManager(Storage storage) : base(storage)
+    /// <param name="storage">Where <c>framework.ini</c> is kept.</param>
+    /// <param name="appType">Picks the defaults that differ between a game and an application.</param>
+    public FrameworkConfigManager(Storage storage, AppType appType = AppType.Game) : base(storage)
     {
-        initializeDefaults();
+        initializeDefaults(appType);
     }
 
-    private void initializeDefaults()
+    private void initializeDefaults(AppType appType)
     {
-        Get(FrameworkSetting.FrameLimiter, FrameSync.Limit2x);
+        // An application gains nothing from frames the display cannot show.
+        Get(FrameworkSetting.FrameLimiter, appType == AppType.Game ? FrameSync.Limit2x : FrameSync.VSync);
         Get(FrameworkSetting.ShowFpsGraph, PerformanceOverlayState.Hidden);
         Get(FrameworkSetting.ExecutionMode, ExecutionMode.MultiThread);
         Get(FrameworkSetting.MasterVolume, 1.0);
