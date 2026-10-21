@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using System.IO;
 using NUnit.Framework;
 using Sakura.Framework.Graphics.Rendering;
@@ -206,6 +207,82 @@ public class CreateFromStreamTest
             Assert.That(replacement, Is.Not.Null);
             Assert.That(replacement, Is.Not.SameAs(original));
             Assert.That(replacement!.IsDisposed, Is.False);
+        }
+    }
+
+    private static MemoryStream png(int width, int height, Rgba32 fill)
+    {
+        var stream = new MemoryStream();
+        using (var image = new Image<Rgba32>(width, height, fill))
+            image.SaveAsPng(stream);
+        stream.Position = 0;
+        return stream;
+    }
+
+    /// <summary>
+    /// The inspector sees what the texture will hold: the reduced image, not the source.
+    /// </summary>
+    [Test]
+    public void TheInspectorSeesTheDecodedPixels()
+    {
+        using var stream = png(400, 400, new Rgba32(200, 40, 90, 255));
+
+        int width = 0, height = 0, length = 0;
+        byte[] first = [];
+
+        var texture = create(stream, new TextureCreationOptions
+        {
+            Decode = ImageLoadOptions.FillTarget(new Vector2(40, 40)),
+            InspectPixels = (rgba, w, h) =>
+            {
+                width = w;
+                height = h;
+                length = rgba.Length;
+                first = rgba[..4].ToArray();
+            }
+        });
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(texture, Is.Not.Null);
+            Assert.That(width, Is.EqualTo(texture!.Width));
+            Assert.That(height, Is.EqualTo(texture.Height));
+            Assert.That(width, Is.LessThanOrEqualTo(40), "it should see the reduced image");
+            Assert.That(length, Is.EqualTo(width * height * 4), "tightly packed RGBA");
+            Assert.That(first, Is.EqualTo(new byte[] { 200, 40, 90, 255 }));
+        }
+    }
+
+    [Test]
+    public void AShareHitDoesNotCallTheInspector()
+    {
+        int calls = 0;
+        var options = new TextureCreationOptions { ShareKey = "shared", InspectPixels = (_, _, _) => calls++ };
+
+        using var first = jpeg(64, 64);
+        create(first, options);
+
+        using var second = jpeg(64, 64);
+        create(second, options);
+
+        Assert.That(calls, Is.EqualTo(1), "nothing is decoded on a hit, so there is nothing to inspect");
+    }
+
+    [Test]
+    public void AFailingInspectorStillCreatesTheTexture()
+    {
+        using var stream = jpeg(64, 64);
+
+        var texture = create(stream, new TextureCreationOptions
+        {
+            ShareKey = "shared",
+            InspectPixels = (_, _, _) => throw new InvalidOperationException("inspector bug")
+        });
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(texture, Is.Not.Null);
+            Assert.That(sharedTextures.Count, Is.EqualTo(1));
         }
     }
 
