@@ -39,13 +39,16 @@ jobs:
           dotnet-version: '10.0.x'
 
       # Mesa's software Vulkan driver (lavapipe) and the Khronos validation layer, so the Vulkan tests
-      # run, validated, on a machine with no GPU, and a virtual X server for the one that opens a window.
-      # Elsewhere they skip for lack of a driver.
+      # run, validated, on a machine with no GPU, plus a virtual X server and a headless Wayland compositor
+      # for the ones that open a window, and Mesa's software OpenGL for the renderer fallback test, which
+      # starts on one and lands on the other. Elsewhere they skip for lack of a driver.
       - name: Install Vulkan
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers libvulkan1 vulkan-validationlayers xvfb xauth
+          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers libvulkan1 vulkan-validationlayers xvfb xauth \
+            weston libwayland-client0 libwayland-cursor0 libwayland-egl1 libxkbcommon0 libdecor-0-0 \
+            libgl1 libglx-mesa0 libgl1-mesa-dri libegl1
 
       - name: Test
         # A deadlocked test dumps and fails after the hang timeout instead of holding the runner until the
@@ -56,6 +59,20 @@ jobs:
           dotnet test Sakura.Framework.Tests/Sakura.Framework.Tests.csproj
           --logger "trx;LogFileName=results.trx"
           --blame-hang-timeout 10m
+
+      # The window test again on Wayland, which the run above (under Xvfb) can't reach: the surface comes
+      # from SDL's Wayland backend, and the test checks the window really opened there.
+      - name: Test the window on Wayland
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          export XDG_RUNTIME_DIR=$(mktemp -d)
+          weston --backend=headless --renderer=pixman --socket=wayland-1 --width=1280 --height=1024 &
+          for _ in $(seq 100); do [ -S "$XDG_RUNTIME_DIR/wayland-1" ] && break; sleep 0.1; done
+          WAYLAND_DISPLAY=wayland-1 SDL_VIDEODRIVER=wayland dotnet test Sakura.Framework.Tests/Sakura.Framework.Tests.csproj \
+            --no-build --filter "FullyQualifiedName~VulkanWindowSmokeTest" --logger "trx;LogFileName=wayland.trx"
+          # A skipped test passes the step too; this one has to have run.
+          grep -q 'outcome="Passed"' Sakura.Framework.Tests/TestResults/wayland.trx || { echo "The window test didn't run on Wayland."; exit 1; }
 
       - name: Upload test results
         if: always()
