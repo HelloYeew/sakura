@@ -243,6 +243,28 @@ internal static class TextureUploads
     }
 
     /// <summary>
+    /// Hands the decoded pixels to <see cref="TextureCreationOptions.InspectPixels"/>, if set.
+    /// </summary>
+    /// <remarks>
+    /// A failure here is the caller's bug, not the image's: the pixels are fine, so the texture is still
+    /// created rather than dropped along with whatever the inspector was trying to learn.
+    /// </remarks>
+    private static void inspect(TextureCreationOptions options, ImageRawData raw)
+    {
+        if (options.InspectPixels == null)
+            return;
+
+        try
+        {
+            options.InspectPixels(raw.Data, raw.Width, raw.Height);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"Pixel inspector for texture '{options.Name ?? "(unnamed)"}' failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
     /// The backend-independent implementation of <see cref="ITextureManager.CreateFromStream"/>.
     /// </summary>
     /// <param name="stream">The encoded image. Read but not disposed.</param>
@@ -291,6 +313,8 @@ internal static class TextureUploads
                 raw.Dispose();
                 return null;
             }
+
+            inspect(options, raw);
 
             var nativeTexture = renderer.CreateNativeTexture(raw.Width, raw.Height);
             texture = new Texture(nativeTexture) { Name = options.Name };
