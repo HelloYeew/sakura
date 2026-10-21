@@ -206,20 +206,62 @@ public class SDLWindow : IWindow
         if (window == null)
             return;
 
-        SDL_Rect safeRect;
-        if (!SDL_GetWindowSafeArea(window, &safeRect))
+        MarginPadding insets;
+
+        if (GetPlatformSafeAreaInsets() is MarginPadding platformInsets)
+            insets = platformInsets;
+        else
+        {
+            SDL_Rect safeRect;
+            if (!SDL_GetWindowSafeArea(window, &safeRect))
+                return;
+
+            int windowW, windowH;
+            SDL_GetWindowSize(window, &windowW, &windowH);
+
+            insets = new MarginPadding
+            {
+                Left = Math.Max(0, safeRect.x),
+                Top = Math.Max(0, safeRect.y),
+                Right = Math.Max(0, windowW - (safeRect.x + safeRect.w)),
+                Bottom = Math.Max(0, windowH - (safeRect.y + safeRect.h)),
+            };
+        }
+
+        var padding = new MarginPadding
+        {
+            Left = insets.Left / contentScale,
+            Top = insets.Top / contentScale,
+            Right = insets.Right / contentScale,
+            Bottom = insets.Bottom / contentScale,
+        };
+
+        if (padding.Equals(SafeAreaPadding.Value))
             return;
 
-        int windowW, windowH;
-        SDL_GetWindowSize(window, &windowW, &windowH);
+        SafeAreaPadding.Value = padding;
+        Logger.Verbose($"Safe area insets: {padding}");
+    }
 
-        SafeAreaPadding.Value = new MarginPadding
-        {
-            Left = Math.Max(0, safeRect.x) / contentScale,
-            Top = Math.Max(0, safeRect.y) / contentScale,
-            Right = Math.Max(0, windowW - (safeRect.x + safeRect.w)) / contentScale,
-            Bottom = Math.Max(0, windowH - (safeRect.y + safeRect.h)) / contentScale,
-        };
+    /// <summary>
+    /// The safe-area insets in SDL window coordinates when the platform knows them better than SDL does, or
+    /// null to use SDL's. Called on the event thread whenever the safe area may have changed.
+    /// </summary>
+    protected virtual MarginPadding? GetPlatformSafeAreaInsets() => null;
+
+    /// <summary>
+    /// Has the safe area read again on the event thread. Safe to call from any thread, for a subclass whose
+    /// <see cref="GetPlatformSafeAreaInsets"/> learns of a change SDL doesn't report.
+    /// </summary>
+    protected unsafe void InvalidateSafeArea()
+    {
+        if (window == null)
+            return;
+
+        var e = new SDL_Event();
+        e.window.type = SDL_EventType.SDL_EVENT_WINDOW_SAFE_AREA_CHANGED;
+        e.window.windowID = SDL_GetWindowID(window);
+        SDL_PushEvent(&e);
     }
 
     /// <summary>

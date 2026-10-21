@@ -1,8 +1,11 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
+using Android.Content;
 using Android.OS;
 using Org.Libsdl.App;
+using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Platform;
 using static SDL.SDL3;
 
@@ -31,6 +34,42 @@ public abstract class SakuraActivity : SDLActivity
     protected virtual HostOptions CreateHostOptions() => new HostOptions();
 
     protected override string[] GetLibraries() => ["SDL3"];
+
+    protected override SDLSurface CreateSDLSurface(Context? context) => new SakuraSurface(this, context!);
+
+    private readonly object coveredInsetsLock = new object();
+    private MarginPadding? coveredInsets;
+
+    /// <summary>
+    /// The insets of what covers the content (the system bars and the cutout) in pixels, or null before the
+    /// system has reported any.
+    /// </summary>
+    internal MarginPadding? CoveredInsets
+    {
+        get
+        {
+            lock (coveredInsetsLock)
+                return coveredInsets;
+        }
+    }
+
+    /// <summary>
+    /// Raised on the UI thread when <see cref="CoveredInsets"/> changes.
+    /// </summary>
+    internal event Action? CoveredInsetsChanged;
+
+    internal void SetCoveredInsets(MarginPadding insets)
+    {
+        lock (coveredInsetsLock)
+        {
+            if (coveredInsets is MarginPadding current && current.Equals(insets))
+                return;
+
+            coveredInsets = insets;
+        }
+
+        CoveredInsetsChanged?.Invoke();
+    }
 
     protected override void OnCreate(Bundle? savedInstanceState)
     {
