@@ -11,9 +11,11 @@ namespace Sakura.Framework.Tests.Graphics;
 
 /// <summary>
 /// The compositing arithmetic test : rendering a subtree into an offscreen buffer and drawing that
-/// buffer back must produce the same pixels as drawing the subtree straight to the target.
+/// buffer back must produce the same pixels as drawing the subtree straight to the target. Runs on the
+/// CPU reference rasterizer and on Vulkan (see <see cref="PixelCapture"/>).
 /// </summary>
-[TestFixture]
+[TestFixture(PixelCapture.HEADLESS)]
+[TestFixture(PixelCapture.VULKAN)]
 public class FrameBufferCompositeBlendTest
 {
     private const int surface_size = 8;
@@ -24,14 +26,26 @@ public class FrameBufferCompositeBlendTest
     private static readonly Vector4 child_two = new Vector4(0, 1, 0, 0.5f);
     private static readonly Vector4 background = new Vector4(0, 0, 1, 1);
 
-    private HeadlessRenderer renderer = null!;
+    private readonly string rendererKind;
+    private PixelCapture capture = null!;
 
-    [SetUp]
-    public void SetUp()
+    private IRenderer renderer => capture.Renderer;
+
+    /// <summary>
+    /// Exact up to float error on the reference rasterizer; widened by the GPU's 8-bit rounding otherwise.
+    /// </summary>
+    private float tolerance => 1e-5f + capture.Quantization;
+
+    public FrameBufferCompositeBlendTest(string rendererKind)
     {
-        renderer = new HeadlessRenderer(new HeadlessTextureManager());
-        renderer.EnablePixelCapture(surface_size, surface_size);
+        this.rendererKind = rendererKind;
     }
+
+    [OneTimeSetUp]
+    public void OneTimeSetUp() => capture = PixelCapture.Create(rendererKind, surface_size, surface_size);
+
+    [OneTimeTearDown]
+    public void OneTimeTearDown() => capture?.Dispose();
 
     /// <summary>
     /// The reading that matters: a buffered pass composited with <see cref="BlendingMode.Premultiplied"/>
@@ -61,13 +75,13 @@ public class FrameBufferCompositeBlendTest
         // buffer arrives scaled by 0.75 instead of 1.
         Assert.Multiple(() =>
         {
-            Assert.That(buffered.X, Is.EqualTo(direct.X * 0.75f).Within(1e-5f));
-            Assert.That(buffered.Y, Is.EqualTo(direct.Y * 0.75f).Within(1e-5f));
+            Assert.That(buffered.X, Is.EqualTo(direct.X * 0.75f).Within(tolerance));
+            Assert.That(buffered.Y, Is.EqualTo(direct.Y * 0.75f).Within(tolerance));
 
             // Blue comes from the background rather than through the buffer, so it is untouched — which is
             // why this reads as a color shift and not merely as "darker".
-            Assert.That(buffered.Z, Is.EqualTo(direct.Z).Within(1e-5f));
-            Assert.That(buffered.W, Is.EqualTo(direct.W).Within(1e-5f), "coverage is right either way; only RGB is wrong");
+            Assert.That(buffered.Z, Is.EqualTo(direct.Z).Within(tolerance));
+            Assert.That(buffered.W, Is.EqualTo(direct.W).Within(tolerance), "coverage is right either way; only RGB is wrong");
         });
     }
 
@@ -114,7 +128,7 @@ public class FrameBufferCompositeBlendTest
             assertSamePixel(premultipliedQuad, expected, "a premultiplied quad color fades correctly");
 
             // The straight quad keeps full-strength red while only covering half the pixel.
-            Assert.That(straightQuad.X, Is.EqualTo(1f).Within(1e-5f), "a straight quad color does not darken with the fade");
+            Assert.That(straightQuad.X, Is.EqualTo(1f).Within(tolerance), "a straight quad color does not darken with the fade");
         });
     }
 
@@ -137,14 +151,13 @@ public class FrameBufferCompositeBlendTest
     /// </summary>
     private Vector4 drawDirectly()
     {
-        var screen = renderer.Screen;
-        screen.Clear(background);
+        capture.Begin(background);
 
         renderer.SetBlendMode(BlendingMode.Alpha);
         renderer.DrawQuads(quad(child_one), renderer.WhitePixel);
         renderer.DrawQuads(quad(child_two), renderer.WhitePixel);
 
-        return centre(screen);
+        return centre(capture.End());
     }
 
     /// <summary>
@@ -153,8 +166,7 @@ public class FrameBufferCompositeBlendTest
     /// </summary>
     private Vector4 drawThroughBuffer(BlendingMode compositeMode, Vector4? one = null, Vector4? two = null, Vector4? quadColor = null)
     {
-        var screen = renderer.Screen;
-        screen.Clear(background);
+        capture.Begin(background);
 
         var rect = new RectangleF(0, 0, surface_size, surface_size);
 
@@ -171,7 +183,7 @@ public class FrameBufferCompositeBlendTest
         renderer.SetBlendMode(compositeMode);
         renderer.DrawQuads(compositeQuad(rect, quadColor ?? new Vector4(1, 1, 1, 1)), buffer.Texture);
 
-        return centre(screen);
+        return centre(capture.End());
     }
 
     /// <summary>
@@ -215,14 +227,14 @@ public class FrameBufferCompositeBlendTest
 
     private static Vector4 centre(PixelSurface surface) => surface[surface_size / 2, surface_size / 2];
 
-    private static void assertSamePixel(Vector4 actual, Vector4 expected, string because)
+    private void assertSamePixel(Vector4 actual, Vector4 expected, string because)
     {
         Assert.Multiple(() =>
         {
-            Assert.That(actual.X, Is.EqualTo(expected.X).Within(1e-5f), $"{because}: red");
-            Assert.That(actual.Y, Is.EqualTo(expected.Y).Within(1e-5f), $"{because}: green");
-            Assert.That(actual.Z, Is.EqualTo(expected.Z).Within(1e-5f), $"{because}: blue");
-            Assert.That(actual.W, Is.EqualTo(expected.W).Within(1e-5f), $"{because}: alpha");
+            Assert.That(actual.X, Is.EqualTo(expected.X).Within(tolerance), $"{because}: red");
+            Assert.That(actual.Y, Is.EqualTo(expected.Y).Within(tolerance), $"{because}: green");
+            Assert.That(actual.Z, Is.EqualTo(expected.Z).Within(tolerance), $"{because}: blue");
+            Assert.That(actual.W, Is.EqualTo(expected.W).Within(tolerance), $"{because}: alpha");
         });
     }
 }
