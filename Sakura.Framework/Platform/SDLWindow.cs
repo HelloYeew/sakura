@@ -73,6 +73,14 @@ public class SDLWindow : IWindow
     private int logicalWidth;
     private int logicalHeight;
 
+    /// <summary>
+    /// SDL window coordinates per framework unit. On Android SDL works in physical pixels and reports the
+    /// display's density on its own, so every position and size crossing into or out of SDL is scaled by it,
+    /// and an app lays out in density-independent units as it does elsewhere. Desktop systems already scale
+    /// window coordinates themselves, so there it stays 1.
+    /// </summary>
+    private float contentScale = 1;
+
     // Tracks the last size for which Resized was fired (main-thread only).
     // Separate from currentWidth/currentHeight which the watch callback updates
     // mid-drag so the renderer can draw at the correct size before PollEvents runs.
@@ -207,17 +215,35 @@ public class SDLWindow : IWindow
 
         SafeAreaPadding.Value = new MarginPadding
         {
-            Left = Math.Max(0, safeRect.x),
-            Top = Math.Max(0, safeRect.y),
-            Right = Math.Max(0, windowW - (safeRect.x + safeRect.w)),
-            Bottom = Math.Max(0, windowH - (safeRect.y + safeRect.h)),
+            Left = Math.Max(0, safeRect.x) / contentScale,
+            Top = Math.Max(0, safeRect.y) / contentScale,
+            Right = Math.Max(0, windowW - (safeRect.x + safeRect.w)) / contentScale,
+            Bottom = Math.Max(0, windowH - (safeRect.y + safeRect.h)) / contentScale,
         };
+    }
+
+    /// <summary>
+    /// Re-reads <see cref="contentScale"/>. Returns whether it changed.
+    /// </summary>
+    private unsafe bool updateContentScale()
+    {
+        if (window == null || RuntimeInfo.OS != RuntimeInfo.Platform.Android)
+            return false;
+
+        float scale = SDL_GetWindowDisplayScale(window);
+
+        if (scale <= 0 || scale == contentScale)
+            return false;
+
+        contentScale = scale;
+        Logger.Verbose($"Content scale: {scale}");
+        return true;
     }
 
     private unsafe void applyMinimumSize()
     {
         if (window == null) return;
-        SDL_SetWindowMinimumSize(window, (int)minimumSize.X, (int)minimumSize.Y);
+        SDL_SetWindowMinimumSize(window, (int)(minimumSize.X * contentScale), (int)(minimumSize.Y * contentScale));
     }
 
     private unsafe void applyRelativeMouseMode()
@@ -237,7 +263,7 @@ public class SDLWindow : IWindow
             SDL_SetWindowRelativeMouseMode(window, false);
             // Hand the virtual cursor position back to the OS cursor so leaving
             // relative mode doesn't make the pointer jump.
-            SDL_WarpMouseInWindow(window, mouseState.Position.X, mouseState.Position.Y);
+            SDL_WarpMouseInWindow(window, mouseState.Position.X * contentScale, mouseState.Position.Y * contentScale);
             Logger.Debug("Relative (raw input) mouse mode disabled");
         }
     }
@@ -455,6 +481,9 @@ public class SDLWindow : IWindow
             throw new Exception("SDL window creation failed.");
         }
 
+        // Before anything converts a size or position between SDL's units and the framework's.
+        updateContentScale();
+
         applyMinimumSize();
 
         if (relativeMouseMode)
@@ -488,8 +517,8 @@ public class SDLWindow : IWindow
 
         int w, h;
         SDL_GetWindowSize(window, &w, &h);
-        logicalWidth = w;
-        logicalHeight = h;
+        logicalWidth = (int)MathF.Round(w / contentScale);
+        logicalHeight = (int)MathF.Round(h / contentScale);
 
         // Physical size is resolved after the graphics context is initialised.
         currentWidth = w;
@@ -757,15 +786,15 @@ public class SDLWindow : IWindow
         // GetPhysicalSize, so publish them with Interlocked.
         Interlocked.Exchange(ref currentWidth, drawW);
         Interlocked.Exchange(ref currentHeight, drawH);
-        logicalWidth = logW;
-        logicalHeight = logH;
+        logicalWidth = (int)MathF.Round(logW / contentScale);
+        logicalHeight = (int)MathF.Round(logH / contentScale);
 
         lastNotifiedDrawW = drawW;
         lastNotifiedDrawH = drawH;
         lastNotifiedLogW = logW;
         lastNotifiedLogH = logH;
 
-        Logger.Verbose($"Window resized to {drawW}x{drawH} (logical size: {logW}x{logH})");
+        Logger.Verbose($"Window resized to {drawW}x{drawH} (logical size: {logicalWidth}x{logicalHeight})");
 
         if (windowConfig != null && windowMode == WindowMode.Windowed)
         {
@@ -1039,6 +1068,11 @@ public class SDLWindow : IWindow
             case SDL_EventType.SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
             case SDL_EventType.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
             case SDL_EventType.SDL_EVENT_WINDOW_RESIZED:
+                // A new density changes the size in framework units even when SDL's size stays the same,
+                // so the dedupe below must not swallow it.
+                if (updateContentScale())
+                    lastNotifiedLogW = -1;
+
                 // The event watch usually handled this already mid-drag; handleSizeChanged
                 // dedupes via lastNotified*, so this only fires for size changes the watch
                 // didn't see and is a no-op for queued duplicates of watch-handled events.
@@ -1137,7 +1171,7 @@ public class SDLWindow : IWindow
         // In relative mode the OS position is meaningless (cursor is captured) —
         // the virtual cursor maintained by motion events is authoritative.
         if (!relativeMouseMode)
-            mouseState.Position = new Vector2(buttonEvent.x, buttonEvent.y);
+            mouseState.Position = new Vector2(buttonEvent.x / contentScale, buttonEvent.y / contentScale);
         mouseState.SetPressed(button, buttonEvent.down);
         action.Invoke(new SakuraMouseButtonEvent(mouseState.Clone(), button, buttonEvent.clicks, convertEventTimestamp(buttonEvent.timestamp)));
     }
@@ -1165,8 +1199,8 @@ public class SDLWindow : IWindow
         }
         else
         {
-            mouseState.Position = new Vector2(motionEvent.x, motionEvent.y);
-            delta = new Vector2(motionEvent.xrel, motionEvent.yrel);
+            mouseState.Position = new Vector2(motionEvent.x / contentScale, motionEvent.y / contentScale);
+            delta = new Vector2(motionEvent.xrel / contentScale, motionEvent.yrel / contentScale);
         }
 
         OnMouseMove.Invoke(new MouseEvent(mouseState.Clone(), delta, convertEventTimestamp(motionEvent.timestamp)));
@@ -1176,7 +1210,7 @@ public class SDLWindow : IWindow
     {
         // SDL3 wheel events carry the mouse position directly (meaningless in relative mode).
         if (!relativeMouseMode)
-            mouseState.Position = new Vector2(wheelEvent.mouse_x, wheelEvent.mouse_y);
+            mouseState.Position = new Vector2(wheelEvent.mouse_x / contentScale, wheelEvent.mouse_y / contentScale);
         OnScroll.Invoke(new ScrollEvent(mouseState, new Vector2(wheelEvent.x, wheelEvent.y)));
     }
 
@@ -1186,7 +1220,7 @@ public class SDLWindow : IWindow
         string filePath = Marshal.PtrToStringUTF8((nint)dropEvent.data);
         if (string.IsNullOrEmpty(filePath))
             return;
-        OnDragDropFile.Invoke(new DragDropFileEvent(filePath, new Vector2(dropEvent.x, dropEvent.y)));
+        OnDragDropFile.Invoke(new DragDropFileEvent(filePath, new Vector2(dropEvent.x / contentScale, dropEvent.y / contentScale)));
     }
 
     private unsafe void handleDropTextEvent(SDL_DropEvent dropEvent)
@@ -1194,7 +1228,7 @@ public class SDLWindow : IWindow
         string text = Marshal.PtrToStringUTF8((nint)dropEvent.data);
         if (string.IsNullOrEmpty(text))
             return;
-        OnDragDropText.Invoke(new DragDropTextEvent(text, new Vector2(dropEvent.x, dropEvent.y)));
+        OnDragDropText.Invoke(new DragDropTextEvent(text, new Vector2(dropEvent.x / contentScale, dropEvent.y / contentScale)));
     }
 
     private unsafe void handleTextInputEvent(SDL_TextInputEvent textEvent)
@@ -1330,10 +1364,10 @@ public class SDLWindow : IWindow
             var rect = targetRect.Value;
             var sdlRect = new SDL_Rect
             {
-                x = (int)rect.X,
-                y = (int)rect.Y,
-                w = (int)rect.Width,
-                h = (int)rect.Height
+                x = (int)(rect.X * contentScale),
+                y = (int)(rect.Y * contentScale),
+                w = (int)(rect.Width * contentScale),
+                h = (int)(rect.Height * contentScale)
             };
             SDL_SetTextInputArea(window, &sdlRect, 0);
         }
