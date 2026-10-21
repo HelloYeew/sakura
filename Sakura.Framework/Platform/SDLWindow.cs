@@ -43,6 +43,16 @@ public class SDLWindow : IWindow
     private readonly VulkanGraphicsSurface vulkanSurface;
     private IGraphicsSurface activeSurface;
 
+    /// <summary>
+    /// The view <see cref="InitializeMetalSurface"/> made, destroyed with the window.
+    /// </summary>
+    private IntPtr metalView;
+
+    /// <summary>
+    /// The window flags each graphics API adds, cleared before another API's are set.
+    /// </summary>
+    private const SDL_WindowFlags graphics_api_flags = SDL_WindowFlags.SDL_WINDOW_OPENGL | SDL_WindowFlags.SDL_WINDOW_METAL | SDL_WindowFlags.SDL_WINDOW_VULKAN;
+
     private RendererType graphicsApi = RendererType.OpenGL;
 
     private FrameworkConfigManager windowConfig;
@@ -263,6 +273,9 @@ public class SDLWindow : IWindow
     public void SetGraphicsApi(RendererType type)
     {
         graphicsApi = type;
+
+        // A window being made again for another API mustn't keep the last one's flag.
+        windowFlags &= ~graphics_api_flags;
 
         switch (type)
         {
@@ -545,6 +558,7 @@ public class SDLWindow : IWindow
         }
 
         metalSurface.MetalLayer = layer;
+        metalView = view;
 
         Logger.Verbose("Metal surface initialised successfully");
     }
@@ -1579,6 +1593,33 @@ public class SDLWindow : IWindow
     }
 
     #endregion
+
+    public unsafe void Destroy()
+    {
+        // Added again by the next Create.
+        SDL_RemoveEventWatch(&resizeEventWatch, IntPtr.Zero);
+
+        if (glContext != null)
+        {
+            SDL_GL_DestroyContext(glContext);
+            glContext = null;
+        }
+
+        if (metalView != IntPtr.Zero)
+        {
+            SDL_Metal_DestroyView(metalView);
+            metalView = IntPtr.Zero;
+            metalSurface.MetalLayer = IntPtr.Zero;
+        }
+
+        if (window != null)
+        {
+            SDL_DestroyWindow(window);
+            window = null;
+        }
+
+        Logger.Verbose("SDL window destroyed");
+    }
 
     public unsafe void Dispose()
     {

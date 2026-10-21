@@ -27,6 +27,12 @@ public class DesktopAppHost : AppHost
     /// </summary>
     private RendererType selectedRendererType = RendererType.OpenGL;
 
+    /// <summary>
+    /// The renderers that failed to start this run, with why, in the order they failed. They aren't
+    /// chosen again.
+    /// </summary>
+    private readonly List<(RendererType Type, Exception Failure)> failedRenderers = new List<(RendererType, Exception)>();
+
     public DesktopAppHost(string appName, HostOptions options = null) : base(appName, options)
     {
         IsPortableInstallation = Options.PortableInstallation;
@@ -76,7 +82,11 @@ public class DesktopAppHost : AppHost
         }
     }
 
-    protected override IRenderer CreateRenderer()
+    /// <summary>
+    /// The renderer configured in <c>framework.ini</c>, if it isn't <see cref="RendererType.Automatic"/>,
+    /// then <see cref="GetPreferredRenderers"/>, leaving out any that failed to start this run.
+    /// </summary>
+    private List<RendererType> getCandidates()
     {
         var configured = FrameworkConfigManager.Get<RendererType>(FrameworkSetting.RendererType).Value;
 
@@ -91,13 +101,19 @@ public class DesktopAppHost : AppHost
                 candidates.Add(preferred);
         }
 
-        foreach (var type in candidates)
+        candidates.RemoveAll(type => failedRenderers.Exists(failed => failed.Type == type));
+        return candidates;
+    }
+
+    protected override IRenderer CreateRenderer()
+    {
+        foreach (var type in getCandidates())
         {
             var renderer = CreateRendererForType(type);
 
             if (renderer == null)
             {
-                Logger.Verbose($"Renderer '{type}' is not available on this platform, skipping.");
+                Logger.Verbose($"Renderer '{type}' isn't available here, skipping.");
                 continue;
             }
 
@@ -106,7 +122,30 @@ public class DesktopAppHost : AppHost
             return renderer;
         }
 
+        if (failedRenderers.Count > 0)
+        {
+            throw new InvalidOperationException($"No renderer could start: {string.Join(", ", failedRenderers.ConvertAll(f => f.Type))} failed, and no other is available.",
+                new AggregateException(failedRenderers.ConvertAll(f => f.Failure)));
+        }
+
         throw new InvalidOperationException("No suitable renderer could be initialised.");
+    }
+
+    /// <summary>
+    /// Records the renderer that failed and goes on to the next. When none is left, the next
+    /// <see cref="CreateRenderer"/> throws with every failure, rather than this one's alone escaping. The
+    /// configured renderer stays configured: a driver problem may be fixed by the next run, and the log says
+    /// what happened.
+    /// </summary>
+    protected override bool OnRendererFailed(Exception exception)
+    {
+        failedRenderers.Add((selectedRendererType, exception));
+
+        Logger.Error(getCandidates().Count > 0
+            ? $"Renderer '{selectedRendererType}' failed to start, so the next one is tried."
+            : $"Renderer '{selectedRendererType}' failed to start, and no other is left to try.", exception);
+
+        return true;
     }
 
     /// <summary>
