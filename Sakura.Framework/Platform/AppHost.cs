@@ -368,6 +368,14 @@ public abstract class AppHost : IDisposable
     /// </summary>
     protected virtual void PrepareWindowForRenderer(IWindow window) { }
 
+    /// <summary>
+    /// Called when the renderer <see cref="CreateRenderer"/> returned failed to start, in creating the
+    /// window for it or in setting it up. Returns whether to go on: the renderer is disposed, the window
+    /// destroyed, and <see cref="CreateRenderer"/> called again, which must then return a different
+    /// renderer or throw. Otherwise <paramref name="exception"/> ends startup, as the default does.
+    /// </summary>
+    protected virtual bool OnRendererFailed(Exception exception) => false;
+
     private static readonly SemaphoreSlim host_running_mutex = new SemaphoreSlim(1);
 
     /// <summary>
@@ -513,8 +521,10 @@ public abstract class AppHost : IDisposable
 
             Window.RenderRequested += () =>
             {
-                // make renderer still resize itself in single thread mode
-                if (executionState == ExecutionState.Running && ExecutionMode.Value == Threading.ExecutionMode.SingleThread)
+                // make renderer still resize itself in single thread mode. The window can ask before the
+                // threads exist: a window made during startup (a renderer falling back makes a second one)
+                // reports being exposed while the renderer is still being set up.
+                if (executionState == ExecutionState.Running && threadRunner != null && ExecutionMode?.Value == Threading.ExecutionMode.SingleThread)
                 {
                     threadRunner.RunSingleThreadedFrame(targetUpdateHz > 0 ? 1000.0 / targetUpdateHz : 0, GetPresentationDeadlineMs());
                 }
@@ -522,14 +532,7 @@ public abstract class AppHost : IDisposable
 
             Window.Initialize();
 
-            Renderer = CreateRenderer();
-
-            PrepareWindowForRenderer(Window);
-            Window.Create();
-
-            onFrameLimiterChanged(new ValueChangedEvent<FrameSync>(default, FrameLimiter.Value));
-
-            SetupRenderer();
+            createRendererAndWindow();
 
             Window.GetPhysicalSize(out int initialPhysicalWidth, out int initialPhysicalHeight);
             onResize(initialPhysicalWidth, initialPhysicalHeight, Window.Width, Window.Height);
@@ -880,6 +883,35 @@ public abstract class AppHost : IDisposable
     protected virtual void OnGamepadAxisMotion(GamepadAxisEvent e) => app?.OnGamepadAxisMotion(e);
     protected virtual void OnGamepadConnected(GamepadConnectedEvent e) => app?.OnGamepadConnected(e);
     protected virtual void OnGamepadDisconnected(GamepadDisconnectedEvent e) => app?.OnGamepadDisconnected(e);
+
+    /// <summary>
+    /// Chooses the renderer, creates the window for it and sets it up. A renderer that fails to start is
+    /// disposed, the window is destroyed, and the host's next choice gets a window made for it, until one
+    /// starts or the host has none left (<see cref="OnRendererFailed"/>).
+    /// </summary>
+    private void createRendererAndWindow()
+    {
+        while (true)
+        {
+            Renderer = CreateRenderer();
+            PrepareWindowForRenderer(Window);
+
+            try
+            {
+                Window.Create();
+                onFrameLimiterChanged(new ValueChangedEvent<FrameSync>(default, FrameLimiter.Value));
+                SetupRenderer();
+                return;
+            }
+            catch (Exception e) when (OnRendererFailed(e))
+            {
+                // Disposed before the window goes: a renderer's surface or context belongs to it.
+                (Renderer as IDisposable)?.Dispose();
+                Renderer = null;
+                Window.Destroy();
+            }
+        }
+    }
 
     protected virtual void SetupRenderer()
     {
