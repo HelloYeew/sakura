@@ -158,6 +158,21 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
     private VkFormat? offscreenFormat;
 
+    /// <summary>
+    /// What frames render into when the renderer has no window (<see cref="InitializeOffscreen"/>).
+    /// </summary>
+    private VulkanFrameBuffer? offscreenScreen;
+
+    /// <summary>
+    /// The linear color the offscreen target is cleared to at the start of each frame.
+    /// </summary>
+    internal Vector4 OffscreenClearColor { get; set; } = new Vector4(0, 0, 0, 1);
+
+    /// <summary>
+    /// Whether a frame has been started and not yet submitted.
+    /// </summary>
+    internal bool IsFrameOpen => currentFrame != null;
+
     private int drawableWidth;
     private int drawableHeight;
 
@@ -241,6 +256,16 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     private VulkanTexture? whiteTexture;
 
     /// <summary>
+    /// Every texture, framebuffer and shader created on the device and not yet disposed. Whatever their
+    /// owners never dispose (a buffered container's framebuffer, the effect shaders kept in statics) is
+    /// released here when the renderer is, since the device can only be destroyed once nothing created on
+    /// it is left.
+    /// </summary>
+    private readonly HashSet<IDisposable> liveResources = new HashSet<IDisposable>();
+
+    private readonly System.Threading.Lock liveResourcesLock = new System.Threading.Lock();
+
+    /// <summary>
     /// The 1x1 white texture sampled by solid-color geometry and in place of textures not uploaded yet.
     /// </summary>
     internal VulkanTexture? WhiteTexture => whiteTexture;
@@ -258,18 +283,47 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     /// <inheritdoc cref="VulkanDevice.IsSupported"/>
     public static bool IsSupported() => VulkanDevice.IsSupported();
 
+    /// <inheritdoc cref="VulkanDevice.IsSupportedOffscreen"/>
+    internal static bool IsSupportedOffscreen() => VulkanDevice.IsSupportedOffscreen();
+
     public void Initialize(IGraphicsSurface graphicsSurface)
     {
         if (graphicsSurface is not IVulkanGraphicsSurface vulkanSurface)
             throw new InvalidOperationException($"{nameof(VulkanRenderer)} requires an {nameof(IVulkanGraphicsSurface)}.");
 
         windowSurface = vulkanSurface;
+        createDevice(vulkanSurface);
+
+        vulkanSurface.GetDrawableSize(out drawableWidth, out drawableHeight);
+    }
+
+    /// <summary>
+    /// Initialises the renderer with no window: every frame renders into an offscreen target of the given
+    /// size, which <see cref="ReadOffscreen"/> reads back. Used by tests, so they can render on any machine
+    /// with a Vulkan driver, a software one included.
+    /// </summary>
+    internal void InitializeOffscreen(int width, int height)
+    {
+        createDevice(null);
+
+        offscreenScreen = new VulkanFrameBuffer(this, device!, memory!, renderPasses!, chooseOffscreenFormat(), descriptors!.RenderTargetSampler, width, height);
+
+        foreach (var blend in Enum.GetValues<BlendingMode>())
+            pipelines!.Get(mainShader!, blend, offscreenScreen.Format);
+
+        Resize(width, height, width, height);
+    }
+
+    private void createDevice(IVulkanGraphicsSurface? vulkanSurface)
+    {
         device = new VulkanDevice(vulkanSurface, out var surface);
         memory = new VulkanMemory(device);
         renderPasses = new VulkanRenderPasses(device);
         descriptors = new VulkanDescriptors(device);
         pipelines = new VulkanPipelines(device, renderPasses, ShaderCache);
-        swapchain = new VulkanSwapchain(device, vulkanSurface, renderPasses, surface);
+
+        if (vulkanSurface != null)
+            swapchain = new VulkanSwapchain(device, vulkanSurface, renderPasses, surface);
 
         var limits = device.Properties.limits;
         uniformAlignment = Math.Max(limits.minUniformBufferOffsetAlignment, 16);
@@ -288,8 +342,6 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         currentShader = mainShader;
 
         batch = new VertexBatch(max_batch_vertices, FlushBatch);
-
-        vulkanSurface.GetDrawableSize(out drawableWidth, out drawableHeight);
 
         if (!mipmapsSupported)
             Logger.Warning($"Vulkan: {VulkanTexture.FORMAT} can't be blitted with linear filtering here, so textures have no mip levels and minify with more aliasing.");
@@ -311,7 +363,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         currentFrame = null;
         currentImage = null;
 
-        if (device == null || swapchain == null)
+        if (device == null || (swapchain == null && offscreenScreen == null))
             return;
 
         applyVSync();
@@ -351,7 +403,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         var beginInfo = new VkCommandBufferBeginInfo { flags = VkCommandBufferUsageFlags.OneTimeSubmit };
         VulkanDevice.Check(device.Api.vkBeginCommandBuffer(frame.CommandBuffer, &beginInfo), "vkBeginCommandBuffer");
 
-        currentImage = acquireImage(frame);
+        currentImage = swapchain != null ? acquireImage(frame) : null;
 
         currentShader = mainShader;
         currentBlendMode = BlendingMode.Alpha;
@@ -360,8 +412,16 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         targetStack.Clear();
         resetTextureSlotsToWhite();
 
-        if (currentImage is uint image)
-            beginPass(swapchain.RenderPass, swapchain.GetFramebuffer(image), swapchain.Format, swapchain.Extent.width, swapchain.Extent.height, clear_color);
+        if (offscreenScreen is VulkanFrameBuffer screen)
+        {
+            currentTarget = screen;
+
+            var clear = new VkClearColorValue(OffscreenClearColor.X, OffscreenClearColor.Y, OffscreenClearColor.Z, OffscreenClearColor.W);
+            beginPass(renderPasses!.Get(screen.Format, VulkanPassKind.OffscreenClear), screen.Handle, screen.Format, (uint)screen.Width, (uint)screen.Height, clear);
+            screen.ColorTexture.MarkRendered();
+        }
+        else if (currentImage is uint image)
+            beginPass(swapchain!.RenderPass, swapchain.GetFramebuffer(image), swapchain.Format, swapchain.Extent.width, swapchain.Extent.height, clear_color);
     }
 
     public void SetRoot(DrawNode rootDrawNode) => rootNode = rootDrawNode;
@@ -385,7 +445,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
     public void Draw(IClock clock)
     {
-        if (device == null || swapchain == null || currentFrame == null)
+        if (device == null || currentFrame == null)
             return;
 
         stat_draw_calls.CompleteFrame();
@@ -401,7 +461,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
         // A frame with no image (minimised, or the swapchain is being rebuilt) still submits its uploads,
         // but draws nothing.
-        if (currentImage != null)
+        if (currentImage != null || offscreenScreen != null)
             rootNode?.Draw(this);
 
         FlushBatch();
@@ -426,7 +486,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
         if (currentImage is uint image)
             present(image);
-        else
+        else if (swapchain != null)
             stat_frames_without_present.Value++;
 
         lastSubmittedSlot = slot;
@@ -462,7 +522,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
             slot = 0;
         }
 
-        swapchain!.SetVSync(vsync);
+        swapchain?.SetVSync(vsync);
     }
 
     private void waitForAllFrames()
@@ -718,6 +778,22 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
                 VulkanDevice.Check(result, "vkQueuePresentKHR");
                 break;
         }
+    }
+
+    /// <summary>
+    /// Records a resource created on the device, so <see cref="Dispose"/> can release it if its owner
+    /// never does. Thread-safe: textures are created off the draw thread.
+    /// </summary>
+    internal void Track(IDisposable resource)
+    {
+        lock (liveResourcesLock)
+            liveResources.Add(resource);
+    }
+
+    internal void Untrack(IDisposable resource)
+    {
+        lock (liveResourcesLock)
+            liveResources.Remove(resource);
     }
 
     /// <summary>
@@ -1722,6 +1798,124 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
     #endregion
 
+    #region Readback
+
+    /// <summary>
+    /// sRGB-encoded 8-bit values decoded to linear, the space the shaders blend in and
+    /// <see cref="PixelSurface"/> holds.
+    /// </summary>
+    private static readonly float[] srgb_to_linear = buildSrgbTable();
+
+    private static float[] buildSrgbTable()
+    {
+        float[] table = new float[256];
+
+        for (int i = 0; i < table.Length; i++)
+        {
+            float c = i / 255f;
+            table[i] = c <= 0.04045f ? c / 12.92f : MathF.Pow((c + 0.055f) / 1.055f, 2.4f);
+        }
+
+        return table;
+    }
+
+    /// <summary>
+    /// Copies the offscreen target back as it stands after the last submitted frame, in linear color
+    /// with row 0 at the top. Waits for the GPU, so it is for tests, not frames.
+    /// </summary>
+    internal PixelSurface ReadOffscreen()
+    {
+        var screen = offscreenScreen ?? throw new InvalidOperationException($"{nameof(ReadOffscreen)} needs {nameof(InitializeOffscreen)}.");
+
+        if (currentFrame != null)
+            throw new InvalidOperationException("A frame is still being recorded; read back after Draw.");
+
+        var texture = screen.ColorTexture;
+        ulong size = (ulong)texture.Width * (ulong)texture.Height * 4;
+
+        var createInfo = new VkBufferCreateInfo
+        {
+            size = size,
+            usage = VkBufferUsageFlags.TransferDst,
+            sharingMode = VkSharingMode.Exclusive,
+        };
+
+        var api = device!.Api;
+        VkBuffer buffer;
+        VulkanDevice.Check(api.vkCreateBuffer(&createInfo, null, &buffer), "vkCreateBuffer");
+        var allocation = memory!.BindHostVisibleBuffer(buffer);
+
+        try
+        {
+            var commandBuffer = beginImmediate();
+
+            // The last frame's pass left the image ready to sample, written as a color attachment.
+            transition(commandBuffer, texture, 0, 1, VkImageLayout.ShaderReadOnlyOptimal, VkImageLayout.TransferSrcOptimal,
+                VkPipelineStageFlags.ColorAttachmentOutput, VkAccessFlags.ColorAttachmentWrite,
+                VkPipelineStageFlags.Transfer, VkAccessFlags.TransferRead);
+
+            var region = new VkBufferImageCopy
+            {
+                imageSubresource = new VkImageSubresourceLayers(VkImageAspectFlags.Color, 0, 0, 1),
+                imageExtent = new VkExtent3D { width = (uint)texture.Width, height = (uint)texture.Height, depth = 1 },
+            };
+
+            api.vkCmdCopyImageToBuffer(commandBuffer, texture.Image, VkImageLayout.TransferSrcOptimal, buffer, 1, &region);
+
+            transition(commandBuffer, texture, 0, 1, VkImageLayout.TransferSrcOptimal, VkImageLayout.ShaderReadOnlyOptimal,
+                VkPipelineStageFlags.Transfer, VkAccessFlags.None,
+                VkPipelineStageFlags.FragmentShader, VkAccessFlags.ShaderRead);
+
+            var hostBarrier = new VkBufferMemoryBarrier
+            {
+                srcAccessMask = VkAccessFlags.TransferWrite,
+                dstAccessMask = VkAccessFlags.HostRead,
+                srcQueueFamilyIndex = Vortice.Vulkan.Vulkan.VK_QUEUE_FAMILY_IGNORED,
+                dstQueueFamilyIndex = Vortice.Vulkan.Vulkan.VK_QUEUE_FAMILY_IGNORED,
+                buffer = buffer,
+                offset = 0,
+                size = Vortice.Vulkan.Vulkan.VK_WHOLE_SIZE,
+            };
+
+            api.vkCmdPipelineBarrier(commandBuffer, VkPipelineStageFlags.Transfer, VkPipelineStageFlags.Host, VkDependencyFlags.None, 0, null, 1, &hostBarrier, 0, null);
+
+            submitImmediate(commandBuffer);
+
+            if (!allocation.Coherent)
+            {
+                var range = new VkMappedMemoryRange { memory = allocation.Memory, offset = 0, size = Vortice.Vulkan.Vulkan.VK_WHOLE_SIZE };
+                VulkanDevice.Check(api.vkInvalidateMappedMemoryRanges(1, &range), "vkInvalidateMappedMemoryRanges");
+            }
+
+            bool bgra = texture.Format is VkFormat.B8G8R8A8Srgb or VkFormat.B8G8R8A8Unorm;
+            var surface = new PixelSurface(texture.Width, texture.Height);
+            byte* pixels = allocation.Mapped;
+
+            for (int y = 0; y < texture.Height; y++)
+            {
+                for (int x = 0; x < texture.Width; x++)
+                {
+                    byte* p = pixels + ((long)y * texture.Width + x) * 4;
+                    float r = srgb_to_linear[bgra ? p[2] : p[0]];
+                    float g = srgb_to_linear[p[1]];
+                    float b = srgb_to_linear[bgra ? p[0] : p[2]];
+
+                    // Alpha is stored linearly in sRGB formats.
+                    surface[x, y] = new Vector4(r, g, b, p[3] / 255f);
+                }
+            }
+
+            return surface;
+        }
+        finally
+        {
+            api.vkDestroyBuffer(buffer, null);
+            memory.Free(allocation);
+        }
+    }
+
+    #endregion
+
     #region Resources
 
     public void ScheduleToDrawThread(Action action) => drawThreadQueue.Enqueue(action);
@@ -1777,9 +1971,9 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
             return chosen;
 
         var format = VkFormat.R8G8B8A8Srgb;
-        var swapchainFormat = swapchain!.Format;
+        var swapchainFormat = swapchain?.Format ?? VkFormat.Undefined;
 
-        if (swapchain.Handle.IsNotNull && swapchainFormat is VkFormat.B8G8R8A8Srgb or VkFormat.R8G8B8A8Srgb)
+        if (swapchain != null && swapchain.Handle.IsNotNull && swapchainFormat is VkFormat.B8G8R8A8Srgb or VkFormat.R8G8B8A8Srgb)
         {
             VkFormatProperties properties;
             device!.InstanceApi.vkGetPhysicalDeviceFormatProperties(device.PhysicalDevice, swapchainFormat, &properties);
@@ -1841,8 +2035,14 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
         device.WaitIdle();
 
-        mainShader?.Dispose();
-        whiteTexture?.Dispose();
+        // Releasing retires each one into the last frame, which the frame disposal below then destroys.
+        IDisposable[] remaining;
+
+        lock (liveResourcesLock)
+            remaining = [.. liveResources];
+
+        foreach (var resource in remaining)
+            resource.Dispose();
 
         foreach (var frame in frames)
             frame?.Dispose();

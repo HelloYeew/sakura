@@ -85,7 +85,8 @@ internal sealed unsafe class VulkanDevice : IDisposable
         return vkInitialize(string.IsNullOrEmpty(library) ? null : library) == VkResult.Success;
     });
 
-    private static readonly Lazy<bool> is_supported = new Lazy<bool>(probe);
+    private static readonly Lazy<bool> is_supported = new Lazy<bool>(() => probe(true));
+    private static readonly Lazy<bool> is_supported_offscreen = new Lazy<bool>(() => probe(false));
 
     public VkInstance Instance { get; }
     public VkInstanceApi InstanceApi { get; }
@@ -136,12 +137,20 @@ internal sealed unsafe class VulkanDevice : IDisposable
     public static bool IsSupported() => is_supported.Value;
 
     /// <summary>
+    /// Whether this machine can render offscreen through Vulkan, with no window: a usable loader and a
+    /// device with a graphics queue. Computed once per process.
+    /// </summary>
+    public static bool IsSupportedOffscreen() => is_supported_offscreen.Value;
+
+    /// <summary>
     /// Creates the instance and device for <paramref name="windowSurface"/>, which is also where the
     /// surface comes from that the chosen device has to present to.
     /// </summary>
-    /// <param name="windowSurface">The window to render into.</param>
-    /// <param name="surface">The surface created to choose the device. The caller owns it from here.</param>
-    public VulkanDevice(IVulkanGraphicsSurface windowSurface, out VkSurfaceKHR surface)
+    /// <param name="windowSurface">The window to render into, or null to render offscreen only, with no
+    /// surface, swapchain or presentation.</param>
+    /// <param name="surface">The surface created to choose the device (null without a window). The caller
+    /// owns it from here.</param>
+    public VulkanDevice(IVulkanGraphicsSurface? windowSurface, out VkSurfaceKHR surface)
     {
         if (!loader_available.Value)
             throw new InvalidOperationException("The Vulkan loader could not be loaded.");
@@ -150,7 +159,7 @@ internal sealed unsafe class VulkanDevice : IDisposable
 
         ValidationEnabled = shouldEnableValidation();
 
-        var extensions = new List<string>(windowSurface.RequiredInstanceExtensions);
+        var extensions = new List<string>(windowSurface?.RequiredInstanceExtensions ?? []);
         var layers = new List<string>();
         bool syncValidation = false;
 
@@ -204,9 +213,10 @@ internal sealed unsafe class VulkanDevice : IDisposable
 
         try
         {
-            surface = windowSurface.CreateSurface(Instance.Handle);
+            if (windowSurface != null)
+                surface = windowSurface.CreateSurface(Instance.Handle);
 
-            var candidate = choosePhysicalDevice(InstanceApi, surface, apiVersion);
+            var candidate = choosePhysicalDevice(InstanceApi, surface, windowSurface != null, apiVersion);
 
             PhysicalDevice = candidate.Device;
             Properties = candidate.Properties;
@@ -216,7 +226,7 @@ internal sealed unsafe class VulkanDevice : IDisposable
             GraphicsQueueFamily = candidate.GraphicsFamily;
             PresentQueueFamily = candidate.PresentFamily;
 
-            Handle = createDevice(candidate);
+            Handle = createDevice(candidate, windowSurface != null);
             Api = GetApi(Instance, Handle);
 
             VkQueue queue;
@@ -229,7 +239,7 @@ internal sealed unsafe class VulkanDevice : IDisposable
         catch
         {
             if (surface.IsNotNull)
-                windowSurface.DestroySurface(Instance.Handle, surface);
+                windowSurface!.DestroySurface(Instance.Handle, surface);
 
             destroyInstance();
             throw;
@@ -435,7 +445,7 @@ internal sealed unsafe class VulkanDevice : IDisposable
         public ulong DeviceLocalMemory;
     }
 
-    private static Candidate choosePhysicalDevice(VkInstanceApi api, VkSurfaceKHR surface, VkVersion instanceApiVersion)
+    private static Candidate choosePhysicalDevice(VkInstanceApi api, VkSurfaceKHR surface, bool presents, VkVersion instanceApiVersion)
     {
         var candidates = new List<Candidate>();
         var rejections = new List<string>();
@@ -444,7 +454,7 @@ internal sealed unsafe class VulkanDevice : IDisposable
         {
             var candidate = describe(api, device, instanceApiVersion);
 
-            if (!isUsable(api, candidate, surface, out string? reason))
+            if (!isUsable(api, candidate, surface, presents, out string? reason))
             {
                 rejections.Add($"{candidate.Name}: {reason}");
                 continue;
@@ -456,7 +466,7 @@ internal sealed unsafe class VulkanDevice : IDisposable
         if (candidates.Count == 0)
         {
             string detail = rejections.Count > 0 ? string.Join("; ", rejections) : "no physical devices";
-            throw new InvalidOperationException($"No Vulkan device can render to this window ({detail}).");
+            throw new InvalidOperationException($"No Vulkan device can be used here ({detail}).");
         }
 
         string? requested = Environment.GetEnvironmentVariable(device_override_variable);
@@ -555,12 +565,17 @@ internal sealed unsafe class VulkanDevice : IDisposable
         return candidate;
     }
 
-    private static bool isUsable(VkInstanceApi api, Candidate candidate, VkSurfaceKHR surface, out string? reason)
+    /// <summary>
+    /// Whether <paramref name="candidate"/> can be used, and which queue families it would use. A device
+    /// that <paramref name="presents"/> to a window also needs the swapchain extension and, when
+    /// <paramref name="surface"/> is given, a queue that can present to it.
+    /// </summary>
+    private static bool isUsable(VkInstanceApi api, Candidate candidate, VkSurfaceKHR surface, bool presents, out string? reason)
     {
         if (!meetsDevicePolicy(candidate.Properties, out reason))
             return false;
 
-        if (!candidate.Extensions.Contains(swapchain_extension))
+        if (presents && !candidate.Extensions.Contains(swapchain_extension))
         {
             reason = $"no {swapchain_extension}";
             return false;
@@ -651,9 +666,12 @@ internal sealed unsafe class VulkanDevice : IDisposable
 
     #region Logical device
 
-    private VkDevice createDevice(Candidate candidate)
+    private VkDevice createDevice(Candidate candidate, bool presents)
     {
-        var extensions = new List<string> { swapchain_extension };
+        var extensions = new List<string>();
+
+        if (presents)
+            extensions.Add(swapchain_extension);
 
         // The spec requires enabling this whenever a device offers it: it is how a portability driver
         // says which parts of Vulkan it doesn't implement.
@@ -723,11 +741,14 @@ internal sealed unsafe class VulkanDevice : IDisposable
     #endregion
 
     /// <summary>
-    /// Answers <see cref="IsSupported"/>: a usable loader, a window-system surface extension, and at
-    /// least one device with a graphics queue and swapchain support. Presentation to the real window
-    /// can't be checked without one, so that is left to device creation.
+    /// Answers <see cref="IsSupported"/> and <see cref="IsSupportedOffscreen"/>: a usable loader and at
+    /// least one device with a graphics queue, plus, for a window, a window-system surface extension and
+    /// swapchain support. Presentation to the real window can't be checked without one, so that is left
+    /// to device creation.
     /// </summary>
-    private static bool probe()
+    /// <param name="window">Whether rendering to a window has to work too: a window-system surface
+    /// extension and swapchain support.</param>
+    private static bool probe(bool window)
     {
         // SDL3-CS binds VkSurfaceKHR as a pointer, but it is a 64-bit handle everywhere.
         if (!Environment.Is64BitProcess)
@@ -746,7 +767,7 @@ internal sealed unsafe class VulkanDevice : IDisposable
 
             var instanceExtensions = enumerateInstanceExtensions(null);
 
-            if (!instanceExtensions.Contains(surface_extension) || !platform_surface_extensions.Any(instanceExtensions.Contains))
+            if (window && (!instanceExtensions.Contains(surface_extension) || !platform_surface_extensions.Any(instanceExtensions.Contains)))
             {
                 Logger.Verbose("Vulkan: the loader offers no window-system surface extension (no driver installed?).");
                 return false;
@@ -775,7 +796,7 @@ internal sealed unsafe class VulkanDevice : IDisposable
                 {
                     var candidate = describe(api, device, apiVersion);
 
-                    if (isUsable(api, candidate, VkSurfaceKHR.Null, out string? reason))
+                    if (isUsable(api, candidate, VkSurfaceKHR.Null, window, out string? reason))
                         return true;
 
                     Logger.Verbose($"Vulkan: {candidate.Name} can't be used ({reason}).");

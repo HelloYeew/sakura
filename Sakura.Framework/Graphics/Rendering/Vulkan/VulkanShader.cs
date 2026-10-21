@@ -43,6 +43,8 @@ public sealed unsafe class VulkanShader : IShader
 
         VertexModule = createModule(spirv.Vertex, $"{name} (vertex)");
         FragmentModule = createModule(spirv.Fragment, $"{name} (fragment)");
+
+        renderer.Track(this);
     }
 
     public void Use() => renderer.UseShader(this);
@@ -103,6 +105,8 @@ public sealed unsafe class VulkanShader : IShader
         var fragment = FragmentModule;
         VertexModule = VkShaderModule.Null;
         FragmentModule = VkShaderModule.Null;
+
+        renderer.Untrack(this);
 
         renderer.ReleaseShader(this, () =>
         {
