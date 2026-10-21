@@ -33,6 +33,11 @@ public class ConfigManagerTest
 
     private string readFile() => File.ReadAllText(Path.Combine(tempDir, "test.ini"));
 
+    /// <summary>
+    /// The file's lines, whichever line ending the platform wrote them with.
+    /// </summary>
+    private string[] readLines() => File.ReadAllLines(Path.Combine(tempDir, "test.ini"));
+
     private void writeFile(string content) => File.WriteAllText(Path.Combine(tempDir, "test.ini"), content);
 
     [Test]
@@ -100,7 +105,7 @@ public class ConfigManagerTest
             Assert.That(manager.Get(TestSetting.Mode, TestMode.Fast).Value, Is.EqualTo(TestMode.Slow));
             Assert.That(manager.Get(TestSetting.Enabled, true).Value, Is.False);
 
-            Assert.That(readFile().Trim().Split('\n'), Is.EqualTo(expected));
+            Assert.That(readLines(), Is.EqualTo(expected));
         }
     }
 
