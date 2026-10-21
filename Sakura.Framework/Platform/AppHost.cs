@@ -575,7 +575,13 @@ public abstract class AppHost : IDisposable
 
             threadRunner = new ThreadRunner(updateThread, drawThread, audioThread);
 
-            ExecutionMode = FrameworkConfigManager.Get<ExecutionMode>(FrameworkSetting.ExecutionMode);
+            if (FrameworkEnvironment.StartupExecutionMode is ExecutionMode forced)
+            {
+                ExecutionMode = new Reactive<Threading.ExecutionMode>(forced);
+                Logger.Verbose($"Execution mode forced to {forced} by SAKURA_EXECUTION_MODE.");
+            }
+            else
+                ExecutionMode = FrameworkConfigManager.Get<ExecutionMode>(FrameworkSetting.ExecutionMode);
 
             ExecutionMode.ValueChanged += e =>
             {
