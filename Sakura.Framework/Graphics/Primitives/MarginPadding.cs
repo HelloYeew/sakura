@@ -9,7 +9,7 @@ namespace Sakura.Framework.Graphics.Primitives;
 /// <summary>
 /// Define padding or margin for the four sides of a rectangle.
 /// </summary>
-public struct MarginPadding
+public struct MarginPadding : IEquatable<MarginPadding>
 {
     public float Top;
     public float Right;
@@ -42,9 +42,10 @@ public struct MarginPadding
 
     public override string ToString() => $"(T:{Top}, R:{Right}, B:{Bottom}, L:{Left})";
 
-    public override bool Equals(object? obj)
+    public override bool Equals(object? obj) => obj is MarginPadding other && Equals(other);
+
+    public bool Equals(MarginPadding other)
     {
-        if (obj is not MarginPadding other) return false;
         return Math.Abs(Top - other.Top) < float.Epsilon &&
                Math.Abs(Right - other.Right) < float.Epsilon &&
                Math.Abs(Bottom - other.Bottom) < float.Epsilon &&
