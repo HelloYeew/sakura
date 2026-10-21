@@ -277,7 +277,9 @@ internal sealed unsafe class VulkanDevice : IDisposable
             }
         }
 
-        HasDebugUtils = instanceExtensions.Contains(debug_utils_extension);
+        // On Android a driver that offers the extension itself can't be trusted with it: the emulator's crashes
+        // naming an object. Names are only of use to a layer reading them, so there they wait for validation.
+        HasDebugUtils = instanceExtensions.Contains(debug_utils_extension) && (ValidationEnabled || RuntimeInfo.OS != RuntimeInfo.Platform.Android);
 
         if (HasDebugUtils)
             extensions.Add(debug_utils_extension);
