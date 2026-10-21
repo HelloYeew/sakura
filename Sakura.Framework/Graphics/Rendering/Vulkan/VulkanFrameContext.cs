@@ -75,6 +75,17 @@ internal sealed unsafe class VulkanFrameContext : IDisposable
 
     public int RetiredCount => retired.Count;
 
+    /// <summary>
+    /// The slot this context is, which also picks its pair of timestamp queries.
+    /// </summary>
+    public int Index => index;
+
+    /// <summary>
+    /// Whether the frame recorded into this slot last wrote both its timestamps, so they can be read once
+    /// its fence has signalled.
+    /// </summary>
+    public bool TimestampsWritten { get; set; }
+
     public VulkanFrameContext(VulkanDevice device, VulkanMemory memory, VulkanStagingPool stagingPool, int index)
     {
         this.device = device;

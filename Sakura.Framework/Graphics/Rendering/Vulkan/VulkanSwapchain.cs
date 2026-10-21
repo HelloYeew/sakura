@@ -4,6 +4,7 @@
 using System;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
+using Sakura.Framework.Statistic;
 using Vortice.Vulkan;
 
 namespace Sakura.Framework.Graphics.Rendering.Vulkan;
@@ -15,7 +16,9 @@ namespace Sakura.Framework.Graphics.Rendering.Vulkan;
 /// <remarks>
 /// Everything here is rebuilt when the window resizes, the present mode changes, or the swapchain
 /// reports itself out of date; the surface too when it is lost. The device and everything created on
-/// it survive both.
+/// it survive both. Where the device can switch present modes per present and the surface allows FIFO
+/// and the uncapped mode together, turning vsync on or off switches the mode at the next present
+/// instead of rebuilding.
 /// </remarks>
 internal sealed unsafe class VulkanSwapchain : IDisposable
 {
@@ -24,6 +27,8 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
     /// run ahead, not by the image count, and a third image keeps FIFO from stalling on a late frame.
     /// </summary>
     private const uint desired_image_count = 3;
+
+    private static readonly GlobalStatistic<int> stat_present_mode_switches = GlobalStatistics.Get<int>("Vulkan", "Present Mode Switches", StatisticKind.Cumulative);
 
     private readonly VulkanDevice device;
     private readonly IVulkanGraphicsSurface window;
@@ -51,6 +56,23 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
     private bool surfaceFormatChosen;
     private bool vsync = true;
 
+    /// <summary>
+    /// The mode presents use when vsync is off, chosen at the last rebuild.
+    /// </summary>
+    private VkPresentModeKHR uncappedMode = VkPresentModeKHR.Fifo;
+
+    /// <summary>
+    /// Whether the current swapchain was created to switch between FIFO and <see cref="uncappedMode"/>
+    /// per present.
+    /// </summary>
+    private bool switchesModes;
+
+    /// <summary>
+    /// The ID the last present carried, or 0 before the first. IDs only grow, across rebuilds too, as
+    /// <c>VK_KHR_present_id</c> requires of the swapchains that replace one another.
+    /// </summary>
+    public ulong LastPresentId { get; private set; }
+
     private VkImage[] images = [];
     private VkImageView[] views = [];
     private VkFramebuffer[] framebuffers = [];
@@ -63,6 +85,7 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
     private VkSemaphore[] renderFinished = [];
 
     private string? lastDescription;
+    private string? lastSwitchMessage;
 
     public VulkanSwapchain(VulkanDevice device, IVulkanGraphicsSurface window, VulkanRenderPasses renderPasses, VkSurfaceKHR surface)
     {
@@ -78,7 +101,8 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
     public void Invalidate() => NeedsRecreate = true;
 
     /// <summary>
-    /// Selects FIFO (vsync) or an uncapped present mode, taking effect at the next rebuild.
+    /// Selects FIFO (vsync) or an uncapped present mode: from the next present when the swapchain can
+    /// switch between them, otherwise from the next rebuild.
     /// </summary>
     public void SetVSync(bool enabled)
     {
@@ -86,6 +110,15 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
             return;
 
         vsync = enabled;
+
+        if (switchesModes && Handle.IsNotNull)
+        {
+            PresentMode = enabled ? VkPresentModeKHR.Fifo : uncappedMode;
+            stat_present_mode_switches.Value++;
+            logIfChanged();
+            return;
+        }
+
         NeedsRecreate = true;
     }
 
@@ -119,12 +152,23 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
             surfaceFormatChosen = true;
         }
 
-        var presentMode = choosePresentMode();
+        uncappedMode = chooseUncappedMode();
+        var presentMode = vsync ? VkPresentModeKHR.Fifo : uncappedMode;
 
         uint imageCount = Math.Max(desired_image_count, capabilities.minImageCount);
 
+        // Both modes, if one swapchain can serve them, and enough images for whichever needs more.
+        var modes = stackalloc VkPresentModeKHR[] { VkPresentModeKHR.Fifo, uncappedMode };
+        bool switching = uncappedMode != VkPresentModeKHR.Fifo && canSwitch(uncappedMode, ref imageCount);
+
         if (capabilities.maxImageCount > 0)
             imageCount = Math.Min(imageCount, capabilities.maxImageCount);
+
+        var presentModes = new VkSwapchainPresentModesCreateInfoKHR
+        {
+            presentModeCount = 2,
+            pPresentModes = modes,
+        };
 
         uint* families = stackalloc uint[] { device.GraphicsQueueFamily, device.PresentQueueFamily };
         bool shared = device.GraphicsQueueFamily != device.PresentQueueFamily;
@@ -152,6 +196,7 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
             presentMode = presentMode,
             clipped = true,
             oldSwapchain = oldSwapchain,
+            pNext = switching ? &presentModes : null,
         };
 
         VkSwapchainKHR swapchain;
@@ -166,6 +211,7 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
         Format = surfaceFormat.format;
         Extent = extent;
         PresentMode = presentMode;
+        switchesModes = switching;
         RenderPass = renderPasses.Get(Format, VulkanPassKind.SwapchainClear);
 
         createImageResources();
@@ -210,15 +256,32 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
 
     /// <summary>
     /// Queues <paramref name="imageIndex"/> for presentation once its render-finished semaphore is
-    /// signalled.
+    /// signalled, in the current present mode, and with the next present ID where the device takes one
+    /// (<see cref="LastPresentId"/>).
     /// </summary>
     public VkResult Present(uint imageIndex)
     {
         var swapchain = Handle;
         var wait = renderFinished[imageIndex];
+        var mode = PresentMode;
+        ulong id = LastPresentId + 1;
+
+        var modeInfo = new VkSwapchainPresentModeInfoKHR
+        {
+            swapchainCount = 1,
+            pPresentModes = &mode,
+        };
+
+        var idInfo = new VkPresentIdKHR
+        {
+            pNext = switchesModes ? &modeInfo : null,
+            swapchainCount = 1,
+            pPresentIds = &id,
+        };
 
         var presentInfo = new VkPresentInfoKHR
         {
+            pNext = device.SupportsPresentWait ? &idInfo : switchesModes ? &modeInfo : null,
             waitSemaphoreCount = 1,
             pWaitSemaphores = &wait,
             swapchainCount = 1,
@@ -226,8 +289,21 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
             pImageIndices = &imageIndex,
         };
 
-        return device.Api.vkQueuePresentKHR(device.PresentQueue, &presentInfo);
+        var result = device.Api.vkQueuePresentKHR(device.PresentQueue, &presentInfo);
+
+        // An out-of-date or suboptimal present was still queued; only an error means it never was.
+        if (device.SupportsPresentWait && result >= VkResult.Success)
+            LastPresentId = id;
+
+        return result;
     }
+
+    /// <summary>
+    /// Waits until the present carrying <paramref name="presentId"/> is on screen, or
+    /// <paramref name="timeoutNanoseconds"/> passes (<c>VK_TIMEOUT</c>; 0 only checks). Only valid for an
+    /// ID this swapchain presented, so callers forget their IDs when it is rebuilt.
+    /// </summary>
+    public VkResult WaitForPresent(ulong presentId, ulong timeoutNanoseconds) => device.Api.vkWaitForPresentKHR(Handle, presentId, timeoutNanoseconds);
 
     public VkFramebuffer GetFramebuffer(uint imageIndex) => framebuffers[imageIndex];
 
@@ -406,12 +482,12 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
         return formats[0];
     }
 
-    private VkPresentModeKHR choosePresentMode()
+    /// <summary>
+    /// The mode presents use with vsync off. FIFO, the only mode every device has and the only one that
+    /// waits for vertical blank, is the vsync mode.
+    /// </summary>
+    private VkPresentModeKHR chooseUncappedMode()
     {
-        // FIFO is the only mode every device has, and the only one that waits for vertical blank.
-        if (vsync)
-            return VkPresentModeKHR.Fifo;
-
         var api = device.InstanceApi;
 
         uint count;
@@ -434,6 +510,61 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
         return VkPresentModeKHR.Fifo;
     }
 
+    /// <summary>
+    /// Whether one swapchain can switch between FIFO and <paramref name="uncapped"/> from present to
+    /// present, raising <paramref name="imageCount"/> to what either needs.
+    /// </summary>
+    private bool canSwitch(VkPresentModeKHR uncapped, ref uint imageCount)
+    {
+        if (!device.SupportsPresentModeSwitching)
+            return false;
+
+        var api = device.InstanceApi;
+        var compatible = stackalloc VkPresentModeKHR[8];
+
+        // What FIFO can switch to, and how many images it needs on its own.
+        var fifo = new VkSurfacePresentModeKHR { presentMode = VkPresentModeKHR.Fifo };
+        var surfaceInfo = new VkPhysicalDeviceSurfaceInfo2KHR { pNext = &fifo, surface = Surface };
+        var compatibility = new VkSurfacePresentModeCompatibilityKHR { presentModeCount = 8, pPresentModes = compatible };
+        var capabilities = new VkSurfaceCapabilities2KHR { pNext = &compatibility };
+
+        if (api.vkGetPhysicalDeviceSurfaceCapabilities2KHR(device.PhysicalDevice, &surfaceInfo, &capabilities) != VkResult.Success)
+            return false;
+
+        bool found = false;
+        var names = new System.Collections.Generic.List<string>();
+
+        for (int i = 0; i < compatibility.presentModeCount && i < 8; i++)
+        {
+            found |= compatible[i] == uncapped;
+            names.Add(compatible[i].ToString());
+        }
+
+        if (!found)
+        {
+            string message = $"Vulkan swapchain: FIFO can only switch to {string.Join(", ", names)} without a rebuild, not {uncapped}, so changing vsync rebuilds the swapchain.";
+
+            // Every rebuild asks again, and resizes rebuild often.
+            if (message != lastSwitchMessage)
+                Logger.Verbose(message);
+
+            lastSwitchMessage = message;
+            return false;
+        }
+
+        imageCount = Math.Max(imageCount, capabilities.surfaceCapabilities.minImageCount);
+
+        var other = new VkSurfacePresentModeKHR { presentMode = uncapped };
+        surfaceInfo.pNext = &other;
+        capabilities = new VkSurfaceCapabilities2KHR();
+
+        if (api.vkGetPhysicalDeviceSurfaceCapabilities2KHR(device.PhysicalDevice, &surfaceInfo, &capabilities) != VkResult.Success)
+            return false;
+
+        imageCount = Math.Max(imageCount, capabilities.surfaceCapabilities.minImageCount);
+        return true;
+    }
+
     private static VkCompositeAlphaFlagsKHR chooseCompositeAlpha(VkCompositeAlphaFlagsKHR supported)
     {
         foreach (var wanted in (ReadOnlySpan<VkCompositeAlphaFlagsKHR>)[VkCompositeAlphaFlagsKHR.Opaque, VkCompositeAlphaFlagsKHR.Inherit, VkCompositeAlphaFlagsKHR.PreMultiplied, VkCompositeAlphaFlagsKHR.PostMultiplied])
@@ -448,7 +579,8 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
     private void logIfChanged()
     {
         // The size is left out: it changes on every resize, and the rest rarely does.
-        string description = $"{Format} {surfaceFormat.colorSpace}, {PresentMode}{(vsync ? string.Empty : PresentMode == VkPresentModeKHR.Fifo ? " (uncapped requested, but FIFO is all the window offers)" : string.Empty)}, {images.Length} images";
+        string switching = switchesModes ? $", switching to {(vsync ? uncappedMode : VkPresentModeKHR.Fifo)} without a rebuild" : string.Empty;
+        string description = $"{Format} {surfaceFormat.colorSpace}, {PresentMode}{(vsync ? string.Empty : PresentMode == VkPresentModeKHR.Fifo ? " (uncapped requested, but FIFO is all the window offers)" : string.Empty)}{switching}, {images.Length} images";
 
         if (description == lastDescription)
             return;

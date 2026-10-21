@@ -70,6 +70,48 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     private static readonly GlobalStatistic<long> stat_frames_without_present = GlobalStatistics.Get<long>("Vulkan", "Frames Without Present", StatisticKind.Cumulative);
 
     /// <summary>
+    /// The GPU's time on a frame, from its first command to its last, read back once the frame has
+    /// finished. It includes any wait for the swapchain image within the frame.
+    /// </summary>
+    private static readonly GlobalStatistic<double> stat_gpu_time = GlobalStatistics.Get<double>("Renderer", "GPU Time", StatisticKind.PerFrame, StatisticUnit.Milliseconds);
+
+    /// <summary>
+    /// Time the draw thread spent before a frame could start: waiting for the previous frame to reach the
+    /// screen, for the frame slot's previous use to finish, and for a swapchain image.
+    /// </summary>
+    private static readonly GlobalStatistic<double> stat_latency_wait = GlobalStatistics.Get<double>("Renderer", "Latency Wait", StatisticKind.PerFrame, StatisticUnit.Milliseconds);
+
+    private static readonly GlobalStatistic<double> stat_present = GlobalStatistics.Get<double>("Renderer", "Present", StatisticKind.PerFrame, StatisticUnit.Milliseconds);
+
+    /// <summary>
+    /// From the start of a frame's work to its present being on screen, for the latest frame known to
+    /// have got there. Needs present IDs.
+    /// </summary>
+    private static readonly GlobalStatistic<double> stat_present_latency = GlobalStatistics.Get<double>("Vulkan", "Present Latency", StatisticKind.Gauge, StatisticUnit.Milliseconds);
+
+    /// <summary>
+    /// How many presents may still be waiting for the screen when a vsync frame starts, as DXGI's maximum
+    /// frame latency counts them. Unset or <c>off</c> doesn't wait.
+    /// </summary>
+    private const string max_frame_latency_variable = "SAKURA_VULKAN_MAX_FRAME_LATENCY";
+
+    /// <summary>
+    /// Off unless asked for. A present wait returns when a frame is on screen, which behind a compositor is
+    /// a refresh or more after the compositor has taken it, and how many depends on the window server's
+    /// state. DXGI's waitable swapchain signals at the earlier point, so a latency of 1 never costs
+    /// Direct3D 11 throughput, but the same wait here cut vsync from 120 to 60–80 fps whenever presents
+    /// took three refreshes to show, while the host was already pacing frames to the refresh rate.
+    /// </summary>
+    private static readonly int? max_frame_latency = int.TryParse(Environment.GetEnvironmentVariable(max_frame_latency_variable), out int frames) && frames >= 0
+        ? Math.Min(frames, max_pending_presents - 1)
+        : null;
+
+    /// <summary>
+    /// How many presents can be awaiting the screen before the oldest is no longer followed.
+    /// </summary>
+    private const int max_pending_presents = 8;
+
+    /// <summary>
     /// The frame slots allocated. Up to two run at once: one while presentation is synced to the display
     /// (the CPU starts a frame only once the previous one has finished), two when uncapped.
     /// </summary>
@@ -208,8 +250,27 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     private float renderScaleX = 1f;
     private float renderScaleY = 1f;
 
-    private double blockedMilliseconds;
+    private double latencyWaitMilliseconds;
+    private double presentMilliseconds;
     private bool waitReported;
+
+    /// <summary>
+    /// Presents not yet seen on screen, oldest first, each with when the frame it shows started its work.
+    /// </summary>
+    private readonly (ulong Id, long StartTicks)[] pendingPresents = new (ulong, long)[max_pending_presents];
+
+    private int pendingPresentFirst;
+    private int pendingPresentCount;
+    private long frameStartTicks;
+
+    /// <summary>
+    /// Two timestamps per frame slot, at the start of the frame's first command buffer and the end of its
+    /// last. Null where the graphics queue can't write timestamps.
+    /// </summary>
+    private VkQueryPool timestampPool;
+
+    private double nanosecondsPerTick;
+    private ulong timestampMask;
 
     private VertexBatch? batch;
     private VkBuffer quadIndexBuffer;
@@ -344,6 +405,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         // Copies from a buffer into a color image need the offset to be a multiple of the texel size.
         stagingAlignment = Math.Max(limits.optimalBufferCopyOffsetAlignment, 4);
         mipmapsSupported = supportsMipmapGeneration(device);
+        createTimestampPool();
 
         stagingPool = new VulkanStagingPool(device, memory);
         hardwareFrames = new VulkanHardwareFrames(device);
@@ -370,13 +432,14 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     }
 
     /// <inheritdoc/>
-    public double LastBlockedMilliseconds => blockedMilliseconds;
+    public double LastBlockedMilliseconds => latencyWaitMilliseconds + presentMilliseconds;
 
     public void SetVSync(bool enabled) => vsyncRequested = enabled;
 
     public void StartFrame()
     {
-        blockedMilliseconds = 0;
+        latencyWaitMilliseconds = 0;
+        presentMilliseconds = 0;
         currentFrame = null;
         currentImage = null;
 
@@ -387,12 +450,32 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
         var frame = frames[slot]!;
 
+        // When asked for, a vsync frame starts only once few enough earlier presents are still waiting for
+        // the screen, which caps how far latency can creep when the host's pacing runs faster than the
+        // display. Uncapped, frames are only held back by the frames in flight.
+        if (vsyncApplied && max_frame_latency is int latency)
+            waitForQueuedPresents(latency);
+
         waitForFence(frame.Fence);
+        readTimestamps(frame);
+
+        frameStartTicks = Stopwatch.GetTimestamp();
+        checkPresents();
 
         // The fence proves the GPU finished this slot's last frame: what was retired during it can go,
         // and its command buffers, descriptor sets, stream buffer and staging buffers can be reused.
         frame.Reset();
         stagingPool!.Trim();
+
+        // First in the frame's first command buffer, ahead of every upload, so the GPU time covers them.
+        if (timestampPool.IsNotNull)
+        {
+            var uploads = frame.BeginUploads();
+            uint first = (uint)frame.Index * 2;
+
+            device.Api.vkCmdResetQueryPool(uploads, timestampPool, first, 2);
+            device.Api.vkCmdWriteTimestamp(uploads, VkPipelineStageFlags.TopOfPipe, timestampPool, first);
+        }
 
         currentFrame = frame;
         cachedSetCount = 0;
@@ -491,6 +574,12 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         // offscreen one (a framebuffer left bound) its image ready to sample.
         endPass();
 
+        if (timestampPool.IsNotNull)
+        {
+            device.Api.vkCmdWriteTimestamp(frame.CommandBuffer, VkPipelineStageFlags.BottomOfPipe, timestampPool, (uint)frame.Index * 2 + 1);
+            frame.TimestampsWritten = true;
+        }
+
         // Hardware frames are acquired last, so their locks are held only from here until the submit.
         bool acquiring = !hardwareFrames!.IsEmpty;
 
@@ -527,6 +616,9 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         lastSubmittedSlot = slot;
         slot = (slot + 1) % framesInFlight;
         currentFrame = null;
+
+        stat_latency_wait.Value = latencyWaitMilliseconds;
+        stat_present.Value = presentMilliseconds;
 
         pipelines!.SaveIfChanged();
     }
@@ -586,8 +678,110 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
             reportLongWait("waiting for the GPU to finish a frame");
         }
 
-        blockedMilliseconds += Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        latencyWaitMilliseconds += Stopwatch.GetElapsedTime(start).TotalMilliseconds;
         waitReported = false;
+    }
+
+    /// <summary>
+    /// Waits until at most <paramref name="queued"/> presents are still waiting for the screen. Gives up
+    /// after the acquire timeout, since a hidden window can stop presents from ever being shown (Wayland),
+    /// and the frame then goes ahead.
+    /// </summary>
+    private void waitForQueuedPresents(int queued)
+    {
+        if (swapchain == null || !device!.SupportsPresentWait || pendingPresentCount <= queued)
+            return;
+
+        // Pending presents are consecutive, oldest first, so the newest one that has to be on screen is the
+        // one just before the last `queued`.
+        var target = pendingPresents[(pendingPresentFirst + pendingPresentCount - queued - 1) % max_pending_presents];
+
+        long start = Stopwatch.GetTimestamp();
+        var result = swapchain.WaitForPresent(target.Id, acquire_timeout_nanoseconds);
+        latencyWaitMilliseconds += Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+
+        switch (result)
+        {
+            case VkResult.Success:
+                break;
+
+            case VkResult.Timeout:
+                reportLongWait("waiting for the previous frame to reach the screen");
+                break;
+
+            case VkResult.SuboptimalKHR:
+            case VkResult.ErrorOutOfDateKHR:
+                swapchain.Invalidate();
+                break;
+
+            case VkResult.ErrorSurfaceLostKHR:
+                pendingPresentCount = 0;
+                replaceSurface();
+                break;
+
+            default:
+                VulkanDevice.Check(result, "vkWaitForPresentKHR");
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Publishes the latency of every pending present that is on screen by now, without waiting.
+    /// </summary>
+    private void checkPresents()
+    {
+        while (pendingPresentCount > 0)
+        {
+            var (id, startTicks) = pendingPresents[pendingPresentFirst];
+            var result = swapchain!.WaitForPresent(id, 0);
+
+            if (result == VkResult.Timeout)
+                break;
+
+            // Anything else but success (out of date, lost) means this present will never be reported.
+            if (result == VkResult.Success)
+                stat_present_latency.Value = Stopwatch.GetElapsedTime(startTicks).TotalMilliseconds;
+
+            pendingPresentFirst = (pendingPresentFirst + 1) % max_pending_presents;
+            pendingPresentCount--;
+        }
+    }
+
+    /// <summary>
+    /// Follows the present just made until it reaches the screen; the oldest one is dropped when too many
+    /// are waiting.
+    /// </summary>
+    private void trackPresent(ulong id)
+    {
+        if (pendingPresentCount == max_pending_presents)
+        {
+            pendingPresentFirst = (pendingPresentFirst + 1) % max_pending_presents;
+            pendingPresentCount--;
+        }
+
+        pendingPresents[(pendingPresentFirst + pendingPresentCount) % max_pending_presents] = (id, frameStartTicks);
+        pendingPresentCount++;
+    }
+
+    /// <summary>
+    /// Publishes the GPU time of the frame last recorded into <paramref name="frame"/>'s slot. Only valid
+    /// once its fence has signalled.
+    /// </summary>
+    private void readTimestamps(VulkanFrameContext frame)
+    {
+        if (!frame.TimestampsWritten)
+            return;
+
+        frame.TimestampsWritten = false;
+
+        ulong* ticks = stackalloc ulong[2];
+        var result = device!.Api.vkGetQueryPoolResults(timestampPool, (uint)frame.Index * 2, 2, 2 * sizeof(ulong), ticks, sizeof(ulong), VkQueryResultFlags.Bit64);
+
+        if (result != VkResult.Success)
+            return;
+
+        ulong elapsed = (ticks[1] - ticks[0]) & timestampMask;
+        stat_gpu_time.Value = elapsed * nanosecondsPerTick / 1_000_000.0;
     }
 
     private void reportLongWait(string what)
@@ -618,7 +812,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
             long start = Stopwatch.GetTimestamp();
             var result = chain.Acquire(frame.ImageAvailable, acquire_timeout_nanoseconds, out uint image);
-            blockedMilliseconds += Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            latencyWaitMilliseconds += Stopwatch.GetElapsedTime(start).TotalMilliseconds;
 
             switch (result)
             {
@@ -662,6 +856,9 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         swapchainBuiltFor = (drawableWidth, drawableHeight);
         stat_swapchain_rebuilds.Value++;
 
+        // Their IDs belonged to the swapchain just replaced.
+        pendingPresentCount = 0;
+
         // Compiled now rather than the first time each blend mode is drawn, which would be a hitch in
         // the middle of a frame. After the first run these come straight from the pipeline cache.
         foreach (var blend in Enum.GetValues<BlendingMode>())
@@ -673,6 +870,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     private void replaceSurface()
     {
         Logger.Verbose("Vulkan: the window surface was lost; creating a new one.");
+        pendingPresentCount = 0;
         swapchain!.RecreateSurface();
     }
 
@@ -838,7 +1036,10 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         using (device!.PresentQueueLock.EnterScope())
             result = swapchain!.Present(image);
 
-        blockedMilliseconds += Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        presentMilliseconds += Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+
+        if (device.SupportsPresentWait && result >= VkResult.Success)
+            trackPresent(swapchain.LastPresentId);
 
         switch (result)
         {
@@ -1813,6 +2014,27 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         memory!.Free(allocation);
     }
 
+    private void createTimestampPool()
+    {
+        uint bits = device!.GraphicsTimestampBits;
+
+        if (bits == 0)
+            return;
+
+        var createInfo = new VkQueryPoolCreateInfo
+        {
+            queryType = VkQueryType.Timestamp,
+            queryCount = max_frames_in_flight * 2,
+        };
+
+        VkQueryPool pool;
+        VulkanDevice.Check(device.Api.vkCreateQueryPool(&createInfo, null, &pool), "vkCreateQueryPool");
+        timestampPool = pool;
+
+        nanosecondsPerTick = device.Properties.limits.timestampPeriod;
+        timestampMask = bits >= 64 ? ulong.MaxValue : (1UL << (int)bits) - 1;
+    }
+
     private void createImmediateCommandPool()
     {
         var poolInfo = new VkCommandPoolCreateInfo
@@ -2248,6 +2470,9 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         device.Api.vkDestroyBuffer(quadIndexBuffer, null);
         memory?.Free(quadIndexAllocation);
         device.Api.vkDestroyCommandPool(immediateCommandPool, null);
+
+        if (timestampPool.IsNotNull)
+            device.Api.vkDestroyQueryPool(timestampPool, null);
 
         swapchain?.Dispose();
         renderPasses?.Dispose();

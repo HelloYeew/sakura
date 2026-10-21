@@ -38,6 +38,17 @@ internal sealed unsafe class VulkanDevice : IDisposable
     private const string video_queue_extension = "VK_KHR_video_queue";
     private const string video_decode_queue_extension = "VK_KHR_video_decode_queue";
     private const string video_maintenance1_extension = "VK_KHR_video_maintenance1";
+    private const string present_id_extension = "VK_KHR_present_id";
+    private const string present_wait_extension = "VK_KHR_present_wait";
+    private const string surface_capabilities2_extension = "VK_KHR_get_surface_capabilities2";
+
+    /// <summary>
+    /// The KHR name first: the EXT one is the same extension before it was promoted, with identical
+    /// structures.
+    /// </summary>
+    private static readonly string[] surface_maintenance1_extensions = ["VK_KHR_surface_maintenance1", "VK_EXT_surface_maintenance1"];
+
+    private static readonly string[] swapchain_maintenance1_extensions = ["VK_KHR_swapchain_maintenance1", "VK_EXT_swapchain_maintenance1"];
 
     /// <summary>
     /// The decode extension for each codec operation a video queue can report.
@@ -76,8 +87,9 @@ internal sealed unsafe class VulkanDevice : IDisposable
     ];
 
     /// <summary>
-    /// Device extensions that nothing requires but later work can use: present pacing, switching present
-    /// modes without a new swapchain, and memory budgets. Their availability is logged at startup.
+    /// Device extensions logged at startup when available. The present and swapchain ones are enabled
+    /// whenever the device has them (present pacing, switching present modes without a new swapchain);
+    /// memory budgets aren't used yet.
     /// </summary>
     private static readonly string[] optional_device_extensions =
     [
@@ -120,6 +132,12 @@ internal sealed unsafe class VulkanDevice : IDisposable
     /// not it says so.
     /// </summary>
     public VkQueueFlags GraphicsQueueFlags { get; }
+
+    /// <summary>
+    /// How many bits of a timestamp written on the graphics queue are meaningful; 0 when it can't write
+    /// timestamps at all.
+    /// </summary>
+    public uint GraphicsTimestampBits { get; }
     public VkQueue GraphicsQueue { get; }
 
     /// <summary>
@@ -149,6 +167,24 @@ internal sealed unsafe class VulkanDevice : IDisposable
     /// Whether <c>VK_EXT_debug_utils</c> is enabled, so objects can be given names that debuggers show.
     /// </summary>
     public bool HasDebugUtils { get; }
+
+    /// <summary>
+    /// Whether presents can carry an ID and the CPU can wait for one to reach the screen
+    /// (<c>VK_KHR_present_id</c> and <c>VK_KHR_present_wait</c>).
+    /// </summary>
+    public bool SupportsPresentWait { get; private set; }
+
+    /// <summary>
+    /// Whether a swapchain can be created to switch between compatible present modes from one present to
+    /// the next (<c>VK_KHR_swapchain_maintenance1</c>), so turning vsync on or off needs no new swapchain.
+    /// </summary>
+    public bool SupportsPresentModeSwitching { get; private set; }
+
+    /// <summary>
+    /// Whether the instance can query a surface per present mode (<c>VK_KHR_surface_maintenance1</c>),
+    /// which present-mode switching needs.
+    /// </summary>
+    private readonly bool hasSurfaceMaintenance;
 
     /// <summary>
     /// Whether frames a hardware decoder produces on this device can be sampled where they are: the
@@ -246,6 +282,16 @@ internal sealed unsafe class VulkanDevice : IDisposable
         if (HasDebugUtils)
             extensions.Add(debug_utils_extension);
 
+        // Only of use to a window: they describe what a surface can do per present mode.
+        string? surfaceMaintenance = surface_maintenance1_extensions.FirstOrDefault(instanceExtensions.Contains);
+
+        if (windowSurface != null && surfaceMaintenance != null && instanceExtensions.Contains(surface_capabilities2_extension))
+        {
+            extensions.Add(surface_capabilities2_extension);
+            extensions.Add(surfaceMaintenance);
+            hasSurfaceMaintenance = true;
+        }
+
         var flags = VkInstanceCreateFlags.None;
 
         // Portability drivers (MoltenVK) are only enumerated when the application says it can cope with
@@ -291,6 +337,7 @@ internal sealed unsafe class VulkanDevice : IDisposable
             AvailableExtensions = candidate.Extensions;
             GraphicsQueueFamily = candidate.GraphicsFamily;
             GraphicsQueueFlags = candidate.GraphicsFlags;
+            GraphicsTimestampBits = candidate.GraphicsTimestampBits;
             PresentQueueFamily = candidate.PresentFamily;
 
             Handle = createDevice(candidate, windowSurface != null);
@@ -557,6 +604,7 @@ internal sealed unsafe class VulkanDevice : IDisposable
         public HashSet<string> Extensions = [];
         public uint GraphicsFamily;
         public VkQueueFlags GraphicsFlags;
+        public uint GraphicsTimestampBits;
         public uint PresentFamily;
         public ulong DeviceLocalMemory;
     }
@@ -732,6 +780,7 @@ internal sealed unsafe class VulkanDevice : IDisposable
 
         candidate.GraphicsFamily = graphics.Value;
         candidate.GraphicsFlags = families[graphics.Value].queueFlags;
+        candidate.GraphicsTimestampBits = families[graphics.Value].timestampValidBits;
         candidate.PresentFamily = present.Value;
         reason = null;
         return true;
@@ -798,6 +847,13 @@ internal sealed unsafe class VulkanDevice : IDisposable
         var features = chooseVideoFeatures(candidate);
         uint? decodeFamily = features != null ? chooseDecodeQueue(candidate, extensions) : null;
 
+        // Presentation features go in front of the video ones, which are kept as their own chain for
+        // FFmpeg. These only have to live until the device is created.
+        var presentId = new VkPhysicalDevicePresentIdFeaturesKHR();
+        var presentWait = new VkPhysicalDevicePresentWaitFeaturesKHR();
+        var maintenance = new VkPhysicalDeviceSwapchainMaintenance1FeaturesKHR();
+        void* chain = presents ? choosePresentFeatures(candidate, extensions, &presentId, &presentWait, &maintenance, features) : features;
+
         var families = new List<uint> { candidate.GraphicsFamily };
 
         if (!families.Contains(candidate.PresentFamily))
@@ -823,7 +879,7 @@ internal sealed unsafe class VulkanDevice : IDisposable
 
         var createInfo = new VkDeviceCreateInfo
         {
-            pNext = features,
+            pNext = chain,
             queueCreateInfoCount = (uint)families.Count,
             pQueueCreateInfos = queues,
             enabledExtensionCount = extensionNames.Length,
@@ -890,6 +946,70 @@ internal sealed unsafe class VulkanDevice : IDisposable
         *features = new VkPhysicalDeviceFeatures2 { pNext = features13 };
 
         return features;
+    }
+
+    /// <summary>
+    /// Enables present IDs with present waits, and swapchain present-mode switching, where the device has
+    /// them, adding their extensions to <paramref name="extensions"/>. Returns the head of the feature chain
+    /// with the enabled ones linked in front of <paramref name="next"/>.
+    /// </summary>
+    private void* choosePresentFeatures(Candidate candidate, List<string> extensions, VkPhysicalDevicePresentIdFeaturesKHR* presentId,
+                                        VkPhysicalDevicePresentWaitFeaturesKHR* presentWait, VkPhysicalDeviceSwapchainMaintenance1FeaturesKHR* maintenance, void* next)
+    {
+        // Feature support is only known through the properties2 queries.
+        if (InstanceApiVersion.Minor < 1 || candidate.Properties.apiVersion.Minor < 1)
+            return next;
+
+        bool offersWait = candidate.Extensions.Contains(present_id_extension) && candidate.Extensions.Contains(present_wait_extension);
+        string? swapchainMaintenance = hasSurfaceMaintenance ? swapchain_maintenance1_extensions.FirstOrDefault(candidate.Extensions.Contains) : null;
+
+        // Only structures of extensions the device has go into the query.
+        var supportedId = new VkPhysicalDevicePresentIdFeaturesKHR();
+        var supportedWait = new VkPhysicalDevicePresentWaitFeaturesKHR();
+        var supportedMaintenance = new VkPhysicalDeviceSwapchainMaintenance1FeaturesKHR();
+        var supported = new VkPhysicalDeviceFeatures2();
+
+        if (offersWait)
+        {
+            supportedWait.pNext = &supportedId;
+            supported.pNext = &supportedWait;
+        }
+
+        if (swapchainMaintenance != null)
+        {
+            supportedMaintenance.pNext = supported.pNext;
+            supported.pNext = &supportedMaintenance;
+        }
+
+        if (supported.pNext == null)
+            return next;
+
+        InstanceApi.vkGetPhysicalDeviceFeatures2(candidate.Device, &supported);
+
+        void* head = next;
+
+        if (swapchainMaintenance != null && supportedMaintenance.swapchainMaintenance1)
+        {
+            extensions.Add(swapchainMaintenance);
+            maintenance->swapchainMaintenance1 = true;
+            maintenance->pNext = head;
+            head = maintenance;
+            SupportsPresentModeSwitching = true;
+        }
+
+        if (offersWait && supportedId.presentId && supportedWait.presentWait)
+        {
+            extensions.Add(present_id_extension);
+            extensions.Add(present_wait_extension);
+            presentWait->presentWait = true;
+            presentWait->pNext = head;
+            presentId->presentId = true;
+            presentId->pNext = presentWait;
+            head = presentId;
+            SupportsPresentWait = true;
+        }
+
+        return head;
     }
 
     /// <summary>
@@ -984,6 +1104,7 @@ internal sealed unsafe class VulkanDevice : IDisposable
             ? $"Vulkan video: decodes {DecodeOperations} on queue family {decodeFamily}, into frames the renderer samples in place"
             : $"Vulkan video: no decode queue{(SharesVideoFrames ? string.Empty : ", and decoded frames couldn't be shared (needs Vulkan 1.3 with timeline semaphores and synchronization2)")}");
         Logger.Verbose($"Vulkan optional extensions available: {(optional.Length > 0 ? optional : "none")}");
+        Logger.Verbose($"Vulkan presentation: present wait {(SupportsPresentWait ? "on" : "unavailable")}, present-mode switching {(SupportsPresentModeSwitching ? "on" : "unavailable")}, GPU timestamps {(GraphicsTimestampBits > 0 ? $"{GraphicsTimestampBits} bits" : "unavailable")}");
         Logger.Verbose($"Vulkan validation: {(ValidationEnabled ? syncValidation ? "on, with synchronization validation" : "on" : "off")}");
     }
 
