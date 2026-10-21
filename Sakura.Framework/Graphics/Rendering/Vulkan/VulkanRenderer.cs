@@ -807,6 +807,10 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
         for (int attempt = 0; attempt < 2; attempt++)
         {
+            // Released when the window lost it; until the window has one again, nothing is presented.
+            if (!chain.HasSurface && !chain.TryCreateSurface())
+                return null;
+
             if (chain.NeedsRecreate && !rebuildSwapchain())
                 return null;
 
@@ -871,7 +875,18 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     {
         Logger.Verbose("Vulkan: the window surface was lost; creating a new one.");
         pendingPresentCount = 0;
-        swapchain!.RecreateSurface();
+        swapchain!.ReleaseSurface();
+        swapchain.TryCreateSurface();
+    }
+
+    public void ReleaseSurface()
+    {
+        if (swapchain == null)
+            return;
+
+        Logger.Verbose("Vulkan: releasing the window surface.");
+        pendingPresentCount = 0;
+        swapchain.ReleaseSurface();
     }
 
     /// <summary>

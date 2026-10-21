@@ -222,16 +222,40 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
     }
 
     /// <summary>
-    /// Replaces a lost surface (<c>VK_ERROR_SURFACE_LOST_KHR</c>) with a new one on the same window. The
-    /// swapchain is rebuilt by the next <see cref="Recreate"/>.
+    /// Whether there is a surface to build the swapchain on. There isn't after <see cref="ReleaseSurface"/>
+    /// until <see cref="TryCreateSurface"/> succeeds.
     /// </summary>
-    public void RecreateSurface()
+    public bool HasSurface => Surface.IsNotNull;
+
+    /// <summary>
+    /// Destroys the swapchain and its surface: the surface was lost (<c>VK_ERROR_SURFACE_LOST_KHR</c>), or the
+    /// window is about to lose it. <see cref="TryCreateSurface"/> makes a new one.
+    /// </summary>
+    public void ReleaseSurface()
     {
         device.WaitIdle();
         destroySwapchain();
-        window.DestroySurface(device.Instance.Handle, Surface);
 
-        Surface = window.CreateSurface(device.Instance.Handle);
+        if (Surface.IsNotNull)
+        {
+            window.DestroySurface(device.Instance.Handle, Surface);
+            Surface = VkSurfaceKHR.Null;
+        }
+
+        NeedsRecreate = true;
+    }
+
+    /// <summary>
+    /// Makes a new surface on the same window after <see cref="ReleaseSurface"/>. The swapchain is rebuilt by
+    /// the next <see cref="Recreate"/>.
+    /// </summary>
+    /// <returns>False while the window has no surface to give, as in an Android app's background.</returns>
+    public bool TryCreateSurface()
+    {
+        if (!window.TryCreateSurface(device.Instance.Handle, out ulong handle))
+            return false;
+
+        Surface = handle;
 
         VkBool32 supported;
         VulkanDevice.Check(device.InstanceApi.vkGetPhysicalDeviceSurfaceSupportKHR(device.PhysicalDevice, device.PresentQueueFamily, Surface, &supported), "vkGetPhysicalDeviceSurfaceSupportKHR");
@@ -241,6 +265,7 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
 
         surfaceFormatChosen = false;
         NeedsRecreate = true;
+        return true;
     }
 
     /// <summary>

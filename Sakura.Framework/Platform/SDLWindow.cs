@@ -244,6 +244,13 @@ public class SDLWindow : IWindow
     }
 
     /// <summary>
+    /// Sets the SDL hints this platform needs. Called before SDL is initialised.
+    /// </summary>
+    protected virtual void ConfigureHints()
+    {
+    }
+
+    /// <summary>
     /// The safe-area insets in SDL window coordinates when the platform knows them better than SDL does, or
     /// null to use SDL's. Called on the event thread whenever the safe area may have changed.
     /// </summary>
@@ -391,6 +398,8 @@ public class SDLWindow : IWindow
     public event Action Minimized = delegate { };
     public event Action Restored = delegate { };
     public event Action ExitRequested = delegate { };
+    public event Action EnteringBackground = delegate { };
+    public event Action EnteredForeground = delegate { };
     public event Action Exited = delegate { };
 
     public event Action<KeyEvent> OnKeyDown = delegate { };
@@ -442,6 +451,7 @@ public class SDLWindow : IWindow
     public unsafe void Initialize()
     {
         setApplicationName(applicationName);
+        ConfigureHints();
 
         // Note: SDL3 is always per-monitor DPI aware; the SDL2-era Windows DPI hints are gone.
         // Make sure SDL video backend is fully initialized
@@ -459,6 +469,9 @@ public class SDLWindow : IWindow
         sdlTimestampOffset = TimeSource.CurrentTime - SDL_GetTicksNS() / 1_000_000.0;
 
         Logger.Verbose("🪟 SDL initialized");
+
+        // From here, so a backgrounding that comes while the app is still starting isn't missed.
+        SDL_AddEventWatch(&lifecycleEventWatch, IntPtr.Zero);
         Logger.Verbose($"SDL Version: {version / 1000000}.{version / 1000 % 1000}.{version % 1000}");
         Logger.Verbose($"SDL Revision: {SDL_GetRevision()}");
         Logger.Verbose($"SDL Video Driver: {SDL_GetCurrentVideoDriver()}");
@@ -552,7 +565,10 @@ public class SDLWindow : IWindow
             }
         }
 
-        SDL_AddEventWatch(&resizeEventWatch, IntPtr.Zero);
+        // It exists to keep drawing through a desktop window's live resize. On Android it would run on the UI
+        // thread, where no frame may run, and the polled resize events are enough there.
+        if (RuntimeInfo.OS != RuntimeInfo.Platform.Android)
+            SDL_AddEventWatch(&resizeEventWatch, IntPtr.Zero);
 
         DisplayHz = getDisplayRefreshRate();
         Logger.Verbose($"Display refresh rate: {DisplayHz} Hz");
@@ -709,6 +725,14 @@ public class SDLWindow : IWindow
         return surface;
     }
 
+    internal unsafe bool TryCreateVulkanSurface(nint vkInstance, out ulong surface)
+    {
+        ulong created = 0;
+        bool ok = SDL_Vulkan_CreateSurface(window, (VkInstance_T*)vkInstance, null, (VkSurfaceKHR_T**)&created);
+        surface = created;
+        return ok;
+    }
+
     internal unsafe void DestroyVulkanSurface(nint vkInstance, ulong surface)
         => SDL_Vulkan_DestroySurface((VkInstance_T*)vkInstance, (VkSurfaceKHR_T*)surface, null);
 
@@ -773,6 +797,36 @@ public class SDLWindow : IWindow
         SDL_GetWindowSizeInPixels(window, &drawableWidth, &drawableHeight);
 
         return ((float)drawableWidth / windowWidth, (float)drawableHeight / windowHeight);
+    }
+
+    /// <summary>
+    /// Raises <see cref="EnteringBackground"/> and <see cref="EnteredForeground"/> the moment SDL reports them. On
+    /// Android that is on the UI thread, before SDL blocks its own thread for the background, so a handler can
+    /// still stop everything that draws to the window before its surface goes.
+    /// </summary>
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static unsafe SDLBool lifecycleEventWatch(IntPtr userdata, SDL_Event* e)
+    {
+        try
+        {
+            switch ((SDL_EventType)e->type)
+            {
+                case SDL_EventType.SDL_EVENT_WILL_ENTER_BACKGROUND:
+                    instance?.EnteringBackground.Invoke();
+                    break;
+
+                case SDL_EventType.SDL_EVENT_DID_ENTER_FOREGROUND:
+                    instance?.EnteredForeground.Invoke();
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            // An exception can't cross back into SDL.
+            Logger.Error("Handling an app lifecycle event failed.", ex);
+        }
+
+        return true;
     }
 
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
@@ -1700,6 +1754,7 @@ public class SDLWindow : IWindow
     public unsafe void Dispose()
     {
         SDL_RemoveEventWatch(&resizeEventWatch, IntPtr.Zero);
+        SDL_RemoveEventWatch(&lifecycleEventWatch, IntPtr.Zero);
 
         foreach (IntPtr ptr in openGamepads.Values)
             SDL_CloseGamepad((SDL_Gamepad*)ptr);

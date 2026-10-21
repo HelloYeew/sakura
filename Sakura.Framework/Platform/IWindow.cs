@@ -193,6 +193,18 @@ public interface IWindow : IDisposable
     event Action Exited;
 
     /// <summary>
+    /// Invoked when the app is about to go to the background (a mobile app leaving the screen), on whichever
+    /// thread the system reports it. Whatever has to happen first must be done before the handler returns: on
+    /// Android the window's surface is taken away right after.
+    /// </summary>
+    event Action EnteringBackground;
+
+    /// <summary>
+    /// Invoked when the app is back in the foreground, on whichever thread the system reports it.
+    /// </summary>
+    event Action EnteredForeground;
+
+    /// <summary>
     /// Invoked when a key is pressed.
     /// </summary>
     event Action<KeyEvent> OnKeyDown;

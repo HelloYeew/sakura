@@ -53,6 +53,13 @@ public interface IRenderer
     /// </summary>
     void SetVSync(bool enabled) { }
 
+    /// <summary>
+    /// Lets go of everything tied to the window's surface, before the system takes the surface away (an Android
+    /// app going to the background). Drawing picks the surface up again once the window has one. Called with the
+    /// draw thread stopped. Backends whose surface outlives backgrounding leave this a no-op.
+    /// </summary>
+    void ReleaseSurface() { }
+
     void DrawVertices(ReadOnlySpan<Vertex.Vertex> vertices, Texture textureGl);
 
     /// <summary>

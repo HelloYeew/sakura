@@ -378,6 +378,57 @@ public abstract class AppHost : IDisposable
 
     private static readonly SemaphoreSlim host_running_mutex = new SemaphoreSlim(1);
 
+    private readonly object lifecycleLock = new object();
+    private bool inBackground;
+
+    /// <summary>
+    /// Stops every per-frame thread and lets go of the window's surface, for an app leaving the screen. Runs on
+    /// whichever thread the system reports it on, and is done by the time it returns, as the system needs.
+    /// </summary>
+    private void enterBackground()
+    {
+        lock (lifecycleLock)
+        {
+            if (inBackground || threadRunner == null)
+                return;
+
+            inBackground = true;
+
+            threadRunner.Pause();
+
+            // Time spent in the background isn't the app's: the first frame back carries none of it.
+            UpdateClock.Stop();
+            DrawClock.Stop();
+            AudioClock.Stop();
+
+            Renderer?.ReleaseSurface();
+
+            // From here the system may end the process without another word.
+            FrameworkConfigManager?.Flush();
+
+            Logger.Verbose("Entered the background: frames stopped and the window surface released.");
+        }
+    }
+
+    private void enterForeground()
+    {
+        lock (lifecycleLock)
+        {
+            if (!inBackground)
+                return;
+
+            inBackground = false;
+
+            UpdateClock.Start();
+            DrawClock.Start();
+            AudioClock.Start();
+
+            threadRunner.Resume();
+
+            Logger.Verbose("Back in the foreground: frames resumed.");
+        }
+    }
+
     /// <summary>
     /// The <see cref="Console.CancelKeyPress"/> handler, kept so it can be detached on disposal.
     /// </summary>
@@ -530,6 +581,8 @@ public abstract class AppHost : IDisposable
             Window.Minimized += updateTargetUpdateHz;
             Window.Restored += updateTargetUpdateHz;
             Window.DisplayChanged += _ => updateTargetUpdateHz();
+            Window.EnteringBackground += enterBackground;
+            Window.EnteredForeground += enterForeground;
 
             Window.RenderRequested += () =>
             {
@@ -786,6 +839,12 @@ public abstract class AppHost : IDisposable
     private double lastExitRequestMs = double.NegativeInfinity;
 
     /// <summary>
+    /// Whether the app may block a close request (<see cref="App.OnExitRequested"/>, <see cref="ExitRequested"/>).
+    /// A host whose system closes the app without waiting for it (an Android activity being destroyed) says no.
+    /// </summary>
+    protected virtual bool CanBlockExit => true;
+
+    /// <summary>
     /// Handles a close request on the update thread: honors a veto on the first request, but forces an
     /// immediate exit if a second request arrives quickly (double-clicking the close button).
     /// </summary>
@@ -795,7 +854,7 @@ public abstract class AppHost : IDisposable
         bool isSecondRequest = now - lastExitRequestMs <= force_exit_threshold_ms;
         lastExitRequestMs = now;
 
-        if (isSecondRequest || !shouldBlockExit())
+        if (!CanBlockExit || isSecondRequest || !shouldBlockExit())
         {
             // Close the window; the main loop's IsExiting check then drives Exit().
             Window?.Close();
@@ -825,6 +884,14 @@ public abstract class AppHost : IDisposable
     }
 
     /// <summary>
+    /// Called when nothing in the app handled <see cref="Key.SystemBack"/>. A host for a system with a back
+    /// action does what that system does by default; an Android app leaves the screen.
+    /// </summary>
+    protected virtual void OnUnhandledSystemBack()
+    {
+    }
+
+    /// <summary>
     /// Requests the host to exit gracefully.
     /// </summary>
     public virtual void Exit()
@@ -834,7 +901,10 @@ public abstract class AppHost : IDisposable
 
     protected virtual void OnKeyDown(KeyEvent e)
     {
-        app?.OnKeyDown(e);
+        bool handled = app?.OnKeyDown(e) ?? false;
+
+        if (!handled && !e.IsRepeat && e.Key == Key.SystemBack)
+            OnUnhandledSystemBack();
 
         // Global hotkey
         // TODO: Global hotkey should be in list (don't have to be able to change since it's framework level)

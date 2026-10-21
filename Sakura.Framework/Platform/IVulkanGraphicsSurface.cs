@@ -36,6 +36,12 @@ public interface IVulkanGraphicsSurface : IGraphicsSurface
     ulong CreateSurface(nint instance);
 
     /// <summary>
+    /// <see cref="CreateSurface"/> for when the window may have no surface to give right now (an Android app in
+    /// the background): false then, rather than an error.
+    /// </summary>
+    bool TryCreateSurface(nint instance, out ulong surface);
+
+    /// <summary>
     /// Destroys a surface returned by <see cref="CreateSurface"/>. The caller must have destroyed every
     /// swapchain created on it first.
     /// </summary>

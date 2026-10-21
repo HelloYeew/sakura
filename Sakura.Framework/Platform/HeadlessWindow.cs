@@ -148,6 +148,8 @@ public class HeadlessWindow : IWindow
     public event Action? Restored;
     public event Action? ExitRequested;
     public event Action? Exited;
+    public event Action? EnteringBackground;
+    public event Action? EnteredForeground;
     public event Action<KeyEvent>? OnKeyDown;
     public event Action<KeyEvent>? OnKeyUp;
     public event Action<int>? DisplayChanged;
