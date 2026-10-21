@@ -37,6 +37,8 @@ FFMPEG_FLAGS+=(
     --target-os=linux
 )
 
+enable_vulkan
+
 pushd . > /dev/null
 prep_ffmpeg "linux-$arch"
 build_ffmpeg

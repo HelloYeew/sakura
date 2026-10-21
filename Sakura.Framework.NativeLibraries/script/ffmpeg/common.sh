@@ -41,6 +41,28 @@ FFMPEG_FLAGS=(
     --enable-protocol=file
 )
 
+# Vulkan headers for FFmpeg's Vulkan decoders, so the Vulkan renderer can sample decoded frames where
+# they are. Headers only: FFmpeg opens the Vulkan loader at run time, so nothing links against it, and a
+# machine without Vulkan still loads these libraries. FFmpeg needs 1.3.277 or later, and 1.4.317 or later
+# for VP9, newer than the distribution packages on the build runners.
+VULKAN_HEADERS_VERSION="1.4.363"
+
+function enable_vulkan() {
+    local dir="$PWD/vulkan-headers-$VULKAN_HEADERS_VERSION"
+
+    if [ ! -d "$dir" ]; then
+        echo "-> Downloading Vulkan headers $VULKAN_HEADERS_VERSION..."
+        mkdir "$dir"
+        curl -sSfL "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v$VULKAN_HEADERS_VERSION.tar.gz" | tar xz --strip 1 -C "$dir"
+    fi
+
+    FFMPEG_FLAGS+=(
+        --enable-vulkan
+        --enable-hwaccel='h264_vulkan,hevc_vulkan,vp9_vulkan'
+        --extra-cflags="-I$dir/include"
+    )
+}
+
 function prep_ffmpeg() {
     FFMPEG_FLAGS+=(
         --prefix="$PWD/$1"
