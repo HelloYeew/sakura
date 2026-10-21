@@ -141,6 +141,31 @@ public static class ColorExtensions
     }
 
     /// <summary>
+    /// Blends the color with another by <paramref name="factor"/> (0 to 1), as it looks rather than as
+    /// the RGB numbers go: the blend's lightness and colorfulness change evenly along the way (it works in
+    /// <see cref="OklabColor"/>). Use it for gradients and color scales; alpha blends as in
+    /// <see cref="Blend"/>.
+    /// </summary>
+    /// <param name="color">The original color.</param>
+    /// <param name="other">The color to blend with.</param>
+    /// <param name="factor">The blending factor (0 to 1).</param>
+    /// <returns>The blended color; exactly <paramref name="color"/> or <paramref name="other"/> at the ends.</returns>
+    public static Color BlendPerceptually(this Color color, Color other, float factor)
+    {
+        factor = Math.Clamp(factor, 0, 1);
+
+        // The ends exactly, rather than as the round trip through Oklab rounds them.
+        if (factor <= 0)
+            return color;
+
+        if (factor >= 1)
+            return other;
+
+        byte alpha = (byte)Math.Round(color.A + (other.A - color.A) * factor);
+        return OklabColor.Lerp(OklabColor.FromColor(color), OklabColor.FromColor(other), factor).ToColor(alpha);
+    }
+
+    /// <summary>
     /// Calculates the brightness of the color (0 to 1).
     /// 0 is black, 1 is white.
     /// </summary>
