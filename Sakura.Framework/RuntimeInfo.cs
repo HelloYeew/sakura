@@ -42,6 +42,8 @@ public static class RuntimeInfo
     /// <summary>
     /// Gets the entry assembly.
     /// When running under NUnit, the assembly of the current test will be returned instead.
+    /// Where the process has no managed entry point (Android, which starts in Java), this is null until
+    /// <see cref="Sakura.Framework.Platform.AppHost.Run"/> sets it to the assembly of the app it runs.
     /// </summary>
     /// <returns>The entry assembly.</returns>
     public static Assembly EntryAssembly { get; internal set; } = DebugUtils.IsNUnitRunning

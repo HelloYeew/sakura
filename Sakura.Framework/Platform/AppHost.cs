@@ -254,9 +254,9 @@ public abstract class AppHost : IDisposable
 
     /// <summary>
     /// The assembly containing the application's embedded resources.
-    /// Defaults to the entry assembly.
+    /// Defaults to the entry assembly (<see cref="RuntimeInfo.EntryAssembly"/>).
     /// </summary>
-    public virtual Assembly ResourceAssembly => Assembly.GetEntryAssembly();
+    public virtual Assembly ResourceAssembly => RuntimeInfo.EntryAssembly;
 
     private ExecutionState executionState = ExecutionState.Idle;
 
@@ -423,6 +423,12 @@ public abstract class AppHost : IDisposable
             GCSettings.LatencyMode = GCLatencyMode.SustainedLowLatency;
         }
 
+        // A process started from Java (Android) has no managed entry point, so the app's assembly stands in
+        // for it. Everything below reads it, the logger first.
+        RuntimeInfo.EntryAssembly ??= app.GetType().Assembly;
+
+        bool ownsHostRunning = false;
+
         try
         {
             Logger.AppIdentifier = Name;
@@ -436,6 +442,8 @@ public abstract class AppHost : IDisposable
                 return;
             }
 
+            ownsHostRunning = true;
+
             AppDomain.CurrentDomain.UnhandledException += unhandledExceptionHandler;
             TaskScheduler.UnobservedTaskException += unobservedTaskExceptionHandler;
 
@@ -444,15 +452,19 @@ public abstract class AppHost : IDisposable
 
             SetupForRun();
 
-            cancelKeyPressHandler = (_, _) =>
+            // Mobile platforms have no console to press Ctrl+C in, and don't support subscribing to it.
+            if (RuntimeInfo.IsDesktop)
             {
-                // Try to gracefully stop the application without missing any events before exiting.
-                Window.Close();
-                Dispose(true);
-                exitEvent.Set();
-            };
+                cancelKeyPressHandler = (_, _) =>
+                {
+                    // Try to gracefully stop the application without missing any events before exiting.
+                    Window.Close();
+                    Dispose(true);
+                    exitEvent.Set();
+                };
 
-            Console.CancelKeyPress += cancelKeyPressHandler;
+                Console.CancelKeyPress += cancelKeyPressHandler;
+            }
 
             FrameLimiter = FrameworkConfigManager.Get<FrameSync>(FrameworkSetting.FrameLimiter);
             updateTargetUpdateHz();
@@ -749,7 +761,10 @@ public abstract class AppHost : IDisposable
         {
             threadRunner?.Dispose();
             Dispose(true);
-            host_running_mutex.Release();
+
+            // Releasing a wait that timed out would let two hosts run at once from then on.
+            if (ownsHostRunning)
+                host_running_mutex.Release();
         }
     }
 
