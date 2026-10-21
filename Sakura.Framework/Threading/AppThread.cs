@@ -60,9 +60,19 @@ public class AppThread
     public bool UseMultimediaClassScheduler { get; set; }
 
     private Thread? internalThread;
-    private readonly ManualResetEventSlim pauseEvent = new ManualResetEventSlim(true);
     private volatile bool isRunning;
-    private volatile bool isPaused;
+
+    /// <summary>
+    /// Guards <see cref="pauseRequested"/> and <see cref="parked"/>, and is what a paused thread waits on.
+    /// </summary>
+    private readonly object pauseLock = new object();
+
+    private bool pauseRequested;
+
+    /// <summary>
+    /// Whether the thread is waiting between frames because a pause was asked for.
+    /// </summary>
+    private bool parked;
 
     public AppThread(string name, Action frameAction, Func<double> getTargetHz)
     {
@@ -76,8 +86,6 @@ public class AppThread
     {
         if (isRunning) return;
         isRunning = true;
-        isPaused = false;
-        pauseEvent.Set();
 
         internalThread = new Thread(runLoop)
         {
@@ -91,21 +99,55 @@ public class AppThread
     public void StopMultiThreaded()
     {
         isRunning = false;
-        pauseEvent.Set(); // unblock if paused
+
+        // Wake it if it's paused, so it can see it should stop.
+        lock (pauseLock)
+            Monitor.PulseAll(pauseLock);
+
         internalThread?.Join(2000);
         internalThread = null;
     }
 
+    /// <summary>
+    /// Asks the thread to stop between frames, which it does once the frame it is on finishes. Use
+    /// <see cref="WaitUntilPaused"/> to know when it has.
+    /// </summary>
     public void PauseMultiThreaded()
     {
-        isPaused = true;
-        pauseEvent.Reset();
+        lock (pauseLock)
+            pauseRequested = true;
     }
 
     public void ResumeMultiThreaded()
     {
-        isPaused = false;
-        pauseEvent.Set();
+        lock (pauseLock)
+        {
+            pauseRequested = false;
+            Monitor.PulseAll(pauseLock);
+        }
+    }
+
+    /// <summary>
+    /// Waits until a paused thread has finished its frame and stopped, so nothing it does can overlap with
+    /// what the caller does next. True straight away for a thread that isn't running on its own.
+    /// </summary>
+    /// <returns>False if it hadn't stopped within <paramref name="timeout"/>.</returns>
+    public bool WaitUntilPaused(TimeSpan timeout)
+    {
+        long deadline = Environment.TickCount64 + (long)timeout.TotalMilliseconds;
+
+        lock (pauseLock)
+        {
+            while (pauseRequested && !parked && isRunning && internalThread != null)
+            {
+                long remaining = deadline - Environment.TickCount64;
+
+                if (remaining <= 0 || !Monitor.Wait(pauseLock, (int)remaining))
+                    return parked;
+            }
+
+            return true;
+        }
     }
 
     /// <summary>
@@ -189,7 +231,18 @@ public class AppThread
 
         while (isRunning)
         {
-            pauseEvent.Wait();
+            lock (pauseLock)
+            {
+                while (pauseRequested && isRunning)
+                {
+                    parked = true;
+                    Monitor.PulseAll(pauseLock);
+                    Monitor.Wait(pauseLock);
+                }
+
+                parked = false;
+            }
+
             if (!isRunning) break;
 
             Clock.Update();
