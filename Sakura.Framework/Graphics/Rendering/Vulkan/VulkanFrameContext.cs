@@ -10,8 +10,8 @@ namespace Sakura.Framework.Graphics.Rendering.Vulkan;
 /// <summary>
 /// Everything one frame in flight records into and owns until the GPU has finished it: its command
 /// buffers, the fence that says when they are done, the semaphore its swapchain image is acquired
-/// with, the stream buffer and descriptor sets its draws read, and the objects destroyed while it was
-/// being recorded.
+/// with, the stream buffer and descriptor sets its draws read, the staging buffers its large uploads
+/// read, and the objects destroyed while it was being recorded.
 /// </summary>
 internal sealed unsafe class VulkanFrameContext : IDisposable
 {
@@ -24,6 +24,7 @@ internal sealed unsafe class VulkanFrameContext : IDisposable
 
     private readonly VulkanDevice device;
     private readonly VulkanMemory memory;
+    private readonly VulkanStagingPool stagingPool;
     private readonly int index;
 
     public VkCommandPool CommandPool { get; }
@@ -64,15 +65,21 @@ internal sealed unsafe class VulkanFrameContext : IDisposable
     /// </summary>
     private readonly List<Action> retired = new List<Action>();
 
+    /// <summary>
+    /// Staging buffers this frame's uploads read from, handed back to the pool once it has finished.
+    /// </summary>
+    private readonly List<VulkanStagingBuffer> staging = new List<VulkanStagingBuffer>();
+
     private readonly List<VkDescriptorPool> descriptorPools = new List<VkDescriptorPool>();
     private int currentPool;
 
     public int RetiredCount => retired.Count;
 
-    public VulkanFrameContext(VulkanDevice device, VulkanMemory memory, int index)
+    public VulkanFrameContext(VulkanDevice device, VulkanMemory memory, VulkanStagingPool stagingPool, int index)
     {
         this.device = device;
         this.memory = memory;
+        this.stagingPool = stagingPool;
         this.index = index;
 
         var api = device.Api;
@@ -218,6 +225,17 @@ internal sealed unsafe class VulkanFrameContext : IDisposable
     public void Retire(Action destroy) => retired.Add(destroy);
 
     /// <summary>
+    /// Takes a staging buffer for one of this frame's uploads, held until the frame has finished on the
+    /// GPU.
+    /// </summary>
+    public VulkanStagingBuffer RentStaging(ulong size)
+    {
+        var buffer = stagingPool.Rent(size);
+        staging.Add(buffer);
+        return buffer;
+    }
+
+    /// <summary>
     /// Destroys everything retired into this frame. Only valid once <see cref="Fence"/> has signalled.
     /// </summary>
     public void ReleaseRetired()
@@ -226,6 +244,11 @@ internal sealed unsafe class VulkanFrameContext : IDisposable
             destroy();
 
         retired.Clear();
+
+        foreach (var buffer in staging)
+            stagingPool.Return(buffer);
+
+        staging.Clear();
     }
 
     private VkDescriptorPool createDescriptorPool()

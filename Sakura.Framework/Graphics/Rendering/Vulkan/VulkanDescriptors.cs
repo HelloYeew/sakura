@@ -37,14 +37,15 @@ internal sealed unsafe class VulkanDescriptors : IDisposable
 
     /// <summary>
     /// Linear, trilinear between mip levels, repeating: how every regular texture is sampled, as on GL
-    /// and Metal. Repeat because tiled fills rely on UVs past 1 wrapping around.
+    /// and Metal, and video planes under a tiled fill. Repeat because tiled fills rely on UVs past 1
+    /// wrapping around.
     /// </summary>
     public VkSampler TextureSampler { get; }
 
     /// <summary>
-    /// Linear, clamped to the edge, no mip levels: how offscreen framebuffers are sampled. Clamped
-    /// because the blur reads past the buffer's edges and must see the edge texels there, not the
-    /// opposite side.
+    /// Linear, clamped to the edge, no mip levels: how offscreen framebuffers and video planes are
+    /// sampled. Clamped because the blur reads past the buffer's edges and must see the edge texels
+    /// there, not the opposite side, and a video's edge would otherwise bleed in the opposite one.
     /// </summary>
     public VkSampler RenderTargetSampler { get; }
 

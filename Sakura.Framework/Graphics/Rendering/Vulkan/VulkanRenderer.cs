@@ -47,8 +47,8 @@ namespace Sakura.Framework.Graphics.Rendering.Vulkan;
 /// between.
 /// </para>
 /// <para>
-/// Video doesn't exist on this renderer yet: video textures never become available, so video draws are
-/// skipped.
+/// Video frames are copied into plane images like any other upload (<see cref="VulkanVideoTexture"/>);
+/// none is sampled straight out of the decoder's memory yet.
 /// </para>
 /// </remarks>
 public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
@@ -113,6 +113,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     private VulkanDescriptors? descriptors;
     private VulkanPipelines? pipelines;
     private VulkanSwapchain? swapchain;
+    private VulkanStagingPool? stagingPool;
     private readonly VulkanFrameContext?[] frames = new VulkanFrameContext?[max_frames_in_flight];
 
     private int framesInFlight = 1;
@@ -331,8 +332,10 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         stagingAlignment = Math.Max(limits.optimalBufferCopyOffsetAlignment, 4);
         mipmapsSupported = supportsMipmapGeneration(device);
 
+        stagingPool = new VulkanStagingPool(device, memory);
+
         for (int i = 0; i < frames.Length; i++)
-            frames[i] = new VulkanFrameContext(device, memory, i);
+            frames[i] = new VulkanFrameContext(device, memory, stagingPool, i);
 
         createImmediateCommandPool();
         createQuadIndexBuffer();
@@ -373,8 +376,9 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         waitForFence(frame.Fence);
 
         // The fence proves the GPU finished this slot's last frame: what was retired during it can go,
-        // and its command buffers, descriptor sets and stream buffer can be reused.
+        // and its command buffers, descriptor sets, stream buffer and staging buffers can be reused.
         frame.Reset();
+        stagingPool!.Trim();
 
         currentFrame = frame;
         cachedSetCount = 0;
@@ -867,15 +871,32 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     /// Puts <paramref name="texture"/> at entry <paramref name="index"/> of the texture table the next
     /// flush samples. Called by <see cref="VulkanTexture.Bind"/>.
     /// </summary>
-    internal void BindTexture(int index, VulkanTexture texture)
+    internal void BindTexture(int index, VulkanTexture texture) => bindTexture(index, texture, texture.Sampler);
+
+    private void bindTexture(int index, VulkanTexture texture, VkSampler sampler)
     {
         if (index < 0 || index >= texture_slot_count)
             return;
 
         slotViews[index] = texture.View;
-        slotSamplers[index] = texture.Sampler;
+        slotSamplers[index] = sampler;
         slotHandles[index] = texture.Handle;
         textureSetDirty = true;
+    }
+
+    /// <summary>
+    /// Puts a video plane at entry <paramref name="index"/> of the texture table, sampled repeating when
+    /// <paramref name="tiling"/> and clamped to the edge otherwise. A plane nothing has been uploaded into
+    /// samples white, as any other texture would. Called by <see cref="VulkanVideoTexture.BindPlanes"/>.
+    /// </summary>
+    internal void BindVideoPlane(int index, VulkanTexture plane, bool tiling)
+    {
+        var bound = plane.Available && !plane.IsReleased ? plane : whiteTexture;
+
+        if (bound == null)
+            return;
+
+        bindTexture(index, bound, tiling ? descriptors!.TextureSampler : descriptors!.RenderTargetSampler);
     }
 
     /// <summary>
@@ -1428,20 +1449,61 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     #region Uploads
 
     /// <summary>
-    /// Records a copy of <paramref name="data"/> into a region of <paramref name="texture"/>. During a
-    /// frame it goes into the frame's upload command buffer; outside one (at startup) it is submitted
-    /// and waited for on the spot.
+    /// Records a copy of <paramref name="data"/>, tightly packed rows of RGBA, into a region of
+    /// <paramref name="texture"/>.
     /// </summary>
     internal void UploadTexture(VulkanTexture texture, int x, int y, int width, int height, ReadOnlySpan<byte> data)
     {
-        ulong bytes = (ulong)width * (ulong)height * 4;
-        var source = data[..(int)bytes];
+        fixed (byte* source = data)
+            upload(texture, x, y, width, height, source, (long)width * texture.TexelBytes);
+    }
+
+    /// <summary>
+    /// Records a copy of a decoded video plane, its rows <paramref name="stride"/> bytes apart, into the
+    /// top-left of <paramref name="plane"/>. Called by <see cref="VulkanTexture.UploadPlane"/>.
+    /// </summary>
+    internal void UploadPlane(VulkanTexture plane, byte* data, int stride, int width, int height)
+        => upload(plane, 0, 0, width, height, data, stride);
+
+    /// <summary>
+    /// Stages <paramref name="height"/> rows read <paramref name="stride"/> bytes apart from
+    /// <paramref name="source"/> and records their copy into a region of <paramref name="texture"/>.
+    /// During a frame the copy goes into the frame's upload command buffer; outside one (at startup) it is
+    /// submitted and waited for on the spot.
+    /// </summary>
+    private void upload(VulkanTexture texture, int x, int y, int width, int height, byte* source, long stride)
+    {
+        long rowBytes = (long)width * texture.TexelBytes;
+
+        // The rows keep the source's stride when it is a whole number of texels, since the copy can step
+        // over padding itself: a decoded frame, whose rows are padded for alignment, is then one memcpy.
+        // A stride that splits a texel, or runs backwards, is packed row by row instead.
+        long stagedStride = stride >= rowBytes && stride % texture.TexelBytes == 0 ? stride : rowBytes;
+        ulong bytes = (ulong)(stagedStride * (height - 1) + rowBytes);
+        uint rowLength = (uint)(stagedStride / texture.TexelBytes);
 
         stat_staging_bytes.Accumulator += (long)bytes;
 
         if (currentFrame == null)
         {
-            uploadImmediately(texture, x, y, width, height, source);
+            var staging = stagingPool!.Rent(bytes);
+
+            try
+            {
+                copyRows(source, stride, staging.Mapped, stagedStride, rowBytes, height);
+                flushStaging(staging.Allocation);
+
+                var immediate = beginImmediate();
+                recordCopy(immediate, texture, staging.Buffer, 0, rowLength, x, y, width, height);
+                finishTexture(immediate, texture);
+                submitImmediate(immediate);
+            }
+            finally
+            {
+                // The queue has drained, so nothing reads it any more.
+                stagingPool.Return(staging);
+            }
+
             return;
         }
 
@@ -1453,19 +1515,20 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
         if (bytes > dedicated_staging_threshold)
         {
-            var (buffer, allocation) = createStagingBuffer(bytes, source);
-            frame.Retire(() => destroyStagingBuffer(buffer, allocation));
-            stagingBuffer = buffer;
+            var staging = frame.RentStaging(bytes);
+            copyRows(source, stride, staging.Mapped, stagedStride, rowBytes, height);
+            flushStaging(staging.Allocation);
+            stagingBuffer = staging.Buffer;
             stagingOffset = 0;
         }
         else
         {
             byte* destination = allocateStream(bytes, stagingAlignment, out stagingOffset);
-            source.CopyTo(new Span<byte>(destination, (int)bytes));
+            copyRows(source, stride, destination, stagedStride, rowBytes, height);
             stagingBuffer = frame.Stream.Buffer;
         }
 
-        recordCopy(commandBuffer, texture, stagingBuffer, stagingOffset, x, y, width, height);
+        recordCopy(commandBuffer, texture, stagingBuffer, stagingOffset, rowLength, x, y, width, height);
 
         if (!texture.AwaitingFinish)
         {
@@ -1474,11 +1537,24 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         }
     }
 
+    private static void copyRows(byte* source, long sourceStride, byte* destination, long destinationStride, long rowBytes, int rows)
+    {
+        if (sourceStride == destinationStride)
+        {
+            long total = sourceStride * (rows - 1) + rowBytes;
+            Buffer.MemoryCopy(source, destination, total, total);
+            return;
+        }
+
+        for (int row = 0; row < rows; row++)
+            Buffer.MemoryCopy(source + row * sourceStride, destination + row * destinationStride, rowBytes, rowBytes);
+    }
+
     /// <summary>
     /// Records the copy of a staged region into <paramref name="texture"/>, moving it into the transfer
-    /// layout first.
+    /// layout first. Staged rows are <paramref name="rowLength"/> texels apart.
     /// </summary>
-    private void recordCopy(VkCommandBuffer commandBuffer, VulkanTexture texture, VkBuffer buffer, ulong offset, int x, int y, int width, int height)
+    private void recordCopy(VkCommandBuffer commandBuffer, VulkanTexture texture, VkBuffer buffer, ulong offset, uint rowLength, int x, int y, int width, int height)
     {
         var api = device!.Api;
 
@@ -1506,8 +1582,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         var region = new VkBufferImageCopy
         {
             bufferOffset = offset,
-            // Tightly packed rows.
-            bufferRowLength = 0,
+            bufferRowLength = rowLength,
             bufferImageHeight = 0,
             imageSubresource = new VkImageSubresourceLayers(VkImageAspectFlags.Color, 0, 0, 1),
             imageOffset = new VkOffset3D(x, y, 0),
@@ -1608,21 +1683,17 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         device!.Api.vkCmdPipelineBarrier(commandBuffer, srcStage, dstStage, VkDependencyFlags.None, 0, null, 0, null, 1, &barrier);
     }
 
-    private void uploadImmediately(VulkanTexture texture, int x, int y, int width, int height, ReadOnlySpan<byte> data)
+    /// <summary>
+    /// Makes host writes into <paramref name="allocation"/> visible to the device, where the memory isn't
+    /// coherent. Must come before the submission that reads them.
+    /// </summary>
+    private void flushStaging(in VulkanAllocation allocation)
     {
-        var (buffer, allocation) = createStagingBuffer((ulong)data.Length, data);
+        if (allocation.Coherent)
+            return;
 
-        try
-        {
-            var commandBuffer = beginImmediate();
-            recordCopy(commandBuffer, texture, buffer, 0, x, y, width, height);
-            finishTexture(commandBuffer, texture);
-            submitImmediate(commandBuffer);
-        }
-        finally
-        {
-            destroyStagingBuffer(buffer, allocation);
-        }
+        var range = new VkMappedMemoryRange { memory = allocation.Memory, offset = 0, size = Vortice.Vulkan.Vulkan.VK_WHOLE_SIZE };
+        VulkanDevice.Check(device!.Api.vkFlushMappedMemoryRanges(1, &range), "vkFlushMappedMemoryRanges");
     }
 
     private (VkBuffer Buffer, VulkanAllocation Allocation) createStagingBuffer(ulong size, ReadOnlySpan<byte> contents)
@@ -1639,12 +1710,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
         var allocation = memory!.BindHostVisibleBuffer(buffer);
         contents.CopyTo(new Span<byte>(allocation.Mapped, contents.Length));
-
-        if (!allocation.Coherent)
-        {
-            var range = new VkMappedMemoryRange { memory = allocation.Memory, offset = 0, size = Vortice.Vulkan.Vulkan.VK_WHOLE_SIZE };
-            VulkanDevice.Check(device.Api.vkFlushMappedMemoryRanges(1, &range), "vkFlushMappedMemoryRanges");
-        }
+        flushStaging(allocation);
 
         return (buffer, allocation);
     }
@@ -1952,9 +2018,16 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         Retire(destroyModules);
     }
 
+    /// <remarks>
+    /// Always a copying texture: <see cref="CanSampleHardwareFrame"/> never says yes, so
+    /// <paramref name="fromHardwareFrame"/> is never true here.
+    /// </remarks>
     public INativeVideoTexture CreateVideoTexture(int width, int height, VideoPlaneLayout layout, bool fromHardwareFrame = false)
-        => new PlaceholderVideoTexture(width, height, layout);
+        => new VulkanVideoTexture(this, device!, memory!, descriptors!.RenderTargetSampler, width, height, layout);
 
+    /// <summary>
+    /// Always false: hardware frames are read back by the decoder and copied in.
+    /// </summary>
     public bool CanSampleHardwareFrame(FFmpeg.AutoGen.AVFrame* frame) => false;
 
     public IFrameBuffer CreateFrameBuffer(int width, int height, bool pixelSnapping = false)
@@ -1989,43 +2062,6 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         return format;
     }
 
-    /// <summary>
-    /// Stands in for a video texture until this renderer can draw video. It never becomes available, so
-    /// video draws are skipped (and counted as such) rather than drawn with nothing bound.
-    /// </summary>
-    private sealed class PlaceholderVideoTexture : INativeVideoTexture
-    {
-        public int Width { get; }
-        public int Height { get; }
-        public long PlaneBytes => 0;
-        public VideoPlaneLayout Layout { get; }
-        public bool Available => false;
-        public TextureBindCounter Binds { get; } = new TextureBindCounter();
-
-        public PlaceholderVideoTexture(int width, int height, VideoPlaneLayout layout)
-        {
-            Width = width;
-            Height = height;
-            Layout = layout;
-        }
-
-        public void BindPlanes(bool tiling)
-        {
-        }
-
-        public void Upload(FFmpeg.AutoGen.AVFrame* frame)
-        {
-        }
-
-        public void MarkAvailable()
-        {
-        }
-
-        public void Dispose()
-        {
-        }
-    }
-
     #endregion
 
     public void Dispose()
@@ -2044,9 +2080,11 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         foreach (var resource in remaining)
             resource.Dispose();
 
+        // Frames hand their staging buffers back as they go, so the pool is emptied after them.
         foreach (var frame in frames)
             frame?.Dispose();
 
+        stagingPool?.Dispose();
         pipelines?.Dispose();
         descriptors?.Dispose();
 
