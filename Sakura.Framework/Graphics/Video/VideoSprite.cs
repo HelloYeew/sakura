@@ -54,6 +54,21 @@ public partial class VideoSprite : Drawable
     private VideoTexture? lastUploadedTexture; // last texture confirmed uploaded — fallback for draw node
     private float[]? currentMatrix;
 
+    /// <summary>
+    /// The frame this sprite is drawing now, for a <see cref="VideoMirror"/> to draw again.
+    /// </summary>
+    internal IVideoTexture? DisplayedTexture => currentVideoTexture;
+
+    /// <summary>
+    /// The YUV→RGB matrix for <see cref="DisplayedTexture"/>.
+    /// </summary>
+    internal float[]? DisplayedMatrix => currentMatrix;
+
+    /// <summary>
+    /// How many times this sprite has updated, so a mirror can say when it was last drawn.
+    /// </summary>
+    internal long Updates { get; private set; }
+
     // Playback clock list
     // - seekBaseMs: the absolute video position (ms, 0-based) we last seeked to. Stays constant between seeks.
     // - elapsedMs: how much real time has elapsed since the last seek. Incremented by ElapsedFrameTime each update while playing.
@@ -244,6 +259,8 @@ public partial class VideoSprite : Drawable
     {
         base.Update();
 
+        Updates++;
+
         if (!IsLoaded || decoder.IsNull() || decoder.State == VideoDecoder.DecoderState.Preparing) return;
 
         if (syncToClock)
@@ -385,6 +402,16 @@ public partial class VideoSprite : Drawable
     private readonly IVideoTexture?[] stampedTextures = new IVideoTexture?[3];
 
     /// <summary>
+    /// The mirrors drawing this sprite's frames. Their draw nodes can still hold a frame this sprite has
+    /// moved on from, so a retired frame waits for them too. Update thread only.
+    /// </summary>
+    private readonly List<VideoMirror> mirrors = new List<VideoMirror>();
+
+    internal void AddMirror(VideoMirror mirror) => mirrors.Add(mirror);
+
+    internal void RemoveMirror(VideoMirror mirror) => mirrors.Remove(mirror);
+
+    /// <summary>
     /// Takes a frame off the display without releasing its texture yet.
     /// </summary>
     private void retire(DecodedFrame frame) => retiringFrames.Add(frame);
@@ -402,7 +429,7 @@ public partial class VideoSprite : Drawable
         {
             var frame = retiringFrames[i];
 
-            if (!force && stillReferenced(frame.NativeTexture))
+            if (!force && StillReferenced(frame.NativeTexture))
                 continue;
 
             singleFrame[0] = frame;
@@ -415,9 +442,9 @@ public partial class VideoSprite : Drawable
 
     /// <summary>
     /// Whether anything can still read <paramref name="texture"/> like the display path, the fallback
-    /// behind it, or a draw node it was stamped onto.
+    /// behind it, a draw node it was stamped onto, or a mirror.
     /// </summary>
-    private bool stillReferenced(IVideoTexture texture)
+    internal bool StillReferenced(IVideoTexture texture)
     {
         if (ReferenceEquals(texture, currentVideoTexture) || ReferenceEquals(texture, lastUploadedTexture))
             return true;
@@ -425,6 +452,12 @@ public partial class VideoSprite : Drawable
         foreach (var stamped in stampedTextures)
         {
             if (ReferenceEquals(texture, stamped))
+                return true;
+        }
+
+        foreach (var mirror in mirrors)
+        {
+            if (mirror.Holds(texture, Updates))
                 return true;
         }
 
@@ -450,8 +483,10 @@ public partial class VideoSprite : Drawable
             decoder.ReturnFrames(availableFrames);
             availableFrames.Clear();
 
-            // Nothing outlives this sprite to read them, so the draw-node hold does not apply.
+            // Nothing outlives this sprite to read them, so the draw-node hold does not apply. A mirror
+            // can, but the textures go with the decoder below, and a draw node skips a disposed texture.
             Array.Clear(stampedTextures);
+            mirrors.Clear();
             releaseRetiredFrames(force: true);
             retiringFrames.Clear();
 
