@@ -123,6 +123,14 @@ public class VideoPlaneLayoutTest
         if (decoder.ActiveHardwareDevice == FFmpeg.AutoGen.AVHWDeviceType.AV_HWDEVICE_TYPE_NONE)
             Assert.Ignore("no hardware decoder for H.264 here, so there is no layout to switch away from");
 
+        // A hardware device can open and still not decode: on a GPU without H.264 decode (a CI runner's
+        // basic display adapter) FFmpeg falls back to software when the first frame arrives, and the
+        // frames are the software decoder's. What the codec handed back says which happened.
+        string decoderFormat = GlobalStatistics.Get<string>("Video", "Decoder Format").Value;
+
+        if (!FFmpeg.AutoGen.ffmpeg.av_get_pix_fmt(decoderFormat).IsHardwareFormat())
+            Assert.Ignore($"{decoder.ActiveHardwareDevice} opened, but FFmpeg decoded in software ({decoderFormat}), so there is no hardware layout to switch away from");
+
         Assert.That(before, Is.EqualTo(VideoPlaneLayout.Nv12));
 
         decoder.HardwareAcceleration.Value = false;

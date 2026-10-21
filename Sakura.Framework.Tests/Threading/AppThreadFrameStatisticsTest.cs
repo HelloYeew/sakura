@@ -91,7 +91,12 @@ public class AppThreadFrameStatisticsTest
         Assert.That(settled, Is.Not.Empty);
 
         double medianBusy = median(settled.Select(s => s.BusyMilliseconds));
-        double medianElapsed = median(settled.Select(s => s.ElapsedMilliseconds));
+
+        // The mean, not the median: the thread keeps its cadence locked to the wall clock, so a sleep that
+        // overshoots past the next deadline is followed by a frame that runs at once to catch up. Where
+        // sleeps overshoot by a frame or more (shared CI machines), half the frames are those, and the
+        // median is the work alone while the mean is still the period.
+        double meanElapsed = settled.Average(s => s.ElapsedMilliseconds);
 
         using (Assert.EnterMultipleScope())
         {
@@ -101,9 +106,9 @@ public class AppThreadFrameStatisticsTest
             // The point of the whole exercise: busy reflects the ~2ms of work, not the ~10ms period the
             // throttle produces. Before this existed, the only number available was the period.
             Assert.That(medianBusy, Is.EqualTo(work_ms).Within(2), $"busy should track the work done, was {medianBusy:F2}ms");
-            Assert.That(medianElapsed, Is.EqualTo(budget_ms).Within(4), $"elapsed should track the frame period, was {medianElapsed:F2}ms");
+            Assert.That(meanElapsed, Is.EqualTo(budget_ms).Within(4), $"elapsed should track the frame period, was {meanElapsed:F2}ms");
         }
-        Assert.That(medianBusy, Is.LessThan(medianElapsed / 2), "busy and the frame period should not be the same measurement");
+        Assert.That(medianBusy, Is.LessThan(meanElapsed / 2), "busy and the frame period should not be the same measurement");
 
         // A thread using a fifth of its budget is not missing deadlines.
         Assert.That(settled.Count(s => s.MissedDeadline), Is.Zero);

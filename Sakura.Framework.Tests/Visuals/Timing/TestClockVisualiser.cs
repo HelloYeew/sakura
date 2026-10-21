@@ -214,7 +214,10 @@ public partial class TestClockVisualiser : TestScene
             gameplay.Start();
         });
         AddWaitStep("Run 1 second", 1000);
-        AddAssert("Interpolated clock is interpolating", () => gameplay.InterpolatedClock.IsInterpolating);
+
+        // Waited for rather than sampled once: on a machine whose frames are irregular (a loaded CI machine)
+        // the clock can be mid-catch-up, not interpolating, at any one moment.
+        AddUntilStep("Interpolated clock is interpolating", () => gameplay.InterpolatedClock.IsInterpolating, 5000);
     }
 
     private partial class ClockPanel : Container

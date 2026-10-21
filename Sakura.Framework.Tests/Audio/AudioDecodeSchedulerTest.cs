@@ -76,6 +76,9 @@ public class AudioDecodeSchedulerTest
     [Test]
     public void ComesBackPromptlyForASourceWaitingOnTheAudioThread()
     {
+        // Above 60 rounds in 200 ms needs each 1 ms wait back within about 3 ms.
+        TimerPrecision.RequireOneMillisecondWaitWithin(3);
+
         int pumps = run(true).Pumps;
 
         // One pump per round, so this is the round rate. The blocked wait is 1 ms, giving ~200 rounds
