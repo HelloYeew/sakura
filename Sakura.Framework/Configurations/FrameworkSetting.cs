@@ -26,5 +26,6 @@ public enum FrameworkSetting
     WindowHeight,
     RelativeMouseMode,
     CursorSensitivity,
-    AudioDeviceBufferFrames
+    AudioDeviceBufferFrames,
+    SafeAreaPreview
 }

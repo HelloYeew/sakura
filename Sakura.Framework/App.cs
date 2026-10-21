@@ -13,6 +13,7 @@ using Sakura.Framework.Audio.Headless;
 using Sakura.Framework.Audio.SdlEngine;
 using Sakura.Framework.Configurations;
 using Sakura.Framework.Development;
+using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Graphics.Rendering;
@@ -54,6 +55,21 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
     protected VideoStore VideoStore { get; private set; }
 
     private Reactive<PerformanceOverlayState> fpsGraphState;
+
+    /// <summary>
+    /// Holds everything added to the app, laid out in the window's safe area so nothing lands under a notch,
+    /// a cutout or the system bars. A background reaches the edge of the screen with <see cref="Drawable.Bleed"/>.
+    /// </summary>
+    private readonly SafeAreaDefiningContainer safeArea = new SafeAreaDefiningContainer();
+
+    private Reactive<SafeAreaPreview> safeAreaPreview;
+
+    protected override Container Content => safeArea;
+
+    public App()
+    {
+        AddInternal(safeArea);
+    }
 
     /// <summary>
     /// The Assembly where embedded resources are stored.
@@ -223,6 +239,12 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
         Cache(Host.FrameworkConfigManager);
 
         fpsGraphState = Host.FrameworkConfigManager.Get(FrameworkSetting.ShowFpsGraph, PerformanceOverlayState.Hidden);
+        safeAreaPreview = Host.FrameworkConfigManager.Get(FrameworkSetting.SafeAreaPreview, SafeAreaPreview.Off);
+
+        AddInternal(new SafeAreaPreviewOverlay(safeArea, safeAreaPreview)
+        {
+            Depth = float.MaxValue
+        });
 
         Add(debugWindows = new DebugWindowLayer
         {
@@ -341,6 +363,11 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
         else if (!e.IsRepeat && e.Key == Key.F3 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
             debugWindows.Toggle(() => new TextureViewerDisplay());
+            return true;
+        }
+        else if (!e.IsRepeat && e.Key == Key.F6 && (e.Modifiers & KeyModifiers.Control) > 0)
+        {
+            safeAreaPreview.Value = (SafeAreaPreview)(((int)safeAreaPreview.Value + 1) % Enum.GetValues<SafeAreaPreview>().Length);
             return true;
         }
         else if (!e.IsRepeat && e.Key == Key.F7 && (e.Modifiers & KeyModifiers.Control) > 0)

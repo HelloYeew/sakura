@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using Sakura.Framework.Allocation;
 using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Graphics.Colors;
+using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Rendering.Vertex;
@@ -56,6 +57,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
         {
             if (parent == value) return;
             parent = value;
+            bleedSize = Vector2.Zero;
             MarkSizesChanged();
             OnParentChanged();
         }
@@ -113,6 +115,8 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
     private float alpha = 1f;
     private MarginPadding margin;
     private MarginPadding padding;
+    private Edges bleed;
+    private Vector2 bleedSize;
     private float depth;
     private bool alwaysPresent;
     private Texture? texture;
@@ -475,6 +479,31 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
     }
 
     /// <summary>
+    /// The edges on which this drawable reaches past the safe area to the edge of the screen, so a
+    /// background covers the notch, the cutout, and the system bars while the UI stays clear of them.
+    /// An edge extends only while it lies on or beyond the safe area's boundary; an edge inside the safe
+    /// area stays where it is. The screen and its safe area come from the nearest
+    /// <see cref="SafeAreaDefiningContainer"/>, which <see cref="App"/> provides.
+    /// </summary>
+    /// <remarks>
+    /// Meant for decoration, such as a background or the color of a bar. The children of a container
+    /// that bleeds are laid out in the bigger rectangle, so UI inside one needs a
+    /// <see cref="SafeAreaContainer"/>. Bleeding needs this drawable and its ancestors to be
+    /// unrotated and unsheared, and it can't escape a masking ancestor. Input reaches the extension only
+    /// where the parent covers it too.
+    /// </remarks>
+    public Edges Bleed
+    {
+        get => bleed;
+        set
+        {
+            if (bleed == value) return;
+            bleed = value;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+    }
+
+    /// <summary>
     /// Called when one of this drawable's own inputs to laying out its children changes
     /// (<see cref="Padding"/>, <see cref="RelativeSizeAxes"/>). A container that sizes itself around its
     /// children redoes that layout.
@@ -630,10 +659,11 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
     protected internal Vector2 AppliedDrawSize { get; private set; }
 
     /// <summary>
-    /// <paramref name="size"/> (a <see cref="Size"/>) with relative axes resolved against the parent as it is now.
+    /// <paramref name="size"/> (a <see cref="Size"/>) with relative axes resolved against the parent as it is now,
+    /// plus whatever <see cref="Bleed"/> added at the last layout.
     /// </summary>
     private protected Vector2 ResolveDrawSize(Vector2 size) =>
-        Parent == null || RelativeSizeAxes == Axes.None ? size : resolveDrawSize(size, Parent.RelativeToAbsoluteFactor);
+        (Parent == null || RelativeSizeAxes == Axes.None ? size : resolveDrawSize(size, Parent.RelativeToAbsoluteFactor)) + bleedSize;
 
     /// <summary>
     /// <paramref name="size"/> with relative axes resolved by <paramref name="relativeToAbsolute"/> (the
@@ -647,6 +677,79 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
             size.Y = Math.Max(0, relativeToAbsolute.Y * size.Y - Margin.Total.Y);
 
         return size;
+    }
+
+    /// <summary>
+    /// How close (in screen pixels) an edge has to be to the safe area's boundary to count as on it.
+    /// </summary>
+    private const float bleed_tolerance = 0.5f;
+
+    /// <summary>
+    /// Extends the rectangle this drawable is about to be laid out in (<paramref name="drawSize"/> at
+    /// <paramref name="pixelPosition"/>, in the parent's pixels) out to the screen edge, on each
+    /// <see cref="Bleed"/> edge that lies on or beyond the safe area's boundary.
+    /// </summary>
+    /// <returns>How much bigger that made the drawable, in its own units.</returns>
+    private Vector2 applyBleed(ref Vector2 drawSize, ref Vector2 pixelPosition, Vector2 originVector, Vector2 parentDrawSize)
+    {
+        var definition = SafeAreaDefiningContainer.FindFor(this);
+        if (definition == null || !definition.HasSafeArea)
+            return Vector2.Zero;
+
+        Matrix3x2 parentMatrix = Parent!.ModelMatrix;
+
+        // Edges map straight to screen edges only when nothing on the way is rotated, sheared or mirrored.
+        if (Rotation != 0 || Shear != Vector2.Zero || Scale.X <= 0 || Scale.Y <= 0
+            || parentMatrix.M11 <= 0 || parentMatrix.M22 <= 0
+            || Math.Abs(parentMatrix.M12) > parentMatrix.M11 * 1e-5f || Math.Abs(parentMatrix.M21) > parentMatrix.M22 * 1e-5f)
+            return Vector2.Zero;
+
+        // Screen pixels per parent pixel.
+        float toScreenX = parentMatrix.M11 / parentDrawSize.X;
+        float toScreenY = parentMatrix.M22 / parentDrawSize.Y;
+
+        Vector2 scaledSize = drawSize * Scale;
+        float left = pixelPosition.X - originVector.X * scaledSize.X;
+        float top = pixelPosition.Y - originVector.Y * scaledSize.Y;
+
+        float screenLeft = parentMatrix.M31 + left * toScreenX;
+        float screenTop = parentMatrix.M32 + top * toScreenY;
+        float screenRight = screenLeft + scaledSize.X * toScreenX;
+        float screenBottom = screenTop + scaledSize.Y * toScreenY;
+
+        RectangleF screen = definition.ScreenSpaceBounds;
+        RectangleF safe = definition.ScreenSpaceSafeArea;
+
+        float extendLeft = 0, extendTop = 0, extendRight = 0, extendBottom = 0;
+
+        if ((bleed & Edges.Left) != 0 && safe.X > screen.X && screenLeft <= safe.X + bleed_tolerance)
+            extendLeft = Math.Max(0, screenLeft - screen.X);
+
+        if ((bleed & Edges.Top) != 0 && safe.Y > screen.Y && screenTop <= safe.Y + bleed_tolerance)
+            extendTop = Math.Max(0, screenTop - screen.Y);
+
+        float safeRight = safe.X + safe.Width;
+        float screenEdgeRight = screen.X + screen.Width;
+        if ((bleed & Edges.Right) != 0 && safeRight < screenEdgeRight && screenRight >= safeRight - bleed_tolerance)
+            extendRight = Math.Max(0, screenEdgeRight - screenRight);
+
+        float safeBottom = safe.Y + safe.Height;
+        float screenEdgeBottom = screen.Y + screen.Height;
+        if ((bleed & Edges.Bottom) != 0 && safeBottom < screenEdgeBottom && screenBottom >= safeBottom - bleed_tolerance)
+            extendBottom = Math.Max(0, screenEdgeBottom - screenBottom);
+
+        if (extendLeft == 0 && extendTop == 0 && extendRight == 0 && extendBottom == 0)
+            return Vector2.Zero;
+
+        // Back into the parent's pixels, keeping the origin where it falls on the bigger rectangle.
+        Vector2 grownScaledSize = scaledSize + new Vector2((extendLeft + extendRight) / toScreenX, (extendTop + extendBottom) / toScreenY);
+        left -= extendLeft / toScreenX;
+        top -= extendTop / toScreenY;
+        pixelPosition = new Vector2(left + originVector.X * grownScaledSize.X, top + originVector.Y * grownScaledSize.Y);
+
+        Vector2 extra = (grownScaledSize - scaledSize) / Scale;
+        drawSize += extra;
+        return extra;
     }
 
     /// <summary>
@@ -727,6 +830,14 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
             // Shift by Parent's Padding to get position relative to Parent's Top-Left (DrawSize space)
             pixelPosition.X += Parent.Padding.Left;
             pixelPosition.Y += Parent.Padding.Top;
+
+            Vector2 newBleedSize = bleed != Edges.None ? applyBleed(ref finalDrawSize, ref pixelPosition, originVector, parentDrawSize) : Vector2.Zero;
+
+            if (newBleedSize != bleedSize)
+            {
+                bleedSize = newBleedSize;
+                MarkSizesChanged();
+            }
 
             var m = Matrix3x2.CreateTranslation(-originVector.X, -originVector.Y);
             m *= Matrix3x2.CreateScale(finalDrawSize.X * Scale.X, finalDrawSize.Y * Scale.Y);

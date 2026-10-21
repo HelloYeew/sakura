@@ -86,13 +86,9 @@ public partial class TestBrowserApp : App
         TestScene.IsVisualRunner = true;
         base.Load();
 
-        Add(new SafeAreaContainer
+        Add(mainContainer = new DrawSizePreservingFillContainer
         {
-            RelativeSizeAxes = Axes.Both,
-            Child = mainContainer = new DrawSizePreservingFillContainer
-            {
-                RelativeSizeAxes = Axes.Both
-            }
+            RelativeSizeAxes = Axes.Both
         });
 
         // Build the rate-adjustable clock that drives test content only.

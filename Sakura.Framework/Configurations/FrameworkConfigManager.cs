@@ -3,6 +3,7 @@
 
 using Sakura.Framework.Audio;
 using Sakura.Framework.Audio.SdlEngine;
+using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Threading;
@@ -39,5 +40,6 @@ public class FrameworkConfigManager : ConfigManager<FrameworkSetting>
         Get(FrameworkSetting.WindowHeight, -1);
         Get(FrameworkSetting.RelativeMouseMode, false);
         Get(FrameworkSetting.CursorSensitivity, 1.0);
+        Get(FrameworkSetting.SafeAreaPreview, SafeAreaPreview.Off);
     }
 }
