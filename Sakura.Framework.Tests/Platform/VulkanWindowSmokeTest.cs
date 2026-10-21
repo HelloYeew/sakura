@@ -25,12 +25,15 @@ namespace Sakura.Framework.Tests.Platform;
 /// <summary>
 /// The Vulkan renderer through a real window: the window system's surface, a swapchain, presentation, two
 /// resizes and two present mode changes (which also change the frames in flight), all under the validation
-/// layer.
+/// layer. A resize has to rebuild the swapchain; a present mode change either rebuilds it or, where the
+/// driver can switch modes per present, switches without one.
 /// </summary>
 /// <remarks>
 /// Linux only. The window has to live on the thread the test runs on, which macOS forbids for anything but
-/// the process's main thread, and Windows CI has no Vulkan driver. CI runs it under Xvfb on Mesa's lavapipe,
-/// which is how a Linux-only window path gets tested without Linux hardware.
+/// the process's main thread, and Windows CI has no Vulkan driver. CI runs it on Mesa's lavapipe twice: under
+/// Xvfb, and on a headless Weston compositor with <c>SDL_VIDEODRIVER=wayland</c>, which is how both Linux
+/// window systems get tested without Linux hardware. When <c>SDL_VIDEODRIVER</c> names one, the test checks
+/// that the window really was opened on it.
 /// </remarks>
 [TestFixture]
 [Platform("Linux")]
@@ -38,6 +41,7 @@ public class VulkanWindowSmokeTest
 {
     private static readonly GlobalStatistic<long> stat_validation_messages = GlobalStatistics.Get<long>("Vulkan", "Validation Messages", StatisticKind.Cumulative);
     private static readonly GlobalStatistic<int> stat_swapchain_rebuilds = GlobalStatistics.Get<int>("Vulkan", "Swapchain Rebuilds", StatisticKind.Cumulative);
+    private static readonly GlobalStatistic<int> stat_present_mode_switches = GlobalStatistics.Get<int>("Vulkan", "Present Mode Switches", StatisticKind.Cumulative);
 
     [Test]
     public void RendersPresentsAndResizesUnderValidation()
@@ -59,13 +63,18 @@ public class VulkanWindowSmokeTest
 
             long frames = host.DrawFrameStatistics?.TotalFrames ?? 0;
 
+            string? requestedDriver = Environment.GetEnvironmentVariable("SDL_VIDEODRIVER");
+
             Assert.Multiple(() =>
             {
+                if (!string.IsNullOrEmpty(requestedDriver))
+                    Assert.That(app.VideoDriver, Is.EqualTo(requestedDriver), "the window system SDL_VIDEODRIVER asked for");
+
                 Assert.That(app.Failure, Is.Null, "the script");
                 Assert.That(app.Completed, Is.True, "the script ran to the end");
                 Assert.That(host.Renderer, Is.InstanceOf<VulkanRenderer>(), "the window rendered through Vulkan");
                 Assert.That(frames, Is.GreaterThan(30), "frames were drawn");
-                Assert.That(app.StepsWithoutRebuild, Is.Empty, "steps after which the swapchain was not rebuilt");
+                Assert.That(app.StepsNotFollowed, Is.Empty, "steps the swapchain didn't follow (no rebuild, and no present mode switch for a mode change)");
                 Assert.That(stat_validation_messages.Value - validationBefore, Is.Zero, "validation messages (the log has them)");
             });
         }
@@ -107,10 +116,16 @@ public class VulkanWindowSmokeTest
         private Box box = null!;
         private int step;
         private int rebuildsAtLastStep;
+        private int switchesAtLastStep;
 
         public bool Completed { get; private set; }
         public Exception? Failure { get; private set; }
-        public List<string> StepsWithoutRebuild { get; } = [];
+        public List<string> StepsNotFollowed { get; } = [];
+
+        /// <summary>
+        /// The SDL video driver the window was opened with.
+        /// </summary>
+        public string? VideoDriver { get; private set; }
 
         protected override Assembly ResourceAssembly => typeof(VulkanWindowSmokeTest).Assembly;
         protected override string ResourceRootNamespace => "Sakura.Framework.Tests.Resources";
@@ -139,18 +154,29 @@ public class VulkanWindowSmokeTest
 
             box.Rotation = (float)(Clock.CurrentTime / 10);
 
+            VideoDriver ??= SDL_GetCurrentVideoDriver();
+
             // A step per second, in time rather than updates: multi-threaded updates run far faster than
             // frames are drawn.
             if (Clock.CurrentTime < (step + 1) * 1000)
                 return;
 
-            // A second is plenty for the draw thread to have rebuilt the swapchain for the previous step.
+            // A second is plenty for the draw thread to have followed the previous step.
             int rebuilds = stat_swapchain_rebuilds.Value;
+            int switches = stat_present_mode_switches.Value;
 
-            if (step > 0 && rebuilds == rebuildsAtLastStep)
-                StepsWithoutRebuild.Add(steps[step - 1]);
+            if (step > 0)
+            {
+                bool rebuilt = rebuilds != rebuildsAtLastStep;
+                bool switched = switches != switchesAtLastStep;
+                bool modeChange = steps[step - 1] is "VSync" or "uncapped";
+
+                if (!rebuilt && !(modeChange && switched))
+                    StepsNotFollowed.Add(steps[step - 1]);
+            }
 
             rebuildsAtLastStep = rebuilds;
+            switchesAtLastStep = switches;
 
             try
             {
