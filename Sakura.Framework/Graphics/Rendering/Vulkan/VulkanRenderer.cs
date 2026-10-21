@@ -6,6 +6,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using FFmpeg.AutoGen;
 using Sakura.Framework.Development;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Rendering.Batches;
@@ -47,8 +48,10 @@ namespace Sakura.Framework.Graphics.Rendering.Vulkan;
 /// between.
 /// </para>
 /// <para>
-/// Video frames are copied into plane images like any other upload (<see cref="VulkanVideoTexture"/>);
-/// none is sampled straight out of the decoder's memory yet.
+/// Video is either copied into plane images like any other upload (<see cref="VulkanVideoTexture"/>), or,
+/// when FFmpeg decodes on this renderer's own device, sampled in the decoder's images
+/// (<see cref="VulkanHardwareVideoTexture"/>). Those images belong to FFmpeg, so every submission that
+/// samples one acquires it from FFmpeg first (<see cref="VulkanHardwareFrames"/>).
 /// </para>
 /// </remarks>
 public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
@@ -114,6 +117,16 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     private VulkanPipelines? pipelines;
     private VulkanSwapchain? swapchain;
     private VulkanStagingPool? stagingPool;
+    private VulkanHardwareFrames? hardwareFrames;
+
+    /// <summary>
+    /// The FFmpeg device context on this renderer's device, made the first time a decoder asks for it.
+    /// Read on decode threads.
+    /// </summary>
+    private volatile nint videoDevice;
+
+    private bool videoDeviceCreated;
+    private readonly System.Threading.Lock videoDeviceLock = new System.Threading.Lock();
     private readonly VulkanFrameContext?[] frames = new VulkanFrameContext?[max_frames_in_flight];
 
     private int framesInFlight = 1;
@@ -333,6 +346,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         mipmapsSupported = supportsMipmapGeneration(device);
 
         stagingPool = new VulkanStagingPool(device, memory);
+        hardwareFrames = new VulkanHardwareFrames(device);
 
         for (int i = 0; i < frames.Length; i++)
             frames[i] = new VulkanFrameContext(device, memory, stagingPool, i);
@@ -477,16 +491,33 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         // offscreen one (a framebuffer left bound) its image ready to sample.
         endPass();
 
-        if (frame.HasUploads)
+        // Hardware frames are acquired last, so their locks are held only from here until the submit.
+        bool acquiring = !hardwareFrames!.IsEmpty;
+
+        if (acquiring)
+            hardwareFrames.Begin(frame.BeginUploads());
+
+        bool submitted = false;
+
+        try
         {
-            finishUploads(frame.UploadCommandBuffer);
-            VulkanDevice.Check(device.Api.vkEndCommandBuffer(frame.UploadCommandBuffer), "vkEndCommandBuffer");
+            if (frame.HasUploads)
+            {
+                finishUploads(frame.UploadCommandBuffer);
+                VulkanDevice.Check(device.Api.vkEndCommandBuffer(frame.UploadCommandBuffer), "vkEndCommandBuffer");
+            }
+
+            VulkanDevice.Check(device.Api.vkEndCommandBuffer(frame.CommandBuffer), "vkEndCommandBuffer");
+
+            frame.Stream.FlushWrites();
+            submit(frame);
+            submitted = true;
         }
-
-        VulkanDevice.Check(device.Api.vkEndCommandBuffer(frame.CommandBuffer), "vkEndCommandBuffer");
-
-        frame.Stream.FlushWrites();
-        submit(frame);
+        finally
+        {
+            if (acquiring)
+                hardwareFrames.End(submitted);
+        }
 
         if (currentImage is uint image)
             present(image);
@@ -731,21 +762,60 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
         commandBuffers[commandBufferCount++] = frame.CommandBuffer;
 
-        var waitSemaphore = frame.ImageAvailable;
-        var waitStage = VkPipelineStageFlags.ColorAttachmentOutput;
-        var signalSemaphore = currentImage is uint image ? swapchain!.GetRenderFinished(image) : VkSemaphore.Null;
+        // The swapchain's semaphores are binary. Each hardware frame adds its timeline semaphore, waited
+        // on at its current value and signalled at the next.
+        var timeline = hardwareFrames!.Semaphores;
+        var timelineValues = hardwareFrames.WaitValues;
+        int capacity = 1 + timeline.Length;
 
-        var submitInfo = new VkSubmitInfo
+        var waitSemaphores = stackalloc VkSemaphore[capacity];
+        var waitStages = stackalloc VkPipelineStageFlags[capacity];
+        var waitValues = stackalloc ulong[capacity];
+        var signalSemaphores = stackalloc VkSemaphore[capacity];
+        var signalValues = stackalloc ulong[capacity];
+        uint count = 0;
+
+        if (currentImage is uint image)
         {
             // Only the first write to the image has to wait for it to be available, so the uploads run
             // while presentation still holds it.
-            waitSemaphoreCount = currentImage != null ? 1u : 0u,
-            pWaitSemaphores = &waitSemaphore,
-            pWaitDstStageMask = &waitStage,
+            waitSemaphores[0] = frame.ImageAvailable;
+            waitStages[0] = VkPipelineStageFlags.ColorAttachmentOutput;
+            waitValues[0] = 0;
+            signalSemaphores[0] = swapchain!.GetRenderFinished(image);
+            signalValues[0] = 0;
+            count = 1;
+        }
+
+        for (int i = 0; i < timeline.Length; i++, count++)
+        {
+            // Every stage: the uploads that move the frame's image into the layout it's sampled in come
+            // first in the batch.
+            waitSemaphores[count] = timeline[i];
+            waitStages[count] = VkPipelineStageFlags.AllCommands;
+            waitValues[count] = timelineValues[i];
+            signalSemaphores[count] = timeline[i];
+            signalValues[count] = timelineValues[i] + 1;
+        }
+
+        var timelineInfo = new VkTimelineSemaphoreSubmitInfo
+        {
+            waitSemaphoreValueCount = count,
+            pWaitSemaphoreValues = waitValues,
+            signalSemaphoreValueCount = count,
+            pSignalSemaphoreValues = signalValues,
+        };
+
+        var submitInfo = new VkSubmitInfo
+        {
+            pNext = timeline.Length > 0 ? &timelineInfo : null,
+            waitSemaphoreCount = count,
+            pWaitSemaphores = waitSemaphores,
+            pWaitDstStageMask = waitStages,
             commandBufferCount = commandBufferCount,
             pCommandBuffers = commandBuffers,
-            signalSemaphoreCount = currentImage != null ? 1u : 0u,
-            pSignalSemaphores = &signalSemaphore,
+            signalSemaphoreCount = count,
+            pSignalSemaphores = signalSemaphores,
         };
 
         var fence = frame.Fence;
@@ -753,7 +823,9 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         // Reset only now, right before the submit that signals it again, so nothing between the wait in
         // StartFrame and here can leave the slot with a fence that never signals.
         VulkanDevice.Check(api.vkResetFences(1, &fence), "vkResetFences");
-        VulkanDevice.Check(api.vkQueueSubmit(device.GraphicsQueue, 1, &submitInfo, fence), "vkQueueSubmit");
+
+        using (device.GraphicsQueueLock.EnterScope())
+            VulkanDevice.Check(api.vkQueueSubmit(device.GraphicsQueue, 1, &submitInfo, fence), "vkQueueSubmit");
 
         stat_queue_submits.Accumulator++;
     }
@@ -761,7 +833,11 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     private void present(uint image)
     {
         long start = Stopwatch.GetTimestamp();
-        var result = swapchain!.Present(image);
+        VkResult result;
+
+        using (device!.PresentQueueLock.EnterScope())
+            result = swapchain!.Present(image);
+
         blockedMilliseconds += Stopwatch.GetElapsedTime(start).TotalMilliseconds;
 
         switch (result)
@@ -873,15 +949,31 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     /// </summary>
     internal void BindTexture(int index, VulkanTexture texture) => bindTexture(index, texture, texture.Sampler);
 
-    private void bindTexture(int index, VulkanTexture texture, VkSampler sampler)
+    private void bindTexture(int index, VulkanTexture texture, VkSampler sampler) => bindView(index, texture.View, sampler, texture.Handle);
+
+    private void bindView(int index, VkImageView view, VkSampler sampler, nint handle)
     {
         if (index < 0 || index >= texture_slot_count)
             return;
 
-        slotViews[index] = texture.View;
+        slotViews[index] = view;
         slotSamplers[index] = sampler;
-        slotHandles[index] = texture.Handle;
+        slotHandles[index] = handle;
         textureSetDirty = true;
+    }
+
+    /// <summary>
+    /// Puts a hardware frame's planes at texture slots 0 and 1, and has <paramref name="frame"/> acquired
+    /// for this frame's submission. Called by <see cref="VulkanHardwareVideoTexture.BindPlanes"/>.
+    /// </summary>
+    internal void BindHardwarePlanes(AVFrame* frame, VkImageView luma, VkImageView chroma, bool tiling)
+    {
+        var sampler = tiling ? descriptors!.TextureSampler : descriptors!.RenderTargetSampler;
+
+        bindView(0, luma, sampler, (nint)luma.Handle);
+        bindView(1, chroma, sampler, (nint)chroma.Handle);
+
+        hardwareFrames!.Use(frame);
     }
 
     /// <summary>
@@ -1768,8 +1860,11 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
             pCommandBuffers = &commandBuffer,
         };
 
-        VulkanDevice.Check(api.vkQueueSubmit(device.GraphicsQueue, 1, &submitInfo, VkFence.Null), "vkQueueSubmit");
-        VulkanDevice.Check(api.vkQueueWaitIdle(device.GraphicsQueue), "vkQueueWaitIdle");
+        using (device.GraphicsQueueLock.EnterScope())
+        {
+            VulkanDevice.Check(api.vkQueueSubmit(device.GraphicsQueue, 1, &submitInfo, VkFence.Null), "vkQueueSubmit");
+            VulkanDevice.Check(api.vkQueueWaitIdle(device.GraphicsQueue), "vkQueueWaitIdle");
+        }
 
         api.vkFreeCommandBuffers(immediateCommandPool, 1, &commandBuffer);
     }
@@ -2018,17 +2113,65 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         Retire(destroyModules);
     }
 
-    /// <remarks>
-    /// Always a copying texture: <see cref="CanSampleHardwareFrame"/> never says yes, so
-    /// <paramref name="fromHardwareFrame"/> is never true here.
-    /// </remarks>
     public INativeVideoTexture CreateVideoTexture(int width, int height, VideoPlaneLayout layout, bool fromHardwareFrame = false)
-        => new VulkanVideoTexture(this, device!, memory!, descriptors!.RenderTargetSampler, width, height, layout);
+        => fromHardwareFrame
+            ? new VulkanHardwareVideoTexture(this, device!, width, height)
+            : new VulkanVideoTexture(this, device!, memory!, descriptors!.RenderTargetSampler, width, height, layout);
 
     /// <summary>
-    /// Always false: hardware frames are read back by the decoder and copied in.
+    /// Whether <paramref name="frame"/> is an NV12 frame FFmpeg decoded on this renderer's device (through
+    /// <see cref="CreateVideoDecodeDevice"/>), in images the graphics queue may read without an ownership
+    /// transfer.
     /// </summary>
-    public bool CanSampleHardwareFrame(FFmpeg.AutoGen.AVFrame* frame) => false;
+    public bool CanSampleHardwareFrame(AVFrame* frame)
+    {
+        var shared = (AVBufferRef*)videoDevice;
+
+        if (shared == null || frame->format != (int)AVPixelFormat.AV_PIX_FMT_VULKAN || frame->hw_frames_ctx == null || frame->data[0] == null)
+            return false;
+
+        var framesContext = (AVHWFramesContext*)frame->hw_frames_ctx->data;
+
+        if (framesContext->device_ref == null || framesContext->device_ref->data != shared->data || framesContext->sw_format != AVPixelFormat.AV_PIX_FMT_NV12)
+            return false;
+
+        var vkFrame = (AVVkFrame*)frame->data[0];
+
+        for (int i = 0; i < 8 && vkFrame->img[i] != 0; i++)
+        {
+            uint family = vkFrame->queue_family[i];
+
+            if (family != Vortice.Vulkan.Vulkan.VK_QUEUE_FAMILY_IGNORED && family != device!.GraphicsQueueFamily)
+                return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Whether the device has a video decode queue, so FFmpeg can decode on it into images this renderer
+    /// samples in place.
+    /// </summary>
+    internal bool DecodesVideo => device?.DecodeQueueFamily != null;
+
+    /// <summary>
+    /// A new reference to an FFmpeg device context on this renderer's device, or null when the device can't
+    /// share frames or this FFmpeg has no Vulkan support. Made the first time it is asked for, from any
+    /// thread; the caller owns the reference.
+    /// </summary>
+    internal AVBufferRef* CreateVideoDecodeDevice()
+    {
+        lock (videoDeviceLock)
+        {
+            if (!videoDeviceCreated && device != null)
+            {
+                videoDeviceCreated = true;
+                videoDevice = (nint)VulkanVideoDevice.Create(device);
+            }
+
+            return videoDevice != 0 ? ffmpeg.av_buffer_ref((AVBufferRef*)videoDevice) : null;
+        }
+    }
 
     public IFrameBuffer CreateFrameBuffer(int width, int height, bool pixelSnapping = false)
         => new VulkanFrameBuffer(this, device!, memory!, renderPasses!, chooseOffscreenFormat(), pixelSnapping ? descriptors!.PixelSnappingSampler : descriptors!.RenderTargetSampler, width, height);
@@ -2083,6 +2226,20 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         // Frames hand their staging buffers back as they go, so the pool is emptied after them.
         foreach (var frame in frames)
             frame?.Dispose();
+
+        // Hardware frames still held were let go above. A decoder that still holds the context keeps
+        // FFmpeg's objects on the device alive, and has to be gone before the device is.
+        lock (videoDeviceLock)
+        {
+            // Never touches FFmpeg when no decoder asked for the context, so a renderer that played no
+            // video doesn't load it just to let go of nothing.
+            if (videoDevice != 0)
+            {
+                var shared = (AVBufferRef*)videoDevice;
+                ffmpeg.av_buffer_unref(&shared);
+                videoDevice = 0;
+            }
+        }
 
         stagingPool?.Dispose();
         pipelines?.Dispose();

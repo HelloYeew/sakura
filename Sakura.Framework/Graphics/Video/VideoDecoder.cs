@@ -12,6 +12,7 @@ using System.Threading.Tasks;
 using FFmpeg.AutoGen;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Rendering.Direct3D11;
+using Sakura.Framework.Graphics.Rendering.Vulkan;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
@@ -48,8 +49,9 @@ public unsafe class VideoDecoder : IDisposable
 
     /// <summary>
     /// Whether hardware-decoded frames may be sampled where the decoder produced them, skipping the
-    /// readback and the upload entirely. Only has an effect where the active renderer supports it,
-    /// Metal with VideoToolbox today; see <see cref="IRenderer.CanSampleHardwareFrame"/>.
+    /// readback and the upload entirely. Only has an effect where the active renderer supports it:
+    /// Metal with VideoToolbox, and Vulkan when FFmpeg decodes on the renderer's own device; see
+    /// <see cref="IRenderer.CanSampleHardwareFrame"/>.
     /// </summary>
     /// <remarks>
     /// Unlike <see cref="HardwareAcceleration"/> this needs no codec reopen: the frames are identical
@@ -546,6 +548,8 @@ public unsafe class VideoDecoder : IDisposable
     ///   macOS  — VideoToolbox
     ///   Windows — D3D11VA > DXVA2 > CUDA
     ///   Linux   — VAAPI > VDPAU > CUDA
+    ///   Either of the last two puts Vulkan first when the renderer is Vulkan and its device has a video
+    ///   decode queue, so frames are decoded where the renderer samples them
     ///   Android — MediaCodec (a separate decoder rather than a device; see <see cref="tryOpenMediaCodec"/>)
     ///
     /// If every HW attempt fails, or if <see cref="AllowHardwareAcceleration"/> is
@@ -586,6 +590,9 @@ public unsafe class VideoDecoder : IDisposable
                     AVHWDeviceType.AV_HWDEVICE_TYPE_VDPAU,
                     AVHWDeviceType.AV_HWDEVICE_TYPE_CUDA,
                 };
+
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX) && renderer is VulkanRenderer { DecodesVideo: true })
+                candidates = [AVHWDeviceType.AV_HWDEVICE_TYPE_VULKAN, .. candidates];
 
             foreach (var hwType in candidates)
             {
@@ -631,12 +638,16 @@ public unsafe class VideoDecoder : IDisposable
         ctx->pkt_timebase = avStream->time_base;
         ffmpeg.avcodec_parameters_to_context(ctx, avStream->codecpar);
 
-        // Create the hardware device context. D3D11VA gets a special one built around the renderer's
-        // own device; everything else lets FFmpeg create its own, which is right for them because
-        // nothing samples their frames in place.
-        AVBufferRef* hwDeviceCtx = hwType == AVHWDeviceType.AV_HWDEVICE_TYPE_D3D11VA
-            ? createSharedD3D11DeviceContext()
-            : createOwnedDeviceContext(hwType);
+        // Create the hardware device context. D3D11VA and Vulkan get one built around the renderer's own
+        // device; everything else lets FFmpeg create its own, which is right for them because nothing
+        // samples their frames in place.
+        AVBufferRef* hwDeviceCtx = hwType switch
+        {
+            AVHWDeviceType.AV_HWDEVICE_TYPE_D3D11VA => createSharedD3D11DeviceContext(),
+            // Decoding on a Vulkan device of FFmpeg's own would only be read back: never worth it.
+            AVHWDeviceType.AV_HWDEVICE_TYPE_VULKAN => renderer is VulkanRenderer vulkan ? vulkan.CreateVideoDecodeDevice() : null,
+            _ => createOwnedDeviceContext(hwType),
+        };
 
         if (hwDeviceCtx == null)
         {
@@ -1224,6 +1235,7 @@ public unsafe class VideoDecoder : IDisposable
         // Zero-copy hardware frames
         AVPixelFormat.AV_PIX_FMT_VIDEOTOOLBOX => VideoPlaneLayout.Nv12,
         AVPixelFormat.AV_PIX_FMT_D3D11 => VideoPlaneLayout.Nv12,
+        AVPixelFormat.AV_PIX_FMT_VULKAN => VideoPlaneLayout.Nv12,
 
         _ => VideoPlaneLayout.Yuv420P,
     };

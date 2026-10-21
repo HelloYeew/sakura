@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using Sakura.Framework.Development;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
@@ -34,6 +35,20 @@ internal sealed unsafe class VulkanDevice : IDisposable
     private const string debug_utils_extension = "VK_EXT_debug_utils";
     private const string validation_features_extension = "VK_EXT_validation_features";
     private const string validation_layer = "VK_LAYER_KHRONOS_validation";
+    private const string video_queue_extension = "VK_KHR_video_queue";
+    private const string video_decode_queue_extension = "VK_KHR_video_decode_queue";
+    private const string video_maintenance1_extension = "VK_KHR_video_maintenance1";
+
+    /// <summary>
+    /// The decode extension for each codec operation a video queue can report.
+    /// </summary>
+    private static readonly (string Extension, VkVideoCodecOperationFlagsKHR Operation)[] video_decode_codecs =
+    [
+        ("VK_KHR_video_decode_h264", VkVideoCodecOperationFlagsKHR.DecodeH264),
+        ("VK_KHR_video_decode_h265", VkVideoCodecOperationFlagsKHR.DecodeH265),
+        ("VK_KHR_video_decode_vp9", VkVideoCodecOperationFlagsKHR.DecodeVP9),
+        ("VK_KHR_video_decode_av1", VkVideoCodecOperationFlagsKHR.DecodeAV1),
+    ];
 
     /// <summary>
     /// Selects the physical device whose name contains this text, overriding the automatic choice (for
@@ -76,6 +91,7 @@ internal sealed unsafe class VulkanDevice : IDisposable
     private static readonly VkVersion version_1_0 = new VkVersion(1, 0, 0);
     private static readonly VkVersion version_1_1 = new VkVersion(1, 1, 0);
     private static readonly VkVersion version_1_2 = new VkVersion(1, 2, 0);
+    private static readonly VkVersion version_1_3 = new VkVersion(1, 3, 0);
 
     private static readonly Lazy<bool> loader_available = new Lazy<bool>(() =>
     {
@@ -90,11 +106,20 @@ internal sealed unsafe class VulkanDevice : IDisposable
 
     public VkInstance Instance { get; }
     public VkInstanceApi InstanceApi { get; }
+    public VkVersion InstanceApiVersion { get; }
+    public IReadOnlyList<string> EnabledInstanceExtensions { get; }
+    public IReadOnlyList<string> EnabledDeviceExtensions { get; private set; } = [];
     public VkPhysicalDevice PhysicalDevice { get; }
     public VkDevice Handle { get; }
     public VkDeviceApi Api { get; }
 
     public uint GraphicsQueueFamily { get; }
+
+    /// <summary>
+    /// What the graphics queue family reports it can do. Transfers are always possible on it whether or
+    /// not it says so.
+    /// </summary>
+    public VkQueueFlags GraphicsQueueFlags { get; }
     public VkQueue GraphicsQueue { get; }
 
     /// <summary>
@@ -124,6 +149,45 @@ internal sealed unsafe class VulkanDevice : IDisposable
     /// Whether <c>VK_EXT_debug_utils</c> is enabled, so objects can be given names that debuggers show.
     /// </summary>
     public bool HasDebugUtils { get; }
+
+    /// <summary>
+    /// Whether frames a hardware decoder produces on this device can be sampled where they are: the
+    /// instance and device are Vulkan 1.3, with timeline semaphores and synchronization2 enabled, which
+    /// is what FFmpeg needs to share the device.
+    /// </summary>
+    public bool SharesVideoFrames { get; private set; }
+
+    /// <summary>
+    /// The features the device was created with, in a chain that lives as long as the device, for handing
+    /// to FFmpeg along with the device. Null unless <see cref="SharesVideoFrames"/>.
+    /// </summary>
+    public VkPhysicalDeviceFeatures2* EnabledFeatures => enabledFeatures;
+
+    private VkPhysicalDeviceFeatures2* enabledFeatures;
+
+    /// <summary>
+    /// The queue family video is decoded on, or null when the device has none, or when
+    /// <see cref="SharesVideoFrames"/> is false and its frames couldn't be sampled anyway.
+    /// </summary>
+    public uint? DecodeQueueFamily { get; private set; }
+
+    /// <summary>
+    /// The codecs <see cref="DecodeQueueFamily"/> decodes and whose extensions were enabled.
+    /// </summary>
+    public VkVideoCodecOperationFlagsKHR DecodeOperations { get; private set; }
+
+    /// <summary>
+    /// One lock per queue the device was created with. Vulkan requires a queue's submissions, presents
+    /// and waits never to overlap, and a hardware decoder sharing the device submits from its own
+    /// thread, so everything that uses a queue holds its lock.
+    /// </summary>
+    private readonly Dictionary<(uint Family, uint Index), Lock> queueLocks = new Dictionary<(uint, uint), Lock>();
+
+    /// <summary>
+    /// What <see cref="GetQueueLock"/> hands out for a queue the device doesn't have, so a caller never
+    /// gets nothing to lock.
+    /// </summary>
+    private readonly Lock unknownQueueLock = new Lock();
 
     public bool ValidationEnabled { get; }
 
@@ -200,6 +264,8 @@ internal sealed unsafe class VulkanDevice : IDisposable
 
         Instance = createInstance(extensions, layers, flags, apiVersion, ValidationEnabled && HasDebugUtils, syncValidation);
         InstanceApi = GetApi(Instance);
+        InstanceApiVersion = apiVersion;
+        EnabledInstanceExtensions = extensions;
 
         if (ValidationEnabled && HasDebugUtils)
         {
@@ -224,6 +290,7 @@ internal sealed unsafe class VulkanDevice : IDisposable
             DriverDescription = candidate.DriverDescription;
             AvailableExtensions = candidate.Extensions;
             GraphicsQueueFamily = candidate.GraphicsFamily;
+            GraphicsQueueFlags = candidate.GraphicsFlags;
             PresentQueueFamily = candidate.PresentFamily;
 
             Handle = createDevice(candidate, windowSurface != null);
@@ -241,6 +308,7 @@ internal sealed unsafe class VulkanDevice : IDisposable
             if (surface.IsNotNull)
                 windowSurface!.DestroySurface(Instance.Handle, surface);
 
+            freeEnabledFeatures();
             destroyInstance();
             throw;
         }
@@ -272,17 +340,55 @@ internal sealed unsafe class VulkanDevice : IDisposable
         InstanceApi.vkSetDebugUtilsObjectNameEXT(Handle, &info);
     }
 
-    public void WaitIdle() => Check(Api.vkDeviceWaitIdle(), "vkDeviceWaitIdle");
+    /// <summary>
+    /// The lock every use of queue <paramref name="index"/> of <paramref name="family"/> holds: submits,
+    /// presents and waits, the renderer's and a sharing decoder's alike.
+    /// </summary>
+    public Lock GetQueueLock(uint family, uint index) => queueLocks.GetValueOrDefault((family, index), unknownQueueLock);
+
+    public Lock GraphicsQueueLock => GetQueueLock(GraphicsQueueFamily, 0);
+
+    public Lock PresentQueueLock => GetQueueLock(PresentQueueFamily, 0);
+
+    /// <summary>
+    /// Waits for every queue to go idle, holding all their locks: the wait is a use of every queue.
+    /// </summary>
+    public void WaitIdle() => Check(waitIdle(), "vkDeviceWaitIdle");
+
+    private VkResult waitIdle()
+    {
+        var locks = queueLocks.OrderBy(entry => entry.Key).Select(entry => entry.Value).ToArray();
+
+        foreach (var queueLock in locks)
+            queueLock.Enter();
+
+        try
+        {
+            return Api.vkDeviceWaitIdle();
+        }
+        finally
+        {
+            foreach (var queueLock in locks)
+                queueLock.Exit();
+        }
+    }
 
     public void Dispose()
     {
         if (Handle.IsNotNull)
         {
-            Api.vkDeviceWaitIdle();
+            waitIdle();
             Api.vkDestroyDevice(null);
         }
 
+        freeEnabledFeatures();
         destroyInstance();
+    }
+
+    private void freeEnabledFeatures()
+    {
+        NativeMemory.Free(enabledFeatures);
+        enabledFeatures = null;
     }
 
     private void destroyInstance()
@@ -326,12 +432,21 @@ internal sealed unsafe class VulkanDevice : IDisposable
     }
 
     /// <summary>
-    /// The renderer is written against Vulkan 1.0 plus extensions, so it asks for 1.1 only to reach the
-    /// properties2 queries without an extension. Asking for more than the loader has would fail on a
-    /// 1.0 loader.
+    /// The renderer is written against Vulkan 1.0 plus extensions. It asks for 1.3 where the loader has
+    /// it, because that is what FFmpeg needs to decode into the renderer's own device, and otherwise for
+    /// 1.1 to reach the properties2 queries without an extension. Asking for more than the loader has
+    /// would fail on a 1.0 loader; on later ones a device older than the version asked for still works,
+    /// it just can't be used past its own version.
     /// </summary>
     private static VkVersion requestedApiVersion()
-        => vkEnumerateInstanceVersion().Value >= version_1_1.Value ? version_1_1 : version_1_0;
+    {
+        uint loader = vkEnumerateInstanceVersion().Value;
+
+        if (loader >= version_1_3.Value)
+            return version_1_3;
+
+        return loader >= version_1_1.Value ? version_1_1 : version_1_0;
+    }
 
     private static VkInstance createInstance(List<string> extensions, List<string> layers, VkInstanceCreateFlags flags, VkVersion apiVersion, bool debugMessenger, bool syncValidation)
     {
@@ -441,6 +556,7 @@ internal sealed unsafe class VulkanDevice : IDisposable
         public VkDriverId? DriverId;
         public HashSet<string> Extensions = [];
         public uint GraphicsFamily;
+        public VkQueueFlags GraphicsFlags;
         public uint PresentFamily;
         public ulong DeviceLocalMemory;
     }
@@ -615,6 +731,7 @@ internal sealed unsafe class VulkanDevice : IDisposable
         }
 
         candidate.GraphicsFamily = graphics.Value;
+        candidate.GraphicsFlags = families[graphics.Value].queueFlags;
         candidate.PresentFamily = present.Value;
         reason = null;
         return true;
@@ -678,36 +795,165 @@ internal sealed unsafe class VulkanDevice : IDisposable
         if (candidate.Extensions.Contains(portability_subset_extension))
             extensions.Add(portability_subset_extension);
 
+        var features = chooseVideoFeatures(candidate);
+        uint? decodeFamily = features != null ? chooseDecodeQueue(candidate, extensions) : null;
+
+        var families = new List<uint> { candidate.GraphicsFamily };
+
+        if (!families.Contains(candidate.PresentFamily))
+            families.Add(candidate.PresentFamily);
+
+        if (decodeFamily is uint decode && !families.Contains(decode))
+            families.Add(decode);
+
         using var extensionNames = new NativeStringArray(extensions);
 
         float priority = 1f;
-        var queues = stackalloc VkDeviceQueueCreateInfo[2];
+        var queues = stackalloc VkDeviceQueueCreateInfo[families.Count];
 
-        queues[0] = new VkDeviceQueueCreateInfo
+        for (int i = 0; i < families.Count; i++)
         {
-            queueFamilyIndex = candidate.GraphicsFamily,
-            queueCount = 1,
-            pQueuePriorities = &priority,
-        };
-
-        queues[1] = new VkDeviceQueueCreateInfo
-        {
-            queueFamilyIndex = candidate.PresentFamily,
-            queueCount = 1,
-            pQueuePriorities = &priority,
-        };
+            queues[i] = new VkDeviceQueueCreateInfo
+            {
+                queueFamilyIndex = families[i],
+                queueCount = 1,
+                pQueuePriorities = &priority,
+            };
+        }
 
         var createInfo = new VkDeviceCreateInfo
         {
-            queueCreateInfoCount = candidate.GraphicsFamily == candidate.PresentFamily ? 1u : 2u,
+            pNext = features,
+            queueCreateInfoCount = (uint)families.Count,
             pQueueCreateInfos = queues,
             enabledExtensionCount = extensionNames.Length,
             ppEnabledExtensionNames = extensionNames.Pointer,
         };
 
         VkDevice device;
-        Check(InstanceApi.vkCreateDevice(candidate.Device, &createInfo, null, &device), "vkCreateDevice");
+
+        try
+        {
+            Check(InstanceApi.vkCreateDevice(candidate.Device, &createInfo, null, &device), "vkCreateDevice");
+        }
+        catch
+        {
+            NativeMemory.Free(features);
+            throw;
+        }
+
+        foreach (uint family in families)
+            queueLocks[(family, 0)] = new Lock();
+
+        EnabledDeviceExtensions = extensions;
+        enabledFeatures = features;
+        SharesVideoFrames = features != null;
+        DecodeQueueFamily = decodeFamily;
+
         return device;
+    }
+
+    /// <summary>
+    /// The features a hardware decoder needs to share the device, in a chain allocated for the device's
+    /// lifetime: timeline semaphores and synchronization2, which FFmpeg can't work without, plus YCbCr
+    /// conversion and host query resets where the device has them. Null when the instance or device is
+    /// older than 1.3 or lacks either required feature, and then nothing beyond the renderer's own needs
+    /// is enabled.
+    /// </summary>
+    private VkPhysicalDeviceFeatures2* chooseVideoFeatures(Candidate candidate)
+    {
+        if (InstanceApiVersion.Value < version_1_3.Value || candidate.Properties.apiVersion.Value < version_1_3.Value)
+            return null;
+
+        var supported11 = new VkPhysicalDeviceVulkan11Features();
+        var supported12 = new VkPhysicalDeviceVulkan12Features { pNext = &supported11 };
+        var supported13 = new VkPhysicalDeviceVulkan13Features { pNext = &supported12 };
+        var supported = new VkPhysicalDeviceFeatures2 { pNext = &supported13 };
+        InstanceApi.vkGetPhysicalDeviceFeatures2(candidate.Device, &supported);
+
+        if (!supported12.timelineSemaphore || !supported13.synchronization2)
+            return null;
+
+        // One block for the whole chain, freed with the device. Every struct's size is a multiple of 8, so
+        // each one after the first stays aligned.
+        byte* block = (byte*)NativeMemory.AllocZeroed((nuint)(sizeof(VkPhysicalDeviceFeatures2) + sizeof(VkPhysicalDeviceVulkan11Features)
+                                                             + sizeof(VkPhysicalDeviceVulkan12Features) + sizeof(VkPhysicalDeviceVulkan13Features)));
+
+        var features = (VkPhysicalDeviceFeatures2*)block;
+        var features11 = (VkPhysicalDeviceVulkan11Features*)(features + 1);
+        var features12 = (VkPhysicalDeviceVulkan12Features*)(features11 + 1);
+        var features13 = (VkPhysicalDeviceVulkan13Features*)(features12 + 1);
+
+        *features11 = new VkPhysicalDeviceVulkan11Features { samplerYcbcrConversion = supported11.samplerYcbcrConversion };
+        *features12 = new VkPhysicalDeviceVulkan12Features { pNext = features11, timelineSemaphore = true, hostQueryReset = supported12.hostQueryReset };
+        *features13 = new VkPhysicalDeviceVulkan13Features { pNext = features12, synchronization2 = true };
+        *features = new VkPhysicalDeviceFeatures2 { pNext = features13 };
+
+        return features;
+    }
+
+    /// <summary>
+    /// The queue family to decode video on, adding the extensions that takes to
+    /// <paramref name="extensions"/>: the video queue extensions, and the decode extension of every codec
+    /// the family reports. Null when the device has no video decode queue, or decodes no codec it has an
+    /// extension for.
+    /// </summary>
+    private uint? chooseDecodeQueue(Candidate candidate, List<string> extensions)
+    {
+        if (!candidate.Extensions.Contains(video_queue_extension) || !candidate.Extensions.Contains(video_decode_queue_extension))
+            return null;
+
+        uint count;
+        InstanceApi.vkGetPhysicalDeviceQueueFamilyProperties2(candidate.Device, &count, null);
+
+        var video = new VkQueueFamilyVideoPropertiesKHR[count];
+        var families = new VkQueueFamilyProperties2[count];
+
+        fixed (VkQueueFamilyVideoPropertiesKHR* videoProperties = video)
+        fixed (VkQueueFamilyProperties2* properties = families)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                videoProperties[i] = new VkQueueFamilyVideoPropertiesKHR();
+                properties[i] = new VkQueueFamilyProperties2 { pNext = &videoProperties[i] };
+            }
+
+            InstanceApi.vkGetPhysicalDeviceQueueFamilyProperties2(candidate.Device, &count, properties);
+        }
+
+        for (uint i = 0; i < count; i++)
+        {
+            if ((families[i].queueFamilyProperties.queueFlags & VkQueueFlags.VideoDecodeKHR) == 0)
+                continue;
+
+            VkVideoCodecOperationFlagsKHR usable = default;
+
+            foreach (var (extension, operation) in video_decode_codecs)
+            {
+                if ((video[i].videoCodecOperations & operation) != 0 && candidate.Extensions.Contains(extension))
+                    usable |= operation;
+            }
+
+            if (usable == default)
+                continue;
+
+            extensions.Add(video_queue_extension);
+            extensions.Add(video_decode_queue_extension);
+
+            foreach (var (extension, operation) in video_decode_codecs)
+            {
+                if ((usable & operation) != 0)
+                    extensions.Add(extension);
+            }
+
+            if (candidate.Extensions.Contains(video_maintenance1_extension))
+                extensions.Add(video_maintenance1_extension);
+
+            DecodeOperations = usable;
+            return i;
+        }
+
+        return null;
     }
 
     private void logDeviceInfo(VkVersion instanceApiVersion, bool syncValidation)
@@ -734,6 +980,9 @@ internal sealed unsafe class VulkanDevice : IDisposable
         Logger.Verbose($"Vulkan API: device {format(properties.apiVersion)}, instance {format(instanceApiVersion)}; hardware IDs: vendor 0x{properties.vendorID:X4}, device 0x{properties.deviceID:X4}");
         Logger.Verbose($"Vulkan memory heaps: {string.Join(", ", heaps)}");
         Logger.Verbose($"Vulkan queues: graphics family {GraphicsQueueFamily}, present family {PresentQueueFamily}");
+        Logger.Verbose(DecodeQueueFamily is uint decodeFamily
+            ? $"Vulkan video: decodes {DecodeOperations} on queue family {decodeFamily}, into frames the renderer samples in place"
+            : $"Vulkan video: no decode queue{(SharesVideoFrames ? string.Empty : ", and decoded frames couldn't be shared (needs Vulkan 1.3 with timeline semaphores and synchronization2)")}");
         Logger.Verbose($"Vulkan optional extensions available: {(optional.Length > 0 ? optional : "none")}");
         Logger.Verbose($"Vulkan validation: {(ValidationEnabled ? syncValidation ? "on, with synchronization validation" : "on" : "off")}");
     }
