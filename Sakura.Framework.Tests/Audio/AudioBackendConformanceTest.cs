@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
@@ -42,6 +43,11 @@ public class AudioBackendConformanceTest
     /// loop to the wrong point, a rate applied the wrong way round — is wrong by far more than this.
     /// </remarks>
     private const double position_tolerance_ms = 150;
+
+    /// <summary>
+    /// Each backend's measured <see cref="drainRate"/>, once per process.
+    /// </summary>
+    private static readonly Dictionary<Backend, double> drain_rates = new Dictionary<Backend, double>();
 
     public enum Backend
     {
@@ -93,6 +99,36 @@ public class AudioBackendConformanceTest
         source.CopyTo(destination);
 
         return path;
+    }
+
+    /// <summary>
+    /// How fast <paramref name="backend"/>'s device drains audio, in milliseconds of audio per millisecond of
+    /// wall clock. Real hardware drains at 1, but the dummy SDL driver these tests run on paces itself with
+    /// sleeps and drains faster, by an amount that depends on the machine: around 1.4 on GitHub's Linux
+    /// runners. Anything compared with the wall clock is scaled by this, so a test measures the backend and
+    /// not the driver. Measured once per backend from a track at its natural speed, before the test opens its
+    /// own manager.
+    /// </summary>
+    private static double drainRate(Backend backend)
+    {
+        if (drain_rates.TryGetValue(backend, out double known))
+            return known;
+
+        double measured;
+
+        using (var manager = (IDisposable)create(backend))
+        {
+            var audio = (IAudioManager)manager;
+            var channel = audio.CreateTrackFromFile(writeTempCopy("Tracks.test.mp3")).GetChannel();
+
+            channel.Play();
+            waitUntil(audio, () => channel.CurrentTime > 200);
+
+            measured = measureSpeed(audio, channel, 1000);
+        }
+
+        drain_rates[backend] = measured;
+        return measured;
     }
 
     /// <summary>
@@ -163,6 +199,8 @@ public class AudioBackendConformanceTest
     [Test]
     public void SeekLandsWhereItWasSent([Values] Backend backend)
     {
+        double drain = drainRate(backend);
+
         using var manager = (IDisposable)create(backend);
         var audio = (IAudioManager)manager;
 
@@ -175,7 +213,8 @@ public class AudioBackendConformanceTest
         channel.CurrentTime = 2000;
         settle(audio);
 
-        Assert.That(channel.CurrentTime, Is.EqualTo(2000).Within(position_tolerance_ms + settle_ms),
+        // The track goes on playing through the settle, at the device's drain rate.
+        Assert.That(channel.CurrentTime, Is.EqualTo(2000).Within(position_tolerance_ms + settle_ms * Math.Max(1, drain)),
             "A seek has to land where it was sent on every backend, or gameplay synced to one backend is wrong on "
             + "the other.");
     }
@@ -307,6 +346,8 @@ public class AudioBackendConformanceTest
     [TestCase(Backend.SdlManaged, 0.5)]
     public void FrequencyScalesHowFastThePositionMoves(Backend backend, double rate)
     {
+        double drain = drainRate(backend);
+
         using var manager = (IDisposable)create(backend);
         var audio = (IAudioManager)manager;
 
@@ -323,13 +364,13 @@ public class AudioBackendConformanceTest
         waitUntil(audio, () => wall.ElapsedMilliseconds > 1000, 3000);
 
         double advanced = channel.CurrentTime - startPosition;
-        double expected = wall.Elapsed.TotalMilliseconds * rate;
+        double expected = wall.Elapsed.TotalMilliseconds * rate * drain;
 
         // The failure worth catching is the ratio being inverted or ignored, which is a factor of two
         // or four out — hence a percentage band rather than a millisecond one.
         Assert.That(advanced, Is.EqualTo(expected).Within(30).Percent,
             $"At rate {rate} the position advanced {advanced:F0} ms over {wall.Elapsed.TotalMilliseconds:F0} ms of "
-            + $"wall clock; {expected:F0} ms was expected.");
+            + $"wall clock, on a device draining at {drain:F2}× real time; {expected:F0} ms was expected.");
     }
 
     [TestCase(Backend.Bass, 2.0)]
@@ -340,6 +381,8 @@ public class AudioBackendConformanceTest
     [TestCase(Backend.SdlManaged, 0.5)]
     public void TempoScalesHowFastThePositionMoves(Backend backend, double tempo)
     {
+        double drain = drainRate(backend);
+
         using var manager = (IDisposable)create(backend);
         var audio = (IAudioManager)manager;
 
@@ -356,11 +399,11 @@ public class AudioBackendConformanceTest
         waitUntil(audio, () => wall.ElapsedMilliseconds > 1000, 3000);
 
         double advanced = channel.CurrentTime - startPosition;
-        double expected = wall.Elapsed.TotalMilliseconds * tempo;
+        double expected = wall.Elapsed.TotalMilliseconds * tempo * drain;
 
         Assert.That(advanced, Is.EqualTo(expected).Within(30).Percent,
             $"At tempo {tempo} the position advanced {advanced:F0} ms over {wall.Elapsed.TotalMilliseconds:F0} ms of "
-            + $"wall clock; {expected:F0} ms was expected.");
+            + $"wall clock, on a device draining at {drain:F2}× real time; {expected:F0} ms was expected.");
     }
 
     /// <summary>
@@ -376,6 +419,10 @@ public class AudioBackendConformanceTest
     [Test]
     public void ChangingTempoWhilePlayingKeepsThePosition([Values] Backend backend)
     {
+        // The dummy driver paces itself with millisecond sleeps; where those take several times as long, it
+        // drains in bursts, and two 600 ms speed measurements disagree by more than the tempo change.
+        TimerPrecision.RequireOneMillisecondWaitWithin(3);
+
         using var manager = (IDisposable)create(backend);
         var audio = (IAudioManager)manager;
 
