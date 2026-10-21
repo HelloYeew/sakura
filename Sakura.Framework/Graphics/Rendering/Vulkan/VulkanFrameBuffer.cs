@@ -44,6 +44,7 @@ public sealed unsafe class VulkanFrameBuffer : IFrameBuffer
         Format = format;
 
         createAttachment(width, height);
+        renderer.Track(this);
     }
 
     public void Resize(int width, int height)
@@ -57,7 +58,11 @@ public sealed unsafe class VulkanFrameBuffer : IFrameBuffer
     /// <summary>
     /// Releases the color texture and framebuffer. Draw thread only.
     /// </summary>
-    public void Dispose() => releaseAttachment();
+    public void Dispose()
+    {
+        releaseAttachment();
+        renderer.Untrack(this);
+    }
 
     private void createAttachment(int width, int height)
     {
