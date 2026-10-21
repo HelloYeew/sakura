@@ -103,6 +103,131 @@ public static partial class ShaderCompiler
     }
 
     /// <summary>
+    /// Reads a vertex + fragment shader pair from <paramref name="sourceStorage"/> (resolving
+    /// <c>#include</c> directives) and compiles each stage to SPIR-V for Vulkan. Nothing is
+    /// cross-compiled, so the shaders' explicit set/binding/location decorations reach the driver as
+    /// written. The result is cached in <paramref name="cache"/> when one is supplied.
+    /// </summary>
+    /// <param name="sourceStorage">Storage containing the GLSL 450 source files.</param>
+    /// <param name="vertexPath">Path within the storage to the vertex shader (e.g. "shader.vert").</param>
+    /// <param name="fragmentPath">Path within the storage to the fragment shader (e.g. "shader.frag").</param>
+    /// <param name="cache">Optional disk cache. When null, compilation always runs.</param>
+    /// <param name="debug">
+    /// Emit source-level debug information (for RenderDoc and similar) instead of optimising.
+    /// </param>
+    public static SpirvShaderPair GetOrCompileSpirv(
+        Storage sourceStorage,
+        string vertexPath,
+        string fragmentPath,
+        DiskCache cache = null,
+        bool debug = false)
+    {
+        string vertSrc = ReadWithIncludes(sourceStorage, vertexPath);
+        string fragSrc = ReadWithIncludes(sourceStorage, fragmentPath);
+
+        return GetOrCompileSpirvSource(vertSrc, fragSrc, cache, debug, vertexPath, fragmentPath);
+    }
+
+    /// <summary>
+    /// Compiles already-resolved GLSL 450 source strings to SPIR-V, using <paramref name="cache"/> when
+    /// supplied. <paramref name="vertexName"/> and <paramref name="fragmentName"/> only label logs and
+    /// compiler errors.
+    /// </summary>
+    public static SpirvShaderPair GetOrCompileSpirvSource(
+        string vertexSource,
+        string fragmentSource,
+        DiskCache cache = null,
+        bool debug = false,
+        string vertexName = null,
+        string fragmentName = null)
+    {
+        string key = $"spirv#{DiskCache.HashString(vertexSource)}" +
+                     $"#{DiskCache.HashString(fragmentSource)}" +
+                     $"#{(debug ? 1 : 0)}#{cache_version}";
+
+        string label = vertexName != null || fragmentName != null ? $"{vertexName}+{fragmentName}" : key[6..18];
+
+        if (cache != null && cache.TryRead(key, out byte[] cached) && tryUnpackSpirv(cached, out var cachedPair))
+        {
+            Logger.Verbose($"☀️ Shader cache hit for {label} → SPIR-V, loaded from cache");
+            return cachedPair;
+        }
+
+        Logger.Verbose($"☀️ Shader cache miss for {label} → SPIR-V, compiling");
+
+        var debugOptions = new GlslCompileOptions(true);
+
+        // Named modules for reflection. Compiling with debug information is the only mode that keeps the
+        // names, and the optimiser removes all of them.
+        byte[] namedVert = SpirvCompilation.CompileGlslToSpirv(vertexSource, vertexName, ShaderStages.Vertex, debugOptions).SpirvBytes;
+        byte[] namedFrag = SpirvCompilation.CompileGlslToSpirv(fragmentSource, fragmentName, ShaderStages.Fragment, debugOptions).SpirvBytes;
+
+        var pair = debug
+            ? new SpirvShaderPair(namedVert, namedFrag, namedVert, namedFrag)
+            : new SpirvShaderPair(
+                SpirvCompilation.CompileGlslToSpirv(vertexSource, vertexName, ShaderStages.Vertex, GlslCompileOptions.Default).SpirvBytes,
+                SpirvCompilation.CompileGlslToSpirv(fragmentSource, fragmentName, ShaderStages.Fragment, GlslCompileOptions.Default).SpirvBytes,
+                namedVert,
+                namedFrag);
+
+        if (cache != null)
+        {
+            cache.Write(key, packSpirv(pair));
+            Logger.Verbose($"☀️ Shader compiled for {label} -> SPIR-V!");
+        }
+
+        return pair;
+    }
+
+    private static byte[] packSpirv(SpirvShaderPair pair)
+    {
+        using var ms = new MemoryStream();
+
+        using (var writer = new BinaryWriter(ms))
+        {
+            foreach (byte[] module in new[] { pair.Vertex, pair.Fragment, pair.VertexForReflection, pair.FragmentForReflection })
+            {
+                writer.Write(module.Length);
+                writer.Write(module);
+            }
+        }
+
+        return ms.ToArray();
+    }
+
+    private static bool tryUnpackSpirv(byte[] data, out SpirvShaderPair pair)
+    {
+        try
+        {
+            using var ms = new MemoryStream(data);
+            using var reader = new BinaryReader(ms);
+
+            byte[][] modules = new byte[4][];
+
+            for (int i = 0; i < modules.Length; i++)
+            {
+                modules[i] = reader.ReadBytes(reader.ReadInt32());
+
+                // A short read means the entry is damaged or was written by something else; recompile
+                // rather than hand a truncated module to the driver.
+                if (modules[i].Length == 0 || modules[i].Length % 4 != 0)
+                {
+                    pair = null;
+                    return false;
+                }
+            }
+
+            pair = new SpirvShaderPair(modules[0], modules[1], modules[2], modules[3]);
+            return ms.Position == ms.Length;
+        }
+        catch
+        {
+            pair = null;
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Reads shader source from a <see cref="Storage"/>, recursively resolving <c>#include</c>
     /// directives relative to the same storage. Mirrors the include handling in <c>GLShader</c>
     /// so a shader compiles identically whether loaded directly or through this compiler.

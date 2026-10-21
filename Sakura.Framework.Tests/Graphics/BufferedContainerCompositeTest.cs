@@ -15,10 +15,11 @@ using Sakura.Framework.Timing;
 namespace Sakura.Framework.Tests.Graphics;
 
 /// <summary>
-/// End-to-end pixels through the real <see cref="BufferedContainer"/> draw path, using
-/// <see cref="HeadlessRenderer"/> pixel capture.
+/// End-to-end pixels through the real <see cref="BufferedContainer"/> draw path, on the CPU reference
+/// rasterizer and on Vulkan (see <see cref="PixelCapture"/>).
 /// </summary>
-[TestFixture]
+[TestFixture(PixelCapture.HEADLESS)]
+[TestFixture(PixelCapture.VULKAN)]
 public class BufferedContainerCompositeTest
 {
     private const int width = 80;
@@ -35,16 +36,36 @@ public class BufferedContainerCompositeTest
     private const int overlap_x = 40;
     private const int sample_y = 20;
 
+    private readonly string rendererKind;
+
     private ManualClock manual = null!;
     private CachingRoot root = null!;
     private HeadlessAppHost host = null!;
-    private HeadlessRenderer renderer = null!;
+    private PixelCapture capture = null!;
+
+    /// <summary>
+    /// Exact up to float error on the reference rasterizer; widened by the GPU's 8-bit rounding otherwise.
+    /// </summary>
+    private float tolerance => 1e-4f + capture.Quantization;
+
+    public BufferedContainerCompositeTest(string rendererKind)
+    {
+        this.rendererKind = rendererKind;
+    }
 
     [OneTimeSetUp]
-    public void InitializeLogger() => Logger.Initialize();
+    public void OneTimeSetUp()
+    {
+        Logger.Initialize();
+        capture = PixelCapture.Create(rendererKind, width, height);
+    }
 
     [OneTimeTearDown]
-    public void ShutdownLogger() => Logger.Shutdown();
+    public void OneTimeTearDown()
+    {
+        capture?.Dispose();
+        Logger.Shutdown();
+    }
 
     [SetUp]
     public void SetUp()
@@ -61,9 +82,6 @@ public class BufferedContainerCompositeTest
 
         host = new HeadlessAppHost(nameof(BufferedContainerCompositeTest));
         root.CacheHost(host);
-
-        renderer = new HeadlessRenderer(new HeadlessTextureManager());
-        renderer.EnablePixelCapture(width, height);
     }
 
     [TearDown]
@@ -83,11 +101,11 @@ public class BufferedContainerCompositeTest
         manual.CurrentTime += 16;
         root.UpdateSubTree();
 
-        renderer.Screen.Clear(background);
-        renderer.SetRoot(root.GenerateDrawNodeSubtree(0));
-        renderer.Draw(new FramedClock(manual));
+        capture.Begin(background);
+        capture.Renderer.SetRoot(root.GenerateDrawNodeSubtree(0));
+        capture.Renderer.Draw(new FramedClock(manual));
 
-        return renderer.Screen;
+        return capture.End();
     }
 
     private static void addOverlappingBoxes(Container target)
@@ -111,9 +129,9 @@ public class BufferedContainerCompositeTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(pixel.X, Is.EqualTo(0f).Within(1e-4f), "the lower box is behind an opaque sibling and must not show through");
-            Assert.That(pixel.Y, Is.EqualTo(0.5f).Within(1e-4f), "half the upper box");
-            Assert.That(pixel.Z, Is.EqualTo(0.5f).Within(1e-4f), "half the background");
+            Assert.That(pixel.X, Is.EqualTo(0f).Within(tolerance), "the lower box is behind an opaque sibling and must not show through");
+            Assert.That(pixel.Y, Is.EqualTo(0.5f).Within(tolerance), "half the upper box");
+            Assert.That(pixel.Z, Is.EqualTo(0.5f).Within(tolerance), "half the background");
         });
     }
 
@@ -130,7 +148,7 @@ public class BufferedContainerCompositeTest
 
         var pixel = render()[overlap_x, sample_y];
 
-        Assert.That(pixel.X, Is.EqualTo(0.25f).Within(1e-4f), "this bleed-through is exactly what buffering exists to remove");
+        Assert.That(pixel.X, Is.EqualTo(0.25f).Within(tolerance), "this bleed-through is exactly what buffering exists to remove");
     }
 
     /// <summary>
@@ -157,9 +175,9 @@ public class BufferedContainerCompositeTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(bufferedPixel.X, Is.EqualTo(plainPixel.X).Within(1e-4f), "red");
-            Assert.That(bufferedPixel.Y, Is.EqualTo(plainPixel.Y).Within(1e-4f), "green");
-            Assert.That(bufferedPixel.Z, Is.EqualTo(plainPixel.Z).Within(1e-4f), "blue");
+            Assert.That(bufferedPixel.X, Is.EqualTo(plainPixel.X).Within(tolerance), "red");
+            Assert.That(bufferedPixel.Y, Is.EqualTo(plainPixel.Y).Within(tolerance), "green");
+            Assert.That(bufferedPixel.Z, Is.EqualTo(plainPixel.Z).Within(tolerance), "blue");
         });
     }
 
@@ -191,13 +209,13 @@ public class BufferedContainerCompositeTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(bufferedOverlap.X, Is.EqualTo(plainOverlap.X).Within(1e-4f), "overlap: red");
-            Assert.That(bufferedOverlap.Y, Is.EqualTo(plainOverlap.Y).Within(1e-4f), "overlap: green");
-            Assert.That(bufferedOverlap.Z, Is.EqualTo(plainOverlap.Z).Within(1e-4f), "overlap: blue");
+            Assert.That(bufferedOverlap.X, Is.EqualTo(plainOverlap.X).Within(tolerance), "overlap: red");
+            Assert.That(bufferedOverlap.Y, Is.EqualTo(plainOverlap.Y).Within(tolerance), "overlap: green");
+            Assert.That(bufferedOverlap.Z, Is.EqualTo(plainOverlap.Z).Within(tolerance), "overlap: blue");
 
-            Assert.That(bufferedLowerOnly.X, Is.EqualTo(plainLowerOnly.X).Within(1e-4f), "lower box only: red");
-            Assert.That(bufferedLowerOnly.Y, Is.EqualTo(plainLowerOnly.Y).Within(1e-4f), "lower box only: green");
-            Assert.That(bufferedLowerOnly.Z, Is.EqualTo(plainLowerOnly.Z).Within(1e-4f), "lower box only: blue");
+            Assert.That(bufferedLowerOnly.X, Is.EqualTo(plainLowerOnly.X).Within(tolerance), "lower box only: red");
+            Assert.That(bufferedLowerOnly.Y, Is.EqualTo(plainLowerOnly.Y).Within(tolerance), "lower box only: green");
+            Assert.That(bufferedLowerOnly.Z, Is.EqualTo(plainLowerOnly.Z).Within(tolerance), "lower box only: blue");
         });
     }
 
@@ -217,9 +235,9 @@ public class BufferedContainerCompositeTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(pixel.X, Is.EqualTo(1f).Within(1e-4f), "red survives the tint");
-            Assert.That(pixel.Y, Is.EqualTo(0f).Within(1e-4f), "green is tinted out");
-            Assert.That(pixel.Z, Is.EqualTo(0f).Within(1e-4f), "blue is tinted out");
+            Assert.That(pixel.X, Is.EqualTo(1f).Within(tolerance), "red survives the tint");
+            Assert.That(pixel.Y, Is.EqualTo(0f).Within(tolerance), "green is tinted out");
+            Assert.That(pixel.Z, Is.EqualTo(0f).Within(tolerance), "blue is tinted out");
         });
     }
 }

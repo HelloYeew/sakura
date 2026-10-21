@@ -1,0 +1,83 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os.name }} (${{ matrix.executionMode }})
+    runs-on: ${{ matrix.os.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          # Pinned rather than ubuntu-latest: 24.04's validation layer (1.3.275) misses a semaphore signalled
+          # while a present may still be waiting on it, and 26.04's (1.4.341) catches it. The window test
+          # relies on that.
+          - { name: Linux, runner: ubuntu-26.04 }
+          - { name: Windows, runner: windows-latest }
+          - { name: macOS, runner: macos-latest }
+        # Headless hosts otherwise always run the default (multi-threaded) mode; see FrameworkEnvironment.
+        executionMode: [SingleThread, MultiThread]
+    env:
+      SAKURA_EXECUTION_MODE: ${{ matrix.executionMode }}
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+      DOTNET_NOLOGO: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      # Mesa's software Vulkan driver (lavapipe) and the Khronos validation layer, so the Vulkan tests
+      # run, validated, on a machine with no GPU, plus a virtual X server and a headless Wayland compositor
+      # for the ones that open a window, and Mesa's software OpenGL for the renderer fallback test, which
+      # starts on one and lands on the other. Elsewhere they skip for lack of a driver.
+      - name: Install Vulkan
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers libvulkan1 vulkan-validationlayers xvfb xauth \
+            weston libwayland-client0 libwayland-cursor0 libwayland-egl1 libxkbcommon0 libdecor-0-0 \
+            libgl1 libglx-mesa0 libgl1-mesa-dri libegl1
+
+      - name: Test
+        # A deadlocked test dumps and fails after the hang timeout instead of holding the runner until the
+        # job timeout.
+        shell: bash
+        run: >
+          ${{ runner.os == 'Linux' && 'xvfb-run -a' || '' }}
+          dotnet test Sakura.Framework.Tests/Sakura.Framework.Tests.csproj
+          --logger "trx;LogFileName=results.trx"
+          --blame-hang-timeout 10m
+
+      # The window test again on Wayland, which the run above (under Xvfb) can't reach: the surface comes
+      # from SDL's Wayland backend, and the test checks the window really opened there.
+      - name: Test the window on Wayland
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          export XDG_RUNTIME_DIR=$(mktemp -d)
+          weston --backend=headless --renderer=pixman --socket=wayland-1 --width=1280 --height=1024 &
+          for _ in $(seq 100); do [ -S "$XDG_RUNTIME_DIR/wayland-1" ] && break; sleep 0.1; done
+          WAYLAND_DISPLAY=wayland-1 SDL_VIDEODRIVER=wayland dotnet test Sakura.Framework.Tests/Sakura.Framework.Tests.csproj \
+            --no-build --filter "FullyQualifiedName~VulkanWindowSmokeTest" --logger "trx;LogFileName=wayland.trx"
+          # A skipped test passes the step too; this one has to have run.
+          grep -q 'outcome="Passed"' Sakura.Framework.Tests/TestResults/wayland.trx || { echo "The window test didn't run on Wayland."; exit 1; }
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-${{ matrix.os.name }}-${{ matrix.executionMode }}
+          path: Sakura.Framework.Tests/TestResults/
+          if-no-files-found: ignore

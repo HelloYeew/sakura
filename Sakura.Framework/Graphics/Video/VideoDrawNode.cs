@@ -2,7 +2,6 @@
 // See the LICENSE file for full license text.
 
 using Sakura.Framework.Graphics.Rendering;
-using Sakura.Framework.Graphics.Rendering.Metal;
 using Sakura.Framework.Graphics.Rendering.Uniforms;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Statistic;
@@ -53,11 +52,7 @@ internal class VideoDrawNode : DrawNode
         if (videoTexture.IsDisposed)
             return;
 
-        // TODO: This is still really bad????
-        bool isGL = renderer is IGLRenderer;
-        bool isMetal = renderer is IMetalRenderer;
-        bool isD3D11 = renderer is Rendering.Direct3D11.ID3D11Renderer;
-        if (!isGL && !isMetal && !isD3D11)
+        if (renderer is not ICustomShaderRenderer customRenderer)
             return;
 
         renderer.SetBlendMode(Blending);
@@ -94,12 +89,7 @@ internal class VideoDrawNode : DrawNode
 
         renderer.ApplyCurrentClip(WritableVertices);
 
-        if (renderer is IGLRenderer glRenderer)
-            glRenderer.DrawVerticesRaw(Vertices);
-        else if (renderer is IMetalRenderer metalRenderer)
-            metalRenderer.DrawVerticesRaw(Vertices);
-        else if (renderer is Rendering.Direct3D11.ID3D11Renderer d3D11Renderer)
-            d3D11Renderer.DrawVerticesRaw(Vertices);
+        customRenderer.DrawVerticesRaw(Vertices);
 
         renderer.RestoreMainShader();
     }

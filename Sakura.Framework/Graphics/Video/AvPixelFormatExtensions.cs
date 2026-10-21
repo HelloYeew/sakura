@@ -16,6 +16,7 @@ internal static class AvPixelFormatExtensions
         AVPixelFormat.AV_PIX_FMT_D3D11 => true,
         AVPixelFormat.AV_PIX_FMT_VIDEOTOOLBOX => true,
         AVPixelFormat.AV_PIX_FMT_MEDIACODEC => true,
+        AVPixelFormat.AV_PIX_FMT_VULKAN => true,
         _ => false,
     };
 }

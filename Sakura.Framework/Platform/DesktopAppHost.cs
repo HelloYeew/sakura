@@ -13,6 +13,7 @@ using Sakura.Framework.Extensions;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Rendering.Direct3D11;
 using Sakura.Framework.Graphics.Rendering.Metal;
+using Sakura.Framework.Graphics.Rendering.Vulkan;
 using Sakura.Framework.Logging;
 
 namespace Sakura.Framework.Platform;
@@ -25,6 +26,12 @@ public class DesktopAppHost : AppHost
     /// Tracks the renderer type that was successfully selected, so context init knows what to do.
     /// </summary>
     private RendererType selectedRendererType = RendererType.OpenGL;
+
+    /// <summary>
+    /// The renderers that failed to start this run, with why, in the order they failed. They aren't
+    /// chosen again.
+    /// </summary>
+    private readonly List<(RendererType Type, Exception Failure)> failedRenderers = new List<(RendererType, Exception)>();
 
     public DesktopAppHost(string appName, HostOptions options = null) : base(appName, options)
     {
@@ -67,12 +74,19 @@ public class DesktopAppHost : AppHost
             case RendererType.Direct3D11:
                 return RuntimeInfo.IsWindows && D3D11Renderer.IsSupported() ? new D3D11Renderer() : null;
 
+            case RendererType.Vulkan:
+                return VulkanRenderer.IsSupported() ? new VulkanRenderer() : null;
+
             default:
                 return null;
         }
     }
 
-    protected override IRenderer CreateRenderer()
+    /// <summary>
+    /// The renderer configured in <c>framework.ini</c>, if it isn't <see cref="RendererType.Automatic"/>,
+    /// then <see cref="GetPreferredRenderers"/>, leaving out any that failed to start this run.
+    /// </summary>
+    private List<RendererType> getCandidates()
     {
         var configured = FrameworkConfigManager.Get<RendererType>(FrameworkSetting.RendererType).Value;
 
@@ -87,13 +101,19 @@ public class DesktopAppHost : AppHost
                 candidates.Add(preferred);
         }
 
-        foreach (var type in candidates)
+        candidates.RemoveAll(type => failedRenderers.Exists(failed => failed.Type == type));
+        return candidates;
+    }
+
+    protected override IRenderer CreateRenderer()
+    {
+        foreach (var type in getCandidates())
         {
             var renderer = CreateRendererForType(type);
 
             if (renderer == null)
             {
-                Logger.Verbose($"Renderer '{type}' is not available on this platform, skipping.");
+                Logger.Verbose($"Renderer '{type}' isn't available here, skipping.");
                 continue;
             }
 
@@ -102,7 +122,30 @@ public class DesktopAppHost : AppHost
             return renderer;
         }
 
+        if (failedRenderers.Count > 0)
+        {
+            throw new InvalidOperationException($"No renderer could start: {string.Join(", ", failedRenderers.ConvertAll(f => f.Type))} failed, and no other is available.",
+                new AggregateException(failedRenderers.ConvertAll(f => f.Failure)));
+        }
+
         throw new InvalidOperationException("No suitable renderer could be initialised.");
+    }
+
+    /// <summary>
+    /// Records the renderer that failed and goes on to the next. When none is left, the next
+    /// <see cref="CreateRenderer"/> throws with every failure, rather than this one's alone escaping. The
+    /// configured renderer stays configured: a driver problem may be fixed by the next run, and the log says
+    /// what happened.
+    /// </summary>
+    protected override bool OnRendererFailed(Exception exception)
+    {
+        failedRenderers.Add((selectedRendererType, exception));
+
+        Logger.Error(getCandidates().Count > 0
+            ? $"Renderer '{selectedRendererType}' failed to start, so the next one is tried."
+            : $"Renderer '{selectedRendererType}' failed to start, and no other is left to try.", exception);
+
+        return true;
     }
 
     /// <summary>
@@ -119,7 +162,7 @@ public class DesktopAppHost : AppHost
     }
 
     /// <summary>
-    /// Initialises the backend-specific context (GL context or Metal surface) after
+    /// Initialises the backend-specific context (GL context, or Metal/Win32/Vulkan surface) after
     /// the SDL window exists but before the renderer's <c>Initialize</c> call.
     /// </summary>
     protected override void InitializeGraphicsContext(IWindow window, IRenderer renderer)
@@ -134,6 +177,10 @@ public class DesktopAppHost : AppHost
 
             case RendererType.Direct3D11:
                 sdlWindow.InitializeWin32Surface();
+                break;
+
+            case RendererType.Vulkan:
+                sdlWindow.InitializeVulkanSurface();
                 break;
 
             default:

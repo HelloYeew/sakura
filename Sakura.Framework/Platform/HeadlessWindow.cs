@@ -41,6 +41,11 @@ public class HeadlessWindow : IWindow
 
     }
 
+    public void Destroy()
+    {
+
+    }
+
     public void Show()
     {
 

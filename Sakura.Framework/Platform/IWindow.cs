@@ -146,6 +146,14 @@ public interface IWindow : IDisposable
     void Create();
 
     /// <summary>
+    /// Destroys the window and whatever graphics context or view it holds, keeping what
+    /// <see cref="Initialize"/> set up, so <see cref="Create"/> can make it again. The host does this when
+    /// the renderer it chose fails to start, to try the next one, whose graphics API may need the window
+    /// created differently.
+    /// </summary>
+    void Destroy();
+
+    /// <summary>
     /// Makes the window visible to the user.
     /// <remarks>
     /// this should be called once the application is fully initialized and the first frame has been

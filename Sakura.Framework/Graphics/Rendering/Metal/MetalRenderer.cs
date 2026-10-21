@@ -123,16 +123,8 @@ public sealed class MetalRenderer : IMetalRenderer
     /// current clip into every vertex — exactly what GL's TriangleBatch does in AddRange/AddQuad. The
     /// MaskBlock UBO is used only for the border pass in PopMask (u_IsBorder path in shader.frag).
     /// </summary>
-    private readonly Stack<ClipState> clipStack = new Stack<ClipState>();
-    private ClipState currentClip;
+    private readonly ClipStack clips = new ClipStack();
     private MaskBlock maskState;
-
-    private struct ClipState
-    {
-        public Vector4 ClipData;
-        public float ShearX;
-        public float Radius;
-    }
 
     /// <summary>
     /// Offscreen render-target stack, mirroring GLRenderer's frameBufferStack. On BindFrameBuffer the
@@ -333,13 +325,7 @@ public sealed class MetalRenderer : IMetalRenderer
         currentShader = mainShader;
         currentBlendMode = BlendingMode.Alpha;
 
-        clipStack.Clear();
-        currentClip = new ClipState
-        {
-            ClipData = new Vector4(0, 0, -1, -1),
-            ShearX = 0,
-            Radius = 0,
-        };
+        clips.Reset();
         maskState = default;
 
         // Bind the pipeline + projection + mask for this frame's (drawable) encoder.
@@ -513,7 +499,8 @@ public sealed class MetalRenderer : IMetalRenderer
 
         // The clip state is injected per-vertex on the way into the batch (the fragment shader's
         // applyClipping reads v_ClipData/v_ClipShearX/v_ClipRadius), exactly as GL's batch does.
-        batch.AddRange(vertices, textureIndex, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
+        var clip = clips.Current;
+        batch.AddRange(vertices, textureIndex, clip.ClipData, clip.ShearX, clip.Radius);
     }
 
     public void DrawQuads(ReadOnlySpan<SakuraVertex> vertices, Texture texture)
@@ -522,10 +509,11 @@ public sealed class MetalRenderer : IMetalRenderer
             return;
 
         float textureIndex = prepareTexture(texture);
+        var clip = clips.Current;
 
         // The batch is non-indexed, so AddQuad expands each quad (TL, TR, BR, BL) into two triangles.
         for (int i = 0; i + 4 <= vertices.Length; i += 4)
-            batch.AddQuad(vertices.Slice(i, 4), textureIndex, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
+            batch.AddQuad(vertices.Slice(i, 4), textureIndex, clip.ClipData, clip.ShearX, clip.Radius);
     }
 
     /// <summary>
@@ -540,69 +528,15 @@ public sealed class MetalRenderer : IMetalRenderer
 
     #region Masking / borders
 
+    public void ApplyCurrentClip(Span<SakuraVertex> vertices) => clips.ApplyTo(vertices);
+
     /// <summary>
     /// Pushes a clip region. Mirrors <c>GLRenderer.PushMask</c>: the new mask is intersected (as an
     /// AABB, accounting for horizontal shear) with any parent mask, and the result becomes the active
     /// clip carried into subsequent vertices by <see cref="DrawVertices"/>.
     /// </summary>
-    public void ApplyCurrentClip(Span<SakuraVertex> vertices)
-    {
-        for (int i = 0; i < vertices.Length; i++)
-        {
-            vertices[i].ClipData = currentClip.ClipData;
-            vertices[i].ClipShearX = currentClip.ShearX;
-            vertices[i].ClipRadius = currentClip.Radius;
-        }
-    }
-
     public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius)
-    {
-        clipStack.Push(currentClip);
-
-        // True AABB of this new mask, taking horizontal shear into account.
-        float skewOffset = Math.Abs(shearX * maskHalfSize.Y);
-        float left = maskCenter.X - maskHalfSize.X - skewOffset;
-        float right = maskCenter.X + maskHalfSize.X + skewOffset;
-        float top = maskCenter.Y - maskHalfSize.Y;
-        float bottom = maskCenter.Y + maskHalfSize.Y;
-
-        // If already inside a parent mask (Z > 0), intersect their bounding boxes.
-        if (currentClip.ClipData.Z > 0)
-        {
-            float parentSkew = Math.Abs(currentClip.ShearX * currentClip.ClipData.W);
-            float pLeft = currentClip.ClipData.X - currentClip.ClipData.Z - parentSkew;
-            float pRight = currentClip.ClipData.X + currentClip.ClipData.Z + parentSkew;
-            float pTop = currentClip.ClipData.Y - currentClip.ClipData.W;
-            float pBottom = currentClip.ClipData.Y + currentClip.ClipData.W;
-
-            left = Math.Max(left, pLeft);
-            right = Math.Min(right, pRight);
-            top = Math.Max(top, pTop);
-            bottom = Math.Min(bottom, pBottom);
-        }
-
-        Vector2 newCenter = new Vector2((left + right) / 2f, (top + bottom) / 2f);
-        Vector2 newHalfSize = new Vector2((right - left) / 2f, (bottom - top) / 2f);
-
-        // If the intersection collapses (child entirely outside the parent mask), shrink to ~zero so
-        // the shader discards all fragments.
-        if (left >= right || top >= bottom)
-        {
-            newHalfSize = new Vector2(0.0001f, 0.0001f);
-        }
-        else
-        {
-            // Remove the skew offset again so the shader receives the true un-sheared half-size.
-            newHalfSize.X = Math.Max(0.0001f, newHalfSize.X - skewOffset);
-        }
-
-        currentClip = new ClipState
-        {
-            ClipData = new Vector4(newCenter.X, newCenter.Y, newHalfSize.X, newHalfSize.Y),
-            ShearX = shearX,
-            Radius = cornerRadius,
-        };
-    }
+        => clips.Push(maskCenter, maskHalfSize, shearX, cornerRadius);
 
     /// <summary>
     /// Pops the clip region pushed by the matching <see cref="PushMask"/> and draws the container's
@@ -610,7 +544,7 @@ public sealed class MetalRenderer : IMetalRenderer
     /// </summary>
     public void PopMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<SakuraVertex> maskVertices = default)
     {
-        currentClip = clipStack.Count > 0 ? clipStack.Pop() : currentClip;
+        clips.Pop();
         drawBorder(maskCenter, maskHalfSize, shearX, cornerRadius, borderThickness, borderColor, maskVertices);
     }
 
@@ -738,7 +672,7 @@ public sealed class MetalRenderer : IMetalRenderer
         frameBufferStack.Push(new FrameBufferState
         {
             Projection = projectionMatrix,
-            Clip = currentClip,
+            Clip = clips.Current,
         });
 
         // Map the captured logical screen-space rect onto the buffer using GL's FB orientation
@@ -762,12 +696,7 @@ public sealed class MetalRenderer : IMetalRenderer
 
         // Content inside the buffer starts from a clean clip state; the outer clip applies to the
         // final composited quad instead.
-        currentClip = new ClipState
-        {
-            ClipData = new Vector4(0, 0, -1, -1),
-            ShearX = 0,
-            Radius = 0,
-        };
+        clips.Current = ClipState.None;
 
         SakuraMetalNative.sakura_metal_begin_offscreen(
             device, metalFrameBuffer.TextureHandle,
@@ -789,7 +718,7 @@ public sealed class MetalRenderer : IMetalRenderer
 
         var state = frameBufferStack.Pop();
         projectionMatrix = state.Projection;
-        currentClip = state.Clip;
+        clips.Current = state.Clip;
 
         // The parent pass was reopened with a fresh encoder (LOAD action) — re-establish all state.
         rebindFrameState();

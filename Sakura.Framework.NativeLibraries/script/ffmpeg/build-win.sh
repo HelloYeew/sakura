@@ -52,6 +52,11 @@ FFMPEG_FLAGS+=(
     --cross-prefix=$cross_prefix
 )
 
+# Not on x86: the Vulkan renderer needs a 64-bit process.
+if [ "$arch" != "x86" ]; then
+    enable_vulkan
+fi
+
 pushd . > /dev/null
 prep_ffmpeg "win-$arch"
 build_ffmpeg

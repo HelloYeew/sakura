@@ -1,0 +1,302 @@
+// This code is part of the Sakura framework project. Licensed under the MIT License.
+// See the LICENSE file for full license text.
+
+using System;
+using System.Numerics;
+using Sakura.Framework.Graphics.Textures;
+using Sakura.Framework.Statistic;
+using Vortice.Vulkan;
+
+namespace Sakura.Framework.Graphics.Rendering.Vulkan;
+
+/// <summary>
+/// A Vulkan image with a view and the sampler it is read with: an sRGB RGBA8 texture with a full mip
+/// chain, so minified text and sprites filter like they do on GL and Metal.
+/// </summary>
+/// <remarks>
+/// Uploads are recorded by <see cref="VulkanRenderer"/>, which also regenerates the mip chain once per
+/// frame however many regions were uploaded during it (a burst of glyphs into one atlas page costs one
+/// chain, not one per glyph). Creation is allowed off the draw thread; everything else isn't.
+/// Framebuffer attachments (<see cref="CreateRenderTarget"/>) and video planes
+/// (<see cref="CreateVideoPlane"/>) are images of this kind too, with one mip level in a format of their
+/// own.
+/// </remarks>
+public sealed unsafe class VulkanTexture : INativeTexture
+{
+    public const VkFormat FORMAT = VkFormat.R8G8B8A8Srgb;
+
+    private readonly VulkanRenderer renderer;
+    private readonly VulkanDevice device;
+    private readonly VulkanMemory memory;
+    private readonly Kind kind;
+
+    /// <summary>
+    /// Null for a video plane, whose memory the video texture owning it accounts for.
+    /// </summary>
+    private readonly NativeMemoryLease? memoryLease;
+
+    private VkImage image;
+    private VkImageView view;
+    private readonly VulkanAllocation allocation;
+
+    public nint Handle => (nint)view.Handle;
+    public int Width { get; }
+    public int Height { get; }
+    public bool Available { get; private set; }
+
+    public TextureBindCounter Binds { get; } = new TextureBindCounter();
+
+    internal VkImage Image => image;
+    internal VkImageView View => view;
+    internal VkSampler Sampler { get; }
+    internal uint MipLevels { get; }
+    internal VkFormat Format { get; }
+
+    /// <summary>
+    /// Bytes per texel of <see cref="Format"/>, the unit an upload's row stride is counted in.
+    /// </summary>
+    internal uint TexelBytes { get; }
+
+    /// <summary>
+    /// Whether this is an offscreen framebuffer's color attachment, filled by rendering rather than by
+    /// uploads.
+    /// </summary>
+    internal bool IsRenderTarget => kind == Kind.RenderTarget;
+
+    /// <summary>
+    /// The layout every subresource will be in once the commands recorded so far have run.
+    /// </summary>
+    internal VkImageLayout Layout { get; set; } = VkImageLayout.Undefined;
+
+    /// <summary>
+    /// Whether a copy into this texture was recorded this frame, so it still needs its mip chain
+    /// regenerated and its transition back to being sampled.
+    /// </summary>
+    internal bool AwaitingFinish { get; set; }
+
+    internal bool IsReleased => image.IsNull;
+
+    internal VulkanTexture(VulkanRenderer renderer, VulkanDevice device, VulkanMemory memory, int width, int height, VkSampler sampler, bool mipmapped)
+        : this(renderer, device, memory, width, height, sampler, FORMAT, mipmapped, Kind.Color)
+    {
+    }
+
+    /// <summary>
+    /// Creates the color attachment of an offscreen framebuffer: renderable and sampleable, one mip
+    /// level, in the framebuffer format. It is unavailable (sampled as white) until its first pass has
+    /// been recorded, since its contents are undefined before then.
+    /// </summary>
+    internal static VulkanTexture CreateRenderTarget(VulkanRenderer renderer, VulkanDevice device, VulkanMemory memory, int width, int height, VkSampler sampler, VkFormat format)
+        => new VulkanTexture(renderer, device, memory, width, height, sampler, format, false, Kind.RenderTarget);
+
+    /// <summary>
+    /// Creates one plane of a video frame: one mip level, in an R8 or R8G8 UNORM format, filled by
+    /// <see cref="UploadPlane"/>. Its memory is accounted for by the <see cref="VulkanVideoTexture"/> that
+    /// owns it, as part of the whole plane set.
+    /// </summary>
+    internal static VulkanTexture CreateVideoPlane(VulkanRenderer renderer, VulkanDevice device, VulkanMemory memory, int width, int height, VkSampler sampler, VkFormat format)
+        => new VulkanTexture(renderer, device, memory, width, height, sampler, format, false, Kind.VideoPlane);
+
+    private VulkanTexture(VulkanRenderer renderer, VulkanDevice device, VulkanMemory memory, int width, int height, VkSampler sampler, VkFormat format, bool mipmapped, Kind kind)
+    {
+        this.renderer = renderer;
+        this.device = device;
+        this.memory = memory;
+        this.kind = kind;
+
+        Width = Math.Max(1, width);
+        Height = Math.Max(1, height);
+        Sampler = sampler;
+        Format = format;
+        TexelBytes = format switch
+        {
+            VkFormat.R8Unorm => 1,
+            VkFormat.R8G8Unorm => 2,
+            _ => 4,
+        };
+        MipLevels = mipmapped ? (uint)BitOperations.Log2((uint)Math.Max(Width, Height)) + 1 : 1;
+
+        var usage = kind == Kind.RenderTarget
+            // Read back as a transfer source by offscreen rendering (tests, CI).
+            ? VkImageUsageFlags.ColorAttachment | VkImageUsageFlags.Sampled | VkImageUsageFlags.TransferSrc
+            // Mip levels are generated by blitting from the level above, which reads it as a transfer source.
+            : VkImageUsageFlags.Sampled | VkImageUsageFlags.TransferDst | (MipLevels > 1 ? VkImageUsageFlags.TransferSrc : VkImageUsageFlags.None);
+
+        var imageInfo = new VkImageCreateInfo
+        {
+            imageType = VkImageType.Image2D,
+            format = format,
+            extent = new VkExtent3D { width = (uint)Width, height = (uint)Height, depth = 1 },
+            mipLevels = MipLevels,
+            arrayLayers = 1,
+            samples = VkSampleCountFlags.Count1,
+            tiling = VkImageTiling.Optimal,
+            usage = usage,
+            sharingMode = VkSharingMode.Exclusive,
+            initialLayout = VkImageLayout.Undefined,
+        };
+
+        VkImage createdImage;
+        VulkanDevice.Check(device.Api.vkCreateImage(&imageInfo, null, &createdImage), "vkCreateImage");
+        image = createdImage;
+
+        try
+        {
+            allocation = memory.BindImage(image);
+
+            var viewInfo = new VkImageViewCreateInfo
+            {
+                image = image,
+                viewType = VkImageViewType.Image2D,
+                format = format,
+                components = new VkComponentMapping
+                {
+                    r = VkComponentSwizzle.Identity,
+                    g = VkComponentSwizzle.Identity,
+                    b = VkComponentSwizzle.Identity,
+                    a = VkComponentSwizzle.Identity,
+                },
+                subresourceRange = new VkImageSubresourceRange
+                {
+                    aspectMask = VkImageAspectFlags.Color,
+                    levelCount = MipLevels,
+                    layerCount = 1,
+                },
+            };
+
+            VkImageView createdView;
+            VulkanDevice.Check(device.Api.vkCreateImageView(&viewInfo, null, &createdView), "vkCreateImageView");
+            view = createdView;
+        }
+        catch
+        {
+            device.Api.vkDestroyImage(createdImage, null);
+            memory.Free(allocation);
+            throw;
+        }
+
+        memoryLease = kind switch
+        {
+            Kind.Color => NativeTextureMemory.Lease(NativeMemoryCategory.Textures, Width, Height),
+            Kind.RenderTarget => NativeTextureMemory.Lease(NativeMemoryCategory.FrameBuffers, Width, Height),
+            _ => null,
+        };
+
+        renderer.Track(this);
+    }
+
+    /// <summary>
+    /// Records that an offscreen pass into this render target has been recorded: once that pass has run,
+    /// the image holds its contents in the layout every sampler expects.
+    /// </summary>
+    internal void MarkRendered()
+    {
+        Layout = VkImageLayout.ShaderReadOnlyOptimal;
+        Available = true;
+    }
+
+    public void Upload(ReadOnlySpan<byte> data) => UploadRegion(0, 0, Width, Height, data);
+
+    public void UploadRegion(int x, int y, int width, int height, ReadOnlySpan<byte> data)
+    {
+        if (kind == Kind.RenderTarget)
+            throw new InvalidOperationException("A framebuffer's texture is filled by rendering into it, not by uploads.");
+
+        if (kind == Kind.VideoPlane)
+            throw new InvalidOperationException($"A video plane is filled through {nameof(UploadPlane)}.");
+
+        if (IsReleased || data.IsEmpty || width <= 0 || height <= 0)
+            return;
+
+        if (x < 0 || y < 0 || x + width > Width || y + height > Height)
+            throw new ArgumentOutOfRangeException(nameof(x), $"Region {width}x{height} at ({x}, {y}) lies outside the {Width}x{Height} texture.");
+
+        if (data.Length < width * height * 4)
+            throw new ArgumentException($"{data.Length} bytes is less than the {width * height * 4} a {width}x{height} RGBA region needs.", nameof(data));
+
+        renderer.UploadTexture(this, x, y, width, height, data);
+
+        // Submission order puts the copy ahead of any draw that samples this texture from here on.
+        Available = true;
+    }
+
+    /// <summary>
+    /// Copies <paramref name="height"/> rows of <paramref name="width"/> texels into the top-left of this
+    /// video plane, reading each row <paramref name="stride"/> bytes after the last, as a decoded frame
+    /// lays out its planes (rows padded for alignment, or running backwards for a negative stride). Draw
+    /// thread only.
+    /// </summary>
+    internal void UploadPlane(byte* data, int stride, int width, int height)
+    {
+        if (kind != Kind.VideoPlane)
+            throw new InvalidOperationException($"Only a video plane is filled through {nameof(UploadPlane)}.");
+
+        if (IsReleased || data == null || width <= 0 || height <= 0)
+            return;
+
+        // A copy past the image's edge is undefined on the GPU, so the region is clamped rather than
+        // trusted.
+        renderer.UploadPlane(this, data, stride, Math.Min(width, Width), Math.Min(height, Height));
+        Available = true;
+    }
+
+    public void Bind(int slot = 0)
+    {
+        // A texture with nothing uploaded yet has undefined contents (and layout), so white is sampled in
+        // its place, as on every other renderer.
+        var bound = Available && !IsReleased ? this : renderer.WhiteTexture;
+
+        if (bound == null)
+            return;
+
+        bound.Binds.Record();
+        renderer.BindTexture(slot, bound);
+    }
+
+    public void Dispose()
+    {
+        release();
+        GC.SuppressFinalize(this);
+    }
+
+    ~VulkanTexture()
+    {
+        // The draw thread owns the renderer's slot table and retire lists.
+        NativeDisposalQueue.Enqueue(release);
+    }
+
+    private void release()
+    {
+        if (IsReleased)
+            return;
+
+        Available = false;
+
+        var releasedImage = image;
+        var releasedView = view;
+        var releasedAllocation = allocation;
+
+        renderer.ForgetTexture(this);
+        renderer.Untrack(this);
+
+        image = VkImage.Null;
+        view = VkImageView.Null;
+        memoryLease?.Dispose();
+
+        // Draws recorded this frame (or still running from the last) may sample it, so it is destroyed
+        // only once the GPU has finished them.
+        renderer.Retire(() =>
+        {
+            device.Api.vkDestroyImageView(releasedView, null);
+            device.Api.vkDestroyImage(releasedImage, null);
+            memory.Free(releasedAllocation);
+        });
+    }
+
+    private enum Kind
+    {
+        Color,
+        RenderTarget,
+        VideoPlane,
+    }
+}

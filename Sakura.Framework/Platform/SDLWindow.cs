@@ -40,7 +40,18 @@ public class SDLWindow : IWindow
     private readonly SDLGraphicsSurface glSurface = new SDLGraphicsSurface();
     private readonly MetalGraphicsSurface metalSurface = new MetalGraphicsSurface();
     private readonly Win32GraphicsSurface win32Surface = new Win32GraphicsSurface();
+    private readonly VulkanGraphicsSurface vulkanSurface;
     private IGraphicsSurface activeSurface;
+
+    /// <summary>
+    /// The view <see cref="InitializeMetalSurface"/> made, destroyed with the window.
+    /// </summary>
+    private IntPtr metalView;
+
+    /// <summary>
+    /// The window flags each graphics API adds, cleared before another API's are set.
+    /// </summary>
+    private const SDL_WindowFlags graphics_api_flags = SDL_WindowFlags.SDL_WINDOW_OPENGL | SDL_WindowFlags.SDL_WINDOW_METAL | SDL_WindowFlags.SDL_WINDOW_VULKAN;
 
     private RendererType graphicsApi = RendererType.OpenGL;
 
@@ -92,6 +103,7 @@ public class SDLWindow : IWindow
     public SDLWindow()
     {
         instance = this;
+        vulkanSurface = new VulkanGraphicsSurface(this);
     }
 
     public string Title
@@ -262,6 +274,9 @@ public class SDLWindow : IWindow
     {
         graphicsApi = type;
 
+        // A window being made again for another API mustn't keep the last one's flag.
+        windowFlags &= ~graphics_api_flags;
+
         switch (type)
         {
             case RendererType.Metal:
@@ -273,6 +288,13 @@ public class SDLWindow : IWindow
                 // D3D11 renders into a plain Win32 window — no graphics-API window flag. The DXGI
                 // swapchain is created against the HWND resolved in InitializeWin32Surface().
                 activeSurface = win32Surface;
+                break;
+
+            case RendererType.Vulkan:
+                // With this flag SDL loads the Vulkan loader while creating the window, and the window
+                // creation fails if no loader can be found.
+                windowFlags |= SDL_WindowFlags.SDL_WINDOW_VULKAN;
+                activeSurface = vulkanSurface;
                 break;
 
             default:
@@ -536,6 +558,7 @@ public class SDLWindow : IWindow
         }
 
         metalSurface.MetalLayer = layer;
+        metalView = view;
 
         Logger.Verbose("Metal surface initialised successfully");
     }
@@ -570,6 +593,53 @@ public class SDLWindow : IWindow
 
         Logger.Verbose("Win32 (Direct3D11) surface initialised successfully");
     }
+
+    /// <summary>
+    /// Reads the instance extensions the window system needs into the <see cref="VulkanGraphicsSurface"/>.
+    /// The surface itself is created later by the renderer, on the instance it creates with those
+    /// extensions. Must be called after <see cref="Create()"/> when the selected renderer is Vulkan.
+    /// </summary>
+    public unsafe void InitializeVulkanSurface()
+    {
+        // SDL3-CS binds VkSurfaceKHR as a pointer, but it is a 64-bit handle on every platform, so the
+        // two only agree in a 64-bit process.
+        if (!Environment.Is64BitProcess)
+            throw new PlatformNotSupportedException("Vulkan rendering requires a 64-bit process.");
+
+        uint count;
+        byte** names = SDL_Vulkan_GetInstanceExtensions(&count);
+
+        if (names == null)
+        {
+            Logger.Error("Failed to get Vulkan instance extensions: " + SDL_GetError());
+            throw new Exception("Vulkan instance extension query failed.");
+        }
+
+        string[] extensions = new string[count];
+
+        for (int i = 0; i < count; i++)
+            extensions[i] = Marshal.PtrToStringUTF8((IntPtr)names[i]);
+
+        vulkanSurface.RequiredInstanceExtensions = extensions;
+
+        Logger.Verbose($"Vulkan surface initialised successfully (instance extensions: {string.Join(", ", extensions)})");
+    }
+
+    internal unsafe ulong CreateVulkanSurface(nint vkInstance)
+    {
+        ulong surface = 0;
+
+        if (!SDL_Vulkan_CreateSurface(window, (VkInstance_T*)vkInstance, null, (VkSurfaceKHR_T**)&surface))
+        {
+            Logger.Error("Failed to create Vulkan surface: " + SDL_GetError());
+            throw new Exception("Vulkan surface creation failed.");
+        }
+
+        return surface;
+    }
+
+    internal unsafe void DestroyVulkanSurface(nint vkInstance, ulong surface)
+        => SDL_Vulkan_DestroySurface((VkInstance_T*)vkInstance, (VkSurfaceKHR_T*)surface, null);
 
     public void Close()
     {
@@ -1523,6 +1593,33 @@ public class SDLWindow : IWindow
     }
 
     #endregion
+
+    public unsafe void Destroy()
+    {
+        // Added again by the next Create.
+        SDL_RemoveEventWatch(&resizeEventWatch, IntPtr.Zero);
+
+        if (glContext != null)
+        {
+            SDL_GL_DestroyContext(glContext);
+            glContext = null;
+        }
+
+        if (metalView != IntPtr.Zero)
+        {
+            SDL_Metal_DestroyView(metalView);
+            metalView = IntPtr.Zero;
+            metalSurface.MetalLayer = IntPtr.Zero;
+        }
+
+        if (window != null)
+        {
+            SDL_DestroyWindow(window);
+            window = null;
+        }
+
+        Logger.Verbose("SDL window destroyed");
+    }
 
     public unsafe void Dispose()
     {

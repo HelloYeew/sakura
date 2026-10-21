@@ -11,6 +11,7 @@ public enum RendererType
     Automatic,
     Metal,
     Direct3D11,
+    Vulkan,
 
     [SuppressMessage("ReSharper", "InconsistentNaming")]
     OpenGL
@@ -22,32 +23,45 @@ public enum RendererType
 public static class RendererTypes
 {
     /// <summary>
-    /// The platform-native renderer types in fallback priority order (most preferred first),
-    /// excluding <see cref="RendererType.Automatic"/>. <see cref="RendererType.OpenGL"/> is always the
-    /// universal fallback, so it is the last entry on every platform. This is the order the automatic
-    /// selection walks when picking a backend.
+    /// The renderer types <see cref="RendererType.Automatic"/> tries on the current platform, most preferred
+    /// first, and so the order the host falls back through when one fails to start.
+    /// <see cref="RendererType.OpenGL"/> is the last resort everywhere but Android, which is Vulkan only.
     /// </summary>
+    /// <remarks>
+    /// Direct3D 11 stays first on Windows, with Vulkan after it. On Linux Vulkan isn't chosen automatically
+    /// until it has passed on real hardware under both X11 and Wayland; until then it is offered for
+    /// selection only (<see cref="GetSuitableRenderers"/>). On macOS it isn't offered at all: Metal is the
+    /// backend there, and Vulkan through KosmicKrisp is for developing the Vulkan renderer, reached only by
+    /// naming it in <c>framework.ini</c>.
+    /// </remarks>
     public static IReadOnlyList<RendererType> GetPlatformRenderers()
     {
+        if (RuntimeInfo.OS == RuntimeInfo.Platform.Android)
+            return [RendererType.Vulkan];
+
         if (RuntimeInfo.IsApple)
             return [RendererType.Metal, RendererType.OpenGL];
 
         if (RuntimeInfo.IsWindows)
-            return [RendererType.Direct3D11, RendererType.OpenGL];
+            return [RendererType.Direct3D11, RendererType.Vulkan, RendererType.OpenGL];
 
         return [RendererType.OpenGL];
     }
 
     /// <summary>
     /// The renderer types a user can select on the current platform, in display order:
-    /// <see cref="RendererType.Automatic"/> first, followed by each platform-native backend from
-    /// <see cref="GetPlatformRenderers"/>. Suitable for populating a settings dropdown — e.g. on macOS
-    /// this returns <c>[Automatic, Metal, OpenGL]</c>.
+    /// <see cref="RendererType.Automatic"/> first, then each one <see cref="GetPlatformRenderers"/> tries,
+    /// then any offered without being tried automatically. For a settings dropdown: on macOS this is
+    /// <c>[Automatic, Metal, OpenGL]</c>, on Linux <c>[Automatic, OpenGL, Vulkan]</c>.
     /// </summary>
     public static IReadOnlyList<RendererType> GetSuitableRenderers()
     {
         var result = new List<RendererType> { RendererType.Automatic };
         result.AddRange(GetPlatformRenderers());
+
+        if (RuntimeInfo.OS == RuntimeInfo.Platform.Linux)
+            result.Add(RendererType.Vulkan);
+
         return result;
     }
 }

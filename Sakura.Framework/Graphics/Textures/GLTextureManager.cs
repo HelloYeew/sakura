@@ -183,7 +183,7 @@ public class GLTextureManager : ITextureManager
 
     /// <summary>
     /// Releases a texture this manager handed out, on the draw thread. See
-    /// <see cref="MetalTextureManager"/>'s equivalent for why this needs no per-call-site ownership
+    /// <see cref="NativeTextureManager"/>'s equivalent for why this needs no per-call-site ownership
     /// checks.
     /// </summary>
     private void release(Texture texture)

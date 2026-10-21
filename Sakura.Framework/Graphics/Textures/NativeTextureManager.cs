@@ -14,11 +14,11 @@ using Sakura.Framework.Statistic;
 namespace Sakura.Framework.Graphics.Textures;
 
 /// <summary>
-/// Texture manager for the Metal backend. Mirrors <see cref="GLTextureManager"/> but creates
-/// textures via <see cref="IRenderer.CreateNativeTexture"/> (returning <see cref="MetalTexture"/>),
-/// so it carries no Metal-specific code beyond the backing renderer.
+/// Texture manager for every backend that creates its textures through
+/// <see cref="IRenderer.CreateNativeTexture"/> (Metal, Direct3D 11). Mirrors <see cref="GLTextureManager"/>
+/// but carries no backend-specific code at all: the renderer it is given decides what a texture is.
 /// </summary>
-public class MetalTextureManager : ITextureManager
+public class NativeTextureManager : ITextureManager
 {
     private readonly Storage storage;
     private readonly IImageLoader imageLoader;
@@ -34,13 +34,13 @@ public class MetalTextureManager : ITextureManager
 
     public TextureAtlas? Atlas => atlas;
 
-    public MetalTextureManager(IRenderer renderer, Storage storage, IImageLoader imageLoader)
+    public NativeTextureManager(IRenderer renderer, Storage storage, IImageLoader imageLoader)
     {
         this.renderer = renderer;
         this.storage = storage;
         this.imageLoader = imageLoader;
 
-        // The Metal renderer owns a 1x1 white texture; reuse it so solid-color drawables sample white.
+        // The renderer owns a 1x1 white texture; reuse it so solid-color drawables sample white.
         WhitePixel = renderer.WhitePixel;
 
         // Handed back from Get() on any failure, so many callers end up holding it. Shared ownership is

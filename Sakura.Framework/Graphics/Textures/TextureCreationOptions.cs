@@ -1,9 +1,18 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.Textures;
+
+/// <summary>
+/// Reads the pixels of an image that was just decoded, before they are uploaded.
+/// </summary>
+/// <param name="rgba">The decoded pixels, RGBA with 8 bits per channel, row by row with no padding.</param>
+/// <param name="width">The decoded width, after any reduction.</param>
+/// <param name="height">The decoded height, after any reduction.</param>
+public delegate void PixelInspector(ReadOnlySpan<byte> rgba, int width, int height);
 
 /// <summary>
 /// How <see cref="ITextureManager.CreateFromStream"/> should decode, label and share a texture.
@@ -45,6 +54,24 @@ public readonly struct TextureCreationOptions
     /// </para>
     /// </remarks>
     public string? ShareKey { get; init; }
+
+    /// <summary>
+    /// Called with the decoded pixels before they are uploaded, for anything that wants to learn something
+    /// from the image (an average or dominant colour, say) without decoding it a second time.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Runs on the loading thread, after <see cref="Decode"/> has reduced the image, so it sees the same
+    /// pixels the texture will hold. The span is only valid for the duration of the call: copy out what you
+    /// need, and keep the work short, since the upload waits for it.
+    /// </para>
+    /// <para>
+    /// Not called when nothing is decoded: on a <see cref="ShareKey"/> hit, or by a texture manager that
+    /// does not decode at all (the headless one). Callers that need the result every time must cache it
+    /// themselves. An exception thrown here is logged and does not stop the texture being created.
+    /// </para>
+    /// </remarks>
+    public PixelInspector? InspectPixels { get; init; }
 
     /// <summary>
     /// Decode at full resolution with no sharing.
