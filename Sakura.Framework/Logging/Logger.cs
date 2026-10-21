@@ -63,6 +63,13 @@ public class Logger
     public static bool LogToConsole { get; set; } = true;
 
     /// <summary>
+    /// Where console output goes instead of the console, for a platform with a system log of its own (Android's
+    /// logcat, where standard output would only repeat each line under a generic tag). Called with each formatted
+    /// line and its level, on whichever thread is logging. Null for the console.
+    /// </summary>
+    public static Action<LogLevel, string> ConsoleOutput { get; set; }
+
+    /// <summary>
     /// Gets or sets the application name. Must be set before Initialize().
     /// If not set, it will be inferred from the entry assembly.
     /// </summary>
@@ -155,7 +162,7 @@ public class Logger
     /// Log a message directly to the console, bypassing the log queue and file writers.
     /// </summary>
     /// <param name="message">The message to log.</param>
-    public static void LogPrint(string message) => logToConsole(
+    public static void LogPrint(string message) => logToConsole(LogLevel.Verbose,
         getFormattedMessage(DateTime.UtcNow, LogLevel.Verbose, message));
 
     #endregion
@@ -272,12 +279,7 @@ public class Logger
         {
             // Fallback directly to console if the logger was already shut down.
             if (LogToConsole)
-            {
-                lock (console_lock)
-                {
-                    Console.WriteLine(getFormattedMessage(DateTime.UtcNow, level, message));
-                }
-            }
+                logToConsole(level, getFormattedMessage(DateTime.UtcNow, level, message), target);
             return;
         }
 
@@ -362,14 +364,22 @@ public class Logger
         await writer.WriteLineAsync(formattedMessage).ConfigureAwait(false);
 
         if (LogToConsole)
-            logToConsole(formattedMessage, logMessage.Target);
+            logToConsole(logMessage.Level, formattedMessage, logMessage.Target);
     }
 
-    private static void logToConsole(string message, LoggingTarget target = LoggingTarget.Runtime)
+    private static void logToConsole(LogLevel level, string message, LoggingTarget target = LoggingTarget.Runtime)
     {
         if (!LogToConsole) return;
 
         message = $"[{target.ToString().ToLower()}] " + message;
+
+        var output = ConsoleOutput;
+
+        if (output != null)
+        {
+            output(level, message);
+            return;
+        }
 
         lock (console_lock)
         {

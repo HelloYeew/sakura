@@ -22,6 +22,8 @@ public class AndroidAppHost : SDLAppHost
         : base(appName, options)
     {
         this.activity = activity;
+
+        Logger.ConsoleOutput = AndroidLog.For(appName);
     }
 
     /// <summary>
@@ -35,7 +37,7 @@ public class AndroidAppHost : SDLAppHost
 
     public override Storage GetStorage(string path) => new NativeStorage(path, this);
 
-    protected override IWindow CreateWindow() => new SDLWindow();
+    protected override IWindow CreateWindow() => new AndroidWindow(activity);
 
     // Another app can only open one of ours through a content URI handed out by a FileProvider, which isn't set up yet.
     public override bool OpenFileExternally(string filename) => false;
