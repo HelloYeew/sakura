@@ -10,14 +10,17 @@ using Vortice.Vulkan;
 namespace Sakura.Framework.Graphics.Rendering.Vulkan;
 
 /// <summary>
-/// Routes validation-layer messages to <see cref="Logger"/>.
+/// Routes validation-layer and loader messages to <see cref="Logger"/>.
 /// </summary>
 /// <remarks>
 /// Messages about invalid usage (and synchronization hazards) are warnings or errors, and are counted
 /// in <c>Vulkan › Validation Messages</c>, which should always read zero. Performance hints are only
 /// advice about valid usage, so they are logged at debug level and counted separately; the effect
 /// passes produce one by design, pairing <c>shader.vert</c>, which writes every varying, with fragment
-/// shaders that read only two of them.
+/// shaders that read only two of them. General messages come from the loader, mostly about installed
+/// drivers that can't find their hardware (Mesa installs a whole set on Linux). They are logged as
+/// warnings, since they explain a missing device, but not counted: they say nothing about how the
+/// renderer uses Vulkan.
 /// </remarks>
 internal static unsafe class VulkanDebug
 {
@@ -50,6 +53,12 @@ internal static unsafe class VulkanDebug
             {
                 stat_performance_hints.Value = Interlocked.Increment(ref hintCount);
                 Logger.Debug(text);
+                return 0;
+            }
+
+            if ((types & VkDebugUtilsMessageTypeFlagsEXT.Validation) == 0)
+            {
+                Logger.Warning(text);
                 return 0;
             }
 
