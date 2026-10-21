@@ -65,7 +65,15 @@ public class AppThreadFrameStatisticsTest
     [Test]
     public void TestBusyTimeExcludesTheThrottleWait()
     {
-        var thread = new AppThread("TestThread", () => spin(work_ms), () => target_hz)
+        // When each frame began, by a clock the thread doesn't use. Written only by the thread, and read
+        // once it has stopped.
+        var frameStarts = new List<long>();
+
+        var thread = new AppThread("TestThread", () =>
+        {
+            frameStarts.Add(Stopwatch.GetTimestamp());
+            spin(work_ms);
+        }, () => target_hz)
         {
             GetDeadlineMilliseconds = () => deadline_ms
         };
@@ -91,12 +99,14 @@ public class AppThreadFrameStatisticsTest
         Assert.That(settled, Is.Not.Empty);
 
         double medianBusy = median(settled.Select(s => s.BusyMilliseconds));
-
-        // The mean, not the median: the thread keeps its cadence locked to the wall clock, so a sleep that
-        // overshoots past the next deadline is followed by a frame that runs at once to catch up. Where
-        // sleeps overshoot by a frame or more (shared CI machines), half the frames are those, and the
-        // median is the work alone while the mean is still the period.
         double meanElapsed = settled.Average(s => s.ElapsedMilliseconds);
+
+        // The period the thread really ran at over the settled frames, from the start of the frame before
+        // the first of them to the start of the last. Not the budget: how close a thread gets to its target
+        // rate is down to how accurately the OS wakes it, and shared CI machines miss a 10ms period by more
+        // than the period itself (GitHub's macOS runners ran this at over 20ms).
+        double measuredPeriod = Stopwatch.GetElapsedTime(frameStarts[samples.Length - settled.Length - 1], frameStarts[samples.Length - 1]).TotalMilliseconds
+                                / settled.Length;
 
         using (Assert.EnterMultipleScope())
         {
@@ -106,7 +116,12 @@ public class AppThreadFrameStatisticsTest
             // The point of the whole exercise: busy reflects the ~2ms of work, not the ~10ms period the
             // throttle produces. Before this existed, the only number available was the period.
             Assert.That(medianBusy, Is.EqualTo(work_ms).Within(2), $"busy should track the work done, was {medianBusy:F2}ms");
-            Assert.That(meanElapsed, Is.EqualTo(budget_ms).Within(4), $"elapsed should track the frame period, was {meanElapsed:F2}ms");
+
+            // Elapsed is the whole period, the throttle's wait included, so it is never shorter than the
+            // budget. Not quite never over a short run: a late wake is followed by a frame that runs at once,
+            // and one of those at the start of the run pulls the mean a little under.
+            Assert.That(meanElapsed, Is.EqualTo(measuredPeriod).Within(1), $"elapsed should be the frame period, was {meanElapsed:F2}ms against {measuredPeriod:F2}ms measured");
+            Assert.That(meanElapsed, Is.AtLeast(budget_ms - 1), $"elapsed should include the throttle's wait, was {meanElapsed:F2}ms");
         }
         Assert.That(medianBusy, Is.LessThan(meanElapsed / 2), "busy and the frame period should not be the same measurement");
 
