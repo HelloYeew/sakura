@@ -430,6 +430,8 @@ public class InputManager : IFocusManager
 
     private readonly HashSet<Drawable> newlyHoveredScratch = new HashSet<Drawable>();
 
+    private readonly MouseState hoverState = new MouseState();
+
     /// <remarks>
     /// A set, not an ordering: it is filled by iterating a <see cref="HashSet{T}"/>, so the first
     /// entry is not the front-most drawable. Use <see cref="PositionalInputQueue"/> when depth
@@ -580,7 +582,8 @@ public class InputManager : IFocusManager
             return;
 
         BuildQueues(lastQueueRoot, CurrentState.MousePosition);
-        updateHover(new MouseEvent(new MouseState { Position = CurrentState.MousePosition }));
+        hoverState.Position = CurrentState.MousePosition;
+        updateHover(new MouseEvent(hoverState));
     }
 
     /// <summary>
@@ -746,7 +749,8 @@ public class InputManager : IFocusManager
         hoveredDrawables.Clear();
         hoverBlockers.Clear();
 
-        var e = new MouseEvent(new MouseState { Position = CurrentState.MousePosition });
+        hoverState.Position = CurrentState.MousePosition;
+        var e = new MouseEvent(hoverState);
         UpdatingHover = true;
 
         try

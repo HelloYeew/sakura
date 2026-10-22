@@ -470,6 +470,80 @@ public class TouchInputTest
         Assert.That(allocated, Is.Zero);
     }
 
+    [Test]
+    public void FingerStandingInForTheMouseDoesNotAllocate()
+    {
+        ScrollableContainer scroll;
+        var button = new ClickCounter { X = 400, Size = new Vector2(200) };
+
+        input.Add(scroll = new ScrollableContainer
+        {
+            Size = new Vector2(200, 300),
+            Child = new Box { Size = new Vector2(200, 4000) }
+        });
+        input.Add(button);
+        settle();
+
+        // Once first: the emulated mouse's set of buttons grows on its first press, and a scroll container sets up
+        // on its first drag.
+        gestures();
+        int clicksBefore = button.Clicks;
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        gestures();
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(allocated, Is.Zero);
+            Assert.That(scroll.CurrentScroll.Y, Is.GreaterThan(0), "the flicks scrolled nothing");
+            Assert.That(button.Clicks, Is.GreaterThan(clicksBefore), "the taps clicked nothing");
+        });
+
+        void gestures()
+        {
+            // A flick up the list, which glides on after the finger lifts.
+            input.TouchDown(TouchSource.Touch1, new Vector2(100, 250));
+
+            for (int i = 1; i <= 20; i++)
+                input.MoveTouchTo(TouchSource.Touch1, new Vector2(100, 250 - 5 * i));
+
+            input.TouchUp(TouchSource.Touch1);
+            settle(30);
+
+            // Taps, a drag over what the finger landed on, and a long press.
+            for (int i = 0; i < 3; i++)
+                input.Tap(button);
+
+            input.TouchDown(TouchSource.Touch1, new Vector2(450, 50));
+            input.MoveTouchTo(TouchSource.Touch1, new Vector2(550, 50));
+            input.TouchUp(TouchSource.Touch1);
+
+            input.TouchDown(TouchSource.Touch1, centreOf(button));
+            settle(40);
+            input.TouchUp(TouchSource.Touch1);
+
+            // A second finger landing next to the first, as a pinch starts.
+            input.TouchDown(TouchSource.Touch1, new Vector2(450, 100));
+            input.TouchDown(TouchSource.Touch2, new Vector2(550, 100));
+            input.MoveTouchTo(TouchSource.Touch1, new Vector2(430, 100));
+            input.MoveTouchTo(TouchSource.Touch2, new Vector2(570, 100));
+            input.TouchUp(TouchSource.Touch1);
+            input.TouchUp(TouchSource.Touch2);
+        }
+    }
+
+    private partial class ClickCounter : Box
+    {
+        public int Clicks;
+
+        public override bool OnClick(MouseButtonEvent e)
+        {
+            Clicks++;
+            return true;
+        }
+    }
+
     private partial class Recorder : Box
     {
         public bool TakesTouches;

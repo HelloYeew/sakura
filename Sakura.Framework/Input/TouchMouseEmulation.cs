@@ -71,6 +71,10 @@ internal sealed class TouchMouseEmulation
     private Vector2 lastTapPosition;
     private int tapCount;
 
+    // The state every event from here carries. Each is dispatched as it's made and nothing keeps one, so one
+    // state serves them all, rather than a new one (and its set of buttons) for every move of a finger.
+    private readonly MouseState state = new MouseState { FromTouch = true };
+
     /// <param name="root">The root the manager's queues are built from.</param>
     /// <param name="manager">The manager the root dispatches with.</param>
     /// <param name="mouseMove">Takes an emulated mouse move the way the root takes a real one.</param>
@@ -225,7 +229,7 @@ internal sealed class TouchMouseEmulation
 
     private MouseState mouseState(bool rightPressed = false)
     {
-        var state = new MouseState { Position = position, FromTouch = true };
+        state.Position = position;
         state.SetPressed(MouseButton.Left, pressed);
         state.SetPressed(MouseButton.Right, rightPressed);
         return state;
