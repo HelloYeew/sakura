@@ -25,7 +25,7 @@ namespace Sakura.Framework.Audio.SdlEngine;
 /// the two master mixers.
 /// </summary>
 [SuppressMessage("ReSharper", "InconsistentNaming")]
-internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, IDisposable
+internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, IStopsInBackground, IDisposable
 {
     /// <summary>
     /// Frames mixed per block. At 44.1kHz this is ~11.6ms of audio, small enough that a volume or
@@ -106,7 +106,7 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     /// <summary>
     /// The name of the device the stream plays on, or empty when it's the system's default.
     /// </summary>
-    internal string PlayingOn => boundTarget == SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK ? string.Empty : deviceName(boundTarget);
+    internal string PlayingOn => aaudioOutput != null || boundTarget == SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK ? string.Empty : deviceName(boundTarget);
 
     // The device the player picked, by name, or empty for the system's default; read and written on the audio thread.
     // OutputDevice is what the player set, and stays so while the device is unplugged; this follows it there.
@@ -179,8 +179,32 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     private readonly AudioDecodeScheduler decodeScheduler = new AudioDecodeScheduler();
 
     // Made once and kept for the life of the manager: playing on another device binds it to that device instead of
-    // making a new one, so the mix thread and the native engine's callback never see it change.
+    // making a new one, so the mix thread and the native engine's callback never see it change. Null on Android,
+    // where the native engine plays through aaudioOutput instead.
     private SDL_AudioStream* deviceStream;
+
+    /// <summary>
+    /// The native engine's output on Android, straight into AAudio with nothing of SDL's in between, or null where it
+    /// plays through SDL's stream.
+    /// </summary>
+    private readonly AAudioOutput? aaudioOutput;
+
+    // How often to try again to open an AAudio stream in place of one that went with an output change.
+    private const double aaudio_reopen_interval_ms = 1000;
+
+    // Underruns at the stream's start and restart are its own settling, not the buffer being too small.
+    private const double aaudio_settle_ms = 500;
+
+    private readonly MeasuredLatency aaudioLatency = new MeasuredLatency();
+    private string aaudioDescription = string.Empty;
+    private double sinceAAudioReopenMs = aaudio_reopen_interval_ms;
+    private double aaudioSettlingMs = aaudio_settle_ms;
+    private int aaudioXruns;
+    private int aaudioLatencyReadings;
+    private GlobalStatistic<long>? statXruns;
+
+    // Readings before the measured latency is settled enough to put in the log.
+    private const int aaudio_latency_readings_to_log = 20;
 
     /// <summary>
     /// The push-model mix thread, or null when the native engine owns the device callback.
@@ -224,7 +248,8 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
     /// <summary>
     /// The device buffer as a duration, from the device's own rate rather than the mix rate, since
-    /// the two can differ after a device change.
+    /// the two can differ after a device change. Through AAudio, the whole way from the engine to the
+    /// listener instead, as AAudio's timestamps measure it.
     /// </summary>
     /// <remarks>
     /// Microseconds in an int rather than milliseconds in a double because this is
@@ -335,6 +360,9 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     public SDLAudioManager(bool useNativeMixEngine = true, int requestedDeviceBufferFrames = DEFAULT_DEVICE_BUFFER_FRAMES,
                            Action<int>? persistDeviceBufferFrames = null, NativeAudioOutput? nativeOutput = null, string outputDevice = "")
     {
+        // AAudio's own buffer is in whole bursts already, so 0 leaves it as AAudio opens it.
+        int aaudioBufferFrames = requestedDeviceBufferFrames;
+
         if (requestedDeviceBufferFrames <= 0 && nativeOutput?.FramesPerBurst > 0)
             requestedDeviceBufferFrames = nativeOutput.Value.FramesPerBurst;
 
@@ -361,44 +389,52 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         if (useNativeMixEngine)
             nativeEngine = tryCreateNativeEngine();
 
-        applyDeviceBufferHint(requestedDeviceBufferFrames);
+        // On Android the native engine plays straight into AAudio, on AAudio's own thread. Through SDL there'd be a
+        // thread and up to two periods of SDL's buffering in between, and SDL keeps the stream's figures to itself.
+        if (nativeEngine != null && AAudioOutput.IsAvailable)
+            aaudioOutput = openAAudio(nativeEngine, aaudioBufferFrames);
 
-        deviceStream = createDeviceStream(SampleRate, nativeEngine);
-
-        // A device the player picked that won't open falls back to the default, rather than to no audio at all.
-        bool bound = deviceStream != null && (bindTo(target, start: false) || (target != SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK && bindTo(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, start: false)));
-
-        // SDL can open the device at another rate than asked: Android's SDL 3.5.0 opens every device at its 44.1 kHz
-        // placeholder. Mixing at any other rate than the device's would then be resampled twice on its way out, by
-        // SDL and again by the platform, so the mix follows the device. Once only, as the device's rate is now known.
-        if (bound && boundDeviceRate() is var deviceRate && deviceRate > 0 && deviceRate != SampleRate)
+        if (aaudioOutput == null)
         {
-            Logger.Verbose($"The audio device opened at {deviceRate} Hz rather than the {SampleRate} Hz asked for, so the mix runs at {deviceRate} Hz.");
-
-            var reopen = boundTarget;
-            unbind();
-            SDL_DestroyAudioStream(deviceStream);
-            SampleRate = deviceRate;
-
-            // The engine mixes at the rate it was made with.
-            if (nativeEngine != null)
-            {
-                nativeEngine.Dispose();
-                nativeEngine = tryCreateNativeEngine();
-            }
+            applyDeviceBufferHint(requestedDeviceBufferFrames);
 
             deviceStream = createDeviceStream(SampleRate, nativeEngine);
-            bound = deviceStream != null && bindTo(reopen, start: false);
-        }
 
-        if (!bound)
-        {
-            if (deviceStream != null)
+            // A device the player picked that won't open falls back to the default, rather than to no audio at all.
+            bool bound = deviceStream != null && (bindTo(target, start: false) || (target != SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK && bindTo(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, start: false)));
+
+            // SDL can open the device at another rate than asked: Android's SDL 3.5.0 opens every device at its 44.1 kHz
+            // placeholder. Mixing at any other rate than the device's would then be resampled twice on its way out, by
+            // SDL and again by the platform, so the mix follows the device. Once only, as the device's rate is now known.
+            if (bound && boundDeviceRate() is var deviceRate && deviceRate > 0 && deviceRate != SampleRate)
+            {
+                Logger.Verbose($"The audio device opened at {deviceRate} Hz rather than the {SampleRate} Hz asked for, so the mix runs at {deviceRate} Hz.");
+
+                var reopen = boundTarget;
+                unbind();
                 SDL_DestroyAudioStream(deviceStream);
+                SampleRate = deviceRate;
 
-            nativeEngine?.Dispose();
-            SDL_QuitSubSystem(SDL_InitFlags.SDL_INIT_AUDIO);
-            throw new InvalidOperationException($"Failed to open an SDL audio device: {SDL_GetError()}");
+                // The engine mixes at the rate it was made with.
+                if (nativeEngine != null)
+                {
+                    nativeEngine.Dispose();
+                    nativeEngine = tryCreateNativeEngine();
+                }
+
+                deviceStream = createDeviceStream(SampleRate, nativeEngine);
+                bound = deviceStream != null && bindTo(reopen, start: false);
+            }
+
+            if (!bound)
+            {
+                if (deviceStream != null)
+                    SDL_DestroyAudioStream(deviceStream);
+
+                nativeEngine?.Dispose();
+                SDL_QuitSubSystem(SDL_InitFlags.SDL_INIT_AUDIO);
+                throw new InvalidOperationException($"Failed to open an SDL audio device: {SDL_GetError()}");
+            }
         }
 
         OutputDevice.ValueChanged += e => EnqueueAction(() =>
@@ -434,7 +470,9 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         MasterVolume.ValueChanged += _ => applyVolumes();
         OutputInterrupted.ValueChanged += e => onOutputInterrupted(e.NewValue);
 
-        if (!SDL_ResumeAudioStreamDevice(deviceStream))
+        if (aaudioOutput != null)
+            aaudioOutput.Start();
+        else if (!SDL_ResumeAudioStreamDevice(deviceStream))
             Logger.Error($"Failed to start the SDL audio device: {SDL_GetError()}");
 
         if (nativeEngine == null)
@@ -774,6 +812,92 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     }
 
     /// <summary>
+    /// Keeps the AAudio output playing and its figures current: opens another stream once AAudio disconnects one (the
+    /// output changed), grows the buffer a burst at a time while the output keeps running dry, and measures how late
+    /// the audio reaches the listener.
+    /// </summary>
+    private void pollAAudio(AAudioOutput output, double frameTime)
+    {
+        if (output.Disconnected)
+        {
+            // Every frame would be a stream opened and dropped at once while the output is still changing.
+            sinceAAudioReopenMs += frameTime;
+
+            if (sinceAAudioReopenMs < aaudio_reopen_interval_ms)
+                return;
+
+            sinceAAudioReopenMs = 0;
+
+            if (!output.Reopen())
+                return;
+
+            sinceAAudioReopenMs = aaudio_reopen_interval_ms;
+            aaudioSettlingMs = aaudio_settle_ms;
+            aaudioLatency.Reset();
+            aaudioLatencyReadings = 0;
+            aaudioDescription = output.Describe();
+            Logger.Verbose($"The audio output changed, so it plays through a new stream: {aaudioDescription}");
+        }
+
+        sinceLatencySampleMs += frameTime;
+
+        if (sinceLatencySampleMs < native_latency_sample_interval_ms)
+            return;
+
+        sinceLatencySampleMs = 0;
+
+        int xruns = output.Xruns;
+
+        if (aaudioSettlingMs > 0)
+        {
+            aaudioSettlingMs -= native_latency_sample_interval_ms;
+            aaudioXruns = xruns;
+        }
+        else if (xruns > aaudioXruns)
+        {
+            aaudioXruns = xruns;
+            growAAudioBuffer(output, xruns);
+        }
+
+        if (output.TrySampleLatency(out double latency))
+        {
+            aaudioLatency.Add(latency);
+
+            if (++aaudioLatencyReadings == aaudio_latency_readings_to_log && aaudioLatency.Milliseconds is double settled)
+            {
+                Logger.Verbose($"Output latency, measured: {settled:F1} ms from the mix to the listener, "
+                               + $"{output.BufferFrames / (double)output.SampleRate * 1000.0:F1} ms of it in the app's buffer.");
+            }
+        }
+
+        deviceBufferFrames = output.BufferFrames;
+
+        // What's buffered is all that's known until AAudio's timestamps say how long the rest of the way takes.
+        double latencyMs = aaudioLatency.Milliseconds ?? deviceBufferFrames / (double)output.SampleRate * 1000.0;
+        deviceBufferMicroseconds = (int)Math.Round(latencyMs * 1000.0);
+    }
+
+    /// <summary>
+    /// A burst more buffer after the output ran dry, which AAudio can give a playing stream without a gap. Never
+    /// smaller again: the latency it adds is measured and compensated for, and a click every so often isn't.
+    /// </summary>
+    private void growAAudioBuffer(AAudioOutput output, int xruns)
+    {
+        int current = output.BufferFrames;
+
+        if (current + output.FramesPerBurst > output.CapacityFrames)
+        {
+            Logger.Verbose($"The audio output ran dry ({xruns} times so far) with its buffer already at its largest, {current} frames.");
+            return;
+        }
+
+        int granted = output.SetBufferFrames(current + output.FramesPerBurst);
+
+        Logger.Verbose($"The audio output ran dry ({xruns} times so far), so its buffer grew to {granted} frames "
+                       + $"({granted / (double)output.SampleRate * 1000.0:F1} ms).");
+    }
+
+    /// <summary>
     /// Reads the playback devices SDL lists.
     /// </summary>
     /// <returns>Whether they changed since the last read.</returns>
@@ -834,6 +958,10 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     /// </summary>
     private void followPreferredDevice()
     {
+        // AAudio plays on wherever Android sends the sound; there's nothing to pick there.
+        if (aaudioOutput != null)
+            return;
+
         var target = resolvePreferredDevice();
 
         if (target == boundTarget && logicalDevice != 0)
@@ -857,9 +985,15 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             : $"Playing on {describeBoundDevice()} until {preferredDevice} is plugged in");
     }
 
-    private string describeBoundDevice() => boundTarget == SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK
-        ? $"the system's default output ({deviceName(logicalDevice)})"
-        : deviceName(boundTarget);
+    private string describeBoundDevice()
+    {
+        if (aaudioOutput != null)
+            return aaudioDescription;
+
+        return boundTarget == SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK
+            ? $"the system's default output ({deviceName(logicalDevice)})"
+            : deviceName(boundTarget);
+    }
 
     private static string deviceName(SDL_AudioDeviceID device) => SDL_GetAudioDeviceName(device) ?? string.Empty;
 
@@ -887,6 +1021,36 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
         return engine;
     }
+
+    /// <summary>
+    /// Opens the AAudio output for <paramref name="engine"/>, or returns null to play through SDL instead.
+    /// </summary>
+    /// <param name="engine">The engine to play.</param>
+    /// <param name="bufferFrames">The buffer to start with, or 0 for the one AAudio opens with.</param>
+    private static AAudioOutput? openAAudio(SakuraAudioEngine engine, int bufferFrames)
+    {
+        var output = AAudioOutput.TryOpen(engine, aaudioUsage());
+
+        if (output == null)
+            return null;
+
+        // AAudio converts from whatever rate it's asked for, so another one is a stream gone wrong, not a choice.
+        if (output.SampleRate != engine.SampleRate)
+        {
+            Logger.Warning($"AAudio opened at {output.SampleRate} Hz rather than the {engine.SampleRate} Hz asked for, so the audio plays through SDL.");
+            output.Dispose();
+            return null;
+        }
+
+        if (bufferFrames > 0)
+            output.SetBufferFrames(bufferFrames);
+
+        return output;
+    }
+
+    // What the sound is for, as the platform told SDL (Android's window says so for a game), which Android's mixing and
+    // volume follow.
+    private static int aaudioUsage() => SDL_GetHint(SDL_HINT_AUDIO_DEVICE_STREAM_ROLE) == "Game" ? AAudioNative.USAGE_GAME : AAudioNative.USAGE_MEDIA;
 
     /// <summary>
     /// Creates a master mixer node and routes it into the engine's root.
@@ -922,11 +1086,41 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
         Logger.Verbose($"SDL Audio Driver: {SDL_GetCurrentAudioDriver()} (available: {availableDrivers()})");
 
-        var device = SDL_GetAudioStreamDevice(deviceStream);
-        Logger.Verbose($"Device: {SDL_GetAudioDeviceName(device)}");
-
         if (nativeOutput is NativeAudioOutput output)
             Logger.Verbose($"Output's native format, from the platform: {output.SampleRate} Hz, {output.FramesPerBurst} frames per burst");
+
+        if (aaudioOutput != null)
+            logAAudioDetails(aaudioOutput);
+        else
+            logDeviceDetails(localRequestedDeviceBufferFrames);
+
+        Logger.Verbose($"Mix format: {SampleRate} Hz, {output_channels} ch, {formatName(SDLAudioConverter.SAMPLE_FORMAT)}");
+
+        if (nativeEngine != null)
+        {
+            Logger.Verbose($"Mix engine: libsakura-audio (native, ABI {SakuraAudioNative.ABI_VERSION}), on the {(aaudioOutput != null ? "AAudio" : "device")} callback");
+            Logger.Verbose($"Mix block: {native_mix_block_frames} frames ({native_mix_block_frames / (double)SampleRate * 1000.0:F1} ms)");
+        }
+        else
+        {
+            // Worth a warning rather than a note: this is the fallback, it is not what the backend is
+            // for, and its latency is an order of magnitude worse.
+            Logger.Verbose("Mix engine: managed reference mixer, pushing from its own thread"
+                           + (SakuraAudioEngine.IsAvailable ? " (native engine available but not selected)" : " (libsakura-audio unavailable)"));
+            Logger.Verbose($"Mix block: {mix_block_frames} frames ({mix_block_frames / (double)SampleRate * 1000.0:F1} ms)");
+            Logger.Verbose($"Target queue length: {target_queue_ms} ms");
+        }
+
+        logDecoderSupport();
+    }
+
+    /// <summary>
+    /// The SDL device the stream plays on: its name, format and the buffer granted.
+    /// </summary>
+    private void logDeviceDetails(int localRequestedDeviceBufferFrames)
+    {
+        var device = SDL_GetAudioStreamDevice(deviceStream);
+        Logger.Verbose($"Device: {SDL_GetAudioDeviceName(device)}");
 
         SDL_AudioSpec deviceSpec;
         int deviceFrames;
@@ -953,25 +1147,18 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         {
             Logger.Verbose($"Device format: unavailable ({SDL_GetError()})");
         }
+    }
 
-        Logger.Verbose($"Mix format: {SampleRate} Hz, {output_channels} ch, {formatName(SDLAudioConverter.SAMPLE_FORMAT)}");
+    private void logAAudioDetails(AAudioOutput output)
+    {
+        aaudioDescription = output.Describe();
+        lastSeenDeviceRate = output.SampleRate;
+        deviceBufferFrames = output.BufferFrames;
+        updateDeviceBufferDuration(deviceBufferFrames, output.SampleRate);
 
-        if (nativeEngine != null)
-        {
-            Logger.Verbose($"Mix engine: libsakura-audio (native, ABI {SakuraAudioNative.ABI_VERSION}), on the device callback");
-            Logger.Verbose($"Mix block: {native_mix_block_frames} frames ({native_mix_block_frames / (double)SampleRate * 1000.0:F1} ms)");
-        }
-        else
-        {
-            // Worth a warning rather than a note: this is the fallback, it is not what the backend is
-            // for, and its latency is an order of magnitude worse.
-            Logger.Verbose("Mix engine: managed reference mixer, pushing from its own thread"
-                           + (SakuraAudioEngine.IsAvailable ? " (native engine available but not selected)" : " (libsakura-audio unavailable)"));
-            Logger.Verbose($"Mix block: {mix_block_frames} frames ({mix_block_frames / (double)SampleRate * 1000.0:F1} ms)");
-            Logger.Verbose($"Target queue length: {target_queue_ms} ms");
-        }
-
-        logDecoderSupport();
+        Logger.Verbose($"Output: {aaudioDescription}, with nothing of SDL's in between");
+        Logger.Verbose($"Output buffer: {deviceBufferFrames} frames ({deviceBufferFrames / (double)output.SampleRate * 1000.0:F1} ms) of {output.CapacityFrames}, "
+                       + "growing a burst at a time if the output runs dry");
     }
 
     private static string availableDrivers()
@@ -1403,8 +1590,16 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
         // Before PollEvents, because a channel that reads its position while handling an end or a
         // loop should see this frame's figure rather than the last one's.
-        sampleOutputLatency(frameTime);
-        checkForDeviceChange(frameTime);
+        if (aaudioOutput != null)
+        {
+            pollAAudio(aaudioOutput, frameTime);
+        }
+        else
+        {
+            sampleOutputLatency(frameTime);
+            checkForDeviceChange(frameTime);
+        }
+
         (statDevice ??= GlobalStatistics.Get<string>("Audio", "SDL Device")).Value = describeBoundDevice();
 
         if (nativeEngine != null)
@@ -1429,7 +1624,13 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             (statVoiceStarvations ??= GlobalStatistics.Get<long>("Audio", "SDL Voice Starvations")).Value = stats.Starvations;
 
             Interlocked.Exchange(ref lastPublishedUnderruns, stats.Starvations);
-            handleSustainedUnderruns(observeNativeCallback(stats), frameTime);
+
+            // AAudio counts the output running dry itself, and its buffer grows on that instead.
+            if (aaudioOutput != null)
+                (statXruns ??= GlobalStatistics.Get<long>("Audio", "SDL Output Xruns")).Value = aaudioXruns;
+            else
+                handleSustainedUnderruns(observeNativeCallback(stats), frameTime);
+
             (statPutFailures ??= GlobalStatistics.Get<long>("Audio", "SDL Put Failures")).Value = stats.PutFailures;
             (statActiveVoices ??= GlobalStatistics.Get<int>("Audio", "SDL Active Voices")).Value = stats.ActiveVoices;
             (statDeviceBufferFrames ??= GlobalStatistics.Get<int>("Audio", "SDL Device Buffer (frames)")).Value = deviceBufferFrames;
@@ -1456,6 +1657,18 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         (statOutputLatency ??= GlobalStatistics.Get<double>("Audio", "SDL Output Latency", StatisticKind.Gauge, StatisticUnit.Milliseconds)).Value = Math.Round(OutputLatencyMs, 2);
     }
 
+    // SDL pauses its own streams for the background on Android, but not this one.
+    void IStopsInBackground.EnterBackground() => aaudioOutput?.Pause();
+
+    void IStopsInBackground.EnterForeground()
+    {
+        if (aaudioOutput == null)
+            return;
+
+        aaudioSettlingMs = aaudio_settle_ms;
+        aaudioOutput.Start();
+    }
+
     public void StopAll()
     {
         foreach (var channel in activeChannelSnapshot)
@@ -1480,6 +1693,8 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         // while the graph it walks is being dismantled underneath it.
         if (deviceStream != null && nativeEngine != null)
             SDL_PauseAudioStreamDevice(deviceStream);
+
+        aaudioOutput?.Dispose();
 
         ISDLChannel[] toDispose;
 

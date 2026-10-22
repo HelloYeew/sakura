@@ -100,6 +100,33 @@ internal sealed class SakuraAudioEngine : IDisposable
     /// </summary>
     public static nint StreamCallback => SakuraAudioNative.sakura_audio_get_stream_callback();
 
+    private static nint? aaudioCallback;
+
+    /// <summary>
+    /// The <c>AAudioStream_dataCallback</c>-compatible function pointer to open an AAudio stream with, passing
+    /// <see cref="Handle"/> as its userdata, or zero where the library predates it.
+    /// </summary>
+    public static nint AAudioCallback
+    {
+        get
+        {
+            if (aaudioCallback.HasValue)
+                return aaudioCallback.Value;
+
+            try
+            {
+                aaudioCallback = IsAvailable ? SakuraAudioNative.sakura_audio_get_aaudio_callback() : 0;
+            }
+            catch (EntryPointNotFoundException)
+            {
+                Logger.Verbose("This libsakura-audio predates its AAudio output, so it plays through SDL.");
+                aaudioCallback = 0;
+            }
+
+            return aaudioCallback.Value;
+        }
+    }
+
     /// <summary>
     /// Hands the library the address of <c>SDL_PutAudioStreamData</c>, the only thing it needs from
     /// SDL, and the one call it makes from inside the device callback.

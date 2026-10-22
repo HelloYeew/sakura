@@ -202,6 +202,14 @@ internal static class SakuraAudioNative
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern nint sakura_audio_get_stream_callback();
 
+    /// <summary>
+    /// The <c>AAudioStream_dataCallback</c>-compatible function pointer to hand to
+    /// <c>AAudioStreamBuilder_setDataCallback</c>, with the engine pointer as its userdata. A library from before the
+    /// AAudio output doesn't have it, which throws <see cref="EntryPointNotFoundException"/>.
+    /// </summary>
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern nint sakura_audio_get_aaudio_callback();
+
     #endregion
 
     #region Engine
