@@ -73,7 +73,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
     private readonly MultiFingerTap multiFingerTap = new MultiFingerTap();
 
     /// <summary>
-    /// How many fingers tap together to open the debug tools on a touchscreen.
+    /// How many fingers tap together to open the debug tools on a touchscreen, in a debug build.
     /// </summary>
     private const int debug_tools_fingers = 4;
 
@@ -510,8 +510,9 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
         if (!handled)
             touchEmulation.TouchUp(e);
 
-        // There are no Ctrl+F keys on a phone.
-        if (multiFingerTap.TouchUp(e, Clock.CurrentTime, out _) == debug_tools_fingers)
+        // There are no Ctrl+F keys on a phone. Only in a debug build, since a player's four fingers landing together
+        // is ordinary play in a game with lanes.
+        if (multiFingerTap.TouchUp(e, Clock.CurrentTime, out _) == debug_tools_fingers && DebugUtils.IsDebugBuild)
             toggleDebugTools();
 
         return handled;
