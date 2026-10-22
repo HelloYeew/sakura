@@ -128,6 +128,11 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     /// </remarks>
     internal int DeviceBufferFrames => deviceBufferFrames;
 
+    /// <summary>
+    /// The rate the output device runs at, or 0 if SDL wouldn't say.
+    /// </summary>
+    internal int DeviceSampleRate => lastSeenDeviceRate;
+
     // The same two mixers as above at their concrete type, set only in managed mode, because Fill is
     // not part of the shared mixer surface.
     private readonly SDLAudioMixer? managedTrackMixer;
@@ -278,18 +283,26 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     /// reference mixer, which is what <see cref="AudioBackend.SDLManaged"/> selects.
     /// </param>
     /// <param name="requestedDeviceBufferFrames">
-    /// Device buffer size to ask SDL for, in frames, or 0 to leave SDL's own default alone. Only
-    /// meaningful on the native engine — see <see cref="applyDeviceBufferHint"/>.
+    /// Device buffer size to ask SDL for, in frames, or 0 for the output's own: its burst where
+    /// <paramref name="nativeOutput"/> gives one, SDL's default otherwise. Only meaningful on the native
+    /// engine — see <see cref="applyDeviceBufferHint"/>.
     /// </param>
     /// <param name="persistDeviceBufferFrames">
     /// Called with a larger buffer size when this machine turns out not to keep up with the one it was
     /// given, so the next launch starts somewhere that works — see
     /// <see cref="handleSustainedUnderruns"/>. Null disables the backoff and leaves it a warning.
     /// </param>
+    /// <param name="nativeOutput">
+    /// The output's native format where the platform knows it (<see cref="AppHost.NativeAudioOutput"/>), so the
+    /// device opens at the rate the output runs at. Null asks SDL.
+    /// </param>
     /// <exception cref="InvalidOperationException">SDL audio could not be started.</exception>
     public SDLAudioManager(bool useNativeMixEngine = true, int requestedDeviceBufferFrames = DEFAULT_DEVICE_BUFFER_FRAMES,
-                           Action<int>? persistDeviceBufferFrames = null)
+                           Action<int>? persistDeviceBufferFrames = null, NativeAudioOutput? nativeOutput = null)
     {
+        if (requestedDeviceBufferFrames <= 0 && nativeOutput?.FramesPerBurst > 0)
+            requestedDeviceBufferFrames = nativeOutput.Value.FramesPerBurst;
+
         this.requestedDeviceBufferFrames = requestedDeviceBufferFrames;
         this.persistDeviceBufferFrames = persistDeviceBufferFrames;
 
@@ -302,35 +315,33 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
         ownsAudioSubsystem = true;
 
-        SampleRate = queryDeviceSampleRate();
+        SampleRate = nativeOutput?.SampleRate > 0 ? nativeOutput.Value.SampleRate : queryDeviceSampleRate();
 
         if (useNativeMixEngine)
             nativeEngine = tryCreateNativeEngine();
 
         applyDeviceBufferHint(requestedDeviceBufferFrames);
 
-        var spec = new SDL_AudioSpec
-        {
-            format = SDLAudioConverter.SAMPLE_FORMAT,
-            channels = output_channels,
-            freq = SampleRate
-        };
+        deviceStream = openDeviceStream(SampleRate, nativeEngine);
 
-        if (nativeEngine != null)
+        // SDL can open the device at another rate than asked: Android's SDL 3.5.0 opens every device at its 44.1 kHz
+        // placeholder. Mixing at any other rate than the device's would then be resampled twice on its way out, by
+        // SDL and again by the platform, so the mix follows the device. Once only, as the device's rate is now known.
+        if (deviceStream != null && openedDeviceRate(deviceStream) is var deviceRate && deviceRate > 0 && deviceRate != SampleRate)
         {
-            // The callback is native, and reaching it involves no managed code at all: this is a raw
-            // function pointer straight into libsakura-audio, not a marshalled delegate. A delegate
-            // here would put a managed frame on the real-time thread and hand a GC pause the ability
-            // to underrun the device, which is the entire thing this backend exists to avoid.
-            var callback = (delegate* unmanaged[Cdecl]<IntPtr, SDL_AudioStream*, int, int, void>)SakuraAudioEngine.StreamCallback;
-            deviceStream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, callback, nativeEngine.Handle);
-        }
-        else
-        {
-            // No callback: the managed mixer pushes from its own thread, so nothing SDL calls can ever
-            // be waiting on managed code either. It buys that with a much larger queue — see
-            // target_queue_ms.
-            deviceStream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, null, IntPtr.Zero);
+            Logger.Verbose($"The audio device opened at {deviceRate} Hz rather than the {SampleRate} Hz asked for, so the mix runs at {deviceRate} Hz.");
+
+            SDL_DestroyAudioStream(deviceStream);
+            SampleRate = deviceRate;
+
+            // The engine mixes at the rate it was made with.
+            if (nativeEngine != null)
+            {
+                nativeEngine.Dispose();
+                nativeEngine = tryCreateNativeEngine();
+            }
+
+            deviceStream = openDeviceStream(SampleRate, nativeEngine);
         }
 
         if (deviceStream == null)
@@ -388,7 +399,7 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             mixThread.Start();
         }
 
-        logInitialisationDetails(requestedDeviceBufferFrames);
+        logInitialisationDetails(requestedDeviceBufferFrames, nativeOutput);
     }
 
     /// <summary>
@@ -464,6 +475,10 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     /// </para>
     /// </remarks>
     public double OutputLatencyMs => outputLatencyFrames / (double)SampleRate * 1000.0 + deviceBufferMicroseconds / 1000.0;
+
+    // The native engine's channels call into it directly, from whichever thread plays them. The managed mixer's
+    // queue their changes for the audio thread.
+    public bool PlaybackWaitsForUpdate => nativeEngine == null;
 
     /// <summary>
     /// Re-reads the queue depth so every channel in this frame compensates by the same figure.
@@ -718,7 +733,7 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     /// they depend on how the shipped FFmpeg was configured, which is exactly the thing that is
     /// awkward to diagnose after the fact.
     /// </remarks>
-    private void logInitialisationDetails(int localRequestedDeviceBufferFrames)
+    private void logInitialisationDetails(int localRequestedDeviceBufferFrames, NativeAudioOutput? nativeOutput)
     {
         Logger.Verbose("🔈 SDL audio initialised");
 
@@ -730,6 +745,9 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
         var device = SDL_GetAudioStreamDevice(deviceStream);
         Logger.Verbose($"Device: {SDL_GetAudioDeviceName(device)}");
+
+        if (nativeOutput is NativeAudioOutput output)
+            Logger.Verbose($"Output's native format, from the platform: {output.SampleRate} Hz, {output.FramesPerBurst} frames per burst");
 
         SDL_AudioSpec deviceSpec;
         int deviceFrames;
@@ -826,6 +844,45 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     /// Uses the device's own rate where SDL will tell us, so the common case involves no resampling
     /// between our mix and the hardware.
     /// </summary>
+    /// <summary>
+    /// Opens the default playback device at <paramref name="sampleRate"/>, fed by <paramref name="engine"/> when
+    /// there is one and pushed to by the managed mixer otherwise.
+    /// </summary>
+    /// <returns>The stream, or null when SDL couldn't open the device.</returns>
+    private static SDL_AudioStream* openDeviceStream(int sampleRate, SakuraAudioEngine? engine)
+    {
+        var spec = new SDL_AudioSpec
+        {
+            format = SDLAudioConverter.SAMPLE_FORMAT,
+            channels = output_channels,
+            freq = sampleRate
+        };
+
+        if (engine != null)
+        {
+            // The callback is native, and reaching it involves no managed code at all: this is a raw
+            // function pointer straight into libsakura-audio, not a marshalled delegate. A delegate
+            // here would put a managed frame on the real-time thread and hand a GC pause the ability
+            // to underrun the device, which is the entire thing this backend exists to avoid.
+            var callback = (delegate* unmanaged[Cdecl]<IntPtr, SDL_AudioStream*, int, int, void>)SakuraAudioEngine.StreamCallback;
+            return SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, callback, engine.Handle);
+        }
+
+        // No callback: the managed mixer pushes from its own thread, so nothing SDL calls can ever
+        // be waiting on managed code either. It buys that with a much larger queue — see
+        // target_queue_ms.
+        return SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, null, IntPtr.Zero);
+    }
+
+    /// <returns>The rate the device behind <paramref name="stream"/> runs at, or 0 if SDL won't say.</returns>
+    private static int openedDeviceRate(SDL_AudioStream* stream)
+    {
+        SDL_AudioSpec deviceSpec;
+        int deviceFrames;
+
+        return SDL_GetAudioDeviceFormat(SDL_GetAudioStreamDevice(stream), &deviceSpec, &deviceFrames) ? deviceSpec.freq : 0;
+    }
+
     private static int queryDeviceSampleRate()
     {
         SDL_AudioSpec deviceSpec;

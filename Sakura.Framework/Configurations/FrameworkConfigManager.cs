@@ -14,22 +14,30 @@ public class FrameworkConfigManager : ConfigManager<FrameworkSetting>
 {
     /// <param name="storage">Where <c>framework.ini</c> is kept.</param>
     /// <param name="appType">Picks the defaults that differ between a game and an application.</param>
-    public FrameworkConfigManager(Storage storage, AppType appType = AppType.Game) : base(storage)
+    public FrameworkConfigManager(Storage storage, AppType appType = AppType.Game)
+        : this(storage, FramePacing.Current(appType))
     {
-        initializeDefaults(appType);
     }
 
-    private void initializeDefaults(AppType appType)
+    /// <param name="storage">Where <c>framework.ini</c> is kept.</param>
+    /// <param name="pacing">Picks the defaults that differ between a game and an application, and on a phone.</param>
+    internal FrameworkConfigManager(Storage storage, FramePacing pacing) : base(storage)
     {
-        // An application gains nothing from frames the display cannot show.
-        Get(FrameworkSetting.FrameLimiter, appType == AppType.Game ? FrameSync.Limit2x : FrameSync.VSync);
+        initializeDefaults(pacing);
+    }
+
+    private void initializeDefaults(FramePacing pacing)
+    {
+        Get(FrameworkSetting.FrameLimiter, pacing.DefaultFrameLimiter);
         Get(FrameworkSetting.ShowFpsGraph, PerformanceOverlayState.Hidden);
         Get(FrameworkSetting.ExecutionMode, ExecutionMode.MultiThread);
         Get(FrameworkSetting.MasterVolume, 1.0);
         Get(FrameworkSetting.TrackVolume, 1.0);
         Get(FrameworkSetting.SampleVolume, 1.0);
         Get(FrameworkSetting.AudioBackend, AudioBackend.Automatic);
-        Get(FrameworkSetting.AudioDeviceBufferFrames, SDLAudioManager.DEFAULT_DEVICE_BUFFER_FRAMES);
+        // A phone's output takes audio in bursts of its own size (0 asks for that); a buffer that doesn't line up
+        // with them keeps the stream off the low-latency path.
+        Get(FrameworkSetting.AudioDeviceBufferFrames, pacing.Mobile ? 0 : SDLAudioManager.DEFAULT_DEVICE_BUFFER_FRAMES);
         Get(FrameworkSetting.WindowMode, WindowMode.Windowed);
         Get(FrameworkSetting.HardwareAcceleration, true);
         Get(FrameworkSetting.VideoZeroCopy, true);

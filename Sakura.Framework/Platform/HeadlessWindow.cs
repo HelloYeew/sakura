@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Threading;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
@@ -55,6 +56,9 @@ public class HeadlessWindow : IWindow
     {
         Update?.Invoke();
     }
+
+    // No events ever arrive here.
+    public void WaitForEvents(double timeoutMilliseconds) => Thread.Sleep(TimeSpan.FromMilliseconds(Math.Max(0, timeoutMilliseconds)));
 
     public void SwapBuffers()
     {

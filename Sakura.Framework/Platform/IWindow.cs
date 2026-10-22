@@ -164,6 +164,12 @@ public interface IWindow : IDisposable
 
     void PollEvents();
 
+    /// <summary>
+    /// Sleeps until an event is waiting for <see cref="PollEvents"/>, or <paramref name="timeoutMilliseconds"/> has
+    /// passed. Takes no event out of the queue. Called on the thread that calls <see cref="PollEvents"/>.
+    /// </summary>
+    void WaitForEvents(double timeoutMilliseconds);
+
     void SwapBuffers();
 
     void SetVSync(bool enabled);

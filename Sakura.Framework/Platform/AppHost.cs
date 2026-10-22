@@ -266,6 +266,13 @@ public abstract class AppHost : IDisposable
     /// </summary>
     public virtual bool IsHeadless => false;
 
+    /// <summary>
+    /// The audio output's native format, where the platform knows it before a device is opened, or null to ask
+    /// SDL. On Android SDL only reports a placeholder until a stream is open, so the audio device would open at a
+    /// rate the output then has to resample from.
+    /// </summary>
+    public virtual NativeAudioOutput? NativeAudioOutput => null;
+
     [NotNull]
     public HostOptions Options { get; private set; }
 
@@ -792,7 +799,14 @@ public abstract class AppHost : IDisposable
                         threadRunner.RunSingleThreadedFrame(mainBudgetMs, deadlineMs);
                     }
 
-                    if (currentHz > 0)
+                    if (currentHz > 0 && Window != null && ExecutionMode.Value == Threading.ExecutionMode.MultiThread && pacing.InputWaitsForEvents)
+                    {
+                        // Woken by the next event, or after a frame to act on what other threads asked of this
+                        // one (text input, cursor changes, scheduled actions).
+                        Window.WaitForEvents(mainBudgetMs);
+                        nextMainFrameTime = Stopwatch.GetTimestamp();
+                    }
+                    else if (currentHz > 0)
                     {
                         long targetMainTicks = (long)(mainBudgetMs / ms_per_tick);
 
@@ -1261,22 +1275,14 @@ public abstract class AppHost : IDisposable
 
     private bool allowSpinning => Options.AppType == AppType.Game && Options.AllowThreadSpinning;
 
+    private FramePacing pacing => FramePacing.Current(Options.AppType);
+
     private double getDisplayHz() => Window?.DisplayHz > 0 ? Window.DisplayHz : 60;
 
-    private double getInputTargetHz() => getPollingTargetHz();
-    private double getAudioTargetHz() => getPollingTargetHz();
+    private bool windowInactive => Window != null && !Window.IsActive;
 
-    /// <summary>
-    /// The rate input is polled and audio state advanced at. An application polls no faster than it can show
-    /// the result: input events carry their own timestamps, and nobody hears a click sound start a frame late.
-    /// </summary>
-    private double getPollingTargetHz()
-    {
-        if (Window != null && !Window.IsActive)
-            return 60;
-
-        return Options.AppType == AppType.Game ? 1000 : getDisplayHz();
-    }
+    private double getInputTargetHz() => windowInactive ? 60 : pacing.InputHz(getDisplayHz());
+    private double getAudioTargetHz() => windowInactive ? 60 : pacing.AudioHz(getDisplayHz(), AudioManager?.PlaybackWaitsForUpdate ?? true);
 
     private double getDrawTargetHz()
     {
@@ -1303,22 +1309,7 @@ public abstract class AppHost : IDisposable
         }
     }
 
-    private double getUpdateTargetHz()
-    {
-        double drawHz = getDrawTargetHz();
-
-        if (drawHz == 0)
-            return Options.LimitUnlimitedUpdateRate ? 1000 : 0;
-
-        if (Window != null && !Window.IsActive)
-            return 60;
-
-        // A game updates between drawn frames for input and physics precision. An application's updates
-        // only matter once they are drawn.
-        double updateHz = Options.AppType == AppType.Game ? drawHz * 2 : drawHz;
-
-        return Options.LimitUnlimitedUpdateRate ? Math.Min(updateHz, 1000) : updateHz;
-    }
+    private double getUpdateTargetHz() => windowInactive ? 60 : pacing.UpdateHz(getDrawTargetHz(), Options.LimitUnlimitedUpdateRate);
 
     private void unhandledExceptionHandler(object sender, UnhandledExceptionEventArgs args)
     {

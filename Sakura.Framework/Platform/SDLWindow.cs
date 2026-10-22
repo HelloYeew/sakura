@@ -1564,6 +1564,13 @@ public class SDLWindow : IWindow
     /// <summary>
     /// Process all pending window events.
     /// </summary>
+    public unsafe void WaitForEvents(double timeoutMilliseconds)
+    {
+        // Rounded up, as SDL waits whole milliseconds: rounded down, a wait of under one would return at once.
+        int timeout = (int)Math.Ceiling(Math.Max(0, timeoutMilliseconds));
+        SDL_WaitEventTimeout(null, timeout);
+    }
+
     public unsafe void PollEvents()
     {
         // Apply relative mouse mode switches on the main thread (SDL window calls are not thread-safe).

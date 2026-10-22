@@ -41,7 +41,11 @@ public class HostOptions
     /// window is inactive regardless of this setting, and the audio thread and multi-threaded input
     /// loop never spin. Only applies to <see cref="Platform.AppType.Game"/>.
     /// </summary>
-    public bool AllowThreadSpinning { get; set; } = true;
+    /// <remarks>
+    /// Off by default on phones and tablets, where a spinning core costs battery and heat, and a hot phone
+    /// slows its clocks down and misses more frames than spinning saved.
+    /// </remarks>
+    public bool AllowThreadSpinning { get; set; } = !RuntimeInfo.IsMobile;
 
     /// <summary>
     /// Windows only. Whether to register the update and draw threads with the Multimedia Class

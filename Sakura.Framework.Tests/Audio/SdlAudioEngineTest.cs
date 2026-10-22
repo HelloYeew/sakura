@@ -238,6 +238,45 @@ public class SdlAudioEngineTest
     }
 
     /// <summary>
+    /// A platform that knows its output's format (a phone: 48 kHz, in bursts of its own size) has the device asked
+    /// for that rate, and a buffer of 0 asks for one burst. The mix then runs at whatever rate the device opened
+    /// at, or the audio would be resampled twice on its way out.
+    /// </summary>
+    /// <remarks>
+    /// Not the requested rate itself: SDL 3.5.0 (ea7a2da) opens a device at its default spec whatever it's asked,
+    /// fixed upstream in ab5541ec5. The dummy driver's default is 44.1 kHz, so until then this opens there.
+    /// </remarks>
+    [Test]
+    public void Manager_MixesAtTheDevicesRateAndAsksForOneBurst()
+    {
+        if (!SakuraAudioEngine.IsAvailable)
+            Assert.Ignore("libsakura-audio is not available for this platform, so the native mix engine cannot be tested here.");
+
+        using var manager = new SDLAudioManager(useNativeMixEngine: true, requestedDeviceBufferFrames: 0,
+            nativeOutput: new NativeAudioOutput(48000, 192));
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(manager.DeviceSampleRate, Is.GreaterThan(0));
+            Assert.That(manager.SampleRate, Is.EqualTo(manager.DeviceSampleRate), "the mix and the device run at different rates");
+            Assert.That(manager.DeviceBufferFrames, Is.EqualTo(192));
+        }
+    }
+
+    /// <summary>
+    /// The native engine's channels call into it directly, so nothing waits for the audio thread; the managed
+    /// mixer's queue their changes for it.
+    /// </summary>
+    [TestCase(true)]
+    [TestCase(false)]
+    public void Manager_PlaybackWaitsForUpdateOnlyOnTheManagedMixer(bool native)
+    {
+        using var manager = createManager(native);
+
+        Assert.That(manager.PlaybackWaitsForUpdate, Is.EqualTo(!native));
+    }
+
+    /// <summary>
     /// A nonsense buffer size is clamped rather than passed to a driver.
     /// </summary>
     [TestCase(1)]

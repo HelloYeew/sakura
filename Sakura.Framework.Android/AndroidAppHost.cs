@@ -4,9 +4,11 @@
 using System;
 using System.Collections.Generic;
 using Android.Content;
+using Sakura.Framework.Audio;
 using Sakura.Framework.Extensions;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
+using AndroidAudioManager = Android.Media.AudioManager;
 using Uri = Android.Net.Uri;
 
 namespace Sakura.Framework.Android;
@@ -38,6 +40,24 @@ public class AndroidAppHost : SDLAppHost
     public override Storage GetStorage(string path) => new NativeStorage(path, this);
 
     protected override IWindow CreateWindow() => new AndroidWindow(activity);
+
+    // What the speaker or headphones run at, which a stream needs to match for the low-latency path: usually
+    // 48 kHz, in bursts of 96 to 240 frames. SDL only knows a placeholder (44.1 kHz) until a stream is open.
+    public override NativeAudioOutput? NativeAudioOutput
+    {
+        get
+        {
+            var audio = activity.GetSystemService(Context.AudioService) as AndroidAudioManager;
+
+            if (!int.TryParse(audio?.GetProperty(AndroidAudioManager.PropertyOutputSampleRate), out int sampleRate) || sampleRate <= 0)
+                return null;
+
+            if (!int.TryParse(audio.GetProperty(AndroidAudioManager.PropertyOutputFramesPerBuffer), out int framesPerBurst))
+                framesPerBurst = 0;
+
+            return new NativeAudioOutput(sampleRate, Math.Max(framesPerBurst, 0));
+        }
+    }
 
     // Another app can only open one of ours through a content URI handed out by a FileProvider, which isn't set up yet.
     public override bool OpenFileExternally(string filename) => false;

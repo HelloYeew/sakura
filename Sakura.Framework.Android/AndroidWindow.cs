@@ -30,7 +30,16 @@ internal class AndroidWindow : SDLWindow
         // Back comes to the app as a key (Key.SystemBack) rather than straight to the system, so the app can
         // close a menu or pause first. The host hands an unhandled one back to the system.
         SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");
-    }
+
+        // The input loop sleeps in SDL_WaitEventTimeout, which on Android pumps events, moving the poll sentinel to
+        // the end of the queue, and then waits on a semaphore that every queued event signals, the sentinel too.
+        // So it woke itself at once, forever: a whole core spun. Without the sentinel, a poll drains the queue
+        // instead of stopping after one pass, which costs nothing at the rate a phone's events come in.
+        SDL_SetHint(SDL_HINT_POLL_SENTINEL, "0");
+
+        // AAudio's low-latency mode, the path a burst-sized buffer at the output's rate is for. SDL's default
+        // today; set so a change of default can't quietly take it away.
+        SDL_SetHint(SDL_HINT_ANDROID_LOW_LATENCY_AUDIO, "1");    }
 
     protected override bool RetargetScreenKeyboard(TextInputType type, SDL_Rect area, bool typeChanged)
     {

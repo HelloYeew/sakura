@@ -308,7 +308,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
                     var deviceBufferFrames = Host.FrameworkConfigManager.Get<int>(FrameworkSetting.AudioDeviceBufferFrames);
 
                     return new SDLAudioManager(backend != AudioBackend.SDLManaged, deviceBufferFrames.Value,
-                        next => deviceBufferFrames.Value = next);
+                        next => deviceBufferFrames.Value = next, Host.NativeAudioOutput);
                 }
                 catch (Exception e)
                 {

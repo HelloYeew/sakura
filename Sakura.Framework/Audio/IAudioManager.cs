@@ -48,6 +48,16 @@ public interface IAudioManager
     double OutputLatencyMs => 0;
 
     /// <summary>
+    /// Whether playing, stopping or seeking a channel only takes effect at the next <see cref="Update"/>, so how often
+    /// that runs adds to how late a sound starts.
+    /// </summary>
+    /// <remarks>
+    /// True unless a backend says otherwise: one that hands those straight to its mixer only raises end-of-sound
+    /// events and tidies up in <see cref="Update"/>, which can run far less often.
+    /// </remarks>
+    bool PlaybackWaitsForUpdate => true;
+
+    /// <summary>
     /// Loads a track from a <see cref="Stream"/>
     /// </summary>
     /// <param name="stream">The stream to load from</param>
