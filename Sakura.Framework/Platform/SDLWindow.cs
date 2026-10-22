@@ -4,6 +4,7 @@
 #nullable disable
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
@@ -564,10 +565,7 @@ public class SDLWindow : IWindow
 
         int version = SDL_GetVersion();
 
-        // Anchor SDL's event timestamp timeline (SDL_GetTicksNS, ns since SDL init) onto the
-        // framework's shared TimeSource timeline so input event timestamps are directly
-        // comparable with every framework clock.
-        sdlTimestampOffset = TimeSource.CurrentTime - SDL_GetTicksNS() / 1_000_000.0;
+        anchorEventTimestamps();
 
         Logger.Verbose("🪟 SDL initialized");
 
@@ -580,6 +578,7 @@ public class SDLWindow : IWindow
 
         CursorState.ValueChanged += _ => pendingCursorChange = true;
 
+        eventThreadId = Environment.CurrentManagedThreadId;
         initialized = true;
     }
 
@@ -1464,6 +1463,25 @@ public class SDLWindow : IWindow
     /// </summary>
     private double convertEventTimestamp(ulong timestampNs) => timestampNs / 1_000_000.0 + sdlTimestampOffset;
 
+    // How often SDL's event clock is anchored onto the framework's again.
+    private const double timestamp_anchor_interval_ms = 1000;
+
+    private double lastTimestampAnchor;
+
+    /// <summary>
+    /// Anchors SDL's event timestamps (SDL_GetTicksNS, ns since SDL init) onto the framework's shared
+    /// <see cref="TimeSource"/> timeline, so input times compare directly with every framework clock. Again each second:
+    /// SDL's clock can be another than .NET's (CLOCK_MONOTONIC_RAW against CLOCK_MONOTONIC on Linux and Android, which
+    /// the system slews), so anchored once, input times would drift from the music over a long session.
+    /// </summary>
+    private void anchorEventTimestamps()
+    {
+        double now = TimeSource.CurrentTime;
+
+        sdlTimestampOffset = now - SDL_GetTicksNS() / 1_000_000.0;
+        lastTimestampAnchor = now;
+    }
+
     private void handleMouseMotionEvent(SDL_MouseMotionEvent motionEvent)
     {
         Vector2 delta;
@@ -1630,16 +1648,78 @@ public class SDLWindow : IWindow
         OnTextEditing.Invoke(new TextEditingEvent(text ?? string.Empty, editEvent.start, editEvent.length));
     }
 
+    // The thread SDL was set up on, which its clipboard and cursor calls belong to.
+    private int eventThreadId;
+
+    // Clipboard work asked for from other threads, done in PollEvents.
+    private readonly ConcurrentQueue<ClipboardRead> clipboardReads = new ConcurrentQueue<ClipboardRead>();
+    private volatile string? pendingClipboardText;
+
+    /// <summary>
+    /// How long a paste from another thread waits for the event thread to read the clipboard.
+    /// </summary>
+    private static readonly TimeSpan clipboard_read_timeout = TimeSpan.FromSeconds(1);
+
+    /// <remarks>
+    /// Read on the event thread, as SDL needs, and only when asked for: Android tells the player each time an app reads
+    /// the clipboard, so it isn't read ahead. From another thread this waits for the event thread, which is woken for it.
+    /// </remarks>
     public string GetClipboardText()
     {
-        if (!SDL_HasClipboardText()) return string.Empty;
+        if (!initialized || Environment.CurrentManagedThreadId == eventThreadId)
+            return readClipboard();
 
-        return SDL_GetClipboardText() ?? string.Empty;
+        var read = new ClipboardRead();
+        clipboardReads.Enqueue(read);
+        wakeEventThread();
+
+        return read.Done.Wait(clipboard_read_timeout) ? read.Text : string.Empty;
     }
 
+    /// <remarks>
+    /// Set on the event thread, as SDL needs: from another thread, it's set there next.
+    /// </remarks>
     public void SetClipboardText(string text)
     {
-        SDL_SetClipboardText(text);
+        if (!initialized || Environment.CurrentManagedThreadId == eventThreadId)
+        {
+            SDL_SetClipboardText(text);
+            return;
+        }
+
+        pendingClipboardText = text;
+        wakeEventThread();
+    }
+
+    private static string readClipboard() => SDL_HasClipboardText() ? SDL_GetClipboardText() ?? string.Empty : string.Empty;
+
+    private void applyClipboardWork()
+    {
+        if (pendingClipboardText is string text)
+        {
+            pendingClipboardText = null;
+            SDL_SetClipboardText(text);
+        }
+
+        while (clipboardReads.TryDequeue(out var read))
+        {
+            read.Text = readClipboard();
+            read.Done.Set();
+        }
+    }
+
+    // An event nothing handles, to bring the event thread out of a wait for events.
+    private static unsafe void wakeEventThread()
+    {
+        var e = new SDL_Event();
+        e.type = (uint)SDL_EventType.SDL_EVENT_USER;
+        SDL_PushEvent(&e);
+    }
+
+    private sealed class ClipboardRead
+    {
+        public readonly ManualResetEventSlim Done = new ManualResetEventSlim();
+        public string Text = string.Empty;
     }
 
     public unsafe void ShowOpenFileDialog(FileDialogOptions options, Action<FileDialogResult> callback)
@@ -1733,12 +1813,22 @@ public class SDLWindow : IWindow
             applyRelativeMouseMode();
         }
 
-        // Same reason: the cursor shape is chosen while dispatching hover, on the update thread.
+        // Same reason: the cursor shape is chosen while dispatching hover, on the update thread, and its visibility there too.
         if (pendingCursorChange)
         {
             pendingCursorChange = false;
             updateSdlCursor();
+
+            if (cursorVisible)
+                SDL_ShowCursor();
+            else
+                SDL_HideCursor();
         }
+
+        applyClipboardWork();
+
+        if (TimeSource.CurrentTime - lastTimestampAnchor >= timestamp_anchor_interval_ms)
+            anchorEventTimestamps();
 
         bool? targetState;
         TextInputType targetType;
@@ -1963,14 +2053,13 @@ public class SDLWindow : IWindow
         get => cursorVisible;
         set
         {
+            if (cursorVisible == value)
+                return;
+
             cursorVisible = value;
-            if (initialized)
-            {
-                if (value)
-                    SDL_ShowCursor();
-                else
-                    SDL_HideCursor();
-            }
+
+            // Set where the cursor's shape is, on the event thread; this is set from the update thread.
+            pendingCursorChange = true;
         }
     }
 
