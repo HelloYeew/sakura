@@ -28,5 +28,6 @@ public enum FrameworkSetting
     CursorSensitivity,
     AudioDeviceBufferFrames,
     SafeAreaPreview,
-    ShowLogOverlay
+    ShowLogOverlay,
+    AudioDevice
 }

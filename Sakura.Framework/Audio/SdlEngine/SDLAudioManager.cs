@@ -95,6 +95,33 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     public Reactive<double> TrackVolume { get; } = new Reactive<double>(1.0);
     public Reactive<double> SampleVolume { get; } = new Reactive<double>(1.0);
 
+    public IReadOnlyList<string> OutputDevices => outputDevices;
+
+    public event Action? OutputDevicesChanged;
+
+    public Reactive<string> OutputDevice { get; } = new Reactive<string>(string.Empty);
+
+    /// <summary>
+    /// The name of the device the stream plays on, or empty when it's the system's default.
+    /// </summary>
+    internal string PlayingOn => boundTarget == SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK ? string.Empty : deviceName(boundTarget);
+
+    // The device the player picked, by name, or empty for the system's default; read and written on the audio thread.
+    // OutputDevice is what the player set, and stays so while the device is unplugged; this follows it there.
+    private string preferredDevice = string.Empty;
+
+    // What the stream plays on: SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, which follows the system's default, or a physical
+    // device. And the logical device opened on it, which the stream is bound to.
+    private SDL_AudioDeviceID boundTarget;
+    private SDL_AudioDeviceID logicalDevice;
+
+    // The playback devices SDL lists, as names for OutputDevices and as the IDs they were listed under. Read by the
+    // update thread, so replaced whole rather than changed.
+    private volatile string[] outputDevices = Array.Empty<string>();
+    private SDL_AudioDeviceID[] outputDeviceIds = Array.Empty<SDL_AudioDeviceID>();
+
+    private GlobalStatistic<string>? statDevice;
+
     private readonly ISDLMixer trackMixer;
     private readonly ISDLMixer sampleMixer;
 
@@ -149,7 +176,9 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
     private readonly AudioDecodeScheduler decodeScheduler = new AudioDecodeScheduler();
 
-    private readonly SDL_AudioStream* deviceStream;
+    // Made once and kept for the life of the manager: playing on another device binds it to that device instead of
+    // making a new one, so the mix thread and the native engine's callback never see it change.
+    private SDL_AudioStream* deviceStream;
 
     /// <summary>
     /// The push-model mix thread, or null when the native engine owns the device callback.
@@ -296,9 +325,13 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     /// The output's native format where the platform knows it (<see cref="AppHost.NativeAudioOutput"/>), so the
     /// device opens at the rate the output runs at. Null asks SDL.
     /// </param>
+    /// <param name="outputDevice">
+    /// The device to play on, by name, or empty for the system's default: the starting <see cref="OutputDevice"/>, so
+    /// the device the player picked is the first one opened rather than the second.
+    /// </param>
     /// <exception cref="InvalidOperationException">SDL audio could not be started.</exception>
     public SDLAudioManager(bool useNativeMixEngine = true, int requestedDeviceBufferFrames = DEFAULT_DEVICE_BUFFER_FRAMES,
-                           Action<int>? persistDeviceBufferFrames = null, NativeAudioOutput? nativeOutput = null)
+                           Action<int>? persistDeviceBufferFrames = null, NativeAudioOutput? nativeOutput = null, string outputDevice = "")
     {
         if (requestedDeviceBufferFrames <= 0 && nativeOutput?.FramesPerBurst > 0)
             requestedDeviceBufferFrames = nativeOutput.Value.FramesPerBurst;
@@ -315,22 +348,33 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
         ownsAudioSubsystem = true;
 
-        SampleRate = nativeOutput?.SampleRate > 0 ? nativeOutput.Value.SampleRate : queryDeviceSampleRate();
+        preferredDevice = outputDevice;
+        OutputDevice.Value = outputDevice;
+        refreshOutputDevices();
+
+        var target = resolvePreferredDevice();
+
+        SampleRate = nativeOutput?.SampleRate > 0 ? nativeOutput.Value.SampleRate : queryDeviceSampleRate(target);
 
         if (useNativeMixEngine)
             nativeEngine = tryCreateNativeEngine();
 
         applyDeviceBufferHint(requestedDeviceBufferFrames);
 
-        deviceStream = openDeviceStream(SampleRate, nativeEngine);
+        deviceStream = createDeviceStream(SampleRate, nativeEngine);
+
+        // A device the player picked that won't open falls back to the default, rather than to no audio at all.
+        bool bound = deviceStream != null && (bindTo(target, start: false) || (target != SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK && bindTo(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, start: false)));
 
         // SDL can open the device at another rate than asked: Android's SDL 3.5.0 opens every device at its 44.1 kHz
         // placeholder. Mixing at any other rate than the device's would then be resampled twice on its way out, by
         // SDL and again by the platform, so the mix follows the device. Once only, as the device's rate is now known.
-        if (deviceStream != null && openedDeviceRate(deviceStream) is var deviceRate && deviceRate > 0 && deviceRate != SampleRate)
+        if (bound && boundDeviceRate() is var deviceRate && deviceRate > 0 && deviceRate != SampleRate)
         {
             Logger.Verbose($"The audio device opened at {deviceRate} Hz rather than the {SampleRate} Hz asked for, so the mix runs at {deviceRate} Hz.");
 
+            var reopen = boundTarget;
+            unbind();
             SDL_DestroyAudioStream(deviceStream);
             SampleRate = deviceRate;
 
@@ -341,15 +385,25 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
                 nativeEngine = tryCreateNativeEngine();
             }
 
-            deviceStream = openDeviceStream(SampleRate, nativeEngine);
+            deviceStream = createDeviceStream(SampleRate, nativeEngine);
+            bound = deviceStream != null && bindTo(reopen, start: false);
         }
 
-        if (deviceStream == null)
+        if (!bound)
         {
+            if (deviceStream != null)
+                SDL_DestroyAudioStream(deviceStream);
+
             nativeEngine?.Dispose();
             SDL_QuitSubSystem(SDL_InitFlags.SDL_INIT_AUDIO);
             throw new InvalidOperationException($"Failed to open an SDL audio device: {SDL_GetError()}");
         }
+
+        OutputDevice.ValueChanged += e => EnqueueAction(() =>
+        {
+            preferredDevice = e.NewValue;
+            followPreferredDevice();
+        });
 
         if (nativeEngine != null)
         {
@@ -638,6 +692,14 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
         sinceDeviceCheckMs = 0;
 
+        // A device plugged in or out: the list changes, and the stream moves if the device it plays on went, or the
+        // one the player picked came back.
+        if (refreshOutputDevices())
+        {
+            RaiseEvent(() => OutputDevicesChanged?.Invoke());
+            followPreferredDevice();
+        }
+
         var device = SDL_GetAudioStreamDevice(deviceStream);
 
         if (device == 0)
@@ -683,6 +745,91 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
                            + "resampling the output a second time. Restart to mix at the device's rate.");
         }
     }
+
+    /// <summary>
+    /// Reads the playback devices SDL lists.
+    /// </summary>
+    /// <returns>Whether they changed since the last read.</returns>
+    private bool refreshOutputDevices()
+    {
+        int count;
+        var ids = SDL_GetAudioPlaybackDevices(&count);
+
+        if (ids == null)
+            return false;
+
+        var listedIds = new SDL_AudioDeviceID[count];
+        var names = new string[count];
+
+        try
+        {
+            for (int i = 0; i < count; i++)
+            {
+                listedIds[i] = ids[i];
+                names[i] = deviceName(ids[i]);
+            }
+        }
+        finally
+        {
+            SDL_free(ids);
+        }
+
+        // By ID too: a device plugged back in comes back under the same name and a new ID.
+        if (listedIds.AsSpan().SequenceEqual(outputDeviceIds) && names.AsSpan().SequenceEqual(outputDevices))
+            return false;
+
+        outputDeviceIds = listedIds;
+        outputDevices = names;
+        return true;
+    }
+
+    /// <summary>
+    /// The device to play on: the one the player picked where it's plugged in, and the system's default otherwise.
+    /// Two devices with one name are told apart by nothing a player could pick by, so the first listed is taken.
+    /// </summary>
+    private SDL_AudioDeviceID resolvePreferredDevice()
+    {
+        if (string.IsNullOrEmpty(preferredDevice))
+            return SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK;
+
+        int index = Array.IndexOf(outputDevices, preferredDevice);
+        return index >= 0 ? outputDeviceIds[index] : SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK;
+    }
+
+    /// <summary>
+    /// Moves the stream onto the device the player picked, or onto the default while that isn't there. Voices carry
+    /// on where they were, and what's queued plays out on the new device.
+    /// </summary>
+    private void followPreferredDevice()
+    {
+        var target = resolvePreferredDevice();
+
+        if (target == boundTarget && logicalDevice != 0)
+            return;
+
+        unbind();
+
+        if (!bindTo(target, start: true) && (target == SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK || !bindTo(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, start: true)))
+        {
+            Logger.Error("No audio device would open. Audio has stopped until one is plugged in.");
+            return;
+        }
+
+        // Read again for the new device by the next check, which logs it.
+        lastSeenDeviceRate = 0;
+        lastSeenDeviceBufferFrames = 0;
+        sinceDeviceCheckMs = device_check_interval_ms;
+
+        Logger.Verbose(string.IsNullOrEmpty(preferredDevice) || boundTarget != SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK
+            ? $"Playing on {describeBoundDevice()}"
+            : $"Playing on {describeBoundDevice()} until {preferredDevice} is plugged in");
+    }
+
+    private string describeBoundDevice() => boundTarget == SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK
+        ? $"the system's default output ({deviceName(logicalDevice)})"
+        : deviceName(boundTarget);
+
+    private static string deviceName(SDL_AudioDeviceID device) => SDL_GetAudioDeviceName(device) ?? string.Empty;
 
     /// <summary>
     /// Brings up the native mix engine, or returns null to fall back to managed mixing.
@@ -845,50 +992,106 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     /// between our mix and the hardware.
     /// </summary>
     /// <summary>
-    /// Opens the default playback device at <paramref name="sampleRate"/>, fed by <paramref name="engine"/> when
-    /// there is one and pushed to by the managed mixer otherwise.
+    /// Makes the stream the mix reaches the device through, at <paramref name="sampleRate"/>: fed by
+    /// <paramref name="engine"/> when there is one and pushed to by the managed mixer otherwise. It plays nothing until
+    /// <see cref="bindTo"/> puts it on a device.
     /// </summary>
-    /// <returns>The stream, or null when SDL couldn't open the device.</returns>
-    private static SDL_AudioStream* openDeviceStream(int sampleRate, SakuraAudioEngine? engine)
+    /// <returns>The stream, or null when SDL couldn't make one.</returns>
+    private static SDL_AudioStream* createDeviceStream(int sampleRate, SakuraAudioEngine? engine)
     {
-        var spec = new SDL_AudioSpec
-        {
-            format = SDLAudioConverter.SAMPLE_FORMAT,
-            channels = output_channels,
-            freq = sampleRate
-        };
+        var spec = mixSpec(sampleRate);
+        var stream = SDL_CreateAudioStream(&spec, null);
 
-        if (engine != null)
+        if (stream == null || engine == null)
         {
-            // The callback is native, and reaching it involves no managed code at all: this is a raw
-            // function pointer straight into libsakura-audio, not a marshalled delegate. A delegate
-            // here would put a managed frame on the real-time thread and hand a GC pause the ability
-            // to underrun the device, which is the entire thing this backend exists to avoid.
-            var callback = (delegate* unmanaged[Cdecl]<IntPtr, SDL_AudioStream*, int, int, void>)SakuraAudioEngine.StreamCallback;
-            return SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, callback, engine.Handle);
+            // No callback for the managed mixer: it pushes from its own thread, so nothing SDL calls can ever be
+            // waiting on managed code either. It buys that with a much larger queue — see target_queue_ms.
+            return stream;
         }
 
-        // No callback: the managed mixer pushes from its own thread, so nothing SDL calls can ever
-        // be waiting on managed code either. It buys that with a much larger queue — see
-        // target_queue_ms.
-        return SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, null, IntPtr.Zero);
+        // The callback is native, and reaching it involves no managed code at all: this is a raw function pointer
+        // straight into libsakura-audio, not a marshalled delegate. A delegate here would put a managed frame on the
+        // real-time thread and hand a GC pause the ability to underrun the device, which is the entire thing this
+        // backend exists to avoid.
+        var callback = (delegate* unmanaged[Cdecl]<IntPtr, SDL_AudioStream*, int, int, void>)SakuraAudioEngine.StreamCallback;
+
+        if (!SDL_SetAudioStreamGetCallback(stream, callback, engine.Handle))
+        {
+            SDL_DestroyAudioStream(stream);
+            return null;
+        }
+
+        return stream;
     }
 
-    /// <returns>The rate the device behind <paramref name="stream"/> runs at, or 0 if SDL won't say.</returns>
-    private static int openedDeviceRate(SDL_AudioStream* stream)
+    private static SDL_AudioSpec mixSpec(int sampleRate) => new SDL_AudioSpec
+    {
+        format = SDLAudioConverter.SAMPLE_FORMAT,
+        channels = output_channels,
+        freq = sampleRate
+    };
+
+    /// <summary>
+    /// Opens <paramref name="target"/> (the system's default, or a device the player picked) and plays the stream on it.
+    /// </summary>
+    /// <param name="target">The device to open.</param>
+    /// <param name="start">Whether it starts playing at once, or waits for the manager to finish starting up.</param>
+    /// <returns>Whether it opened.</returns>
+    private bool bindTo(SDL_AudioDeviceID target, bool start)
+    {
+        var spec = mixSpec(SampleRate);
+        var device = SDL_OpenAudioDevice(target, &spec);
+
+        if (device == 0)
+        {
+            Logger.Error($"Could not open the audio device {deviceName(target)}: {SDL_GetError()}");
+            return false;
+        }
+
+        // A device opened this way plays straight away, so it's held until the manager is ready for it.
+        if (!start)
+            SDL_PauseAudioDevice(device);
+
+        if (!SDL_BindAudioStream(device, deviceStream))
+        {
+            Logger.Error($"Could not play on the audio device {deviceName(target)}: {SDL_GetError()}");
+            SDL_CloseAudioDevice(device);
+            return false;
+        }
+
+        logicalDevice = device;
+        boundTarget = target;
+        return true;
+    }
+
+    /// <summary>
+    /// Takes the stream off its device and closes it. What's queued in the stream stays there for the next device.
+    /// </summary>
+    private void unbind()
+    {
+        if (logicalDevice == 0)
+            return;
+
+        SDL_UnbindAudioStream(deviceStream);
+        SDL_CloseAudioDevice(logicalDevice);
+        logicalDevice = 0;
+    }
+
+    /// <returns>The rate the device the stream plays on runs at, or 0 if SDL won't say.</returns>
+    private int boundDeviceRate()
     {
         SDL_AudioSpec deviceSpec;
         int deviceFrames;
 
-        return SDL_GetAudioDeviceFormat(SDL_GetAudioStreamDevice(stream), &deviceSpec, &deviceFrames) ? deviceSpec.freq : 0;
+        return SDL_GetAudioDeviceFormat(logicalDevice, &deviceSpec, &deviceFrames) ? deviceSpec.freq : 0;
     }
 
-    private static int queryDeviceSampleRate()
+    private static int queryDeviceSampleRate(SDL_AudioDeviceID device)
     {
         SDL_AudioSpec deviceSpec;
         int deviceFrames;
 
-        if (SDL_GetAudioDeviceFormat(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &deviceSpec, &deviceFrames) && deviceSpec.freq > 0)
+        if (SDL_GetAudioDeviceFormat(device, &deviceSpec, &deviceFrames) && deviceSpec.freq > 0)
             return deviceSpec.freq;
 
         Logger.Verbose($"Could not query the audio device format ({SDL_GetError()}); defaulting to {fallback_sample_rate}Hz.");
@@ -1170,6 +1373,7 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         // loop should see this frame's figure rather than the last one's.
         sampleOutputLatency(frameTime);
         checkForDeviceChange(frameTime);
+        (statDevice ??= GlobalStatistics.Get<string>("Audio", "SDL Device")).Value = describeBoundDevice();
 
         if (nativeEngine != null)
         {
@@ -1265,6 +1469,8 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         Update(0);
 
         decodeScheduler.Dispose();
+
+        unbind();
 
         if (deviceStream != null)
             SDL_DestroyAudioStream(deviceStream);

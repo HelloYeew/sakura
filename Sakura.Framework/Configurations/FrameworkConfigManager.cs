@@ -52,5 +52,7 @@ public class FrameworkConfigManager : ConfigManager<FrameworkSetting>
         Get(FrameworkSetting.CursorSensitivity, 1.0);
         Get(FrameworkSetting.SafeAreaPreview, SafeAreaPreview.Off);
         Get(FrameworkSetting.ShowLogOverlay, false);
+        // Empty for the system's default output, which follows the system as it changes.
+        Get(FrameworkSetting.AudioDevice, string.Empty);
     }
 }

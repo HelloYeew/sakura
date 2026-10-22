@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using Sakura.Framework.Reactive;
 using Sakura.Framework.Timing;
@@ -27,6 +28,25 @@ public interface IAudioManager
     /// Master volume for sample playbacks that separately from tracks but still affect by <see cref="MasterVolume"/>
     /// </summary>
     Reactive<double> SampleVolume { get; }
+
+    /// <summary>
+    /// The output devices there are to play on, by name, as the system lists them. The system's default output isn't
+    /// among them: it's always there, as the empty name in <see cref="OutputDevice"/>. Changes as devices are plugged
+    /// in and out, raising <see cref="OutputDevicesChanged"/>.
+    /// </summary>
+    IReadOnlyList<string> OutputDevices { get; }
+
+    /// <summary>
+    /// Raised through <see cref="EventScheduler"/> when <see cref="OutputDevices"/> changes.
+    /// </summary>
+    event Action OutputDevicesChanged;
+
+    /// <summary>
+    /// The device to play on, by its name in <see cref="OutputDevices"/>, or empty for the system's default, which
+    /// follows the system as its default changes. A device that isn't there plays on the default until it's plugged
+    /// in again, and then moves back to it.
+    /// </summary>
+    Reactive<string> OutputDevice { get; }
 
     /// <summary>
     /// Get the master mixer for track playbacks. All track playbacks will be routed through this mixer.

@@ -40,6 +40,14 @@ public class FrameworkConfigManagerTest
     }
 
     [Test]
+    public void TestAudioPlaysOnTheSystemDefaultUntilADeviceIsPicked()
+    {
+        var config = new FrameworkConfigManager(null!, AppType.Game);
+
+        Assert.That(config.Get<string>(FrameworkSetting.AudioDevice).Value, Is.Empty);
+    }
+
+    [Test]
     public void TestPhoneAsksForTheOutputsOwnBuffer()
     {
         var phone = new FrameworkConfigManager(null!, new FramePacing(AppType.Game, Mobile: true));

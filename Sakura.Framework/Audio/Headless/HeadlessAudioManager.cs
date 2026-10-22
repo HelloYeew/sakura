@@ -17,6 +17,16 @@ public class HeadlessAudioManager : IAudioManager, IDisposable
     public Reactive<double> TrackVolume { get; } = new Reactive<double>(1.0);
     public Reactive<double> SampleVolume { get; } = new Reactive<double>(1.0);
 
+    // Nothing to play on, so nothing to pick.
+    public IReadOnlyList<string> OutputDevices => Array.Empty<string>();
+    public Reactive<string> OutputDevice { get; } = new Reactive<string>(string.Empty);
+
+    public event Action? OutputDevicesChanged
+    {
+        add { }
+        remove { }
+    }
+
     private readonly List<HeadlessAudioChannel> activeChannels = new List<HeadlessAudioChannel>();
     private readonly ConcurrentQueue<Action> audioThreadActions = new ConcurrentQueue<Action>();
 

@@ -34,6 +34,16 @@ internal class AudioManager : IAudioManager
     public Reactive<double> MasterVolume { get; } = new Reactive<double>(1.0);
     public Reactive<double> TrackVolume { get; } = new Reactive<double>(1.0);
     public Reactive<double> SampleVolume { get; } = new Reactive<double>(1.0);
+
+    // Nothing to play on, so nothing to pick.
+    public IReadOnlyList<string> OutputDevices => Array.Empty<string>();
+    public Reactive<string> OutputDevice { get; } = new Reactive<string>(string.Empty);
+
+    public event Action? OutputDevicesChanged
+    {
+        add { }
+        remove { }
+    }
     public IAudioMixer TrackMixer { get; } = new AudioMixer();
     public IAudioMixer SampleMixer { get; } = new AudioMixer();
 

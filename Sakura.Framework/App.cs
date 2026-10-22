@@ -185,6 +185,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
         AudioManager.MasterVolume.BindTo(masterVolume);
         AudioManager.TrackVolume.BindTo(trackVolume);
         AudioManager.SampleVolume.BindTo(sampleVolume);
+        AudioManager.OutputDevice.BindTo(Host.FrameworkConfigManager.Get<string>(FrameworkSetting.AudioDevice));
 
         Cache(AudioManager);
 
@@ -304,6 +305,9 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
 
         var backend = Host.FrameworkConfigManager.Get<AudioBackend>(FrameworkSetting.AudioBackend).Value;
 
+        // Opened on the device picked from the start, rather than on the default and then moved.
+        string outputDevice = Host.FrameworkConfigManager.Get<string>(FrameworkSetting.AudioDevice).Value;
+
         switch (backend)
         {
             case AudioBackend.Automatic:
@@ -314,7 +318,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
                     var deviceBufferFrames = Host.FrameworkConfigManager.Get<int>(FrameworkSetting.AudioDeviceBufferFrames);
 
                     return new SDLAudioManager(backend != AudioBackend.SDLManaged, deviceBufferFrames.Value,
-                        next => deviceBufferFrames.Value = next, Host.NativeAudioOutput);
+                        next => deviceBufferFrames.Value = next, Host.NativeAudioOutput, outputDevice);
                 }
                 catch (Exception e)
                 {
@@ -324,7 +328,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
                 break;
         }
 
-        return new BassAudioManager();
+        return new BassAudioManager(outputDevice: outputDevice);
     }
 
     protected override void Dispose(bool isDisposing)

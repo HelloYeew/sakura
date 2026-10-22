@@ -470,6 +470,82 @@ public class SdlAudioEngineTest
         Assert.That(ended, Is.True, "Sample never reported reaching its end.");
     }
 
+    [Test]
+    public void Manager_ListsTheOutputDevices()
+    {
+        using var manager = createManager(native: false);
+
+        Assert.That(manager.OutputDevices, Is.Not.Empty, "the dummy driver has a device to list");
+    }
+
+    [TestCase(true)]
+    [TestCase(false)]
+    public void Manager_OpensTheDevicePicked(bool native)
+    {
+        string device;
+
+        using (var probe = createManager(native))
+            device = probe.OutputDevices[0];
+
+        using var manager = new SDLAudioManager(useNativeMixEngine: native, outputDevice: device);
+
+        Assert.That(manager.PlayingOn, Is.EqualTo(device));
+    }
+
+    [Test]
+    public void Manager_PlaysOnTheDefaultWhileThePickedDeviceIsMissing()
+    {
+        using var manager = new SDLAudioManager(useNativeMixEngine: false, outputDevice: "A device that isn't plugged in");
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(manager.PlayingOn, Is.Empty, "on the default");
+            Assert.That(manager.OutputDevice.Value, Is.EqualTo("A device that isn't plugged in"), "the player's choice is kept for when it's back");
+        }
+    }
+
+    /// <summary>
+    /// Picking a device moves a playing track onto it rather than stopping it, and picking the default moves it back.
+    /// </summary>
+    [TestCase(true)]
+    [TestCase(false)]
+    [FlakyTest]
+    public void Manager_MovesPlaybackToTheDevicePicked(bool native)
+    {
+        using var manager = createManager(native);
+
+        var channel = manager.CreateTrackFromFile(writeTempCopy("Tracks.test.mp3")).GetChannel();
+        channel.Play();
+
+        playUntil(manager, () => channel.CurrentTime > 100);
+
+        manager.OutputDevice.Value = manager.OutputDevices[0];
+        manager.Update(0);
+        Assert.That(manager.PlayingOn, Is.EqualTo(manager.OutputDevices[0]), "moved to the device picked");
+
+        double movedAt = channel.CurrentTime;
+        playUntil(manager, () => channel.CurrentTime > movedAt + 200);
+        Assert.That(channel.CurrentTime, Is.GreaterThan(movedAt + 200), "kept playing on the device picked");
+
+        manager.OutputDevice.Value = string.Empty;
+        manager.Update(0);
+        Assert.That(manager.PlayingOn, Is.Empty, "moved back to the default");
+
+        channel.Dispose();
+        manager.Update(0);
+    }
+
+    private static void playUntil(SDLAudioManager manager, Func<bool> condition)
+    {
+        var timeout = Stopwatch.StartNew();
+
+        while (!condition() && timeout.Elapsed < TimeSpan.FromSeconds(10))
+        {
+            manager.Update(0);
+            Thread.Sleep(10);
+        }
+    }
+
     [TestCase(true)]
     [TestCase(false)]
     public void Manager_PlaysAStreamingTrackAndAdvancesItsPosition(bool native)

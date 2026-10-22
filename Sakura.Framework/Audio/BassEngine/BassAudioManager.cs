@@ -7,6 +7,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using ManagedBass;
 using ManagedBass.Fx;
 using ManagedBass.Mix;
@@ -29,11 +30,32 @@ internal class BassAudioManager : IAudioManager, IDisposable
 
     private readonly BassAudioMixer trackMixer;
     private readonly BassAudioMixer sampleMixer;
-    private bool ownsBassInit;
 
     public Reactive<double> MasterVolume { get; } = new Reactive<double>(1.0);
     public Reactive<double> TrackVolume { get; } = new Reactive<double>(1.0);
     public Reactive<double> SampleVolume { get; } = new Reactive<double>(1.0);
+
+    public IReadOnlyList<string> OutputDevices => outputDevices;
+
+    public event Action OutputDevicesChanged;
+
+    public Reactive<string> OutputDevice { get; } = new Reactive<string>(string.Empty);
+
+    // How often the device list is read again, for devices plugged in and out.
+    private const double device_check_interval_ms = 1000;
+
+    // BASS's output devices by name, and the index each is opened by. Read by the update thread, so replaced whole.
+    private volatile string[] outputDevices = Array.Empty<string>();
+    private int[] outputDeviceIndices = Array.Empty<int>();
+
+    // BASS's "Default" device, which follows the system's default output as it changes, or 0 where there's none.
+    private int followingDefaultDevice;
+
+    // The device the mixers play on, and every device this manager initialised, to free at the end.
+    private int playingDevice;
+    private readonly List<int> initialisedDevices = new List<int>();
+
+    private double sinceDeviceCheckMs;
 
     /// <summary>
     /// Output latency in milliseconds, as BASS measured it at initialisation.
@@ -78,8 +100,23 @@ internal class BassAudioManager : IAudioManager, IDisposable
     /// runs on — the alternative is a test run that plays music out loud — and it is also the right
     /// mode for a headless host that only needs decoding.
     /// </param>
-    public BassAudioManager(int device = -1)
+    /// <param name="outputDevice">
+    /// The device to play on, by name, where <paramref name="device"/> is the default: the starting
+    /// <see cref="OutputDevice"/>. Empty, or a device that isn't there, leaves the system's default.
+    /// </param>
+    public BassAudioManager(int device = -1, string outputDevice = "")
     {
+        // A "Default" device that follows the system's default output, as the empty OutputDevice does with SDL. macOS
+        // lists one regardless; Windows only when asked, before BASS starts.
+        Bass.IncludeDefaultDevice = true;
+
+        refreshOutputDevices();
+
+        OutputDevice.Value = outputDevice;
+
+        if (device == -1)
+            device = indexOf(outputDevice) ?? (followingDefaultDevice > 0 ? followingDefaultDevice : -1);
+
         // DeviceInitFlags.Latency asks BASS to measure the device's output latency during Init, which is
         // the only time it can be measured and the only way BassInfo.Latency is ever populated. It costs
         // a little startup time — BASS plays a short test buffer to time it — and buys the one figure
@@ -93,7 +130,10 @@ internal class BassAudioManager : IAudioManager, IDisposable
         }
         else
         {
-            ownsBassInit = initSuccess;
+            playingDevice = Bass.CurrentDevice;
+
+            if (initSuccess)
+                initialisedDevices.Add(playingDevice);
 
             if (alreadyInitialised)
                 Logger.Verbose("🔈 BASS already initialised, reusing existing device");
@@ -115,6 +155,10 @@ internal class BassAudioManager : IAudioManager, IDisposable
                 trackMixer.Volume.Value = TrackVolume.Value * e.NewValue;
                 sampleMixer.Volume.Value = SampleVolume.Value * e.NewValue;
             };
+
+            // Not for the silent device: it's chosen to play nothing, and stays so.
+            if (device != Bass.NoSoundDevice)
+                OutputDevice.ValueChanged += _ => EnqueueAction(followPreferredDevice);
 
             Logger.Verbose("🔈 BASS initialised");
 
@@ -172,6 +216,105 @@ internal class BassAudioManager : IAudioManager, IDisposable
         }
         channelEndSync = OnChannelEnded;
     }
+
+    /// <summary>
+    /// Reads BASS's output devices.
+    /// </summary>
+    /// <returns>Whether they changed since the last read.</returns>
+    private bool refreshOutputDevices()
+    {
+        var names = new List<string>();
+        var indices = new List<int>();
+
+        followingDefaultDevice = 0;
+
+        // 0 is BASS's "no sound" device, not one to play on.
+        for (int i = 1; Bass.GetDeviceInfo(i, out var info); i++)
+        {
+            if (!info.IsEnabled)
+                continue;
+
+            // The "Default" device is the only one with no driver behind it. It's what the empty name plays on, so it
+            // isn't listed beside the devices it stands for.
+            if (string.IsNullOrEmpty(info.Driver))
+            {
+                followingDefaultDevice = i;
+                continue;
+            }
+
+            names.Add(info.Name);
+            indices.Add(i);
+        }
+
+        if (indices.AsReadOnly().SequenceEqual(outputDeviceIndices) && names.AsReadOnly().SequenceEqual(outputDevices))
+            return false;
+
+        outputDeviceIndices = indices.ToArray();
+        outputDevices = names.ToArray();
+        return true;
+    }
+
+    private int? indexOf(string name)
+    {
+        if (string.IsNullOrEmpty(name))
+            return null;
+
+        int position = Array.IndexOf(outputDevices, name);
+        return position >= 0 ? outputDeviceIndices[position] : null;
+    }
+
+    private int defaultDevice()
+    {
+        if (followingDefaultDevice > 0)
+            return followingDefaultDevice;
+
+        for (int i = 0; i < outputDeviceIndices.Length; i++)
+        {
+            if (Bass.GetDeviceInfo(outputDeviceIndices[i], out var info) && info.IsDefault)
+                return outputDeviceIndices[i];
+        }
+
+        return playingDevice;
+    }
+
+    /// <summary>
+    /// Moves the mixers onto the device the player picked, or onto the default while it isn't there. Everything plays
+    /// through the two mixers, so moving them moves all of it.
+    /// </summary>
+    private void followPreferredDevice()
+    {
+        if (trackMixer == null || playingDevice == Bass.NoSoundDevice)
+            return;
+
+        int target = indexOf(OutputDevice.Value) ?? defaultDevice();
+
+        if (target == playingDevice)
+            return;
+
+        if (!initialisedDevices.Contains(target))
+        {
+            if (!Bass.Init(target, 44100, DeviceInitFlags.Latency) && Bass.LastError != Errors.Already)
+            {
+                Logger.Error($"Could not open the audio device {nameOf(target)}.", new BassException(Bass.LastError));
+                return;
+            }
+
+            initialisedDevices.Add(target);
+        }
+
+        if (!Bass.ChannelSetDevice(trackMixer.ChannelHandle, target) || !Bass.ChannelSetDevice(sampleMixer.ChannelHandle, target))
+        {
+            Logger.Error($"Could not play on the audio device {nameOf(target)}.", new BassException(Bass.LastError));
+            return;
+        }
+
+        playingDevice = target;
+        Bass.CurrentDevice = target;
+
+        Logger.Verbose($"Playing on {nameOf(target)}");
+    }
+
+    private static string nameOf(int device) => Bass.GetDeviceInfo(device, out var info) ? info.Name : device.ToString();
 
     public IAudioMixer TrackMixer => trackMixer;
     public IAudioMixer SampleMixer => sampleMixer;
@@ -292,6 +435,21 @@ internal class BassAudioManager : IAudioManager, IDisposable
             action.Invoke();
         }
 
+        sinceDeviceCheckMs += frameTime;
+
+        // A device plugged in or out: the list changes, and the mixers move if their device went, or the one the
+        // player picked came back.
+        if (sinceDeviceCheckMs >= device_check_interval_ms)
+        {
+            sinceDeviceCheckMs = 0;
+
+            if (refreshOutputDevices())
+            {
+                RaiseEvent(() => OutputDevicesChanged?.Invoke());
+                followPreferredDevice();
+            }
+        }
+
         GlobalStatistics.Get<double>("Audio", "BASS CPU Usage", StatisticKind.Gauge, StatisticUnit.Percent).Value = Bass.CPUUsage;
 
         // Named to line up with "SDL Output Latency (ms)" so the two backends can be read against each
@@ -314,8 +472,11 @@ internal class BassAudioManager : IAudioManager, IDisposable
         }
         activeChannels.Clear();
 
-        if (ownsBassInit)
+        foreach (int device in initialisedDevices)
+        {
+            Bass.CurrentDevice = device;
             Bass.Free();
+        }
     }
 
     public void StopAll()
