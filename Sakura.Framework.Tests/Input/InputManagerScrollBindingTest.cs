@@ -19,6 +19,7 @@ public class InputManagerScrollBindingTest
     private enum TestAction
     {
         VolumeUp,
+        Hit,
     }
 
     private ManualClock manual = null!;
@@ -110,6 +111,35 @@ public class InputManagerScrollBindingTest
         });
     }
 
+    /// <summary>
+    /// A press through a binding carries the time the key went down and came up, as the key events did, for timing
+    /// that would otherwise only have when the frame got round to it.
+    /// </summary>
+    [Test]
+    public void TestKeyBindingCarriesTheKeysTimestamps()
+    {
+        var providerRoot = new ProviderContainer(manager) { RelativeSizeAxes = Axes.Both, Size = new Vector2(1) };
+        var container = new BindingContainer { RelativeSizeAxes = Axes.Both, Size = new Vector2(1) };
+        var handler = new RecordingHandler { RelativeSizeAxes = Axes.Both, Size = new Vector2(1) };
+        container.Add(handler);
+        providerRoot.Add(container);
+        root.Add(providerRoot);
+        settle();
+
+        manager.BuildQueues(root, new Vector2(200, 200));
+
+        manager.HandleKeyDown(Key.Z);
+        manager.DispatchKeyDown(new KeyEvent(Key.Z, KeyModifiers.None, false, 1234.5));
+        manager.HandleKeyUp(Key.Z);
+        manager.DispatchKeyUp(new KeyEvent(Key.Z, KeyModifiers.None, false, 1300.25));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(handler.PressTimestamps, Is.EqualTo(new[] { 1234.5 }));
+            Assert.That(handler.ReleaseTimestamps, Is.EqualTo(new[] { 1300.25 }));
+        });
+    }
+
     private partial class ProviderContainer : Container, IInputManagerProvider
     {
         public ProviderContainer(InputManager manager) => InputManager = manager;
@@ -123,6 +153,7 @@ public class InputManagerScrollBindingTest
         public override IEnumerable<KeyBinding> DefaultKeyBindings => new[]
         {
             new KeyBinding(InputKey.MouseWheelUp, TestAction.VolumeUp),
+            new KeyBinding(InputKeyExtensions.FromKey(Key.Z), TestAction.Hit),
         };
 
         public override bool OnScroll(ScrollEvent e)
@@ -135,13 +166,16 @@ public class InputManagerScrollBindingTest
     private partial class RecordingHandler : Container, IKeyBindingHandler<TestAction>
     {
         public readonly List<TestAction> Pressed = new List<TestAction>();
+        public readonly List<double> PressTimestamps = new List<double>();
+        public readonly List<double> ReleaseTimestamps = new List<double>();
 
         public bool OnPressed(KeyBindingPressEvent<TestAction> e)
         {
             Pressed.Add(e.Action);
+            PressTimestamps.Add(e.Timestamp);
             return true;
         }
 
-        public void OnReleased(KeyBindingReleaseEvent<TestAction> e) { }
+        public void OnReleased(KeyBindingReleaseEvent<TestAction> e) => ReleaseTimestamps.Add(e.Timestamp);
     }
 }
