@@ -27,5 +27,6 @@ public enum FrameworkSetting
     RelativeMouseMode,
     CursorSensitivity,
     AudioDeviceBufferFrames,
-    SafeAreaPreview
+    SafeAreaPreview,
+    ShowLogOverlay
 }

@@ -63,6 +63,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
     private readonly SafeAreaDefiningContainer safeArea = new SafeAreaDefiningContainer();
 
     private Reactive<SafeAreaPreview> safeAreaPreview;
+    private Reactive<bool> logOverlayShown;
 
     protected override Container Content => safeArea;
 
@@ -252,6 +253,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
 
         fpsGraphState = Host.FrameworkConfigManager.Get(FrameworkSetting.ShowFpsGraph, PerformanceOverlayState.Hidden);
         safeAreaPreview = Host.FrameworkConfigManager.Get(FrameworkSetting.SafeAreaPreview, SafeAreaPreview.Off);
+        logOverlayShown = Host.FrameworkConfigManager.Get(FrameworkSetting.ShowLogOverlay, false);
 
         AddInternal(new SafeAreaPreviewOverlay(safeArea, safeAreaPreview)
         {
@@ -263,6 +265,10 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
             Depth = float.MaxValue - 5
         });
         Add(new FpsGraph()
+        {
+            Depth = float.MaxValue
+        });
+        Add(new LogOverlay
         {
             Depth = float.MaxValue
         });
@@ -387,6 +393,13 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
         {
             toggleExecutionMode();
         }
+        // Not on a function key like the rest: macOS keeps Ctrl+F3 to Ctrl+F8 for its own keyboard navigation by
+        // default, and those left are taken.
+        else if (!e.IsRepeat && e.Key == Key.L && (e.Modifiers & KeyModifiers.Control) > 0 && (e.Modifiers & KeyModifiers.Shift) > 0)
+        {
+            toggleLogOverlay();
+            return true;
+        }
         else if (!e.IsRepeat && e.Key == Key.F9 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
             toggleAudioMixer();
@@ -409,6 +422,8 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
 
     private void toggleAudioMixer() => debugWindows.Toggle(() => new AudioMixerVisualiser(AudioManager));
 
+    private void toggleLogOverlay() => logOverlayShown.Value = !logOverlayShown.Value;
+
     private void cycleSafeAreaPreview() =>
         safeAreaPreview.Value = (SafeAreaPreview)(((int)safeAreaPreview.Value + 1) % Enum.GetValues<SafeAreaPreview>().Length);
 
@@ -428,6 +443,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
         ("Statistics (Ctrl+F2)", toggleStatistics),
         ("Textures (Ctrl+F3)", toggleTextureViewer),
         ("Audio mixer (Ctrl+F9)", toggleAudioMixer),
+        ("Log (Ctrl+Shift+L)", toggleLogOverlay),
         ("Safe area preview (Ctrl+F6)", cycleSafeAreaPreview),
         ("Frame limiter (Ctrl+F10)", cycleFrameLimiter),
         ("Execution mode (Ctrl+F7)", toggleExecutionMode),

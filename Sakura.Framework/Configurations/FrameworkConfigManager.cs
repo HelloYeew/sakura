@@ -51,5 +51,6 @@ public class FrameworkConfigManager : ConfigManager<FrameworkSetting>
         Get(FrameworkSetting.RelativeMouseMode, false);
         Get(FrameworkSetting.CursorSensitivity, 1.0);
         Get(FrameworkSetting.SafeAreaPreview, SafeAreaPreview.Off);
+        Get(FrameworkSetting.ShowLogOverlay, false);
     }
 }
