@@ -470,6 +470,8 @@ public class InputManager : IFocusManager
             if (e.Target != null && !leadsTo(drawable, e.Target))
                 continue;
 
+            bool wasDragged = drawable.IsDragged;
+
             if (drawable.OnMouseDown(ReferenceEquals(drawable, previousHandler) ? e : singleClick))
             {
                 if (e.Button == MouseButton.Left)
@@ -479,6 +481,11 @@ public class InputManager : IFocusManager
                 LastPositionalHandler = drawable;
                 return true;
             }
+
+            // The base mouse-down starts a drag on anything it runs on, but only the handler is captured, and only the
+            // captured target gets the mouse-up that ends one: a drawable the press only passed through would stay
+            // dragged, and take every later move as a drag.
+            drawable.IsDragged = wasDragged;
         }
 
         lastMouseDownHandlers[buttonIndex] = null;
