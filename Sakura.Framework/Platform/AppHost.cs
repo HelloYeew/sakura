@@ -570,6 +570,10 @@ public abstract class AppHost : IDisposable
 
             SetupForRun();
 
+            // Startup is a game's first loading screen: the system can raise the CPU for it.
+            if (Options.AppType == AppType.Game)
+                Performance.SetGameState(GameState.None, loading: true);
+
             // Mobile platforms have no console to press Ctrl+C in, and don't support subscribing to it.
             if (RuntimeInfo.IsDesktop)
             {
@@ -768,6 +772,9 @@ public abstract class AppHost : IDisposable
             renderPrimingFrame();
 
             Window.Show();
+
+            if (Options.AppType == AppType.Game)
+                Performance.SetGameState(GameState.None, loading: false);
 
             if (ExecutionMode.Value == Threading.ExecutionMode.MultiThread)
             {
@@ -1235,17 +1242,31 @@ public abstract class AppHost : IDisposable
     }
 
     private GlobalStatistic<double> statThermalHeadroom;
+    private GlobalStatistic<string> statBatterySaver;
+    private GlobalStatistic<string> statGameMode;
 
-    // Listed only once the platform reports one, so it isn't a line of NaN everywhere else.
-    private void publishThermalHeadroom()
+    // Each listed only once the platform reports it, so they aren't lines of nothing everywhere else.
+    private void publishPlatformState()
     {
         float headroom = Performance.ThermalHeadroom;
 
-        if (float.IsNaN(headroom))
-            return;
+        if (!float.IsNaN(headroom))
+        {
+            statThermalHeadroom ??= GlobalStatistics.Get<double>("Host", "Thermal Headroom");
+            statThermalHeadroom.Value = headroom;
+        }
 
-        statThermalHeadroom ??= GlobalStatistics.Get<double>("Host", "Thermal Headroom");
-        statThermalHeadroom.Value = headroom;
+        if (Performance.PowerSaving is bool saving)
+        {
+            statBatterySaver ??= GlobalStatistics.Get<string>("Host", "Battery Saver");
+            statBatterySaver.Value = saving ? "On" : "Off";
+        }
+
+        if (Performance.GameMode is GameMode mode)
+        {
+            statGameMode ??= GlobalStatistics.Get<string>("Host", "Game Mode");
+            statGameMode.Value = mode.ToString();
+        }
     }
 
     /// <summary>
@@ -1261,7 +1282,7 @@ public abstract class AppHost : IDisposable
 
         stat_uptime.Value = UpdateClock.CurrentTime;
         stat_target_update_hz.Value = targetUpdateHz;
-        publishThermalHeadroom();
+        publishPlatformState();
 
         // Run any actions marshalled onto the update thread (e.g. file dialog result callbacks).
         updateScheduler.Update();
