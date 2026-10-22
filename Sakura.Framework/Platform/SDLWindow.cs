@@ -280,6 +280,26 @@ public class SDLWindow : IWindow
     protected virtual bool RetargetScreenKeyboard(TextInputType type, SDL_Rect area, bool typeChanged) => false;
 
     /// <summary>
+    /// The refresh rate of the display the window is on when the platform knows it better than SDL does, or null
+    /// to use SDL's. Called on the event thread whenever the rate may have changed.
+    /// </summary>
+    protected virtual float? GetPlatformRefreshRate() => null;
+
+    /// <summary>
+    /// Has the refresh rate read again on the event thread. Safe to call from any thread, for a subclass whose
+    /// <see cref="GetPlatformRefreshRate"/> learns of a change SDL doesn't report.
+    /// </summary>
+    protected unsafe void InvalidateRefreshRate()
+    {
+        if (window == null)
+            return;
+
+        var e = new SDL_Event();
+        e.display.type = SDL_EventType.SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED;
+        SDL_PushEvent(&e);
+    }
+
+    /// <summary>
     /// Has the safe area read again on the event thread. Safe to call from any thread, for a subclass whose
     /// <see cref="GetPlatformSafeAreaInsets"/> learns of a change SDL doesn't report.
     /// </summary>
@@ -1123,6 +1143,13 @@ public class SDLWindow : IWindow
                     handleTextEditingEvent(sdlEvent.edit);
                     break;
 
+                // A display's mode changed: a refresh rate picked in the system's display settings, or a phone's
+                // panel switching between 60 and 120 Hz. It may be another display's, but re-reading the window's
+                // own costs little, and only a real change is reported.
+                case SDL_EventType.SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED:
+                    updateDisplayHz();
+                    break;
+
                 case SDL_EventType.SDL_EVENT_GAMEPAD_ADDED:
                     handleGamepadAdded(sdlEvent.gdevice);
                     break;
@@ -1186,14 +1213,7 @@ public class SDLWindow : IWindow
                 break;
 
             case SDL_EventType.SDL_EVENT_WINDOW_DISPLAY_CHANGED:
-                int oldHz = DisplayHz;
-                DisplayHz = getDisplayRefreshRate();
-
-                if (oldHz != DisplayHz)
-                {
-                    Logger.Debug($"Display refresh rate changed from {oldHz} Hz to {DisplayHz} Hz");
-                    DisplayChanged.Invoke(DisplayHz);
-                }
+                updateDisplayHz();
 
                 // When the window moves to a display with a different pixel density (e.g. from
                 // a non-HiDPI external monitor to the HiDPI MacBook screen), SDL may or may not
@@ -1551,8 +1571,23 @@ public class SDLWindow : IWindow
         return false;
     }
 
+    private void updateDisplayHz()
+    {
+        int oldHz = DisplayHz;
+        DisplayHz = getDisplayRefreshRate();
+
+        if (oldHz == DisplayHz)
+            return;
+
+        Logger.Debug($"Display refresh rate changed from {oldHz} Hz to {DisplayHz} Hz");
+        DisplayChanged.Invoke(DisplayHz);
+    }
+
     private unsafe int getDisplayRefreshRate()
     {
+        if (GetPlatformRefreshRate() is float platformRate && platformRate > 0)
+            return (int)Math.Round(platformRate);
+
         var mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window));
 
         if (mode != null && mode->refresh_rate > 0)
