@@ -33,6 +33,9 @@ internal sealed class AAudioOutput : IDisposable
     private nint stream;
     private bool started;
 
+    // Once set, no stream opens again: the engine a new one would mix is freed after this is.
+    private bool disposed;
+
     // The buffer size last asked for, asked for again on a reopened stream.
     private int requestedBufferFrames;
 
@@ -189,9 +192,13 @@ internal sealed class AAudioOutput : IDisposable
     /// Opens another stream in place of one AAudio disconnected, as it does when the output changes, with the same
     /// buffer, playing if the old one was.
     /// </summary>
-    /// <returns>Whether it opened. If not, try again later: the output may still be changing.</returns>
+    /// <returns>Whether it opened. If not, try again later: the output may still be changing. Never once disposed.</returns>
     public bool Reopen()
     {
+        // A disposed output reads as disconnected, and its owner may still be polling it while it shuts down.
+        if (disposed)
+            return false;
+
         earlierXruns += currentXruns();
         close();
 
@@ -276,7 +283,11 @@ internal sealed class AAudioOutput : IDisposable
         stream = 0;
     }
 
-    public void Dispose() => close();
+    public void Dispose()
+    {
+        disposed = true;
+        close();
+    }
 
     private static bool succeeded(int result, string what)
     {
