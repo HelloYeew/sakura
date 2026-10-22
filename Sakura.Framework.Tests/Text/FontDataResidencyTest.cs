@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using NUnit.Framework;
 using Sakura.Framework.Graphics.Rendering;
@@ -62,11 +63,12 @@ public class FontDataResidencyTest
 
     /// <summary>
     /// Forces the store's <see cref="System.Lazy{T}"/> to materialise, since loading is deferred until a
-    /// font is first asked for.
+    /// font is first asked for. Through a storage whose streams aren't already in memory (as an archive's
+    /// aren't), so the font is copied into unmanaged memory; an embedded one is read in place instead.
     /// </summary>
     private Font load(string alias)
     {
-        store.AddFont(fonts, font_file, alias);
+        store.AddFont(new StreamedStorage(fonts), font_file, alias);
         return store.Get(FontUsage.Default.With(family: alias));
     }
 
@@ -78,6 +80,26 @@ public class FontDataResidencyTest
         load("Residency");
 
         Assert.That(fontBytes - before, Is.EqualTo(fontFileLength()), "every byte of the face, and no managed copy of it");
+    }
+
+    /// <summary>
+    /// An embedded font is already in memory, in the loaded assembly: it's read there, with no copy of it anywhere,
+    /// and shapes text all the same.
+    /// </summary>
+    [Test]
+    public void AnEmbeddedFontIsReadInPlace()
+    {
+        long before = fontBytes;
+
+        store.AddFont(fonts, font_file, "InPlace");
+        var shaped = store.Shape(FontUsage.Default.With(family: "InPlace"), "hello", 1f);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(fontBytes, Is.EqualTo(before), "nothing copied");
+            Assert.That(shaped.Glyphs, Has.Count.EqualTo(5));
+            Assert.That(shaped.Glyphs[0].Texture, Is.Not.Null, "and it rasterised");
+        });
     }
 
     /// <summary>
@@ -236,20 +258,68 @@ public class FontDataResidencyTest
     }
 
     /// <summary>
-    /// An embedded resource has no filesystem path, so it still has to be copied — and must still work.
-    /// This is the routing, not a fallback for a failure.
+    /// A font that's neither a file nor already in memory, as an archive's isn't, can't be mapped, so it's copied —
+    /// and must still work. This is the routing, not a fallback for a failure.
     /// </summary>
     [Test]
-    public void AnEmbeddedFontStillLoadsByCopy()
+    public void AStreamedFontLoadsByCopy()
     {
         long mappedBefore = NativeFileMapping.MappedBytes;
 
-        load("Embedded");
+        load("Streamed");
 
         Assert.Multiple(() =>
         {
             Assert.That(fontBytes, Is.GreaterThan(0), "copied into unmanaged memory");
-            Assert.That(NativeFileMapping.MappedBytes, Is.EqualTo(mappedBefore), "an embedded resource cannot be mapped");
+            Assert.That(NativeFileMapping.MappedBytes, Is.EqualTo(mappedBefore), "a stream cannot be mapped");
+        });
+    }
+
+    #endregion
+
+    #region Collections
+
+    /// <summary>
+    /// A face a file doesn't have fails to load, and whatever was read for it goes again.
+    /// </summary>
+    [Test]
+    public void AFaceTheFileDoesNotHaveLoadsNothing()
+    {
+        long before = fontBytes;
+
+        store.AddFont(new StreamedStorage(fonts), font_file, "NoSuchFace", 3);
+        var resolved = store.Get("NoSuchFace");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(resolved?.Name, Is.Not.EqualTo("NoSuchFace"), "nothing loaded under the name");
+            Assert.That(fontBytes, Is.EqualTo(before), "and the copy of the file let go");
+        });
+    }
+
+    /// <summary>
+    /// A collection's faces are told apart by index: here a family's regular and bold, which set the same word to
+    /// different widths. Uses one of macOS's own collections, so it only runs there.
+    /// </summary>
+    [Test]
+    public void ACollectionLoadsTheFaceAskedFor()
+    {
+        const string collection = "/System/Library/Fonts/Helvetica.ttc";
+
+        if (!File.Exists(collection))
+            Assert.Ignore($"{collection} is a macOS system font.");
+
+        store.AddFontFromFile(collection, "CollectionFirst", 0);
+        store.AddFontFromFile(collection, "CollectionSecond", 1);
+
+        var first = store.Shape(FontUsage.Default.With(family: "CollectionFirst"), "hello world", 1f);
+        var second = store.Shape(FontUsage.Default.With(family: "CollectionSecond"), "hello world", 1f);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(store.Get("CollectionFirst").Name, Is.EqualTo("CollectionFirst"));
+            Assert.That(store.Get("CollectionSecond").Name, Is.EqualTo("CollectionSecond"));
+            Assert.That(second.BoundingBox.X, Is.Not.EqualTo(first.BoundingBox.X), "two different faces");
         });
     }
 
@@ -275,6 +345,42 @@ public class FontDataResidencyTest
         Assert.That(buffer!.Length, Is.EqualTo(expected), "the growing path must land on the exact byte count");
 
         buffer.Dispose();
+    }
+
+    /// <summary>
+    /// A storage that hands out each file as a stream of its own, as an archive does, rather than the memory it's in.
+    /// </summary>
+    private sealed class StreamedStorage : Storage
+    {
+        private readonly Storage inner;
+
+        public StreamedStorage(Storage inner)
+            : base(string.Empty)
+        {
+            this.inner = inner;
+        }
+
+        public override Stream GetStream(string path, FileAccess access = FileAccess.Read, FileMode mode = FileMode.OpenOrCreate)
+        {
+            var copy = new MemoryStream();
+
+            using (var source = inner.GetStream(path, access, mode))
+                source.CopyTo(copy);
+
+            copy.Position = 0;
+            return copy;
+        }
+
+        public override bool Exists(string path) => inner.Exists(path);
+        public override bool ExistsDirectory(string path) => inner.ExistsDirectory(path);
+        public override string GetFullPath(string path, bool createIfNotExists = false) => inner.GetFullPath(path, createIfNotExists);
+        public override IEnumerable<string> GetFiles(string path, string searchPattern = "*") => inner.GetFiles(path, searchPattern);
+        public override IEnumerable<string> GetDirectories(string path) => inner.GetDirectories(path);
+        public override void Move(string fromPath, string toPath) => throw new NotSupportedException();
+        public override bool OpenFileExternally(string filename) => false;
+        public override bool PresentFileExternally(string filename) => false;
+        public override void DeleteDirectory(string path) => throw new NotSupportedException();
+        public override void Delete(string path) => throw new NotSupportedException();
     }
 
     /// <summary>
