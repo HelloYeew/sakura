@@ -493,6 +493,7 @@ public class SDLWindow : IWindow
     public event Action<KeyEvent> OnKeyDown = delegate { };
     public event Action<KeyEvent> OnKeyUp = delegate { };
     public event Action<int> DisplayChanged = delegate { };
+    public event Action LowMemory = delegate { };
     public event Action<int, int> Resized = delegate { };
 
     public event Action<TouchEvent> OnTouchDown = delegate { };
@@ -902,9 +903,9 @@ public class SDLWindow : IWindow
     }
 
     /// <summary>
-    /// Raises <see cref="EnteringBackground"/> and <see cref="EnteredForeground"/> the moment SDL reports them. On
-    /// Android that is on the UI thread, before SDL blocks its own thread for the background, so a handler can
-    /// still stop everything that draws to the window before its surface goes.
+    /// Raises <see cref="EnteringBackground"/>, <see cref="EnteredForeground"/> and <see cref="LowMemory"/> the moment SDL
+    /// reports them. On Android that is on the UI thread, before SDL blocks its own thread for the background, so a
+    /// handler can still stop everything that draws to the window before its surface goes.
     /// </summary>
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
     private static unsafe SDLBool lifecycleEventWatch(IntPtr userdata, SDL_Event* e)
@@ -919,6 +920,12 @@ public class SDLWindow : IWindow
 
                 case SDL_EventType.SDL_EVENT_DID_ENTER_FOREGROUND:
                     instance?.EnteredForeground.Invoke();
+                    break;
+
+                // Here rather than when polled: in the background, which is when Android asks most, SDL's thread is
+                // blocked until the app comes back.
+                case SDL_EventType.SDL_EVENT_LOW_MEMORY:
+                    instance?.LowMemory.Invoke();
                     break;
             }
         }

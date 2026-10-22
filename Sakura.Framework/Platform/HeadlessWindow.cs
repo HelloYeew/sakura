@@ -160,6 +160,12 @@ public class HeadlessWindow : IWindow
     public event Action<KeyEvent>? OnKeyDown;
     public event Action<KeyEvent>? OnKeyUp;
     public event Action<int>? DisplayChanged;
+    public event Action? LowMemory;
+
+    /// <summary>
+    /// Says the system is short of memory, as a phone does.
+    /// </summary>
+    internal void RaiseLowMemory() => LowMemory?.Invoke();
     public event Action<int, int>? Resized;
     public event Action<TouchEvent>? OnTouchDown;
     public event Action<TouchEvent>? OnTouchMove;

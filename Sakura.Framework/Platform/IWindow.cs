@@ -233,6 +233,12 @@ public interface IWindow : IDisposable
     event Action<KeyEvent> OnKeyUp;
 
     event Action<int> DisplayChanged;
+
+    /// <summary>
+    /// Raised when the system is short of memory and wants some back, on the thread it says so on: Android's UI thread,
+    /// often while the app's own threads are stopped for the background. Desktop systems don't send it.
+    /// </summary>
+    event Action LowMemory;
     event Action<int, int> Resized;
 
     /// <summary>

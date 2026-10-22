@@ -450,6 +450,33 @@ public abstract class AppHost : IDisposable
         }
     }
 
+    /// <summary>
+    /// Raised on the update thread once the system has said it's short of memory: drop whatever can be made again, such
+    /// as loaded-ahead content and caches of things not on screen. Android says so as an app goes to the background
+    /// too, and the update thread is stopped there, so this comes once the app is back. By then the framework has
+    /// compacted the managed heap and handed what was free back to the system.
+    /// </summary>
+    public event Action LowMemory;
+
+    /// <summary>
+    /// Compacts the managed heap where the system said it's short of memory: on Android its UI thread, usually with
+    /// the app in the background, which is when a big process is the first to be ended. A full collection stops every
+    /// managed thread, but in the background they're stopped anyway.
+    /// </summary>
+    private void onLowMemory()
+    {
+        long before = GC.GetTotalMemory(false);
+
+        // Aggressive gives back the memory the collection frees rather than keeping it for the next allocations.
+        GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+
+        Logger.Verbose($"Short of memory: the managed heap went from {before / 1048576.0:0.#} MB to {GC.GetTotalMemory(false) / 1048576.0:0.#} MB "
+                       + $"({GC.GetGCMemoryInfo().TotalCommittedBytes / 1048576.0:0.#} MB still held from the system).");
+
+        updateScheduler.Add(() => LowMemory?.Invoke());
+    }
+
     private void enterForeground()
     {
         lock (lifecycleLock)
@@ -628,6 +655,7 @@ public abstract class AppHost : IDisposable
             Window.DisplayChanged += _ => updateTargetUpdateHz();
             Window.EnteringBackground += enterBackground;
             Window.EnteredForeground += enterForeground;
+            Window.LowMemory += onLowMemory;
 
             Window.RenderRequested += () =>
             {
