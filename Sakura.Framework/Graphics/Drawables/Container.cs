@@ -76,6 +76,30 @@ public partial class Container : Drawable
     /// </summary>
     public float CornerRadius { get; set; }
 
+    private MarginPadding maskingFade;
+
+    /// <summary>
+    /// How far in from each edge the children fade out when masking: transparent at the edge, opaque this
+    /// far in. 0 on a side (the default) is a hard edge there. A soft edge for a scrolling list, say, so
+    /// what scrolls out fades away rather than being cut off.
+    /// </summary>
+    /// <remarks>
+    /// Measured from the container's bounding box, so a sheared container's slanted sides aren't
+    /// followed. A masking container inside it fades with it, unless it fades a side itself, which then
+    /// replaces this one on that side. Content composited premultiplied (a <see cref="BufferedContainer"/>)
+    /// has only its alpha faded, so it lightens rather than fades.
+    /// </remarks>
+    public MarginPadding MaskingFade
+    {
+        get => maskingFade;
+        set
+        {
+            if (maskingFade.Equals(value)) return;
+            maskingFade = value;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+    }
+
     private float borderThickness;
 
     /// <summary>

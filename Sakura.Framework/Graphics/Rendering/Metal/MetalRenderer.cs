@@ -8,6 +8,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using Sakura.Framework.Graphics.Colors;
+using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering.Batches;
 using Sakura.Framework.Graphics.Rendering.Uniforms;
 using Sakura.Framework.Graphics.Textures;
@@ -225,7 +226,8 @@ public sealed class MetalRenderer : IMetalRenderer
 
     /// <summary>
     /// Maps each Vertex field to a shader attribute location, matching TriangleBatch's GL layout:
-    /// 0=Position, 1=TexCoords, 2=Color, 3=TexIndex, 4=ClipData, 5=ClipShearX, 6=ClipRadius.
+    /// 0=Position, 1=TexCoords, 2=Color, 3=TexIndex, 4=ClipData, 5=ClipShearX, 6=ClipRadius,
+    /// 7=ClipFadeEdges, 8=ClipFadeLength.
     /// </summary>
     private static MetalVertexAttribute[] buildVertexAttributes() =>
     [
@@ -236,6 +238,8 @@ public sealed class MetalRenderer : IMetalRenderer
         attr(4, 4, nameof(SakuraVertex.ClipData)),
         attr(5, 1, nameof(SakuraVertex.ClipShearX)),
         attr(6, 1, nameof(SakuraVertex.ClipRadius)),
+        attr(7, 4, nameof(SakuraVertex.ClipFadeEdges)),
+        attr(8, 4, nameof(SakuraVertex.ClipFadeLength)),
     ];
 
     private static MetalVertexAttribute attr(int index, int components, string field) =>
@@ -500,7 +504,7 @@ public sealed class MetalRenderer : IMetalRenderer
         // The clip state is injected per-vertex on the way into the batch (the fragment shader's
         // applyClipping reads v_ClipData/v_ClipShearX/v_ClipRadius), exactly as GL's batch does.
         var clip = clips.Current;
-        batch.AddRange(vertices, textureIndex, clip.ClipData, clip.ShearX, clip.Radius);
+        batch.AddRange(vertices, textureIndex, clip);
     }
 
     public void DrawQuads(ReadOnlySpan<SakuraVertex> vertices, Texture texture)
@@ -513,7 +517,7 @@ public sealed class MetalRenderer : IMetalRenderer
 
         // The batch is non-indexed, so AddQuad expands each quad (TL, TR, BR, BL) into two triangles.
         for (int i = 0; i + 4 <= vertices.Length; i += 4)
-            batch.AddQuad(vertices.Slice(i, 4), textureIndex, clip.ClipData, clip.ShearX, clip.Radius);
+            batch.AddQuad(vertices.Slice(i, 4), textureIndex, clip);
     }
 
     /// <summary>
@@ -537,6 +541,9 @@ public sealed class MetalRenderer : IMetalRenderer
     /// </summary>
     public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius)
         => clips.Push(maskCenter, maskHalfSize, shearX, cornerRadius);
+
+    public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, MarginPadding fade)
+        => clips.Push(maskCenter, maskHalfSize, shearX, cornerRadius, fade);
 
     /// <summary>
     /// Pops the clip region pushed by the matching <see cref="PushMask"/> and draws the container's

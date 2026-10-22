@@ -6,6 +6,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering.Batches;
 using Sakura.Framework.Graphics.Rendering.Uniforms;
 using Sakura.Framework.Graphics.Textures;
@@ -464,6 +465,8 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         element(4, Format.R32G32B32A32_Float, nameof(SakuraVertex.ClipData)),
         element(5, Format.R32_Float, nameof(SakuraVertex.ClipShearX)),
         element(6, Format.R32_Float, nameof(SakuraVertex.ClipRadius)),
+        element(7, Format.R32G32B32A32_Float, nameof(SakuraVertex.ClipFadeEdges)),
+        element(8, Format.R32G32B32A32_Float, nameof(SakuraVertex.ClipFadeLength)),
     ];
 
     private static InputElementDescription element(int location, Format format, string field) =>
@@ -746,7 +749,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         // The clip state is injected per-vertex on the way into the batch (the pixel shader's
         // applyClipping reads it from the interpolators), exactly as GL's batch does.
         var clip = clips.Current;
-        batch.AddRange(vertices, textureIndex, clip.ClipData, clip.ShearX, clip.Radius);
+        batch.AddRange(vertices, textureIndex, clip);
     }
 
     public void DrawQuads(ReadOnlySpan<SakuraVertex> vertices, Texture texture)
@@ -758,7 +761,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         var clip = clips.Current;
 
         for (int i = 0; i + 4 <= vertices.Length; i += 4)
-            batch.AddQuad(vertices.Slice(i, 4), textureIndex, clip.ClipData, clip.ShearX, clip.Radius);
+            batch.AddQuad(vertices.Slice(i, 4), textureIndex, clip);
     }
 
     public void DrawVerticesRaw(ReadOnlySpan<SakuraVertex> vertices)
@@ -915,6 +918,9 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
     public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius)
         => clips.Push(maskCenter, maskHalfSize, shearX, cornerRadius);
+
+    public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, MarginPadding fade)
+        => clips.Push(maskCenter, maskHalfSize, shearX, cornerRadius, fade);
 
     public void PopMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<SakuraVertex> maskVertices = default)
     {

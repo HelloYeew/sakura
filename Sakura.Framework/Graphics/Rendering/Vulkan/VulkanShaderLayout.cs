@@ -59,6 +59,8 @@ internal sealed class VulkanShaderLayout
         (nameof(SakuraVertex.ClipData), 4),
         (nameof(SakuraVertex.ClipShearX), 1),
         (nameof(SakuraVertex.ClipRadius), 1),
+        (nameof(SakuraVertex.ClipFadeEdges), 4),
+        (nameof(SakuraVertex.ClipFadeLength), 4),
     ];
 
     /// <summary>

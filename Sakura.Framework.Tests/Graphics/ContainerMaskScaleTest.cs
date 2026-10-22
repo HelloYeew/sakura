@@ -7,6 +7,7 @@ using NUnit.Framework;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
+using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.IO;
@@ -106,6 +107,41 @@ public class ContainerMaskScaleTest
             // The circle invariant: corner radius must equal the screen half-size, not the logical 50.
             Assert.That(mask.CornerRadius, Is.EqualTo(mask.HalfSize.X).Within(0.05f),
                 "CircularContainer corner radius must scale with the half-size to stay a circle under scale.");
+        });
+    }
+
+    /// <summary>
+    /// <see cref="Container.MaskingFade"/> is authored in local pixels like the corner radius, so it reaches
+    /// the renderer in screen space: each side scaled along its own axis.
+    /// </summary>
+    [Test]
+    public void TestMaskingFadeScalesWithTheContainer()
+    {
+        Container faded;
+
+        var scaled = new Container
+        {
+            Scale = new Vector2(2f, 3f),
+            Size = new Vector2(200, 200),
+            Child = faded = new Container
+            {
+                Size = new Vector2(100, 100),
+                Masking = true,
+                MaskingFade = new MarginPadding { Left = 10, Top = 20, Bottom = 5 }
+            }
+        };
+
+        root.Add(scaled);
+        settle();
+
+        var fade = pushDrawNode(faded).Fade;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(fade.Left, Is.EqualTo(20).Within(0.05f), "x scales by 2");
+            Assert.That(fade.Top, Is.EqualTo(60).Within(0.05f), "y scales by 3");
+            Assert.That(fade.Bottom, Is.EqualTo(15).Within(0.05f));
+            Assert.That(fade.Right, Is.EqualTo(0), "a side without a fade stays without one");
         });
     }
 
@@ -276,7 +312,7 @@ public class ContainerMaskScaleTest
     {
         public readonly struct MaskCall
         {
-            public MaskCall(Vector2 center, Vector2 halfSize, float shearX, float cornerRadius, float borderThickness, Color borderColor = default)
+            public MaskCall(Vector2 center, Vector2 halfSize, float shearX, float cornerRadius, float borderThickness, Color borderColor = default, MarginPadding fade = default)
             {
                 Center = center;
                 HalfSize = halfSize;
@@ -284,6 +320,7 @@ public class ContainerMaskScaleTest
                 CornerRadius = cornerRadius;
                 BorderThickness = borderThickness;
                 BorderColor = borderColor;
+                Fade = fade;
             }
 
             public Vector2 Center { get; }
@@ -292,6 +329,7 @@ public class ContainerMaskScaleTest
             public float CornerRadius { get; }
             public float BorderThickness { get; }
             public Color BorderColor { get; }
+            public MarginPadding Fade { get; }
         }
 
         public List<MaskCall> Pushes { get; } = new List<MaskCall>();
@@ -299,6 +337,9 @@ public class ContainerMaskScaleTest
 
         public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius)
             => Pushes.Add(new MaskCall(maskCenter, maskHalfSize, shearX, cornerRadius, 0f));
+
+        public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, MarginPadding fade)
+            => Pushes.Add(new MaskCall(maskCenter, maskHalfSize, shearX, cornerRadius, 0f, fade: fade));
 
         public void PopMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<VertexData> maskVertices = default)
             => Pops.Add(new MaskCall(maskCenter, maskHalfSize, shearX, cornerRadius, borderThickness, borderColor));

@@ -3,6 +3,7 @@
 
 using System;
 using Sakura.Framework.Graphics.Colors;
+using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.IO;
 using Sakura.Framework.Maths;
@@ -69,6 +70,14 @@ public interface IRenderer
     void DrawQuads(ReadOnlySpan<Vertex.Vertex> vertices, Texture textureGl);
 
     void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius);
+
+    /// <summary>
+    /// Pushes a mask whose content also fades out towards its edges: transparent at each edge, opaque
+    /// <paramref name="fade"/>'s distance in from it (screen space; 0 on a side is no fade there). A
+    /// renderer that can't fade masks only masks.
+    /// </summary>
+    void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, MarginPadding fade)
+        => PushMask(maskCenter, maskHalfSize, shearX, cornerRadius);
 
     /// <summary>
     /// Stamps the mask currently pushed on this renderer onto <paramref name="vertices"/>.

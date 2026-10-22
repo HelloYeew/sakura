@@ -9,6 +9,7 @@ using System.Runtime.InteropServices;
 using FFmpeg.AutoGen;
 using Sakura.Framework.Development;
 using Sakura.Framework.Graphics.Colors;
+using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering.Batches;
 using Sakura.Framework.Graphics.Rendering.Uniforms;
 using Sakura.Framework.Graphics.Textures;
@@ -1260,7 +1261,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         // The clip is stamped onto every vertex on the way into the batch; the fragment shader's
         // applyClipping reads it back.
         var clip = clips.Current;
-        batch.AddRange(vertices, textureIndex, clip.ClipData, clip.ShearX, clip.Radius);
+        batch.AddRange(vertices, textureIndex, clip);
     }
 
     public void DrawQuads(ReadOnlySpan<SakuraVertex> vertices, Texture texture)
@@ -1272,7 +1273,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         var clip = clips.Current;
 
         for (int i = 0; i + 4 <= vertices.Length; i += 4)
-            batch.AddQuad(vertices.Slice(i, 4), textureIndex, clip.ClipData, clip.ShearX, clip.Radius);
+            batch.AddQuad(vertices.Slice(i, 4), textureIndex, clip);
     }
 
     /// <summary>
@@ -1538,6 +1539,9 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
     public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius)
         => clips.Push(maskCenter, maskHalfSize, shearX, cornerRadius);
+
+    public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, MarginPadding fade)
+        => clips.Push(maskCenter, maskHalfSize, shearX, cornerRadius, fade);
 
     public void PopMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<SakuraVertex> maskVertices = default)
     {

@@ -56,6 +56,20 @@ public struct Vertex
     public float ClipRadius;
 
     /// <summary>
+    /// The edges the clip's soft fade is measured from (Left, Top, Right, Bottom), in the same space as
+    /// <see cref="Position"/>.
+    /// </summary>
+    [VertexMember(4, VertexMemberType.Float)]
+    public Vector4 ClipFadeEdges;
+
+    /// <summary>
+    /// How far in from each of <see cref="ClipFadeEdges"/> (Left, Top, Right, Bottom) the clip fades from
+    /// transparent to opaque. 0 on a side is no fade there, so a vertex left zeroed doesn't fade.
+    /// </summary>
+    [VertexMember(4, VertexMemberType.Float)]
+    public Vector4 ClipFadeLength;
+
+    /// <summary>
     /// The size of the Vertex struct in bytes.
     /// </summary>
     public static readonly int Size = Marshal.SizeOf<Vertex>();
