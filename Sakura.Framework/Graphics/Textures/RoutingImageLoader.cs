@@ -7,6 +7,7 @@ using Sakura.Framework.Graphics.Textures.ImageSharp;
 using Sakura.Framework.Graphics.Textures.Stb;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Statistic;
+using SixLabors.ImageSharp;
 
 namespace Sakura.Framework.Graphics.Textures;
 
@@ -34,6 +35,11 @@ public class RoutingImageLoader : IImageLoader
     /// </summary>
     private static readonly GlobalStatistic<long> stat_oriented = GlobalStatistics.Get<long>("Textures", "ImageSharp Oriented Routes", StatisticKind.Cumulative);
 
+    /// <summary>
+    /// JPEGs routed to ImageSharp up front to be decoded already reduced.
+    /// </summary>
+    private static readonly GlobalStatistic<long> stat_scaled = GlobalStatistics.Get<long>("Textures", "ImageSharp Scaled JPEG Routes", StatisticKind.Cumulative);
+
     private readonly StbImageLoader stb = new StbImageLoader();
 
     private readonly Lazy<ImageSharpImageLoader> imageSharp =
@@ -43,14 +49,54 @@ public class RoutingImageLoader : IImageLoader
     /// The loader that will handle an image, without decoding it. For diagnostics and tests.
     /// </summary>
     public bool WouldUseStb(ReadOnlySpan<byte> encoded)
-        => StbImageLoader.IsAvailable && !ExifOrientation.RequiresTransform(encoded);
+        => WouldUseStb(encoded, ImageLoadOptions.FullSize);
+
+    /// <summary>
+    /// The loader that will handle an image wanted at <paramref name="options"/>, without decoding it. For diagnostics
+    /// and tests.
+    /// </summary>
+    public bool WouldUseStb(ReadOnlySpan<byte> encoded, ImageLoadOptions options)
+        => StbImageLoader.IsAvailable && !ExifOrientation.RequiresTransform(encoded) && !decodesReduced(encoded, options);
+
+    /// <summary>
+    /// How many pixels a JPEG has to have before it's decoded reduced rather than whole: ImageSharp decodes a JPEG wanted
+    /// at half its size or less at that size, by scaling its DCT, where stb decodes the whole image first. Measured on an
+    /// M3 for a 1920x1080 screen: 24 MP took 320 ms either way but stb peaked ~150 MB higher; 12 MP was 22% slower
+    /// through ImageSharp for 48 MB less; at 2-4 MP the two were within a few milliseconds. So a desktop, with memory to
+    /// spare, sends only the largest photos, and a phone, where a spike that size gets an app ended, sends more.
+    /// </summary>
+    private static readonly long scaled_decode_min_pixels = RuntimeInfo.IsMobile ? 4_000_000 : 16_000_000;
+
+    /// <summary>
+    /// Whether this is a JPEG large enough, and wanted small enough, to be decoded reduced (see
+    /// <see cref="scaled_decode_min_pixels"/>).
+    /// </summary>
+    private static bool decodesReduced(ReadOnlySpan<byte> encoded, ImageLoadOptions options)
+    {
+        // JPEG's start-of-image marker.
+        if (!options.HasTarget || encoded.Length < 3 || encoded[0] != 0xFF || encoded[1] != 0xD8 || encoded[2] != 0xFF)
+            return false;
+
+        try
+        {
+            var info = Image.Identify(encoded);
+
+            return (long)info.Width * info.Height >= scaled_decode_min_pixels
+                   && ImageReduction.DecodeFraction(info.Width, info.Height, options.TargetSize!.Value, options.CropToFill) != null;
+        }
+        catch
+        {
+            // A header ImageSharp can't read: stb has its turn, and the fallback after it.
+            return false;
+        }
+    }
 
     public void LogInfo()
     {
         Logger.Verbose("🖼️ Routing image loader initialized");
         Logger.Verbose($"Routing Primary: {nameof(StbImageLoader)}{(StbImageLoader.IsAvailable ? "" : " (unavailable — everything falls back)")}");
         Logger.Verbose($"Routing Fallback: {nameof(ImageSharpImageLoader)} (loaded on first use)");
-        Logger.Verbose("Routing Rule: EXIF-oriented images go to the fallback up front; anything stb rejects falls back on error");
+        Logger.Verbose($"Routing Rule: EXIF-oriented images, and JPEGs of {scaled_decode_min_pixels / 1_000_000} MP or more wanted at half size or less, go to the fallback up front; anything stb rejects falls back on error");
 
         stb.LogInfo();
 
@@ -75,6 +121,12 @@ public class RoutingImageLoader : IImageLoader
         if (ExifOrientation.RequiresTransform(encoded.Span))
         {
             stat_oriented.Value++;
+            return imageSharp.Value.Load(encoded.AsStream(), options);
+        }
+
+        if (decodesReduced(encoded.Span, options))
+        {
+            stat_scaled.Value++;
             return imageSharp.Value.Load(encoded.AsStream(), options);
         }
 
