@@ -4,6 +4,7 @@
 using System;
 using Android.Content;
 using Android.Graphics;
+using Android.Hardware.Display;
 using Android.OS;
 using Android.Text;
 using Android.Views;
@@ -76,6 +77,40 @@ public abstract class SakuraActivity : SDLActivity
         CoveredInsetsChanged?.Invoke();
     }
 
+    private DisplayListener? displayListener;
+    private volatile float refreshRate;
+
+    /// <summary>
+    /// The refresh rate of the display the app is on, or 0 before it's known. SDL reads it only when the surface
+    /// changes, so it misses a panel switching between 60 and 120 Hz. Safe to read from any thread.
+    /// </summary>
+    internal float RefreshRate => refreshRate;
+
+    /// <summary>
+    /// Raised on the UI thread when <see cref="RefreshRate"/> changes.
+    /// </summary>
+    internal event Action? RefreshRateChanged;
+
+    /// <summary>
+    /// Asks the display for its highest refresh rate while the app's surface shows. Safe to call from any thread.
+    /// </summary>
+    internal void PreferHighestRefreshRate() => RunOnUiThread(() => (MSurface as SakuraSurface)?.PreferHighestRefreshRate());
+
+    private void updateRefreshRate()
+    {
+        // Display moved from the window manager to the context in API 30.
+#pragma warning disable CA1422
+        var display = OperatingSystem.IsAndroidVersionAtLeast(30) ? Display : WindowManager?.DefaultDisplay;
+#pragma warning restore CA1422
+        float rate = display?.RefreshRate ?? 0;
+
+        if (rate == refreshRate)
+            return;
+
+        refreshRate = rate;
+        RefreshRateChanged?.Invoke();
+    }
+
     protected override void OnCreate(Bundle? savedInstanceState)
     {
         // The process starts in '/', which the app can't write to, so relative paths go to its own files instead.
@@ -85,6 +120,18 @@ public abstract class SakuraActivity : SDLActivity
 
         showSurfaceUnderSystemBars();
         panForSoftKeyboard();
+
+        updateRefreshRate();
+        displayListener = new DisplayListener(updateRefreshRate);
+        (GetSystemService(DisplayService) as DisplayManager)?.RegisterDisplayListener(displayListener, null);
+    }
+
+    protected override void OnDestroy()
+    {
+        if (displayListener != null)
+            (GetSystemService(DisplayService) as DisplayManager)?.UnregisterDisplayListener(displayListener);
+
+        base.OnDestroy();
     }
 
     /// <summary>
@@ -163,5 +210,28 @@ public abstract class SakuraActivity : SDLActivity
         // The app exited by itself, so the activity goes with it rather than staying on a dead surface.
         if (!IsFinishing)
             Finish();
+    }
+
+    /// <summary>
+    /// Hears of every change to every display, a mode change included, on the UI thread.
+    /// </summary>
+    private sealed class DisplayListener : Java.Lang.Object, DisplayManager.IDisplayListener
+    {
+        private readonly Action changed;
+
+        public DisplayListener(Action changed)
+        {
+            this.changed = changed;
+        }
+
+        public void OnDisplayChanged(int displayId) => changed();
+
+        public void OnDisplayAdded(int displayId)
+        {
+        }
+
+        public void OnDisplayRemoved(int displayId)
+        {
+        }
     }
 }

@@ -39,7 +39,7 @@ public class AndroidAppHost : SDLAppHost
 
     public override Storage GetStorage(string path) => new NativeStorage(path, this);
 
-    protected override IWindow CreateWindow() => new AndroidWindow(activity);
+    protected override IWindow CreateWindow() => new AndroidWindow(activity, Options.AppType);
 
     // What the speaker or headphones run at, which a stream needs to match for the low-latency path: usually
     // 48 kHz, in bursts of 96 to 240 frames. SDL only knows a placeholder (44.1 kHz) until a stream is open.

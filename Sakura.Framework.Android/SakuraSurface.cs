@@ -3,14 +3,17 @@
 
 using System;
 using Android.Content;
+using Android.Graphics;
 using Android.Views;
 using Org.Libsdl.App;
 using Sakura.Framework.Graphics.Primitives;
+using Sakura.Framework.Logging;
 
 namespace Sakura.Framework.Android;
 
 /// <summary>
-/// SDL's surface, telling the activity which insets cover the app's content.
+/// SDL's surface, telling the activity which insets cover the app's content, and asking the display for the refresh
+/// rate the app wants.
 /// </summary>
 internal class SakuraSurface : SDLSurface
 {
@@ -20,6 +23,68 @@ internal class SakuraSurface : SDLSurface
         : base(context)
     {
         this.activity = activity;
+    }
+
+    private bool prefersHighestRefreshRate;
+
+    /// <summary>
+    /// Asks the display for its highest refresh rate at the current resolution, now and for every surface after
+    /// this one. Called on the UI thread.
+    /// </summary>
+    internal void PreferHighestRefreshRate()
+    {
+        prefersHighestRefreshRate = true;
+        askForHighestRefreshRate(Holder?.Surface);
+    }
+
+    public override void SurfaceChanged(ISurfaceHolder? holder, Format format, int width, int height)
+    {
+        base.SurfaceChanged(holder, format, width, height);
+
+        // The request belongs to the surface, and a new one comes back from every trip to the background.
+        if (prefersHighestRefreshRate)
+            askForHighestRefreshRate(holder?.Surface);
+    }
+
+    private void askForHighestRefreshRate(Surface? surface)
+    {
+        var display = Display;
+
+        if (display?.GetMode() is not Display.Mode current)
+            return;
+
+        // Only modes at the current resolution: some panels reach their highest rate only at a lower one, and the
+        // app shouldn't change that.
+        var highest = current;
+
+        foreach (var mode in display.GetSupportedModes() ?? [])
+        {
+            if (mode.PhysicalWidth == current.PhysicalWidth && mode.PhysicalHeight == current.PhysicalHeight && mode.RefreshRate > highest.RefreshRate)
+                highest = mode;
+        }
+
+        if (OperatingSystem.IsAndroidVersionAtLeast(30))
+        {
+            // A vote the system weighs with the user's settings and battery saver, rather than a mode it must set.
+            if (surface?.IsValid != true)
+                return;
+
+            surface.SetFrameRate(highest.RefreshRate, (int)SurfaceFrameRateCompatibility.Default);
+        }
+        else
+        {
+            // Android 10 can only be asked for a mode, through the window.
+            var window = activity.Window!;
+            var attributes = window.Attributes!;
+
+            if (attributes.PreferredDisplayModeId == highest.ModeId)
+                return;
+
+            attributes.PreferredDisplayModeId = highest.ModeId;
+            window.Attributes = attributes;
+        }
+
+        Logger.Verbose($"Asked the display for {highest.RefreshRate:0.##} Hz (now {current.RefreshRate:0.##} Hz)");
     }
 
     public override WindowInsets? OnApplyWindowInsets(View? view, WindowInsets? insets)

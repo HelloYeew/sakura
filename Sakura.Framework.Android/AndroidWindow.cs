@@ -17,13 +17,21 @@ internal class AndroidWindow : SDLWindow
 {
     private readonly SakuraActivity activity;
 
-    public AndroidWindow(SakuraActivity activity)
+    public AndroidWindow(SakuraActivity activity, AppType appType)
     {
         this.activity = activity;
         activity.CoveredInsetsChanged += InvalidateSafeArea;
+        activity.RefreshRateChanged += InvalidateRefreshRate;
+
+        // A game wants every frame the panel can show. An application leaves the rate to the system, which can drop
+        // it while nothing moves to save power.
+        if (appType == AppType.Game)
+            activity.PreferHighestRefreshRate();
     }
 
     protected override MarginPadding? GetPlatformSafeAreaInsets() => activity.CoveredInsets;
+
+    protected override float? GetPlatformRefreshRate() => activity.RefreshRate > 0 ? activity.RefreshRate : null;
 
     protected override void ConfigureHints()
     {
@@ -39,7 +47,8 @@ internal class AndroidWindow : SDLWindow
 
         // AAudio's low-latency mode, the path a burst-sized buffer at the output's rate is for. SDL's default
         // today; set so a change of default can't quietly take it away.
-        SDL_SetHint(SDL_HINT_ANDROID_LOW_LATENCY_AUDIO, "1");    }
+        SDL_SetHint(SDL_HINT_ANDROID_LOW_LATENCY_AUDIO, "1");
+    }
 
     protected override bool RetargetScreenKeyboard(TextInputType type, SDL_Rect area, bool typeChanged)
     {
