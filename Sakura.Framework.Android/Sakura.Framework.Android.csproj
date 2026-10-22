@@ -11,4 +11,7 @@
   <ItemGroup Label="Project References">
     <ProjectReference Include="..\Sakura.Framework\Sakura.Framework.csproj" />
   </ItemGroup>
+  <ItemGroup Label="Package">
+    <None Include="buildTransitive\Sakura.Framework.Android.targets" Pack="true" PackagePath="buildTransitive/" />
+  </ItemGroup>
 </Project>

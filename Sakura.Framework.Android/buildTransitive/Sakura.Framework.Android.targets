@@ -1,0 +1,14 @@
+<Project>
+  <!--
+    .NET for Android packages a fast-deployment (Debug) build without watching libxamarin-app.so, which holds the type map from
+    managed types to Java ones; the embedded-assembly packaging does watch it. Rebuilding an assembly with Java types in it
+    (Sakura.Framework.Android, whenever the framework changes) gives it a new MVID and libxamarin-app.so a new type map, but the
+    APK keeps the old one, and the app dies at start with "no Java peer type found". Watching the library repackages the APK
+    when it changes.
+  -->
+  <Target Name="SakuraRepackageWhenTypeMapChanges" BeforeTargets="_BuildApkFastDev">
+    <PropertyGroup>
+      <_BuildApkFastDevStaticInputs>$(_BuildApkFastDevStaticInputs);@(_ApplicationSharedLibrary)</_BuildApkFastDevStaticInputs>
+    </PropertyGroup>
+  </Target>
+</Project>

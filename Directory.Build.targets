@@ -1,0 +1,4 @@
+<Project>
+  <!-- What an Android app gets with Sakura.Framework.Android from NuGet, for the apps in this repository. -->
+  <Import Project="$(MSBuildThisFileDirectory)Sakura.Framework.Android/buildTransitive/Sakura.Framework.Android.targets" />
+</Project>
