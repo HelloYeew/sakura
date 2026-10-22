@@ -5,7 +5,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup Label="Resources">
-    <EmbeddedResource Include="Resources\**\*.*" />
+    <EmbeddedResource Include="Resources\**\*.*" Exclude="Resources\**\.DS_Store" />
   </ItemGroup>
   <PropertyGroup Label="Documentation">
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
