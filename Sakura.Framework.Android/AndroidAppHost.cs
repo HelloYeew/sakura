@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using Android.Content;
 using Sakura.Framework.Audio;
 using Sakura.Framework.Extensions;
@@ -62,6 +63,12 @@ public class AndroidAppHost : SDLAppHost
     public override IEnumerable<string> UserStoragePaths => [filesDirectory];
 
     protected override Storage GetDefaultAppStorage() => GetStorage(filesDirectory);
+
+    // Out of the app data Android backs up, which has a 25 MB quota and is restored onto a new phone: logs are this
+    // phone's, and a cache is made again. The cache is Android's too, cleared when the phone runs short of space.
+    protected override Storage GetLogStorage() => GetStorage(Path.Combine(activity.NoBackupFilesDir!.AbsolutePath, "logs"));
+
+    protected override Storage GetCacheStorage() => GetStorage(activity.CacheDir!.AbsolutePath);
 
     public override Storage GetStorage(string path) => new NativeStorage(path, this);
 

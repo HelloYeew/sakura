@@ -20,6 +20,7 @@ using Sakura.Framework.Extensions.ExceptionExtensions;
 using Sakura.Framework.Extensions.IEnumerableExtensions;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Rendering;
+using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Input;
 using Sakura.Framework.IO;
 using Sakura.Framework.Logging;
@@ -280,7 +281,7 @@ public abstract class AppHost : IDisposable
     private AppThread audioThread;
 
     // TODO: This "should" not be accessible from outside the framework.
-    public Storage FrameworkStorage { get; private set; } = new EmbeddedResourceStorage(typeof(AppHost).Assembly, "Sakura.Framework.Resources");
+    public Storage FrameworkStorage { get => field ??= new EmbeddedResourceStorage(typeof(AppHost).Assembly, "Sakura.Framework.Resources"); private set; }
 
     public FrameworkConfigManager FrameworkConfigManager { get; private set; }
 
@@ -462,10 +463,13 @@ public abstract class AppHost : IDisposable
 
             Renderer?.ReleaseSurface();
 
-            // From here the system may end the process without another word.
-            FrameworkConfigManager?.Flush();
+            // From here the system may end the process without another word: every setting is saved, the app's too.
+            ConfigManagers.FlushAll();
 
             Logger.Verbose("Entered the background: frames stopped and the window surface released.");
+
+            // Long enough for what's queued, which is a few lines; the system allows a background move about five seconds.
+            Logger.Flush(TimeSpan.FromMilliseconds(500));
         }
     }
 
@@ -485,6 +489,9 @@ public abstract class AppHost : IDisposable
     private void onLowMemory()
     {
         long before = GC.GetTotalMemory(false);
+
+        // Before the collection, so it frees them.
+        ImageRawData.TrimPool();
 
         // Aggressive gives back the memory the collection frees rather than keeping it for the next allocations.
         GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
@@ -535,9 +542,20 @@ public abstract class AppHost : IDisposable
     /// </summary>
     private ConsoleCancelEventHandler? cancelKeyPressHandler;
 
+    /// <summary>
+    /// Where the logs are written. The app's storage, unless the platform keeps them apart from the data it backs up.
+    /// </summary>
+    protected virtual Storage GetLogStorage() => Storage.GetStorageForDirectory("logs");
+
+    /// <summary>
+    /// Where what can be made again is kept, such as compiled shaders. The app's storage, unless the platform has a
+    /// place it clears when it's short of space and leaves out of backups.
+    /// </summary>
+    protected virtual Storage GetCacheStorage() => Storage.GetStorageForDirectory("cache");
+
     protected virtual void SetupForRun()
     {
-        Logger.Storage = Storage.GetStorageForDirectory("logs");
+        Logger.Storage = GetLogStorage();
 
         FrameworkConfigManager = new FrameworkConfigManager(Storage, Options.AppType);
         FrameworkConfigManager.Load();
@@ -1132,7 +1150,7 @@ public abstract class AppHost : IDisposable
         Renderer.ShaderStorage = FrameworkStorage.GetStorageForDirectory("Shaders");
 
         if (Storage != null)
-            Renderer.ShaderCache = new DiskCache(Storage.GetStorageForDirectory("cache/shader"));
+            Renderer.ShaderCache = new DiskCache(GetCacheStorage().GetStorageForDirectory("shader"));
 
         InitializeGraphicsContext(Window, Renderer);
         Renderer.Initialize(Window.GraphicsSurface);

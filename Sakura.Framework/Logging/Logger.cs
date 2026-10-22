@@ -5,6 +5,7 @@
 
 using System;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Text;
@@ -34,6 +35,9 @@ public class Logger
     private static long startupTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
     private static Storage storage;
     private static bool isShutDown = false;
+
+    // Entries queued and not written yet, so Flush knows when they're all out.
+    private static int unwritten;
 
     public static Storage Storage
     {
@@ -235,6 +239,26 @@ public class Logger
     }
 
     /// <summary>
+    /// Waits, up to <paramref name="timeout"/>, until everything logged so far is in its file, for a process that can be
+    /// ended without another word from here on: an app gone to the background on a phone. The logger carries on.
+    /// </summary>
+    /// <returns>Whether it all got there in time.</returns>
+    public static bool Flush(TimeSpan timeout)
+    {
+        var waited = Stopwatch.StartNew();
+
+        while (Volatile.Read(ref unwritten) > 0)
+        {
+            if (waited.Elapsed >= timeout)
+                return false;
+
+            Thread.Sleep(1);
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// Signals the logger to shut down gracefully.
     /// Before completing, it will wait for all queued messages to be processed before stopping and closing all file writers.
     /// </summary>
@@ -295,7 +319,10 @@ public class Logger
         if (level < MinimumLogLevel || cancellationTokenSource == null || cancellationTokenSource.IsCancellationRequested || level < MinimumLogLevel)
             return;
 
-        message_channel.Writer.TryWrite(new LogEntry(DateTime.UtcNow, level, target, message));
+        Interlocked.Increment(ref unwritten);
+
+        if (!message_channel.Writer.TryWrite(new LogEntry(DateTime.UtcNow, level, target, message)))
+            Interlocked.Decrement(ref unwritten);
 
         log_count_stats.GetOrAdd(level, static l => GlobalStatistics.Get<int>("Logger", $"Log {l} Count")).Value++;
     }
@@ -321,6 +348,10 @@ public class Logger
                 catch (Exception ex)
                 {
                     await Console.Error.WriteLineAsync($"Failed to write log message: {ex}").ConfigureAwait(false);
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref unwritten);
                 }
             }
 

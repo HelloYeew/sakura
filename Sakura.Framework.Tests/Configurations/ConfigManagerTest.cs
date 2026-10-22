@@ -3,6 +3,7 @@
 
 using System;
 using System.IO;
+using System.Linq;
 using NUnit.Framework;
 using Sakura.Framework.Configurations;
 using Sakura.Framework.Platform;
@@ -90,6 +91,42 @@ public class ConfigManagerTest
 
         Assert.That(readFile(), Does.Not.Contain("123456"));
         Assert.That(readFile().Trim().Split('\n'), Has.Length.EqualTo(3));
+    }
+
+    /// <summary>
+    /// A save is written aside and put in place whole: nothing is left beside the file, and the file is never missing
+    /// or part-written in between.
+    /// </summary>
+    [Test]
+    public void SaveReplacesTheFileWhole()
+    {
+        var manager = new TestConfigManager(storage);
+        manager.Load();
+
+        manager.Get(TestSetting.Mode, TestMode.Fast).Value = TestMode.Slow;
+        manager.Flush();
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(readFile(), Does.Contain("Mode = Slow"));
+            Assert.That(Directory.GetFiles(tempDir).Select(Path.GetFileName), Is.EqualTo(new[] { "test.ini" }), "no file written aside is left");
+        }
+    }
+
+    [Test]
+    public void SafeWriteReplacesAnExistingFileInOneStep()
+    {
+        writeFile("old");
+
+        using (var stream = storage.CreateFileSafely("test.ini"))
+        {
+            using (var writer = new StreamWriter(stream, leaveOpen: true))
+                writer.Write("new");
+
+            Assert.That(readFile(), Is.EqualTo("old"), "the old file stays until the new one is whole");
+        }
+
+        Assert.That(readFile(), Is.EqualTo("new"));
     }
 
     [Test]
@@ -227,6 +264,45 @@ public class ConfigManagerTest
             Assert.That(readFile(), Is.EqualTo(canonical));
             Assert.That(File.GetLastWriteTimeUtc(Path.Combine(tempDir, "test.ini")), Is.EqualTo(new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc)),
                 "Loading a file that needs no repair should not write to disk at all.");
+        }
+    }
+
+    /// <summary>
+    /// Going to the background saves every config manager there is, an app's own beside the framework's, not only the
+    /// framework's: a change still waiting out its debounce is in the files straight after.
+    /// </summary>
+    [Test]
+    public void FlushAllSavesEveryManager()
+    {
+        var first = new TestConfigManager(storage);
+        first.Load();
+        var second = new OtherConfigManager(storage);
+        second.Load();
+
+        first.Get(TestSetting.Mode, TestMode.Fast).Value = TestMode.Slow;
+        second.Get(OtherSetting.Name, string.Empty).Value = "saved";
+
+        ConfigManagers.FlushAll();
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(readFile(), Does.Contain("Mode = Slow"));
+            Assert.That(File.ReadAllText(Path.Combine(tempDir, "other.ini")), Does.Contain("Name = saved"));
+        }
+    }
+
+    [SettingSource("other.ini")]
+    private enum OtherSetting
+    {
+        Name
+    }
+
+    private class OtherConfigManager : ConfigManager<OtherSetting>
+    {
+        public OtherConfigManager(Storage storage)
+            : base(storage)
+        {
+            Get(OtherSetting.Name, string.Empty);
         }
     }
 

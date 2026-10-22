@@ -75,6 +75,30 @@ public class LoggerTest
         }
     }
 
+    /// <summary>
+    /// What an app going to the background on a phone does: everything so far reaches the file, and the logger carries on.
+    /// </summary>
+    [Test]
+    public void FlushWritesEverythingQueuedAndCarriesOn()
+    {
+        for (int i = 0; i < 500; i++)
+            Logger.Log($"before {i}");
+
+        Assert.That(Logger.Flush(TimeSpan.FromSeconds(10)), Is.True);
+        Assert.That(readLogs(), Does.Contain("before 499"), "in the file without a shutdown");
+
+        Logger.Log("after");
+        Assert.That(Logger.Flush(TimeSpan.FromSeconds(10)), Is.True);
+        Assert.That(readLogs(), Does.Contain("after"));
+    }
+
+    [Test]
+    public void FlushWithNothingQueuedReturnsAtOnce()
+    {
+        Assert.That(Logger.Flush(TimeSpan.FromSeconds(10)), Is.True);
+        Assert.That(Logger.Flush(TimeSpan.Zero), Is.True);
+    }
+
     [Test]
     public void ShutdownTerminatesPromptlyWhileIdle()
     {

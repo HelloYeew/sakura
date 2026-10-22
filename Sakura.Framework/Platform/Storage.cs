@@ -106,7 +106,7 @@ public abstract class Storage
     }
 
     /// <summary>
-    /// Move a file from one path to another.
+    /// Move a file from one path to another, replacing any file already at <paramref name="toPath"/>.
     /// </summary>
     /// <param name="fromPath">The source path of the file to move.</param>
     /// <param name="toPath"> The destination path where the file should be moved.</param>
@@ -117,7 +117,8 @@ public abstract class Storage
     /// to ensure that the file is not half-written available on the specified path.
     /// </summary>
     /// <remarks>
-    /// If the target file already exists, it will be deleted before the new file is created.
+    /// If the target file already exists, the new one replaces it in one step, so either the old file or the whole new one
+    /// is there, whenever the process ends.
     /// </remarks>
     /// <param name="path">The path of the file to create or overwrite.</param>
     /// <returns>A stream to write to the file, will only exist at the specified path once the stream is disposed.</returns>
