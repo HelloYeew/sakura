@@ -75,6 +75,7 @@ public partial class ScrollableContainer : Container
     private double lastActivityTime;
 
     private double lastDragTime;
+    private double lastDragTimestamp;
     private double averageDragTime;
     private Vector2 averageDragDelta;
 
@@ -536,6 +537,7 @@ public partial class ScrollableContainer : Container
         isDraggingContent = true;
 
         lastDragTime = Clock.CurrentTime;
+        lastDragTimestamp = e.Timestamp;
         averageDragTime = 0;
         averageDragDelta = Vector2.Zero;
 
@@ -546,6 +548,9 @@ public partial class ScrollableContainer : Container
     {
         notifyActivity();
         isDraggingContent = false;
+
+        // Time held still before letting go slows the throw, down to none after a pause.
+        trackDrag(e.Timestamp, Vector2.Zero);
 
         if (averageDragTime > 0.0)
         {
@@ -571,13 +576,7 @@ public partial class ScrollableContainer : Container
     {
         notifyActivity();
 
-        double currentTime = Clock.CurrentTime;
-        double timeDelta = currentTime - lastDragTime;
-        double decay = Math.Pow(0.95, timeDelta);
-
-        averageDragTime = averageDragTime * decay + timeDelta;
-        averageDragDelta = averageDragDelta * (float)decay + e.Delta;
-        lastDragTime = currentTime;
+        trackDrag(e.Timestamp, e.Delta);
 
         Vector2 clamped = getClampedScroll(targetScroll);
         float resistanceX = (targetScroll.X < 0 || targetScroll.X > clamped.X) ? 0.3f : 1f;
@@ -590,6 +589,26 @@ public partial class ScrollableContainer : Container
             targetScroll.X -= e.Delta.X * resistanceX;
 
         return true;
+    }
+
+    /// <summary>
+    /// Folds a drag event into the running average a fling is thrown with: how far it moved, and how long since the last
+    /// one. Timed by when the events happened where they say, since several can arrive in one frame, which the clock
+    /// would read as no time at all; by the clock where they don't.
+    /// </summary>
+    private void trackDrag(double timestamp, Vector2 delta)
+    {
+        double clockTime = Clock.CurrentTime;
+        double timeDelta = double.IsNaN(timestamp) || double.IsNaN(lastDragTimestamp)
+            ? clockTime - lastDragTime
+            : timestamp - lastDragTimestamp;
+        double decay = Math.Pow(0.95, Math.Max(0, timeDelta));
+
+        averageDragTime = averageDragTime * decay + Math.Max(0, timeDelta);
+        averageDragDelta = averageDragDelta * (float)decay + delta;
+
+        lastDragTime = clockTime;
+        lastDragTimestamp = timestamp;
     }
 
     private partial class ScrollbarContainer : Container
