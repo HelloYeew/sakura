@@ -51,11 +51,19 @@ public class Scheduler
     }
 
     /// <summary>
-    /// Schedules a single action to be performed as soon as possible.
+    /// Schedules a single action to be performed as soon as possible: at the next <see cref="Update"/>, or before a
+    /// clock is set, at the first one after.
     /// </summary>
     /// <param name="action">The action to perform.</param>
     /// <returns>A handle to the scheduled task, which can be used to cancel it.</returns>
-    public ScheduledTask Add(Action action) => AddDelayed(action, 0);
+    public ScheduledTask Add(Action action)
+    {
+        // Due whatever the clock reads, so it needs none yet.
+        var task = new ScheduledTask(action, clock?.CurrentTime ?? double.NegativeInfinity);
+        lock (locker)
+            tasksToAdd.Add(task);
+        return task;
+    }
 
     /// <summary>
     /// Schedules a single action to be performed after a specified delay.
