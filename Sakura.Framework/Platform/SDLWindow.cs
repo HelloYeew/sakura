@@ -5,6 +5,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -16,6 +17,7 @@ using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Platform.Dialogs;
 using Sakura.Framework.Reactive;
+using Sakura.Framework.Statistic;
 using Sakura.Framework.Timing;
 using SDL;
 using static SDL.SDL3;
@@ -570,6 +572,7 @@ public class SDLWindow : IWindow
 
         // From here, so a backgrounding that comes while the app is still starting isn't missed.
         SDL_AddEventWatch(&lifecycleEventWatch, IntPtr.Zero);
+        AddTouchTimeWatch();
         Logger.Verbose($"SDL Version: {version / 1000000}.{version / 1000 % 1000}.{version % 1000}");
         Logger.Verbose($"SDL Revision: {SDL_GetRevision()}");
         Logger.Verbose($"SDL Video Driver: {SDL_GetCurrentVideoDriver()}");
@@ -923,6 +926,61 @@ public class SDLWindow : IWindow
         {
             // An exception can't cross back into SDL.
             Logger.Error("Handling an app lifecycle event failed.", ex);
+        }
+
+        return true;
+    }
+
+    // When the touch being handed to SDL on this thread really happened, on the Stopwatch timeline, or 0 if unknown.
+    [ThreadStatic]
+    private static long pendingTouchTime;
+
+    private static readonly GlobalStatistic<double> stat_touch_delay = GlobalStatistics.Get<double>("Input", "Touch Delay", StatisticKind.Gauge, StatisticUnit.Milliseconds);
+
+    // A gap this long isn't a touch's delivery but a clock that doesn't match, and is left alone.
+    private const long max_touch_delay_ns = 1_000_000_000;
+
+    /// <summary>
+    /// For a platform that knows when a touch really happened. SDL stamps a touch with the time it's handed over,
+    /// which on Android comes after the system has passed it along, a few milliseconds later and by a varying amount;
+    /// a rhythm game judges on that time. Call on the thread that hands SDL the touch, just before it does, and again
+    /// with 0 once it has: every touch event SDL makes from it in between gets that time instead.
+    /// </summary>
+    /// <param name="stopwatchTimestamp">When the touch happened, on the <see cref="Stopwatch"/> timeline.</param>
+    protected static void SetTouchTime(long stopwatchTimestamp) => pendingTouchTime = stopwatchTimestamp;
+
+    internal static unsafe void AddTouchTimeWatch() => SDL_AddEventWatch(&touchTimeEventWatch, IntPtr.Zero);
+
+    internal static unsafe void RemoveTouchTimeWatch() => SDL_RemoveEventWatch(&touchTimeEventWatch, IntPtr.Zero);
+
+    /// <summary>
+    /// Moves the touch events SDL is queueing onto the time from <see cref="SetTouchTime"/>. Runs as SDL queues each
+    /// one, on the thread queueing it, with the event SDL is about to queue, so the change is what the app later reads.
+    /// </summary>
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static unsafe SDLBool touchTimeEventWatch(IntPtr userdata, SDL_Event* e)
+    {
+        long happened = pendingTouchTime;
+
+        if (happened == 0)
+            return true;
+
+        switch ((SDL_EventType)e->type)
+        {
+            case SDL_EventType.SDL_EVENT_FINGER_DOWN:
+            case SDL_EventType.SDL_EVENT_FINGER_MOTION:
+            case SDL_EventType.SDL_EVENT_FINGER_UP:
+            case SDL_EventType.SDL_EVENT_FINGER_CANCELED:
+                // SDL stamped it just now, so how long ago the touch happened comes off that stamp.
+                long delay = (long)Stopwatch.GetElapsedTime(happened).TotalNanoseconds;
+
+                if (delay > 0 && delay < max_touch_delay_ns && (ulong)delay < e->tfinger.timestamp)
+                {
+                    e->tfinger.timestamp -= (ulong)delay;
+                    stat_touch_delay.Value = delay / 1_000_000.0;
+                }
+
+                break;
         }
 
         return true;
@@ -2010,6 +2068,7 @@ public class SDLWindow : IWindow
     {
         SDL_RemoveEventWatch(&resizeEventWatch, IntPtr.Zero);
         SDL_RemoveEventWatch(&lifecycleEventWatch, IntPtr.Zero);
+        RemoveTouchTimeWatch();
 
         foreach (IntPtr ptr in openGamepads.Values)
             SDL_CloseGamepad((SDL_Gamepad*)ptr);
