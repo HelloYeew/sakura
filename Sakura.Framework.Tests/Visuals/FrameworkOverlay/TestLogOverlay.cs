@@ -49,6 +49,14 @@ public partial class TestLogOverlay : TestScene
     }
 
     [Test]
+    public void TestEntriesGoAwayByThemselves()
+    {
+        AddStep("Log a line", () => Logger.Verbose("A line that goes away"));
+        AddUntilStep("It's shown", () => shows("A line that goes away"));
+        AddUntilStep("Then it's gone", () => !shows("A line that goes away"), 15000);
+    }
+
+    [Test]
     public void TestWhatWasLoggedWhileOffShowsWhenTurnedOn()
     {
         AddStep("Turn it off", () => shown.Value = false);

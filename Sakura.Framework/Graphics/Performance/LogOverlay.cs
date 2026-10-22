@@ -12,6 +12,7 @@ using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Text;
+using Sakura.Framework.Graphics.Transforms;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
@@ -20,8 +21,9 @@ using Sakura.Framework.Reactive;
 namespace Sakura.Framework.Graphics.Performance;
 
 /// <summary>
-/// The log as it's written, over the bottom-left of the app, newest at the bottom. Each entry stays a few seconds and
-/// then fades. For a platform with no console to read the log on, such as a phone, and for watching it without one.
+/// The log as it's written, over the bottom-left of the app, newest at the bottom, like a game's chat: each entry fades
+/// in, stays a few seconds (longer for warnings and errors) and fades away. For a platform with no console to read the
+/// log on, such as a phone, and for watching it without one.
 /// Shown by <see cref="FrameworkSetting.ShowLogOverlay"/> (Ctrl+Shift+L). It takes no input, so it never gets in the
 /// way.
 /// </summary>
@@ -31,10 +33,13 @@ namespace Sakura.Framework.Graphics.Performance;
 /// </remarks>
 public partial class LogOverlay : Container, IRemoveFromDrawVisualiser
 {
-    private const int max_entries = 20;
+    // Few enough to leave the game in view when the log is busy.
+    private const int max_entries = 10;
 
-    private const double entry_lifetime_ms = 10_000;
-    private const double fade_ms = 500;
+    private const double fade_in_ms = 150;
+    private const double fade_out_ms = 800;
+
+    private const float background_alpha = 0.55f;
 
     private const float edge_margin = 10;
 
@@ -130,7 +135,7 @@ public partial class LogOverlay : Container, IRemoveFromDrawVisualiser
                 {
                     RelativeSizeAxes = Axes.Both,
                     Color = style.Background,
-                    Alpha = 0.75f
+                    Alpha = background_alpha
                 },
                 new FlowContainer
                 {
@@ -193,7 +198,7 @@ public partial class LogOverlay : Container, IRemoveFromDrawVisualiser
         };
 
         lines.Add(line);
-        line.Wait(entry_lifetime_ms).FadeOut(fade_ms);
+        line.FadeInFromZero(fade_in_ms).Wait(style.Lifetime).FadeOut(fade_out_ms, Easing.InQuad);
         line.Expire();
 
         // A fixed-width cell, so the columns line up from one line to the next.
@@ -219,15 +224,17 @@ public partial class LogOverlay : Container, IRemoveFromDrawVisualiser
         return $"{message[..newline].TrimEnd('\r')} (+{moreLines} more {(moreLines == 1 ? "line" : "lines")})";
     }
 
-    private readonly record struct LevelStyle(string Label, Color Accent, Color Message, Color Background);
+    // Lifetime is how long an entry stays before it fades, in milliseconds: the routine briefly, what needs attention
+    // longer.
+    private readonly record struct LevelStyle(string Label, Color Accent, Color Message, Color Background, double Lifetime);
 
     private static LevelStyle styleOf(LogLevel level) => level switch
     {
-        LogLevel.Debug => new LevelStyle("DEBUG", Color.FromArgb(150, 150, 150), Color.FromArgb(175, 175, 175), Color.Black),
-        LogLevel.Verbose => new LevelStyle("VERBOSE", Color.FromArgb(100, 180, 255), Color.White, Color.Black),
-        LogLevel.Warning => new LevelStyle("WARNING", Color.FromArgb(255, 196, 64), Color.FromArgb(255, 232, 175), Color.FromArgb(55, 40, 0)),
-        LogLevel.Error => new LevelStyle("ERROR", Color.FromArgb(255, 95, 90), Color.FromArgb(255, 208, 204), Color.FromArgb(70, 10, 10)),
-        _ => new LevelStyle("FATAL", Color.FromArgb(255, 70, 170), Color.FromArgb(255, 205, 232), Color.FromArgb(80, 0, 40))
+        LogLevel.Debug => new LevelStyle("DEBUG", Color.FromArgb(150, 150, 150), Color.FromArgb(175, 175, 175), Color.Black, 4000),
+        LogLevel.Verbose => new LevelStyle("VERBOSE", Color.FromArgb(100, 180, 255), Color.White, Color.Black, 4000),
+        LogLevel.Warning => new LevelStyle("WARNING", Color.FromArgb(255, 196, 64), Color.FromArgb(255, 232, 175), Color.FromArgb(55, 40, 0), 7000),
+        LogLevel.Error => new LevelStyle("ERROR", Color.FromArgb(255, 95, 90), Color.FromArgb(255, 208, 204), Color.FromArgb(70, 10, 10), 10_000),
+        _ => new LevelStyle("FATAL", Color.FromArgb(255, 70, 170), Color.FromArgb(255, 205, 232), Color.FromArgb(80, 0, 40), 10_000)
     };
 
     protected override void Dispose(bool isDisposing)
