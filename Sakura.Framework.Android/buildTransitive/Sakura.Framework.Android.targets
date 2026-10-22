@@ -11,4 +11,21 @@
       <_BuildApkFastDevStaticInputs>$(_BuildApkFastDevStaticInputs);@(_ApplicationSharedLibrary)</_BuildApkFastDevStaticInputs>
     </PropertyGroup>
   </Target>
+
+  <!--
+    With assembly compression off (so assemblies are mapped from the APK rather than inflated at launch), .NET for Android
+    36.1 leaves compressed_assembly_count, compressed_assembly_descriptors and uncompressed_assemblies_data_size out of
+    libxamarin-app.so, since there's nothing compressed to describe. CoreCLR's Release host, libmonodroid.so, still links
+    them, so a Release build dies at start in dlopen ("cannot locate symbol compressed_assembly_count"); Debug's doesn't.
+    They're added here as what they mean, no compressed assemblies, wherever the generated source lacks them.
+  -->
+  <Target Name="SakuraDeclareNoCompressedAssemblies"
+          AfterTargets="_GenerateCompressedAssembliesNativeSourceFiles"
+          Condition=" '$(UseMonoRuntime)' == 'false' And '$(AndroidEnableAssemblyCompression)' == 'false' ">
+    <WriteLinesToFile
+        File="%(_CompressedAssembliesAssemblySource.FullPath)"
+        Condition=" Exists('%(_CompressedAssembliesAssemblySource.FullPath)') And !$([System.IO.File]::ReadAllText('%(_CompressedAssembliesAssemblySource.FullPath)').Contains('@compressed_assembly_count')) "
+        Lines="@compressed_assembly_count = dso_local local_unnamed_addr constant i32 0, align 4;@compressed_assembly_descriptors = dso_local local_unnamed_addr global [0 x %25struct.CompressedAssemblyDescriptor] zeroinitializer, align 4;@uncompressed_assemblies_data_size = dso_local local_unnamed_addr constant i32 0, align 4"
+        Overwrite="false" />
+  </Target>
 </Project>
