@@ -4,6 +4,7 @@
 using System;
 using System.Diagnostics;
 using System.Threading;
+using Sakura.Framework.Platform;
 using Sakura.Framework.Statistic;
 using Sakura.Framework.Timing;
 
@@ -58,6 +59,13 @@ public class AppThread
     /// multi-threaded. Ignored on other platforms. See <see cref="Platform.HostOptions.UseMultimediaClassScheduler"/>.
     /// </summary>
     public bool UseMultimediaClassScheduler { get; set; }
+
+    /// <summary>
+    /// Optional. Opens, on this thread as it starts running on its own, a session that reports each frame's work
+    /// against its target to the platform (<see cref="IPlatformPerformance.CreateFrameWorkHint"/>). Passed the
+    /// thread's name and the first frame's target in milliseconds.
+    /// </summary>
+    public Func<string, double, IFrameWorkHint?>? CreateWorkHint { get; set; }
 
     private Thread? internalThread;
     private volatile bool isRunning;
@@ -165,7 +173,7 @@ public class AppThread
     public void RunSingleFrame(double budgetMilliseconds = 0, double deadlineMilliseconds = 0)
     {
         Clock.Update();
-        invokeFrameAction(budgetMilliseconds, deadlineMilliseconds > 0 ? deadlineMilliseconds : GetDeadlineMilliseconds?.Invoke() ?? 0);
+        invokeFrameAction(budgetMilliseconds, deadlineMilliseconds > 0 ? deadlineMilliseconds : GetDeadlineMilliseconds?.Invoke() ?? 0, out _);
     }
 
     private static readonly double ms_per_tick = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
@@ -174,11 +182,12 @@ public class AppThread
     /// Invokes <see cref="FrameAction"/> and records how long its work took, separating out any GC
     /// pause that landed inside it.
     /// </summary>
+    /// <param name="workMilliseconds">How long the frame took, less the time it was blocked on a device.</param>
     /// <returns>
     /// The timestamp taken immediately after the frame's work, so the pacing code can reuse it
     /// instead of reading the clock again.
     /// </returns>
-    private long invokeFrameAction(double budgetMilliseconds, double deadlineMilliseconds)
+    private long invokeFrameAction(double budgetMilliseconds, double deadlineMilliseconds, out double workMilliseconds)
     {
         long startTicks = Stopwatch.GetTimestamp();
         double pauseBefore = GC.GetTotalPauseDuration().TotalMilliseconds;
@@ -207,6 +216,9 @@ public class AppThread
             DeadlineMilliseconds = deadlineMilliseconds
         });
 
+        // A GC pause stays in: the CPU has to get through it too.
+        workMilliseconds = Math.Max(0, frameMilliseconds - blockedMilliseconds);
+
         return endTicks;
     }
 
@@ -223,6 +235,10 @@ public class AppThread
         using var multimediaScheduler = UseMultimediaClassScheduler && OperatingSystem.IsWindows()
             ? WindowsMultimediaScheduler.Register(Name)
             : null;
+
+        // Likewise: the session describes the thread that opens it.
+        double firstHz = GetTargetHz();
+        using var workHint = CreateWorkHint?.Invoke(Name, firstHz > 0 ? 1000.0 / firstHz : 1000.0 / 60);
 
         // Absolute next-frame deadline, expressed in stopwatch ticks. We advance it by exactly one
         // frame quantum each iteration so cadence is locked to wall-clock time rather than drifting
@@ -249,7 +265,9 @@ public class AppThread
             double currentHz = GetTargetHz();
             double targetFrameTimeMs = currentHz > 0 ? 1000.0 / currentHz : 0;
 
-            long now = invokeFrameAction(targetFrameTimeMs, GetDeadlineMilliseconds?.Invoke() ?? 0);
+            long now = invokeFrameAction(targetFrameTimeMs, GetDeadlineMilliseconds?.Invoke() ?? 0, out double workMilliseconds);
+
+            workHint?.ReportFrame(targetFrameTimeMs, workMilliseconds);
 
             if (currentHz > 0)
             {

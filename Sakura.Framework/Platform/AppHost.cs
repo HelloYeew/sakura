@@ -280,6 +280,12 @@ public abstract class AppHost : IDisposable
     /// </summary>
     public virtual NativeAudioOutput? NativeAudioOutput => null;
 
+    /// <summary>
+    /// The platform's performance services: the frame threads report their work through it, and an app can read how
+    /// hot the device is running.
+    /// </summary>
+    public virtual IPlatformPerformance Performance { get; } = new NoPlatformPerformance();
+
     [NotNull]
     public HostOptions Options { get; private set; }
 
@@ -646,12 +652,18 @@ public abstract class AppHost : IDisposable
             Func<bool> usePreciseTiming = () => allowSpinning && Window?.IsActive != false;
             bool useMultimediaClassScheduler = Options.AppType == AppType.Game && Options.UseMultimediaClassScheduler;
 
+            // The two threads a frame waits on. An application only has to run smoothly, so the system may favour the
+            // battery for it.
+            bool preferPowerEfficiency = Options.AppType == AppType.Application;
+            Func<string, double, IFrameWorkHint> createWorkHint = (name, target) => Performance.CreateFrameWorkHint(name, target, preferPowerEfficiency);
+
             updateThread = new AppThread("UpdateThread", PerformUpdate, getUpdateTargetHz)
             {
                 GetDeadlineMilliseconds = GetPresentationDeadlineMs,
                 Priority = ThreadPriority.AboveNormal,
                 UsePreciseTiming = usePreciseTiming,
-                UseMultimediaClassScheduler = useMultimediaClassScheduler
+                UseMultimediaClassScheduler = useMultimediaClassScheduler,
+                CreateWorkHint = createWorkHint
             };
             drawThread = new AppThread("DrawThread", PerformDraw, getDrawTargetHz)
             {
@@ -659,7 +671,8 @@ public abstract class AppHost : IDisposable
                 UsePreciseTiming = usePreciseTiming,
                 UseMultimediaClassScheduler = useMultimediaClassScheduler,
                 GetBlockedMilliseconds = () => lastPresentMilliseconds,
-                GetDeadlineMilliseconds = GetPresentationDeadlineMs
+                GetDeadlineMilliseconds = GetPresentationDeadlineMs,
+                CreateWorkHint = createWorkHint
             };
             audioThread = new AppThread("AudioThread", PerformSoundUpdate, getAudioTargetHz)
             {
@@ -1193,6 +1206,20 @@ public abstract class AppHost : IDisposable
         PerformDraw();
     }
 
+    private GlobalStatistic<double> statThermalHeadroom;
+
+    // Listed only once the platform reports one, so it isn't a line of NaN everywhere else.
+    private void publishThermalHeadroom()
+    {
+        float headroom = Performance.ThermalHeadroom;
+
+        if (float.IsNaN(headroom))
+            return;
+
+        statThermalHeadroom ??= GlobalStatistics.Get<double>("Host", "Thermal Headroom");
+        statThermalHeadroom.Value = headroom;
+    }
+
     /// <summary>
     /// This method runs the main game logic updates. It uses a fixed-step approach
     /// to ensure updates are deterministic and independent of the draw rate.
@@ -1206,6 +1233,7 @@ public abstract class AppHost : IDisposable
 
         stat_uptime.Value = UpdateClock.CurrentTime;
         stat_target_update_hz.Value = targetUpdateHz;
+        publishThermalHeadroom();
 
         // Run any actions marshalled onto the update thread (e.g. file dialog result callbacks).
         updateScheduler.Update();
