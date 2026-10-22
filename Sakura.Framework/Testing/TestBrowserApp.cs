@@ -29,7 +29,7 @@ namespace Sakura.Framework.Testing;
 
 public partial class TestBrowserApp : App
 {
-    private DrawSizePreservingFillContainer mainContainer;
+    private Container mainContainer;
     private Container testContentContainer;
     private Box testContentBackgroundBox;
     private Container testSidebar;
@@ -86,10 +86,11 @@ public partial class TestBrowserApp : App
         TestScene.IsVisualRunner = true;
         base.Load();
 
-        Add(mainContainer = new DrawSizePreservingFillContainer
-        {
-            RelativeSizeAxes = Axes.Both
-        });
+        // A phone's units are already a readable size, and fitting the desktop layout onto one leaves the
+        // text a few units tall, so the browser and the tests are laid out in them as they are.
+        Add(mainContainer = RuntimeInfo.IsMobile
+            ? new Container { RelativeSizeAxes = Axes.Both, Size = new Vector2(1) }
+            : new DrawSizePreservingFillContainer { RelativeSizeAxes = Axes.Both });
 
         // Build the rate-adjustable clock that drives test content only.
         // InitialClockRate can be set to >1 for headless/CI runs to speed up tests.
@@ -106,7 +107,8 @@ public partial class TestBrowserApp : App
                 Top = header_height,
                 Left = sidebar_width * 2
             },
-            Color = Color.Black
+            Color = Color.Black,
+            Bleed = Edges.All
         });
 
         mainContainer.Add(testContentContainer = new Container
@@ -140,6 +142,7 @@ public partial class TestBrowserApp : App
             RelativeSizeAxes = Axes.Both,
             Size = new Vector2(1),
             Color = Color.DarkSlateGray,
+            Bleed = Edges.All
         });
 
         var headerFlow = new FlowContainer
@@ -153,6 +156,13 @@ public partial class TestBrowserApp : App
             Spacing = new Vector2(5, 0),
             Padding = new MarginPadding(5)
         };
+
+        if (RuntimeInfo.IsMobile)
+        {
+            // There's no Ctrl+\ on a phone, and the two lists side by side leave little room for the test.
+            headerFlow.Add(new HeaderButton("Tests", toggleTestList, Color.Transparent) { Width = 60 });
+            headerFlow.Add(new HeaderButton("Steps", toggleStepList, Color.Transparent) { Width = 60 });
+        }
 
         headerFlow.Add(new HeaderButton("Restart", () =>
         {
@@ -294,7 +304,8 @@ public partial class TestBrowserApp : App
             Color = Color.DarkBlue,
             Anchor = Anchor.TopLeft,
             Origin = Anchor.TopLeft,
-            Size = new Vector2(1)
+            Size = new Vector2(1),
+            Bleed = Edges.All
         });
 
         testSidebar.Add(searchTextBox = new BasicTextBox
@@ -368,7 +379,8 @@ public partial class TestBrowserApp : App
             RelativeSizeAxes = Axes.Both,
             Color = Color.DarkGreen,
             Anchor = Anchor.TopRight,
-            Origin = Anchor.TopRight
+            Origin = Anchor.TopRight,
+            Bleed = Edges.All
         });
 
         stepScrollContainer = new ScrollableContainer
@@ -470,7 +482,14 @@ public partial class TestBrowserApp : App
             foreach (var type in group.OrderBy(t => t.Name))
             {
                 string displayName = type.Name.StartsWith("Test") ? type.Name.Substring(4) : type.Name;
-                var button = new TestBrowserButton(displayName, () => loadTest(type), Color.DarkGray);
+                var button = new TestBrowserButton(displayName, () =>
+                {
+                    loadTest(type);
+
+                    // On a phone the test needs the room more than the list does once one is picked.
+                    if (RuntimeInfo.IsMobile && isTestListVisible)
+                        toggleTestList();
+                }, Color.DarkGray);
                 testListFlow.Add(button);
             }
         }
@@ -627,6 +646,7 @@ public partial class TestBrowserApp : App
     }
 
     private bool isTestListVisible = true;
+    private bool isStepListVisible = true;
 
     public override bool OnKeyDown(KeyEvent e)
     {
@@ -642,27 +662,37 @@ public partial class TestBrowserApp : App
     private void toggleTestList()
     {
         isTestListVisible = !isTestListVisible;
+        updateSidebars();
+    }
 
+    private void toggleStepList()
+    {
+        isStepListVisible = !isStepListVisible;
+        updateSidebars();
+    }
+
+    private void updateSidebars()
+    {
         if (isTestListVisible)
-        {
             testSidebar.Show();
-            stepSidebar.X = sidebar_width;
-            testContentContainer.Margin = new MarginPadding
-            {
-                Top = header_height,
-                Left = sidebar_width * 2
-            };
-        }
         else
-        {
             testSidebar.Hide();
-            stepSidebar.X = 0;
-            testContentContainer.Margin = new MarginPadding
-            {
-                Top = header_height,
-                Left = sidebar_width
-            };
-        }
+
+        if (isStepListVisible)
+            stepSidebar.Show();
+        else
+            stepSidebar.Hide();
+
+        stepSidebar.X = isTestListVisible ? sidebar_width : 0;
+
+        var contentMargin = new MarginPadding
+        {
+            Top = header_height,
+            Left = (isTestListVisible ? sidebar_width : 0) + (isStepListVisible ? sidebar_width : 0)
+        };
+
+        testContentContainer.Margin = contentMargin;
+        testContentBackgroundBox.Margin = contentMargin;
     }
 
     private void scheduleNextStep(double delayMs, int generation)

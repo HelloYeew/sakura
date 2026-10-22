@@ -65,9 +65,9 @@ public class InputState
 
     /// <summary>
     /// Whether the last pointer to act was a finger rather than a mouse. While it was, there is no cursor to
-    /// show or to hover with.
+    /// show or to hover with. On a phone or tablet it's true until a mouse moves.
     /// </summary>
-    public bool LastPointerWasTouch { get; internal set; }
+    public bool LastPointerWasTouch { get; internal set; } = RuntimeInfo.IsMobile;
 
     public bool IsPressed(MouseButton button) => pressedMouseButtons.Contains(button);
 
@@ -161,7 +161,7 @@ public class InputState
         pressedMouseButtons.Clear();
         gamepads.Clear();
         activeTouches = 0;
-        LastPointerWasTouch = false;
+        LastPointerWasTouch = RuntimeInfo.IsMobile;
         recomputeModifiers();
     }
 

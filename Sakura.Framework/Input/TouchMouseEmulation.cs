@@ -16,6 +16,9 @@ namespace Sakura.Framework.Input;
 /// <item>A finger that moves past <see cref="SLOP"/> drags the scroll container under it that scrolls that way,
 /// rather than pressing what it landed on. With no such container it presses where it landed and drags from there,
 /// as a slider wants.</item>
+/// <item>A finger held still for <see cref="LONG_PRESS_MILLISECONDS"/> is a right click, which opens context menus,
+/// and does nothing more until it lifts.</item>
+/// <item>A second finger landing before the first has moved makes it a gesture of several fingers, which clicks nothing.</item>
 /// <item>Once the finger lifts, nothing stays hovered: there is no pointer left (<see cref="MouseState.FromTouch"/>).</item>
 /// </list>
 /// </summary>
@@ -25,6 +28,11 @@ internal sealed class TouchMouseEmulation
     /// How far a finger can wander, in screen space, and still be a tap.
     /// </summary>
     public const float SLOP = 10;
+
+    /// <summary>
+    /// How long a finger has to stay within <see cref="SLOP"/> to be a right click rather than a tap.
+    /// </summary>
+    public const double LONG_PRESS_MILLISECONDS = 500;
 
     private const double double_tap_milliseconds = 300;
     private const float double_tap_distance = 20;
@@ -44,6 +52,16 @@ internal sealed class TouchMouseEmulation
     /// Whether the emulated button is down: the finger moved past the slop.
     /// </summary>
     private bool pressed;
+
+    /// <summary>
+    /// Whether the finger was held long enough to right click, which ends what it does as the mouse.
+    /// </summary>
+    private bool longPressed;
+
+    /// <summary>
+    /// When the finger landed, on the root's clock.
+    /// </summary>
+    private double downTime;
 
     private TouchSource source;
     private Vector2 start;
@@ -69,23 +87,52 @@ internal sealed class TouchMouseEmulation
     }
 
     /// <summary>
-    /// A finger went down that nothing took. Call after the manager has recorded it.
+    /// A finger went down. Call after the manager has recorded it and dispatched it.
     /// </summary>
-    public void TouchDown(TouchEvent e)
+    /// <param name="e">The finger.</param>
+    /// <param name="taken">Whether a drawable took the finger, so it isn't the mouse.</param>
+    public void TouchDown(TouchEvent e, bool taken)
     {
-        // Only a gesture's first finger, while no other is down; a second finger is a different gesture.
-        if (active || manager.CurrentState.ActiveTouchCount != 1)
+        if (active)
+        {
+            // Another finger, taken or not, makes this a gesture of several fingers (a pinch, say), and those don't
+            // click. A drag that's already under way, such as a list being scrolled, carries on.
+            if (!pressed)
+                active = false;
+
+            return;
+        }
+
+        // Only a gesture's first finger, while no other is down.
+        if (taken || manager.CurrentState.ActiveTouchCount != 1)
             return;
 
         active = true;
         pressed = false;
+        longPressed = false;
         source = e.Source;
         start = position = e.ScreenSpacePosition;
+        downTime = root.Clock.CurrentTime;
+    }
+
+    /// <summary>
+    /// Turns a finger held still for <see cref="LONG_PRESS_MILLISECONDS"/> into a right click. Call once a frame.
+    /// </summary>
+    public void Update()
+    {
+        if (!active || pressed || longPressed || root.Clock.CurrentTime - downTime < LONG_PRESS_MILLISECONDS)
+            return;
+
+        longPressed = true;
+
+        moveTo(start, double.NaN);
+        mouseDown(new MouseButtonEvent(mouseState(rightPressed: true), MouseButton.Right, 1, double.NaN));
+        mouseUp(new MouseButtonEvent(mouseState(), MouseButton.Right, 1, double.NaN));
     }
 
     public void TouchMove(TouchEvent e)
     {
-        if (!active || e.Source != source)
+        if (!active || e.Source != source || longPressed)
             return;
 
         if (!pressed)
@@ -107,6 +154,9 @@ internal sealed class TouchMouseEmulation
             return;
 
         active = false;
+
+        if (longPressed)
+            return;
 
         if (pressed)
         {
@@ -173,10 +223,11 @@ internal sealed class TouchMouseEmulation
         mouseMove(new MouseEvent(mouseState(), delta, timestamp));
     }
 
-    private MouseState mouseState()
+    private MouseState mouseState(bool rightPressed = false)
     {
         var state = new MouseState { Position = position, FromTouch = true };
         state.SetPressed(MouseButton.Left, pressed);
+        state.SetPressed(MouseButton.Right, rightPressed);
         return state;
     }
 }

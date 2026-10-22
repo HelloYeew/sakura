@@ -45,6 +45,12 @@ public partial class ManualInputManager : Container, IInputManagerProvider, IFoc
         touchEmulation = new TouchMouseEmulation(this, InputManager, dispatchMouseMove, dispatchMouseDown, dispatchMouseUp);
     }
 
+    public override void Update()
+    {
+        base.Update();
+        touchEmulation.Update();
+    }
+
     public override bool HandleNonPositionalInput => UseParentInput && base.HandleNonPositionalInput;
     public override bool HandlePositionalInput => UseParentInput && base.HandlePositionalInput;
 
@@ -136,8 +142,7 @@ public partial class ManualInputManager : Container, IInputManagerProvider, IFoc
         InputManager.HandleTouch(source, position, true);
         InputManager.BuildQueues(this, position);
 
-        if (!InputManager.DispatchTouchDown(e))
-            touchEmulation.TouchDown(e);
+        touchEmulation.TouchDown(e, InputManager.DispatchTouchDown(e));
     }
 
     /// <summary>

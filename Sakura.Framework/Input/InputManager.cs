@@ -634,6 +634,23 @@ public class InputManager : IFocusManager
     private readonly Drawable?[] touchCaptures = new Drawable?[InputState.MAX_TOUCHES];
 
     /// <summary>
+    /// The nested input managers each finger went down on without anything in them taking it, indexed by
+    /// <see cref="TouchSource"/>. They recorded the finger going down, so they hear where it goes and when it
+    /// lifts too; otherwise they'd keep it down forever.
+    /// </summary>
+    private readonly List<Drawable>[] touchWatchers = createTouchWatchers();
+
+    private static List<Drawable>[] createTouchWatchers()
+    {
+        var watchers = new List<Drawable>[InputState.MAX_TOUCHES];
+
+        for (int i = 0; i < watchers.Length; i++)
+            watchers[i] = new List<Drawable>(2);
+
+        return watchers;
+    }
+
+    /// <summary>
     /// Offers a finger going down to the positional queue, front to back. The first drawable that takes it
     /// gets its moves and its lift until it lifts.
     /// </summary>
@@ -641,6 +658,9 @@ public class InputManager : IFocusManager
     public bool DispatchTouchDown(TouchEvent e)
     {
         touchCaptures[(int)e.Source] = null;
+
+        var watchers = touchWatchers[(int)e.Source];
+        watchers.Clear();
 
         for (int i = 0; i < positionalQueue.Count; i++)
         {
@@ -655,6 +675,9 @@ public class InputManager : IFocusManager
                 LastPositionalHandler = drawable;
                 return true;
             }
+
+            if (drawable is IInputManagerProvider)
+                watchers.Add(drawable);
         }
 
         return false;
@@ -663,6 +686,14 @@ public class InputManager : IFocusManager
     /// <returns>Whether a drawable has the finger (so it isn't the mouse's).</returns>
     public bool DispatchTouchMove(TouchEvent e)
     {
+        var watchers = touchWatchers[(int)e.Source];
+
+        for (int i = 0; i < watchers.Count; i++)
+        {
+            if (watchers[i].IsLoaded)
+                watchers[i].OnTouchMove(e);
+        }
+
         var target = touchCaptures[(int)e.Source];
 
         if (target == null)
@@ -677,6 +708,16 @@ public class InputManager : IFocusManager
     /// <returns>Whether a drawable had the finger (so it wasn't the mouse's).</returns>
     public bool DispatchTouchUp(TouchEvent e)
     {
+        var watchers = touchWatchers[(int)e.Source];
+
+        for (int i = 0; i < watchers.Count; i++)
+        {
+            if (watchers[i].IsLoaded)
+                watchers[i].OnTouchUp(e);
+        }
+
+        watchers.Clear();
+
         var target = touchCaptures[(int)e.Source];
 
         if (target == null)
@@ -818,6 +859,10 @@ public class InputManager : IFocusManager
         CurrentState.Clear();
         dragCaptureTarget = null;
         Array.Clear(touchCaptures);
+
+        foreach (var watchers in touchWatchers)
+            watchers.Clear();
+
         Array.Clear(lastMouseDownHandlers);
         keyDownHandlers.Clear();
 

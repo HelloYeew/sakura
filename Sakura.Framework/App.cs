@@ -70,6 +70,12 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
     /// Stands a gesture's first finger in for the mouse when nothing takes it.
     /// </summary>
     private readonly TouchMouseEmulation touchEmulation;
+    private readonly MultiFingerTap multiFingerTap = new MultiFingerTap();
+
+    /// <summary>
+    /// How many fingers tap together to open the debug tools on a touchscreen.
+    /// </summary>
+    private const int debug_tools_fingers = 4;
 
     public App()
     {
@@ -329,6 +335,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
     {
         base.Update();
         Scheduler?.Update();
+        touchEmulation.Update();
     }
 
     /// <summary>
@@ -357,43 +364,74 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
             if ((e.Modifiers & KeyModifiers.Shift) > 0)
                 debugWindows.Open(() => new DrawVisualiser(this)).ToggleInspectMode();
             else
-                debugWindows.Toggle(() => new DrawVisualiser(this));
+                toggleDrawVisualiser();
 
             return true;
         }
         else if (!e.IsRepeat && e.Key == Key.F2 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
-            debugWindows.Toggle(() => new GlobalStatisticsDisplay());
+            toggleStatistics();
             return true;
         }
         else if (!e.IsRepeat && e.Key == Key.F3 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
-            debugWindows.Toggle(() => new TextureViewerDisplay());
+            toggleTextureViewer();
             return true;
         }
         else if (!e.IsRepeat && e.Key == Key.F6 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
-            safeAreaPreview.Value = (SafeAreaPreview)(((int)safeAreaPreview.Value + 1) % Enum.GetValues<SafeAreaPreview>().Length);
+            cycleSafeAreaPreview();
             return true;
         }
         else if (!e.IsRepeat && e.Key == Key.F7 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
-            Host.ExecutionMode.Value = Host.ExecutionMode.Value == ExecutionMode.MultiThread ? ExecutionMode.SingleThread : ExecutionMode.MultiThread;
+            toggleExecutionMode();
         }
         else if (!e.IsRepeat && e.Key == Key.F9 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
-            debugWindows.Toggle(() => new AudioMixerVisualiser(AudioManager));
+            toggleAudioMixer();
             return true;
         }
         if (!e.IsRepeat && e.Key == Key.F11 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
-            int nextState = ((int)fpsGraphState.Value + 1) % 3;
-            fpsGraphState.Value = (PerformanceOverlayState)nextState;
+            cycleFpsGraph();
             return true;
         }
 
         return InputManager.DispatchKeyDownWithFocus(e);
     }
+
+    private void toggleDrawVisualiser() => debugWindows.Toggle(() => new DrawVisualiser(this));
+
+    private void toggleStatistics() => debugWindows.Toggle(() => new GlobalStatisticsDisplay());
+
+    private void toggleTextureViewer() => debugWindows.Toggle(() => new TextureViewerDisplay());
+
+    private void toggleAudioMixer() => debugWindows.Toggle(() => new AudioMixerVisualiser(AudioManager));
+
+    private void cycleSafeAreaPreview() =>
+        safeAreaPreview.Value = (SafeAreaPreview)(((int)safeAreaPreview.Value + 1) % Enum.GetValues<SafeAreaPreview>().Length);
+
+    private void toggleExecutionMode() =>
+        Host.ExecutionMode.Value = Host.ExecutionMode.Value == ExecutionMode.MultiThread ? ExecutionMode.SingleThread : ExecutionMode.MultiThread;
+
+    private void cycleFpsGraph() =>
+        fpsGraphState.Value = (PerformanceOverlayState)(((int)fpsGraphState.Value + 1) % Enum.GetValues<PerformanceOverlayState>().Length);
+
+    private void cycleFrameLimiter() =>
+        Host.FrameLimiter.Value = (FrameSync)(((int)Host.FrameLimiter.Value + 1) % Enum.GetValues<FrameSync>().Length);
+
+    private void toggleDebugTools() => debugWindows.Toggle(() => new DebugToolsWindow(new (string, Action)[]
+    {
+        ("Frame graph (Ctrl+F11)", cycleFpsGraph),
+        ("Draw visualiser (Ctrl+F1)", toggleDrawVisualiser),
+        ("Statistics (Ctrl+F2)", toggleStatistics),
+        ("Textures (Ctrl+F3)", toggleTextureViewer),
+        ("Audio mixer (Ctrl+F9)", toggleAudioMixer),
+        ("Safe area preview (Ctrl+F6)", cycleSafeAreaPreview),
+        ("Frame limiter (Ctrl+F10)", cycleFrameLimiter),
+        ("Execution mode (Ctrl+F7)", toggleExecutionMode),
+    }));
 
     public override bool OnKeyUp(KeyEvent e)
     {
@@ -445,16 +483,16 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
         InputManager.HandleTouch(e.Source, e.ScreenSpacePosition, true);
         InputManager.BuildQueues(this, e.ScreenSpacePosition);
 
-        if (InputManager.DispatchTouchDown(e))
-            return true;
-
-        touchEmulation.TouchDown(e);
-        return false;
+        bool taken = InputManager.DispatchTouchDown(e);
+        touchEmulation.TouchDown(e, taken);
+        multiFingerTap.TouchDown(e, taken, Clock.CurrentTime);
+        return taken;
     }
 
     public override bool OnTouchMove(TouchEvent e)
     {
         InputManager.HandleTouch(e.Source, e.ScreenSpacePosition, true);
+        multiFingerTap.TouchMove(e);
 
         if (InputManager.DispatchTouchMove(e))
             return true;
@@ -467,11 +505,16 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
     {
         InputManager.HandleTouch(e.Source, e.ScreenSpacePosition, false);
 
-        if (InputManager.DispatchTouchUp(e))
-            return true;
+        bool handled = InputManager.DispatchTouchUp(e);
 
-        touchEmulation.TouchUp(e);
-        return false;
+        if (!handled)
+            touchEmulation.TouchUp(e);
+
+        // There are no Ctrl+F keys on a phone.
+        if (multiFingerTap.TouchUp(e, Clock.CurrentTime, out _) == debug_tools_fingers)
+            toggleDebugTools();
+
+        return handled;
     }
 
     public override bool OnMouseMove(MouseEvent e)
