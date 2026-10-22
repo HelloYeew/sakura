@@ -122,6 +122,30 @@ public class TextBoxKeyboardTest
     }
 
     [Test]
+    public void KeyboardIsAskedForWithWhereTheBoxIs()
+    {
+        var first = addTextBox();
+        var second = new BasicTextBox { Position = new Vector2(100, 400), Size = new Vector2(300, 40) };
+        input.Add(second);
+        settle();
+
+        // A phone's keyboard places itself by the area the window has as it opens, and not again.
+        input.Tap(first);
+        var firstArea = window.AreasAtStart[^1];
+
+        input.Tap(second);
+        var secondArea = window.AreasAtStart[^1];
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(firstArea, Is.Not.Null, "nothing said where the first box is");
+            Assert.That(firstArea?.Y, Is.EqualTo(100).Within(0.5f));
+            Assert.That(firstArea?.Height, Is.EqualTo(40).Within(0.5f));
+            Assert.That(secondArea?.Y, Is.EqualTo(400).Within(0.5f), "the keyboard was asked for with the first box's place");
+        });
+    }
+
+    [Test]
     public void TapOutsideClosesTheKeyboard()
     {
         var box = addTextBox();
@@ -163,14 +187,24 @@ public class TextBoxKeyboardTest
     {
         public readonly List<string> Calls = new List<string>();
 
+        /// <summary>
+        /// The text input area the window had at each start.
+        /// </summary>
+        public readonly List<RectangleF?> AreasAtStart = new List<RectangleF?>();
+
         public int Starts { get; private set; }
+
+        private RectangleF? area;
 
         public new void StartTextInput(TextInputType type = TextInputType.Text)
         {
             Starts++;
             Calls.Add($"start {type}");
+            AreasAtStart.Add(area);
         }
 
         public new void StopTextInput() => Calls.Add("stop");
+
+        public new void SetTextInputRect(RectangleF rect) => area = rect;
     }
 }

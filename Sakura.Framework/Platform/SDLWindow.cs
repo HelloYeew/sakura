@@ -101,9 +101,13 @@ public class SDLWindow : IWindow
     // The type the virtual keyboard was last opened with.
     private TextInputType activeTextInputType;
 
-    // The text input area SDL has, in pixels, so an unchanged one isn't sent again.
+    // The text input area SDL has, in SDL window coordinates, so an unchanged one isn't sent again.
     private SDL_Rect appliedTextInputArea;
     private bool textInputAreaApplied;
+
+    // The area a virtual keyboard was placed by: SDL places it as it opens, and after that only
+    // RetargetScreenKeyboard moves it.
+    private SDL_Rect screenKeyboardArea;
 
     private WindowMode windowMode = WindowMode.Windowed;
 
@@ -263,6 +267,17 @@ public class SDLWindow : IWindow
     /// null to use SDL's. Called on the event thread whenever the safe area may have changed.
     /// </summary>
     protected virtual MarginPadding? GetPlatformSafeAreaInsets() => null;
+
+    /// <summary>
+    /// Moves a virtual keyboard that's already up onto another text field. SDL places the keyboard and picks its
+    /// layout only as it opens, so a field that starts text input while it's up would otherwise get the previous
+    /// field's. Called on the event thread.
+    /// </summary>
+    /// <param name="type">The field's input type.</param>
+    /// <param name="area">Where the field's caret is, in SDL window coordinates.</param>
+    /// <param name="typeChanged">Whether the keyboard has to change layout too.</param>
+    /// <returns>Whether the platform did it. If not, a change of type closes the keyboard and opens it again.</returns>
+    protected virtual bool RetargetScreenKeyboard(TextInputType type, SDL_Rect area, bool typeChanged) => false;
 
     /// <summary>
     /// Has the safe area read again on the event thread. Safe to call from any thread, for a subclass whose
@@ -1424,11 +1439,19 @@ public class SDLWindow : IWindow
 
     private unsafe void startTextInput(TextInputType type)
     {
-        // A virtual keyboard takes its layout when it opens, so a field of another kind reopens it.
-        if (type != activeTextInputType && SDL_TextInputActive(window))
+        bool typeChanged = type != activeTextInputType;
+        activeTextInputType = type;
+
+        // A virtual keyboard that's up stays on the field it opened for, with that field's layout.
+        bool retargeted = SDL_TextInputActive(window) && SDL_ScreenKeyboardShown(window)
+                          && (typeChanged || !sameArea(appliedTextInputArea, screenKeyboardArea))
+                          && RetargetScreenKeyboard(type, appliedTextInputArea, typeChanged);
+
+        // Without that, it only takes another field's layout by opening again.
+        if (typeChanged && !retargeted && SDL_TextInputActive(window))
             SDL_StopTextInput(window);
 
-        activeTextInputType = type;
+        screenKeyboardArea = appliedTextInputArea;
 
         var props = SDL_CreateProperties();
 
@@ -1440,6 +1463,8 @@ public class SDLWindow : IWindow
         SDL_StartTextInputWithProperties(window, props);
         SDL_DestroyProperties(props);
     }
+
+    private static bool sameArea(SDL_Rect a, SDL_Rect b) => a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
 
     private static SDL_TextInputType toSdlTextInputType(TextInputType type) => type switch
     {
@@ -1570,18 +1595,8 @@ public class SDLWindow : IWindow
             pendingTextInputRect = null;
         }
 
-        // apply text input state switches on the main thread (SDL3: per-window)
-        if (targetState.HasValue)
-        {
-            if (targetState.Value)
-                startTextInput(targetType);
-            else
-                SDL_StopTextInput(window);
-
-            textInputActive = targetState.Value;
-        }
-
-        // apply IME composition box positions on the main thread
+        // apply IME composition box positions on the main thread, before the state: a virtual keyboard
+        // places itself by the area SDL has as it opens
         if (targetRect.HasValue)
         {
             var rect = targetRect.Value;
@@ -1594,13 +1609,23 @@ public class SDLWindow : IWindow
             };
 
             // A focused field sends its caret every frame, but it rarely moves.
-            if (!textInputAreaApplied || sdlRect.x != appliedTextInputArea.x || sdlRect.y != appliedTextInputArea.y
-                || sdlRect.w != appliedTextInputArea.w || sdlRect.h != appliedTextInputArea.h)
+            if (!textInputAreaApplied || !sameArea(sdlRect, appliedTextInputArea))
             {
                 SDL_SetTextInputArea(window, &sdlRect, 0);
                 appliedTextInputArea = sdlRect;
                 textInputAreaApplied = true;
             }
+        }
+
+        // apply text input state switches on the main thread (SDL3: per-window)
+        if (targetState.HasValue)
+        {
+            if (targetState.Value)
+                startTextInput(targetType);
+            else
+                SDL_StopTextInput(window);
+
+            textInputActive = targetState.Value;
         }
 
         // normal OS message processing

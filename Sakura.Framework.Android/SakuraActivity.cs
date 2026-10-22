@@ -5,10 +5,13 @@ using System;
 using Android.Content;
 using Android.Graphics;
 using Android.OS;
+using Android.Text;
 using Android.Views;
+using Android.Views.InputMethods;
 using Org.Libsdl.App;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Platform;
+using SDL;
 using static SDL.SDL3;
 
 namespace Sakura.Framework.Android;
@@ -81,6 +84,46 @@ public abstract class SakuraActivity : SDLActivity
         base.OnCreate(savedInstanceState);
 
         showSurfaceUnderSystemBars();
+        panForSoftKeyboard();
+    }
+
+    /// <summary>
+    /// Has Android pan the window up when the soft keyboard would cover the field being typed in, where SDL keeps a
+    /// hidden text view. It picks that by itself when no view scrolls, but this doesn't rest on the guess. An app's
+    /// manifest choosing another way is left alone.
+    /// </summary>
+    private void panForSoftKeyboard()
+    {
+        var window = Window!;
+        var mode = window.Attributes!.SoftInputMode;
+
+        if ((mode & SoftInput.MaskAdjust) == SoftInput.AdjustUnspecified)
+            window.SetSoftInputMode((mode & ~SoftInput.MaskAdjust) | SoftInput.AdjustPan);
+    }
+
+    /// <summary>
+    /// Moves the soft keyboard that's up onto another field. SDL's hidden text view, which Android pans into view and
+    /// the keyboard takes its layout from, is placed only as the keyboard opens. Safe to call from any thread.
+    /// </summary>
+    /// <param name="type">The field's input type.</param>
+    /// <param name="caret">Where the field's caret is, in pixels.</param>
+    /// <param name="switchLayout">Whether the type differs from the field before.</param>
+    internal void RetargetKeyboard(InputTypes type, SDL_Rect caret, bool switchLayout)
+    {
+        // SDL's own way of placing the view, which gives it the type too.
+        ShowTextInput((int)type, caret.x, caret.y, caret.w, caret.h);
+
+        if (!switchLayout)
+            return;
+
+        // Queued behind that: the keyboard only reads the view's type again when its input restarts.
+        RunOnUiThread(() =>
+        {
+            var view = MLayout?.FindFocus();
+
+            if (view?.OnCheckIsTextEditor() == true)
+                (GetSystemService(InputMethodService) as InputMethodManager)?.RestartInput(view);
+        });
     }
 
     /// <summary>
