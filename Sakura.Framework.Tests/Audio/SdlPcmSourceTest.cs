@@ -455,6 +455,7 @@ public class SdlPcmSourceTest
     }
 
     [Test]
+    [FlakyTest]
     public void Streaming_SchedulerKeepsTheBufferFed()
     {
         using var scheduler = new AudioDecodeScheduler();

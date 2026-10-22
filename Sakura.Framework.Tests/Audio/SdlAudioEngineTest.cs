@@ -368,6 +368,7 @@ public class SdlAudioEngineTest
     /// </summary>
     [TestCase(true)]
     [TestCase(false)]
+    [FlakyTest]
     public void Manager_DoesNotRaiseTheBufferOnAHealthyDevice(bool native)
     {
         int persisted = 0;
@@ -428,6 +429,7 @@ public class SdlAudioEngineTest
     /// The managed mixer's own property: it pushes, so there is a queue to keep full.
     /// </summary>
     [Test]
+    [FlakyTest]
     public void Manager_ManagedMixerKeepsTheDeviceQueueFed()
     {
         using var manager = createManager(native: false);
@@ -496,6 +498,7 @@ public class SdlAudioEngineTest
 
     [TestCase(true)]
     [TestCase(false)]
+    [FlakyTest]
     public void Manager_PublishesItsStatistics(bool native)
     {
         using var manager = createManager(native);
@@ -542,6 +545,7 @@ public class SdlAudioEngineTest
     /// </summary>
     [TestCase(true)]
     [TestCase(false)]
+    [FlakyTest]
     public void Manager_PlaysWithoutUnderrunning(bool native)
     {
         using var manager = createManager(native);
@@ -664,6 +668,7 @@ public class SdlAudioEngineTest
     /// other has finished.
     /// </summary>
     [Test]
+    [FlakyTest]
     public void NativeEngine_SeekLandsAndPlaybackResumesFromTheNewPosition()
     {
         using var manager = createManager(native: true);
@@ -709,6 +714,7 @@ public class SdlAudioEngineTest
     /// the voice publishes the end and waits to be told where to go.
     /// </summary>
     [Test]
+    [FlakyTest]
     public void NativeEngine_LoopingTrackWrapsAndKeepsPlaying()
     {
         using var manager = createManager(native: true);

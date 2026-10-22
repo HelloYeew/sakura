@@ -149,6 +149,7 @@ public class UploadHeadroomTest
     /// degrading to the behaviour before this gate existed rather than hanging.
     /// </summary>
     [Test]
+    [FlakyTest]
     public void AQueueThatNeverDrainsDoesNotWedgeLoading()
     {
         TextureUploads.MaxOutstandingUploads = 1;

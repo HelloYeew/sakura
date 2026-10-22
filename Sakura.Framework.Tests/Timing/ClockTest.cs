@@ -51,9 +51,13 @@ public class ClockTest
         var clock = new Clock(start: true);
         Thread.Sleep(50);
         clock.ProcessFrame();
+
+        // Started before the reset, so it bounds the time since: a fixed limit fails whenever the thread is held
+        // up between the two calls, as on a busy CI runner.
+        var sinceReset = Stopwatch.StartNew();
         clock.Reset();
         clock.ProcessFrame();
-        Assert.That(clock.CurrentTime, Is.LessThan(20));
+        Assert.That(clock.CurrentTime, Is.LessThanOrEqualTo(sinceReset.Elapsed.TotalMilliseconds + 1));
         Assert.That(clock.CurrentTime, Is.GreaterThanOrEqualTo(0));
     }
 
@@ -63,8 +67,10 @@ public class ClockTest
         var clock = new Clock(start: true);
         Thread.Sleep(30);
         clock.ProcessFrame();
-        clock.Reset();
+
+        // Started before the reset rather than after, or a pause between the two would put the clock ahead of it.
         var sinceReset = Stopwatch.StartNew();
+        clock.Reset();
         Thread.Sleep(50);
         clock.ProcessFrame();
         Assert.That(clock.IsRunning, Is.True);

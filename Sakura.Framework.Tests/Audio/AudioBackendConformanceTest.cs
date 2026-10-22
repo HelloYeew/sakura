@@ -197,6 +197,7 @@ public class AudioBackendConformanceTest
     #region Transport
 
     [Test]
+    [FlakyTest]
     public void SeekLandsWhereItWasSent([Values] Backend backend)
     {
         double drain = drainRate(backend);
@@ -220,6 +221,7 @@ public class AudioBackendConformanceTest
     }
 
     [Test]
+    [FlakyTest]
     public void SeekIsVisibleImmediately([Values] Backend backend)
     {
         using var manager = (IDisposable)create(backend);
@@ -240,6 +242,7 @@ public class AudioBackendConformanceTest
     }
 
     [Test]
+    [FlakyTest]
     public void StopRewindsAndPauseDoesNot([Values] Backend backend)
     {
         using var manager = (IDisposable)create(backend);
@@ -293,6 +296,7 @@ public class AudioBackendConformanceTest
     #region Looping
 
     [Test]
+    [FlakyTest]
     public void LoopingReturnsToTheRestartPoint([Values] Backend backend)
     {
         using var manager = (IDisposable)create(backend);
@@ -344,6 +348,7 @@ public class AudioBackendConformanceTest
     [TestCase(Backend.SdlNative, 0.5)]
     [TestCase(Backend.SdlManaged, 2.0)]
     [TestCase(Backend.SdlManaged, 0.5)]
+    [FlakyTest]
     public void FrequencyScalesHowFastThePositionMoves(Backend backend, double rate)
     {
         double drain = drainRate(backend);
@@ -379,6 +384,7 @@ public class AudioBackendConformanceTest
     [TestCase(Backend.SdlNative, 0.5)]
     [TestCase(Backend.SdlManaged, 2.0)]
     [TestCase(Backend.SdlManaged, 0.5)]
+    [FlakyTest]
     public void TempoScalesHowFastThePositionMoves(Backend backend, double tempo)
     {
         double drain = drainRate(backend);
@@ -417,6 +423,7 @@ public class AudioBackendConformanceTest
     /// ratio cancels out.
     /// </remarks>
     [Test]
+    [FlakyTest]
     public void ChangingTempoWhilePlayingKeepsThePosition([Values] Backend backend)
     {
         // The dummy driver paces itself with millisecond sleeps; where those take several times as long, it

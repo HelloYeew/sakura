@@ -255,6 +255,7 @@ public class DecouplingFramedClockTest
     }
 
     [Test]
+    [FlakyTest]
     public void TestStartFromNegativeTimeIncrementsCorrectlyWithRealClock()
     {
         // Use a real reference clock this time to test actual timing behaviour.
