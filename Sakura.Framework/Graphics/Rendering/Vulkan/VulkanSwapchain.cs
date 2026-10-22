@@ -127,14 +127,19 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
     /// to go idle first, since the old swapchain's images and semaphores are destroyed here; rebuilds
     /// happen on resizes and present-mode changes, not every frame.
     /// </summary>
-    /// <returns>False when the window has no drawable area (minimised), in which case nothing is
-    /// presented until a later call succeeds.</returns>
+    /// <returns>False when the window has no drawable area (minimised), or its surface is gone, in which case
+    /// nothing is presented until a later call succeeds.</returns>
     public bool Recreate()
     {
         var api = device.InstanceApi;
 
         VkSurfaceCapabilitiesKHR capabilities;
-        VulkanDevice.Check(api.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device.PhysicalDevice, Surface, &capabilities), "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
+        var queried = api.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device.PhysicalDevice, Surface, &capabilities);
+
+        if (queried == VkResult.ErrorSurfaceLostKHR)
+            return surfaceLost();
+
+        VulkanDevice.Check(queried, "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
 
         var extent = chooseExtent(capabilities);
 
@@ -200,7 +205,13 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
         };
 
         VkSwapchainKHR swapchain;
-        VulkanDevice.Check(device.Api.vkCreateSwapchainKHR(&createInfo, null, &swapchain), "vkCreateSwapchainKHR");
+        var created = device.Api.vkCreateSwapchainKHR(&createInfo, null, &swapchain);
+
+        // The old swapchain is retired even so, and goes with the surface.
+        if (created == VkResult.ErrorSurfaceLostKHR)
+            return surfaceLost();
+
+        VulkanDevice.Check(created, "vkCreateSwapchainKHR");
 
         destroyImageResources();
 
@@ -219,6 +230,19 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
         NeedsRecreate = false;
         logIfChanged();
         return true;
+    }
+
+    /// <summary>
+    /// The window took its surface away while the swapchain was being built for it, as an Android window does going to
+    /// the background (a file picker opening over the app is enough), between the frame's acquire and this rebuild. The
+    /// surface is released, and the next frame makes a new one once the window has one to give.
+    /// </summary>
+    /// <returns>False: there's nothing to present to this frame.</returns>
+    private bool surfaceLost()
+    {
+        Logger.Verbose("Vulkan: the window surface was lost while rebuilding the swapchain; releasing it.");
+        ReleaseSurface();
+        return false;
     }
 
     /// <summary>
