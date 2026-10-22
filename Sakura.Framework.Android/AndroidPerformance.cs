@@ -9,9 +9,10 @@ using Sakura.Framework.Platform;
 namespace Sakura.Framework.Android;
 
 /// <summary>
-/// Android's performance services: hint sessions (ADPF) for the frame threads and the thermal headroom, both from the
-/// NDK. A hint session tells the system how long each frame's work took against its target, so it raises the clocks
-/// before frames run late instead of after; without one, a thread that has to finish in time could only spin.
+/// Android's performance services: hint sessions (ADPF) for the frame threads and, for a game, a higher priority for
+/// them, and the thermal headroom; from the NDK and libc. A hint session tells the system how long each frame's work
+/// took against its target, so it raises the clocks before frames run late instead of after; without one, a thread
+/// that has to finish in time could only spin.
 /// </summary>
 internal sealed class AndroidPerformance : IPlatformPerformance
 {
@@ -64,6 +65,11 @@ internal sealed class AndroidPerformance : IPlatformPerformance
 
     public IFrameWorkHint? CreateFrameWorkHint(string threadName, double targetMilliseconds, bool preferPowerEfficiency)
     {
+        int threadId = gettid();
+
+        if (!preferPowerEfficiency)
+            raiseToUrgentDisplayPriority(threadName, threadId);
+
         // The NDK API came in 33. Android 12 has it in Java only, and few devices backed it before 13.
         if (!OperatingSystem.IsAndroidVersionAtLeast(33))
             return null;
@@ -73,7 +79,6 @@ internal sealed class AndroidPerformance : IPlatformPerformance
         if (manager == IntPtr.Zero)
             return null;
 
-        int threadId = gettid();
         IntPtr session = APerformanceHint_createSession(manager, ref threadId, 1, nanoseconds(targetMilliseconds));
 
         if (session == IntPtr.Zero)
@@ -89,6 +94,39 @@ internal sealed class AndroidPerformance : IPlatformPerformance
                        + (preferPowerEfficiency ? ", preferring power efficiency" : string.Empty));
 
         return new FrameWorkHint(session, targetMilliseconds);
+    }
+
+    // Android's THREAD_PRIORITY_URGENT_DISPLAY. Every thread the app makes already runs at THREAD_PRIORITY_DISPLAY (-4),
+    // which SDL gives its own thread and every thread made from it inherits, the app's background work (decoders,
+    // loading) included. This puts a game's frame threads ahead of that work, still behind audio (-16).
+    private const int urgent_display_priority = -8;
+
+    // sched_setscheduler's SCHED_OTHER, the normal policy, with SCHED_RESET_ON_FORK: a thread made by one with a raised
+    // priority starts at the default instead of inheriting it, so thread-pool workers and decoders started from a
+    // frame thread don't end up level with it.
+    private const int sched_other_reset_on_fork = 0x40000000;
+
+    // setpriority's PRIO_PROCESS, which on Linux, given a thread's ID, applies to that thread alone.
+    private const int prio_process = 0;
+
+    private static void raiseToUrgentDisplayPriority(string threadName, int threadId)
+    {
+        var parameters = new SchedParam();
+
+        if (sched_setscheduler(threadId, sched_other_reset_on_fork, ref parameters) != 0)
+        {
+            Logger.Verbose($"{threadName} stays at its priority: threads it made would inherit a raised one (error {Marshal.GetLastPInvokeError()}).");
+            return;
+        }
+
+        if (setpriority(prio_process, threadId, urgent_display_priority) != 0)
+            Logger.Verbose($"{threadName} stays at its priority: setpriority failed (error {Marshal.GetLastPInvokeError()}).");
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SchedParam
+    {
+        public int Priority;
     }
 
     private static long nanoseconds(double milliseconds) => (long)(milliseconds * 1_000_000);
@@ -134,6 +172,12 @@ internal sealed class AndroidPerformance : IPlatformPerformance
 
     [DllImport("c")]
     private static extern int gettid();
+
+    [DllImport("c", SetLastError = true)]
+    private static extern int sched_setscheduler(int pid, int policy, ref SchedParam parameters);
+
+    [DllImport("c", SetLastError = true)]
+    private static extern int setpriority(int which, int who, int priority);
 
     [DllImport(library)]
     private static extern IntPtr APerformanceHint_getManager();

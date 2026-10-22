@@ -21,7 +21,8 @@ public interface IPlatformPerformance
 
     /// <summary>
     /// Opens a session that tells the system how long each frame of the calling thread takes against its target.
-    /// Called on that thread. Null where the platform has no such service.
+    /// Called on that thread as it starts. Unless power efficiency is preferred, a platform may also raise the thread's
+    /// priority, even where it has no sessions. Null where the platform has no such service.
     /// </summary>
     /// <param name="threadName">The thread's name, for logging.</param>
     /// <param name="targetMilliseconds">The first frame's target.</param>
