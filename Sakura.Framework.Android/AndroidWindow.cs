@@ -16,10 +16,12 @@ namespace Sakura.Framework.Android;
 internal class AndroidWindow : SDLWindow
 {
     private readonly SakuraActivity activity;
+    private readonly AppType appType;
 
     public AndroidWindow(SakuraActivity activity, AppType appType)
     {
         this.activity = activity;
+        this.appType = appType;
         activity.CoveredInsetsChanged += InvalidateSafeArea;
         activity.RefreshRateChanged += InvalidateRefreshRate;
 
@@ -58,6 +60,10 @@ internal class AndroidWindow : SDLWindow
         // AAudio's low-latency mode, the path a burst-sized buffer at the output's rate is for. SDL's default
         // today; set so a change of default can't quietly take it away.
         SDL_SetHint(SDL_HINT_ANDROID_LOW_LATENCY_AUDIO, "1");
+
+        // What a game's sound is for, as its audio focus says too. An application's is media, SDL's default.
+        if (appType == AppType.Game)
+            SDL_SetHint(SDL_HINT_AUDIO_DEVICE_STREAM_ROLE, "Game");
     }
 
     protected override bool RetargetScreenKeyboard(TextInputType type, SDL_Rect area, bool typeChanged)

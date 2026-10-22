@@ -21,6 +21,9 @@ public class HeadlessAudioManager : IAudioManager, IDisposable
     public IReadOnlyList<string> OutputDevices => Array.Empty<string>();
     public Reactive<string> OutputDevice { get; } = new Reactive<string>(string.Empty);
 
+    // Nothing is heard to interrupt, but the host still says so, for an app to watch.
+    public Reactive<bool> OutputInterrupted { get; } = new Reactive<bool>(false);
+
     public event Action? OutputDevicesChanged
     {
         add { }

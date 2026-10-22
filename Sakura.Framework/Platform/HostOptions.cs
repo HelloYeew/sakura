@@ -26,6 +26,20 @@ public class HostOptions
     public AppType AppType { get; set; } = AppType.Game;
 
     /// <summary>
+    /// Whether the app has the sound output to itself on a phone while it's on screen: another app's music pauses for
+    /// it, and its own sound waits out a call or an alarm (<see cref="Audio.IAudioManager.OutputInterrupted"/>).
+    /// Without it, the app plays alongside whatever else is playing, and nothing interrupts it. Defaults to on for a
+    /// game, which someone else's song would spoil, and off for an application.
+    /// </summary>
+    public bool TakesAudioFocus
+    {
+        get => takesAudioFocus ?? AppType == AppType.Game;
+        set => takesAudioFocus = value;
+    }
+
+    private bool? takesAudioFocus;
+
+    /// <summary>
     /// Whether to limit the update thread FPS to maximum at 1000 FPS in order to prevent excessive CPU usage
     /// when the game is running with an unlimited update rate.
     /// </summary>

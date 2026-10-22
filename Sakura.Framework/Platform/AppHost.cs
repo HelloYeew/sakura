@@ -53,7 +53,24 @@ public abstract class AppHost : IDisposable
     public IRenderer Renderer { get; private set; }
 
     [CanBeNull]
-    public IAudioManager AudioManager { get; set; }
+    public IAudioManager AudioManager
+    {
+        get => audioManager;
+        set
+        {
+            audioManager = value;
+
+            // A manager made during a call starts out knowing it.
+            if (value != null)
+                value.OutputInterrupted.Value = audioInterrupted;
+        }
+    }
+
+    [CanBeNull]
+    private IAudioManager audioManager;
+
+    // What the platform last said, on the update thread: whether something else has the audio output for now.
+    private bool audioInterrupted;
 
     private App app;
 
@@ -476,6 +493,19 @@ public abstract class AppHost : IDisposable
 
         updateScheduler.Add(() => LowMemory?.Invoke());
     }
+
+    /// <summary>
+    /// Says the system has taken the audio output for something else for now, such as a call, or given it back. It
+    /// reaches the app as <see cref="IAudioManager.OutputInterrupted"/>, on the update thread. Safe to call from any
+    /// thread.
+    /// </summary>
+    protected void SetAudioInterrupted(bool interrupted) => updateScheduler.Add(() =>
+    {
+        audioInterrupted = interrupted;
+
+        if (AudioManager != null)
+            AudioManager.OutputInterrupted.Value = interrupted;
+    });
 
     private void enterForeground()
     {

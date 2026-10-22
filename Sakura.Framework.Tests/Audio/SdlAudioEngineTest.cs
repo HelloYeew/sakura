@@ -535,6 +535,60 @@ public class SdlAudioEngineTest
         manager.Update(0);
     }
 
+    /// <summary>
+    /// While the system has the output, a playing track stands still and samples are silent. Once it's back, the
+    /// track carries on from where it stood and samples are heard again.
+    /// </summary>
+    [TestCase(true)]
+    [TestCase(false)]
+    [FlakyTest]
+    public void Manager_InterruptionStandsTracksStillAndSilencesSamples(bool native)
+    {
+        using var manager = createManager(native);
+
+        var channel = manager.CreateTrackFromFile(writeTempCopy("Tracks.test.mp3")).GetChannel();
+        channel.Play();
+
+        playUntil(manager, () => channel.CurrentTime > 100);
+
+        manager.OutputInterrupted.Value = true;
+
+        // What was already on its way to the device plays out first.
+        playFor(manager, TimeSpan.FromMilliseconds(200));
+        double stoodAt = channel.CurrentTime;
+        playFor(manager, TimeSpan.FromMilliseconds(300));
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(channel.CurrentTime, Is.EqualTo(stoodAt).Within(1), "the track stood still");
+            Assert.That(channel.IsRunning.Value, Is.True, "and is still playing, to carry on");
+            Assert.That(manager.SampleMixer.Volume.Value, Is.Zero, "samples are silent");
+        }
+
+        manager.OutputInterrupted.Value = false;
+        playUntil(manager, () => channel.CurrentTime > stoodAt + 200);
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(channel.CurrentTime, Is.GreaterThan(stoodAt + 200), "the track carried on");
+            Assert.That(manager.SampleMixer.Volume.Value, Is.EqualTo(1), "samples are heard again");
+        }
+
+        channel.Dispose();
+        manager.Update(0);
+    }
+
+    private static void playFor(SDLAudioManager manager, TimeSpan duration)
+    {
+        var elapsed = Stopwatch.StartNew();
+
+        while (elapsed.Elapsed < duration)
+        {
+            manager.Update(0);
+            Thread.Sleep(10);
+        }
+    }
+
     private static void playUntil(SDLAudioManager manager, Func<bool> condition)
     {
         var timeout = Stopwatch.StartNew();

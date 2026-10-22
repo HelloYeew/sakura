@@ -141,6 +141,37 @@ public abstract class SakuraActivity : SDLActivity
     }
 
     /// <summary>
+    /// Raised on the UI thread each time the app comes to the front: resumed, or given the screen back by the
+    /// notification shade or a dialog that was over it.
+    /// </summary>
+    internal event Action? CameToFront;
+
+    /// <summary>
+    /// Raised on the UI thread once the app is no longer on screen.
+    /// </summary>
+    internal event Action? LeftScreen;
+
+    protected override void OnResume()
+    {
+        base.OnResume();
+        CameToFront?.Invoke();
+    }
+
+    public override void OnWindowFocusChanged(bool hasFocus)
+    {
+        base.OnWindowFocusChanged(hasFocus);
+
+        if (hasFocus)
+            CameToFront?.Invoke();
+    }
+
+    protected override void OnStop()
+    {
+        LeftScreen?.Invoke();
+        base.OnStop();
+    }
+
+    /// <summary>
     /// Has Android pan the window up when the soft keyboard would cover the field being typed in, where SDL keeps a
     /// hidden text view. It picks that by itself when no view scrolls, but this doesn't rest on the guess. An app's
     /// manifest choosing another way is left alone.

@@ -101,6 +101,8 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
     public Reactive<string> OutputDevice { get; } = new Reactive<string>(string.Empty);
 
+    public Reactive<bool> OutputInterrupted { get; } = new Reactive<bool>(false);
+
     /// <summary>
     /// The name of the device the stream plays on, or empty when it's the system's default.
     /// </summary>
@@ -427,13 +429,10 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         trackMixer.IsRunning.Value = true;
         sampleMixer.IsRunning.Value = true;
 
-        TrackVolume.ValueChanged += e => trackMixer.Volume.Value = e.NewValue * MasterVolume.Value;
-        SampleVolume.ValueChanged += e => sampleMixer.Volume.Value = e.NewValue * MasterVolume.Value;
-        MasterVolume.ValueChanged += e =>
-        {
-            trackMixer.Volume.Value = TrackVolume.Value * e.NewValue;
-            sampleMixer.Volume.Value = SampleVolume.Value * e.NewValue;
-        };
+        TrackVolume.ValueChanged += _ => applyVolumes();
+        SampleVolume.ValueChanged += _ => applyVolumes();
+        MasterVolume.ValueChanged += _ => applyVolumes();
+        OutputInterrupted.ValueChanged += e => onOutputInterrupted(e.NewValue);
 
         if (!SDL_ResumeAudioStreamDevice(deviceStream))
             Logger.Error($"Failed to start the SDL audio device: {SDL_GetError()}");
@@ -454,6 +453,34 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         }
 
         logInitialisationDetails(requestedDeviceBufferFrames, nativeOutput);
+    }
+
+    private void applyVolumes()
+    {
+        trackMixer.Volume.Value = TrackVolume.Value * MasterVolume.Value;
+        sampleMixer.Volume.Value = OutputInterrupted.Value ? 0 : SampleVolume.Value * MasterVolume.Value;
+    }
+
+    /// <summary>
+    /// Stands tracks still and silences samples while the system has the output, and undoes both once it's back.
+    /// </summary>
+    /// <remarks>
+    /// The device keeps running, playing silence. Paused, it would stop calling the native engine, which only takes
+    /// commands from there: the samples a game played meanwhile would all start the moment the output came back, and
+    /// the voices disposed meanwhile would never be freed. Silenced instead, a sample plays out unheard and is gone.
+    /// </remarks>
+    private void onOutputInterrupted(bool interrupted)
+    {
+        if (interrupted)
+            trackMixer.Pause();
+        else
+            trackMixer.Play();
+
+        applyVolumes();
+
+        Logger.Verbose(interrupted
+            ? "The system has the audio output for something else: tracks wait and samples are silent until it's back."
+            : "The audio output is back.");
     }
 
     /// <summary>
@@ -752,6 +779,11 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     /// <returns>Whether they changed since the last read.</returns>
     private bool refreshOutputDevices()
     {
+        // SDL's Android drivers play on wherever Android sends the sound (the speaker, or headphones once they're
+        // plugged in) and list a stand-in for it alone, which would offer the default a second time under another name.
+        if (SDL_GetCurrentAudioDriver() is "AAudio" or "openslES")
+            return false;
+
         int count;
         var ids = SDL_GetAudioPlaybackDevices(&count);
 

@@ -19,6 +19,7 @@ namespace Sakura.Framework.Android;
 public class AndroidAppHost : SDLAppHost
 {
     private readonly SakuraActivity activity;
+    private AudioFocusHolder? audioFocus;
 
     public AndroidAppHost(SakuraActivity activity, string appName, HostOptions? options = null)
         : base(appName, options)
@@ -27,6 +28,30 @@ public class AndroidAppHost : SDLAppHost
         Performance = new AndroidPerformance(activity);
 
         Logger.ConsoleOutput = AndroidLog.For(appName);
+
+        if (Options.TakesAudioFocus)
+        {
+            audioFocus = new AudioFocusHolder(activity, Options.AppType, SetAudioInterrupted);
+
+            // The app is at the front already: SDL starts this thread once it is.
+            audioFocus.Take();
+            activity.CameToFront += audioFocus.Take;
+            activity.LeftScreen += audioFocus.Release;
+        }
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (audioFocus != null)
+        {
+            activity.CameToFront -= audioFocus.Take;
+            activity.LeftScreen -= audioFocus.Release;
+            audioFocus.Release();
+            audioFocus.Dispose();
+            audioFocus = null;
+        }
+
+        base.Dispose(disposing);
     }
 
     /// <summary>

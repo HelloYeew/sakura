@@ -41,6 +41,8 @@ internal class BassAudioManager : IAudioManager, IDisposable
 
     public Reactive<string> OutputDevice { get; } = new Reactive<string>(string.Empty);
 
+    public Reactive<bool> OutputInterrupted { get; } = new Reactive<bool>(false);
+
     // How often the device list is read again, for devices plugged in and out.
     private const double device_check_interval_ms = 1000;
 
@@ -148,13 +150,10 @@ internal class BassAudioManager : IAudioManager, IDisposable
             trackMixer.Play();
             sampleMixer.Play();
 
-            TrackVolume.ValueChanged += e => trackMixer.Volume.Value = e.NewValue;
-            SampleVolume.ValueChanged += e => sampleMixer.Volume.Value = e.NewValue;
-            MasterVolume.ValueChanged += e =>
-            {
-                trackMixer.Volume.Value = TrackVolume.Value * e.NewValue;
-                sampleMixer.Volume.Value = SampleVolume.Value * e.NewValue;
-            };
+            TrackVolume.ValueChanged += _ => applyVolumes();
+            SampleVolume.ValueChanged += _ => applyVolumes();
+            MasterVolume.ValueChanged += _ => applyVolumes();
+            OutputInterrupted.ValueChanged += e => onOutputInterrupted(e.NewValue);
 
             // Not for the silent device: it's chosen to play nothing, and stays so.
             if (device != Bass.NoSoundDevice)
@@ -215,6 +214,26 @@ internal class BassAudioManager : IAudioManager, IDisposable
             }
         }
         channelEndSync = OnChannelEnded;
+    }
+
+    private void applyVolumes()
+    {
+        trackMixer.Volume.Value = TrackVolume.Value * MasterVolume.Value;
+        sampleMixer.Volume.Value = OutputInterrupted.Value ? 0 : SampleVolume.Value * MasterVolume.Value;
+    }
+
+    /// <summary>
+    /// Stands tracks still and silences samples while the system has the output, and undoes both once it's back. The
+    /// sample mixer keeps playing, so a sample played meanwhile plays out unheard rather than waiting to start.
+    /// </summary>
+    private void onOutputInterrupted(bool interrupted)
+    {
+        if (interrupted)
+            trackMixer.Pause();
+        else
+            trackMixer.Play();
+
+        applyVolumes();
     }
 
     /// <summary>

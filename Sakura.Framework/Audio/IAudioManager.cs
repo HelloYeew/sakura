@@ -32,7 +32,8 @@ public interface IAudioManager
     /// <summary>
     /// The output devices there are to play on, by name, as the system lists them. The system's default output isn't
     /// among them: it's always there, as the empty name in <see cref="OutputDevice"/>. Changes as devices are plugged
-    /// in and out, raising <see cref="OutputDevicesChanged"/>.
+    /// in and out, raising <see cref="OutputDevicesChanged"/>. Empty where the system picks the output itself, as
+    /// Android does, so the default is the only choice there is.
     /// </summary>
     IReadOnlyList<string> OutputDevices { get; }
 
@@ -47,6 +48,14 @@ public interface IAudioManager
     /// in again, and then moves back to it.
     /// </summary>
     Reactive<string> OutputDevice { get; }
+
+    /// <summary>
+    /// Whether the system has the output for something else for now, such as a call or an alarm. Until it's given
+    /// back, tracks stand still where they are and samples play silently, so the music picks up where it was and
+    /// nothing played meanwhile sounds all at once afterwards. An app's host sets it from what the platform says
+    /// (<see cref="Platform.HostOptions.TakesAudioFocus"/>); a game can watch it to pause itself.
+    /// </summary>
+    Reactive<bool> OutputInterrupted { get; }
 
     /// <summary>
     /// Get the master mixer for track playbacks. All track playbacks will be routed through this mixer.

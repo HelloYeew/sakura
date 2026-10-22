@@ -38,6 +38,7 @@ internal class AudioManager : IAudioManager
     // Nothing to play on, so nothing to pick.
     public IReadOnlyList<string> OutputDevices => Array.Empty<string>();
     public Reactive<string> OutputDevice { get; } = new Reactive<string>(string.Empty);
+    public Reactive<bool> OutputInterrupted { get; } = new Reactive<bool>(false);
 
     public event Action? OutputDevicesChanged
     {
