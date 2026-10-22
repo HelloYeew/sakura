@@ -428,10 +428,10 @@ static int64_t now_microseconds(void)
 
     return (int64_t)time.tv_sec * 1000000 + time.tv_nsec / 1000;
 #else
-    // Detected by CMake rather than assumed: bionic only declares timespec_get from API 29, and the
-    // Android legs target 21 to match the shipped FFmpeg. Giving up the measurement is the right
-    // trade -- reaching for clock_gettime or QueryPerformanceCounter instead would put a platform
-    // branch on the audio path, which is the thing this library does not have.
+    // Detected by CMake rather than assumed: bionic only declares timespec_get from API 29, the
+    // level the Android legs target, so only a build for an older level lands here. Giving up the
+    // measurement is the right trade -- reaching for clock_gettime or QueryPerformanceCounter instead
+    // would put a platform branch on the audio path, which is the thing this library does not have.
     return 0;
 #endif
 }

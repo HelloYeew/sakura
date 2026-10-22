@@ -64,9 +64,9 @@ stutter bug if broken:
 The one deliberate exception is `timespec_get`, used to measure callback duration. A callback whose
 cost is not measured is a callback whose latency budget is guesswork; C11's `timespec_get` needs no
 platform header, which is why it and not `clock_gettime` or `QueryPerformanceCounter`. CMake
-feature-checks it rather than the C branching on the platform — bionic only declares it from API 29
-and the Android legs target 21 to match the shipped FFmpeg, so on those `callbackMicroseconds` reads
-zero and nothing else changes.
+feature-checks it rather than the C branching on the platform. bionic only declares it from API 29,
+which is the level the Android legs target (the framework's minimum); a build for an older level
+gets `callbackMicroseconds` reading zero and nothing else changes.
 
 ## Threading
 
