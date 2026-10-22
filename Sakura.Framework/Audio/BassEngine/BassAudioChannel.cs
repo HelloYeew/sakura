@@ -14,7 +14,7 @@ namespace Sakura.Framework.Audio.BassEngine;
 /// <summary>
 /// BASS implementation of <see cref="IAudioChannel"/>.
 /// </summary>
-internal class BassAudioChannel : IAudioChannel
+internal class BassAudioChannel : IAudioChannel, IDuckable
 {
     public event Action OnStart = () => { };
     public event Action OnStop = () => { };
@@ -79,13 +79,7 @@ internal class BassAudioChannel : IAudioChannel
             manager.RaiseEvent(() => handler?.Invoke());
         };
 
-        Volume.ValueChanged += e => manager.EnqueueAction(() =>
-        {
-            if (isDisposed) return;
-            BassUtils.CheckError(Bass.ChannelSetAttribute(ChannelHandle, ChannelAttribute.Volume, (float)e.NewValue), "setting volume");
-        });
-
-        Volume.ValueChanged += e => manager.EnqueueAction(() => BassUtils.CheckError(Bass.ChannelSetAttribute(ChannelHandle, ChannelAttribute.Volume, (float)e.NewValue), "setting volume"));
+        Volume.ValueChanged += _ => applyVolume();
         bool isFreqInitialized = false;
         Frequency.ValueChanged += e =>
         {
@@ -198,6 +192,32 @@ internal class BassAudioChannel : IAudioChannel
     }
 
     public Reactive<double> Volume { get; } = new Reactive<double>(1.0);
+
+    private double ducking = 1;
+
+    public double Ducking
+    {
+        get => ducking;
+        set
+        {
+            if (value == ducking)
+                return;
+
+            ducking = value;
+            applyVolume();
+        }
+    }
+
+    private void applyVolume()
+    {
+        float volume = (float)(Volume.Value * ducking);
+
+        manager.EnqueueAction(() =>
+        {
+            if (isDisposed) return;
+            BassUtils.CheckError(Bass.ChannelSetAttribute(ChannelHandle, ChannelAttribute.Volume, volume), "setting volume");
+        });
+    }
     public Reactive<double> Frequency { get; } = new Reactive<double>(1.0);
     public Reactive<double> Balance { get; } = new Reactive<double>(0.0);
     public Reactive<double> Tempo { get; } = new Reactive<double>(1.0);

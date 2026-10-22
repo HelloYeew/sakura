@@ -26,7 +26,7 @@ namespace Sakura.Framework.Audio.SdlEngine;
 /// </para>
 /// </remarks>
 [SuppressMessage("ReSharper", "InconsistentNaming")]
-internal class SDLAudioChannel : ISDLChannel
+internal class SDLAudioChannel : ISDLChannel, IDuckable
 {
     public event Action OnStart = () => { };
     public event Action OnStop = () => { };
@@ -79,6 +79,20 @@ internal class SDLAudioChannel : ISDLChannel
     // Snapshots of the reactive properties, refreshed on change so the mix thread reads plain
     // fields. Assignments to these types are atomic, so a torn read is not possible.
     private volatile float volume = 1f;
+
+    private double ducking = 1;
+
+    public double Ducking
+    {
+        get => ducking;
+        set
+        {
+            ducking = value;
+            updateVolume();
+        }
+    }
+
+    private void updateVolume() => volume = (float)(Math.Max(0, Volume.Value) * ducking);
     private volatile float gainLeft = 1f;
     private volatile float gainRight = 1f;
     private double frequency = 1.0;
@@ -146,7 +160,7 @@ internal class SDLAudioChannel : ISDLChannel
             Context.RaiseEvent(() => handler?.Invoke());
         };
 
-        Volume.ValueChanged += e => volume = (float)Math.Max(0, e.NewValue);
+        Volume.ValueChanged += _ => updateVolume();
         Balance.ValueChanged += _ => updateBalance();
         Frequency.ValueChanged += e => frequency = e.NewValue;
         Tempo.ValueChanged += e => Context.EnqueueAction(() => applyTempo(e.NewValue));

@@ -26,7 +26,7 @@ namespace Sakura.Framework.Audio.SdlEngine;
 /// </para>
 /// </remarks>
 [SuppressMessage("ReSharper", "InconsistentNaming")]
-internal class SDLNativeAudioChannel : ISDLChannel
+internal class SDLNativeAudioChannel : ISDLChannel, IDuckable
 {
     public event Action OnStart = () => { };
     public event Action OnStop = () => { };
@@ -189,7 +189,22 @@ internal class SDLNativeAudioChannel : ISDLChannel
         float left = (float)(balance <= 0 ? 1.0 : 1.0 - balance);
         float right = (float)(balance >= 0 ? 1.0 : 1.0 + balance);
 
-        Engine.SetGain(Node, (float)Math.Max(0, Volume.Value), left, right);
+        Engine.SetGain(Node, (float)(Math.Max(0, Volume.Value) * ducking), left, right);
+    }
+
+    private double ducking = 1;
+
+    public double Ducking
+    {
+        get => ducking;
+        set
+        {
+            if (value == ducking)
+                return;
+
+            ducking = value;
+            publishGain();
+        }
     }
 
     private void publishLoop()
