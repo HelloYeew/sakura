@@ -4,6 +4,7 @@
 using System;
 using System.Runtime.InteropServices;
 using Sakura.Framework.Logging;
+using Sakura.Framework.Platform;
 
 namespace Sakura.Framework.Graphics.Textures.Stb;
 
@@ -48,6 +49,8 @@ internal static class StbImageNative
 
             try
             {
+                NativeLibraryResolver.Install();
+
                 int version = sakura_image_abi_version();
 
                 if (version != ABI_VERSION)

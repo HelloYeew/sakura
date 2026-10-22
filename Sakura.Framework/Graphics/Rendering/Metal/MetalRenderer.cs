@@ -155,7 +155,7 @@ public sealed class MetalRenderer : IMetalRenderer
 
         instance = this;
 
-        SakuraMetalNative.SetupLibraryResolvers();
+        NativeLibraryResolver.Install();
 
         device = SakuraMetalNative.sakura_metal_create(metalSurface.MetalLayer);
         if (device == nint.Zero)

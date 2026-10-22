@@ -41,22 +41,6 @@ internal static class SakuraMetalNative
 {
     private const string lib_name = "libsakura-metal";
 
-    /// <summary>
-    /// Installs the iOS DLL import resolver (the framework is embedded as
-    /// <c>sakura-metal.framework</c> under <c>@rpath</c>). No-op on other platforms, where the
-    /// dylib/so is found by name. Call once before any other entry point.
-    /// </summary>
-    public static void SetupLibraryResolvers()
-    {
-        if (OperatingSystem.IsIOS())
-        {
-            NativeLibrary.SetDllImportResolver(
-                typeof(SakuraMetalNative).Assembly,
-                (_, assembly, path) =>
-                    NativeLibrary.Load("@rpath/sakura-metal.framework/sakura-metal", assembly, path));
-        }
-    }
-
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern nint sakura_metal_create(nint caMetalLayer);
 
