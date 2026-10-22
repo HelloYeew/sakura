@@ -307,28 +307,13 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
 
         // Opened on the device picked from the start, rather than on the default and then moved.
         string outputDevice = Host.FrameworkConfigManager.Get<string>(FrameworkSetting.AudioDevice).Value;
+        var deviceBufferFrames = Host.FrameworkConfigManager.Get<int>(FrameworkSetting.AudioDeviceBufferFrames);
 
-        switch (backend)
-        {
-            case AudioBackend.Automatic:
-            case AudioBackend.SDL:
-            case AudioBackend.SDLManaged:
-                try
-                {
-                    var deviceBufferFrames = Host.FrameworkConfigManager.Get<int>(FrameworkSetting.AudioDeviceBufferFrames);
-
-                    return new SDLAudioManager(backend != AudioBackend.SDLManaged, deviceBufferFrames.Value,
-                        next => deviceBufferFrames.Value = next, Host.NativeAudioOutput, outputDevice);
-                }
-                catch (Exception e)
-                {
-                    Logger.Error("Failed to initialise the SDL audio backend, falling back to BASS.", e);
-                }
-
-                break;
-        }
-
-        return new BassAudioManager(outputDevice: outputDevice);
+        return AudioBackends.Create(backend,
+            () => new SDLAudioManager(backend != AudioBackend.SDLManaged, deviceBufferFrames.Value,
+                next => deviceBufferFrames.Value = next, Host.NativeAudioOutput, outputDevice),
+            () => new BassAudioManager(outputDevice: outputDevice),
+            AudioBackends.BassAvailable);
     }
 
     protected override void Dispose(bool isDisposing)

@@ -5,6 +5,7 @@ using System;
 using System.Linq;
 using NUnit.Framework;
 using Sakura.Framework.Audio;
+using Sakura.Framework.Audio.Headless;
 
 namespace Sakura.Framework.Tests.Audio;
 
@@ -27,9 +28,65 @@ public class AudioBackendsTest
     public void SuitableBackendsOfferEveryBackendAUserWouldWant()
     {
         Assert.That(AudioBackends.GetSuitableBackends(),
-            Is.EqualTo(new[] { AudioBackend.Automatic, AudioBackend.BASS, AudioBackend.SDL }),
-            "Automatic first, matching RendererTypes.GetSuitableRenderers.");
+            Is.EqualTo(AudioBackends.BassAvailable
+                ? new[] { AudioBackend.Automatic, AudioBackend.BASS, AudioBackend.SDL }
+                : new[] { AudioBackend.Automatic, AudioBackend.SDL }),
+            "Automatic first, matching RendererTypes.GetSuitableRenderers, and BASS only where it loads.");
     }
+
+    [Test]
+    public void BassIsOfferedWhereItShips()
+    {
+        Assert.That(AudioBackends.BassAvailable, Is.EqualTo(!OperatingSystem.IsAndroid()), "every desktop package carries libbass; Android's doesn't");
+    }
+
+    [Test]
+    public void AutomaticPlaysThroughSdl()
+    {
+        var sdl = new HeadlessAudioManager();
+
+        Assert.That(AudioBackends.Create(AudioBackend.Automatic, () => sdl, failIfCalled, bassAvailable: true), Is.SameAs(sdl));
+    }
+
+    [Test]
+    public void BassWhereItIsAskedForAndLoads()
+    {
+        var bass = new HeadlessAudioManager();
+
+        Assert.That(AudioBackends.Create(AudioBackend.BASS, failIfCalled, () => bass, bassAvailable: true), Is.SameAs(bass));
+    }
+
+    /// <summary>
+    /// A framework.ini carried over from a desktop, or edited by hand, on a phone: SDL rather than a crash.
+    /// </summary>
+    [Test]
+    public void BassAskedForWhereItIsMissingPlaysThroughSdl()
+    {
+        var sdl = new HeadlessAudioManager();
+
+        Assert.That(AudioBackends.Create(AudioBackend.BASS, () => sdl, failIfCalled, bassAvailable: false), Is.SameAs(sdl));
+    }
+
+    [Test]
+    public void SdlThatWontStartFallsBackToBass()
+    {
+        var bass = new HeadlessAudioManager();
+
+        Assert.That(AudioBackends.Create(AudioBackend.SDL, sdlFails, () => bass, bassAvailable: true), Is.SameAs(bass));
+    }
+
+    /// <summary>
+    /// Neither will start: the app runs silent rather than not at all.
+    /// </summary>
+    [Test]
+    public void NothingThatStartsMeansSilence()
+    {
+        Assert.That(AudioBackends.Create(AudioBackend.Automatic, sdlFails, failIfCalled, bassAvailable: false), Is.InstanceOf<HeadlessAudioManager>());
+    }
+
+    private static IAudioManager sdlFails() => throw new InvalidOperationException("Failed to initialise SDL audio");
+
+    private static IAudioManager failIfCalled() => throw new AssertionException("This backend shouldn't have been started.");
 
     /// <summary>
     /// A new backend should be a deliberate decision about whether users see it, not an omission.
@@ -37,7 +94,7 @@ public class AudioBackendsTest
     [Test]
     public void EveryBackendIsEitherOfferedOrDeliberatelyHidden()
     {
-        AudioBackend[] hidden = [AudioBackend.SDLManaged];
+        AudioBackend[] hidden = AudioBackends.BassAvailable ? [AudioBackend.SDLManaged] : [AudioBackend.SDLManaged, AudioBackend.BASS];
 
         var accounted = AudioBackends.GetSuitableBackends().Concat(hidden).ToArray();
 
