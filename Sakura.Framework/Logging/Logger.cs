@@ -5,6 +5,7 @@
 
 using System;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Text;
@@ -19,7 +20,7 @@ namespace Sakura.Framework.Logging;
 
 public class Logger
 {
-    private static readonly Channel<LogMessage> message_channel = Channel.CreateUnbounded<LogMessage>(
+    private static readonly Channel<LogEntry> message_channel = Channel.CreateUnbounded<LogEntry>(
         new UnboundedChannelOptions
         {
             SingleReader = true,
@@ -35,6 +36,9 @@ public class Logger
     private static Storage storage;
     private static bool isShutDown = false;
 
+    // Entries queued and not written yet, so Flush knows when they're all out.
+    private static int unwritten;
+
     public static Storage Storage
     {
         get => storage;
@@ -45,8 +49,6 @@ public class Logger
             clearOldLogs();
         }
     }
-
-    private readonly record struct LogMessage(DateTime Timestamp, LogLevel Level, LoggingTarget Target, string Message);
 
     #region Public Properties
 
@@ -63,6 +65,13 @@ public class Logger
     public static bool LogToConsole { get; set; } = true;
 
     /// <summary>
+    /// Where console output goes instead of the console, for a platform with a system log of its own (Android's
+    /// logcat, where standard output would only repeat each line under a generic tag). Called with each formatted
+    /// line and its level, on whichever thread is logging. Null for the console.
+    /// </summary>
+    public static Action<LogLevel, string> ConsoleOutput { get; set; }
+
+    /// <summary>
     /// Gets or sets the application name. Must be set before Initialize().
     /// If not set, it will be inferred from the entry assembly.
     /// </summary>
@@ -73,6 +82,13 @@ public class Logger
     /// If not set, it will be inferred from the entry assembly.
     /// </summary>
     public static string VersionIdentifier { get; set; }
+
+    /// <summary>
+    /// Raised for each message the log keeps, whole rather than line by line, on the logger's own thread once it has
+    /// been written. For something that shows the log, such as an overlay: a handler should hand the entry on rather
+    /// than work here, and anything it logs comes back to it.
+    /// </summary>
+    public static event Action<LogEntry> NewEntry;
 
     #endregion
 
@@ -155,7 +171,7 @@ public class Logger
     /// Log a message directly to the console, bypassing the log queue and file writers.
     /// </summary>
     /// <param name="message">The message to log.</param>
-    public static void LogPrint(string message) => logToConsole(
+    public static void LogPrint(string message) => logToConsole(LogLevel.Verbose,
         getFormattedMessage(DateTime.UtcNow, LogLevel.Verbose, message));
 
     #endregion
@@ -223,6 +239,26 @@ public class Logger
     }
 
     /// <summary>
+    /// Waits, up to <paramref name="timeout"/>, until everything logged so far is in its file, for a process that can be
+    /// ended without another word from here on: an app gone to the background on a phone. The logger carries on.
+    /// </summary>
+    /// <returns>Whether it all got there in time.</returns>
+    public static bool Flush(TimeSpan timeout)
+    {
+        var waited = Stopwatch.StartNew();
+
+        while (Volatile.Read(ref unwritten) > 0)
+        {
+            if (waited.Elapsed >= timeout)
+                return false;
+
+            Thread.Sleep(1);
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// Signals the logger to shut down gracefully.
     /// Before completing, it will wait for all queued messages to be processed before stopping and closing all file writers.
     /// </summary>
@@ -272,12 +308,7 @@ public class Logger
         {
             // Fallback directly to console if the logger was already shut down.
             if (LogToConsole)
-            {
-                lock (console_lock)
-                {
-                    Console.WriteLine(getFormattedMessage(DateTime.UtcNow, level, message));
-                }
-            }
+                logToConsole(level, getFormattedMessage(DateTime.UtcNow, level, message), target);
             return;
         }
 
@@ -288,7 +319,10 @@ public class Logger
         if (level < MinimumLogLevel || cancellationTokenSource == null || cancellationTokenSource.IsCancellationRequested || level < MinimumLogLevel)
             return;
 
-        message_channel.Writer.TryWrite(new LogMessage(DateTime.UtcNow, level, target, message));
+        Interlocked.Increment(ref unwritten);
+
+        if (!message_channel.Writer.TryWrite(new LogEntry(DateTime.UtcNow, level, target, message)))
+            Interlocked.Decrement(ref unwritten);
 
         log_count_stats.GetOrAdd(level, static l => GlobalStatistics.Get<int>("Logger", $"Log {l} Count")).Value++;
     }
@@ -314,6 +348,10 @@ public class Logger
                 catch (Exception ex)
                 {
                     await Console.Error.WriteLineAsync($"Failed to write log message: {ex}").ConfigureAwait(false);
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref unwritten);
                 }
             }
 
@@ -342,19 +380,28 @@ public class Logger
         }
     }
 
-    private static async Task writeLogMessage(LogMessage logMessage)
+    private static async Task writeLogMessage(LogEntry logMessage)
     {
         if (logMessage.Message.IndexOf('\n') < 0)
-        {
             await writeLine(logMessage, logMessage.Message).ConfigureAwait(false);
-            return;
+        else
+        {
+            foreach (string message in logMessage.Message.Split('\n'))
+                await writeLine(logMessage, message).ConfigureAwait(false);
         }
 
-        foreach (string message in logMessage.Message.Split('\n'))
-            await writeLine(logMessage, message).ConfigureAwait(false);
+        try
+        {
+            NewEntry?.Invoke(logMessage);
+        }
+        catch (Exception ex)
+        {
+            // Not logged: the handler would be called with it again.
+            await Console.Error.WriteLineAsync($"A log entry handler failed: {ex}").ConfigureAwait(false);
+        }
     }
 
-    private static async Task writeLine(LogMessage logMessage, string message)
+    private static async Task writeLine(LogEntry logMessage, string message)
     {
         string formattedMessage = getFormattedMessage(logMessage.Timestamp, logMessage.Level, message);
 
@@ -362,14 +409,22 @@ public class Logger
         await writer.WriteLineAsync(formattedMessage).ConfigureAwait(false);
 
         if (LogToConsole)
-            logToConsole(formattedMessage, logMessage.Target);
+            logToConsole(logMessage.Level, formattedMessage, logMessage.Target);
     }
 
-    private static void logToConsole(string message, LoggingTarget target = LoggingTarget.Runtime)
+    private static void logToConsole(LogLevel level, string message, LoggingTarget target = LoggingTarget.Runtime)
     {
         if (!LogToConsole) return;
 
         message = $"[{target.ToString().ToLower()}] " + message;
+
+        var output = ConsoleOutput;
+
+        if (output != null)
+        {
+            output(level, message);
+            return;
+        }
 
         lock (console_lock)
         {
@@ -416,10 +471,19 @@ public class Logger
 
     private static string getLogLevelPrefix(LogLevel level) => level.ToString().ToLower();
 
-    private static string getFormattedMessage(LogMessage logMessage) => $"{logMessage.Timestamp:yyyy-MM-dd HH:mm:ss} [{getLogLevelPrefix(logMessage.Level)}]: {logMessage.Message}";
+    private static string getFormattedMessage(LogEntry logMessage) => $"{logMessage.Timestamp:yyyy-MM-dd HH:mm:ss} [{getLogLevelPrefix(logMessage.Level)}]: {logMessage.Message}";
 
     private static string getFormattedMessage(DateTime timestamp, LogLevel level, string message) => $"{timestamp:yyyy-MM-dd HH:mm:ss} [{getLogLevelPrefix(level)}]: {message}";
 }
+
+/// <summary>
+/// One message as it was logged.
+/// </summary>
+/// <param name="Timestamp">When it was logged, in UTC.</param>
+/// <param name="Level">How severe it is.</param>
+/// <param name="Target">Which log it went to.</param>
+/// <param name="Message">The message, which may span several lines.</param>
+public readonly record struct LogEntry(DateTime Timestamp, LogLevel Level, LoggingTarget Target, string Message);
 
 /// <summary>
 /// Defines the severity levels for log messages.

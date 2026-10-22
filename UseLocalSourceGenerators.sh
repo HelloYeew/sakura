@@ -13,27 +13,36 @@ path = sys.argv[1]
 with open(path, 'r') as f:
     content = f.read()
 
-# Remove the PackageReference block for SourceGenerators
-content = re.sub(
-    r'\s*<PackageReference Include="Sakura\.Framework\.SourceGenerators"[^/]*/>\s*\n'
+# The csproj references the generator project already, without OutputItemType, only so it builds before packing;
+# that reference runs nothing. Only one marked as an analyzer runs the generator.
+analyzer = re.compile(r'<ProjectReference Include="[^"]*Sakura\.Framework\.SourceGenerators\.csproj"[^>]*OutputItemType="Analyzer"')
+package = re.compile(
+    r'\s*<PackageReference Include="Sakura\.Framework\.SourceGenerators"[^>]*/>[ \t]*\n'
     r'|'
-    r'\s*<PackageReference Include="Sakura\.Framework\.SourceGenerators"[^>]*>.*?</PackageReference>\s*\n',
-    '\n',
-    content,
+    r'\s*<PackageReference Include="Sakura\.Framework\.SourceGenerators"[^>]*>.*?</PackageReference>[ \t]*\n',
     flags=re.DOTALL
 )
 
-# Add ProjectReference if not already present
-if 'Sakura.Framework.SourceGenerators.csproj' not in content:
+if analyzer.search(content) and not package.search(content):
+    print(f"{path} already uses the local source generators.")
+    sys.exit(0)
+
+anchor = '  <ItemGroup>\n    <None Include="..\\icon.png"'
+if not analyzer.search(content) and anchor not in content:
+    sys.exit(f"Couldn't find where to add the generator reference in {path}; nothing changed.")
+
+content = package.sub('\n', content)
+
+if not analyzer.search(content):
     content = content.replace(
-        '  <ItemGroup>\n    <None Include="..\icon.png"',
+        anchor,
         '  <ItemGroup>\n'
         '    <ProjectReference Include="../Sakura.Framework.SourceGenerators/Sakura.Framework.SourceGenerators.csproj"\n'
         '                      ReferenceOutputAssembly="false"\n'
         '                      OutputItemType="Analyzer" />\n'
         '  </ItemGroup>\n'
-        '  <ItemGroup>\n'
-        '    <None Include="..\icon.png"'
+        + anchor,
+        1
     )
 
 with open(path, 'w') as f:

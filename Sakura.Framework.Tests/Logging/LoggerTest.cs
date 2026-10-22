@@ -75,6 +75,30 @@ public class LoggerTest
         }
     }
 
+    /// <summary>
+    /// What an app going to the background on a phone does: everything so far reaches the file, and the logger carries on.
+    /// </summary>
+    [Test]
+    public void FlushWritesEverythingQueuedAndCarriesOn()
+    {
+        for (int i = 0; i < 500; i++)
+            Logger.Log($"before {i}");
+
+        Assert.That(Logger.Flush(TimeSpan.FromSeconds(10)), Is.True);
+        Assert.That(readLogs(), Does.Contain("before 499"), "in the file without a shutdown");
+
+        Logger.Log("after");
+        Assert.That(Logger.Flush(TimeSpan.FromSeconds(10)), Is.True);
+        Assert.That(readLogs(), Does.Contain("after"));
+    }
+
+    [Test]
+    public void FlushWithNothingQueuedReturnsAtOnce()
+    {
+        Assert.That(Logger.Flush(TimeSpan.FromSeconds(10)), Is.True);
+        Assert.That(Logger.Flush(TimeSpan.Zero), Is.True);
+    }
+
     [Test]
     public void ShutdownTerminatesPromptlyWhileIdle()
     {
@@ -118,6 +142,37 @@ public class LoggerTest
             Assert.That(contents, Does.Contain("line one"));
             Assert.That(contents, Does.Contain("line two"));
             Assert.That(contents, Does.Contain("line three"));
+        }
+    }
+
+    [Test]
+    public void EachMessageIsHandedOnWholeOnceWritten()
+    {
+        var entries = new System.Collections.Concurrent.ConcurrentQueue<LogEntry>();
+        Action<LogEntry> handler = entries.Enqueue;
+
+        Logger.NewEntry += handler;
+
+        try
+        {
+            Logger.Warning("first\nsecond");
+
+            // Shutting down waits for everything queued to be written.
+            Logger.Shutdown();
+        }
+        finally
+        {
+            Logger.NewEntry -= handler;
+        }
+
+        var entry = entries.Single(e => e.Message.StartsWith("first", StringComparison.Ordinal));
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(entry.Message, Is.EqualTo("first\nsecond"), "not split into lines");
+            Assert.That(entry.Level, Is.EqualTo(LogLevel.Warning));
+            Assert.That(entry.Target, Is.EqualTo(LoggingTarget.Runtime));
+            Assert.That(readLogs(), Does.Contain("second"), "written before it was handed on");
         }
     }
 }

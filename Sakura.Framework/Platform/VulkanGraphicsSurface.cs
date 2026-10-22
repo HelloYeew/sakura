@@ -25,6 +25,8 @@ public class VulkanGraphicsSurface : IVulkanGraphicsSurface
 
     public ulong CreateSurface(nint instance) => window.CreateVulkanSurface(instance);
 
+    public bool TryCreateSurface(nint instance, out ulong surface) => window.TryCreateVulkanSurface(instance, out surface);
+
     public void DestroySurface(nint instance, ulong surface) => window.DestroyVulkanSurface(instance, surface);
 
     public void GetDrawableSize(out int width, out int height) => window.GetDrawableSize(out width, out height);

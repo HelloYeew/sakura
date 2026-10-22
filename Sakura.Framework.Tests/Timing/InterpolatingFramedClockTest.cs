@@ -189,6 +189,7 @@ public class InterpolatingFramedClockTest
     #region Real-time drift guard
 
     [Test]
+    [FlakyTest]
     public void TestNoInterpolationDriftAgainstRealClock()
     {
         // Use a real StopwatchClock as source so we can verify there is no

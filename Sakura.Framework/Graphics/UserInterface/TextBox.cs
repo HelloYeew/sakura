@@ -123,6 +123,12 @@ public abstract partial class TextBox : Container, ITabStop, IHasCursor
     /// </summary>
     public int? LengthLimit { get; set; }
 
+    /// <summary>
+    /// The kind of text this box takes, which picks a touchscreen keyboard's layout and whether it suggests and
+    /// remembers words. It doesn't change how the text is drawn. Takes effect the next time the box gains focus.
+    /// </summary>
+    public TextInputType InputType { get; set; } = TextInputType.Text;
+
     private double caretBlinkDuration = 750;
 
     // When the caret last moved (or focus arrived), the start of the default blink cycle.
@@ -427,7 +433,10 @@ public abstract partial class TextBox : Container, ITabStop, IHasCursor
         base.OnFocus(e);
         resetCaretBlink();
         OnFocusGained();
-        window?.StartTextInput();
+
+        // Where the box is goes first: a virtual keyboard places itself by it as it opens, before this box next updates.
+        sendTextInputRect(TextContainer.X + SpriteText.Margin.Left + SpriteText.GetCharacterPosition(caretIndex).X);
+        window?.StartTextInput(InputType);
         Invalidate(InvalidationFlags.DrawInfo);
     }
 
@@ -490,6 +499,10 @@ public abstract partial class TextBox : Container, ITabStop, IHasCursor
 
         if (e.Button == MouseButton.Left)
         {
+            // Focus doesn't change on a press in a box that has it, but the user may have put the virtual keyboard away.
+            if (HasFocus)
+                window?.StartTextInput(InputType);
+
             if (e.Clicks == 1)
             {
                 caretIndex = getIndexFromMouseX(e.ScreenSpaceMousePosition);
@@ -869,14 +882,23 @@ public abstract partial class TextBox : Container, ITabStop, IHasCursor
             else if (TextContainer.X + totalTextWidth < DrawSize.X)
                 TextContainer.X = DrawSize.X - totalTextWidth;
 
-            if (window != null)
-            {
-                // Through the matrix, so in the size it was built for.
-                Vector2 size = AppliedDrawSize;
-                float normalizedX = size.X > 0 ? (TextContainer.X + caretTargetX) / size.X : 0;
-                var screenPos = Vector2.Transform(new Vector2(normalizedX, 0), ModelMatrix);
-                window.SetTextInputRect(new RectangleF(screenPos.X, screenPos.Y, 0, size.Y));
-            }
+            sendTextInputRect(TextContainer.X + caretTargetX);
         }
+    }
+
+    /// <summary>
+    /// Tells the window where the caret is, for an IME's candidate list or a virtual keyboard to place itself by.
+    /// </summary>
+    /// <param name="caretX">The caret's X, in this box's space.</param>
+    private void sendTextInputRect(float caretX)
+    {
+        if (window == null)
+            return;
+
+        // Through the matrix, so in the size it was built for.
+        Vector2 size = AppliedDrawSize;
+        float normalizedX = size.X > 0 ? caretX / size.X : 0;
+        var screenPos = Vector2.Transform(new Vector2(normalizedX, 0), ModelMatrix);
+        window.SetTextInputRect(new RectangleF(screenPos.X, screenPos.Y, 0, size.Y));
     }
 }

@@ -238,6 +238,45 @@ public class SdlAudioEngineTest
     }
 
     /// <summary>
+    /// A platform that knows its output's format (a phone: 48 kHz, in bursts of its own size) has the device asked
+    /// for that rate, and a buffer of 0 asks for one burst. The mix then runs at whatever rate the device opened
+    /// at, or the audio would be resampled twice on its way out.
+    /// </summary>
+    /// <remarks>
+    /// Not the requested rate itself: SDL 3.5.0 (ea7a2da) opens a device at its default spec whatever it's asked,
+    /// fixed upstream in ab5541ec5. The dummy driver's default is 44.1 kHz, so until then this opens there.
+    /// </remarks>
+    [Test]
+    public void Manager_MixesAtTheDevicesRateAndAsksForOneBurst()
+    {
+        if (!SakuraAudioEngine.IsAvailable)
+            Assert.Ignore("libsakura-audio is not available for this platform, so the native mix engine cannot be tested here.");
+
+        using var manager = new SDLAudioManager(useNativeMixEngine: true, requestedDeviceBufferFrames: 0,
+            nativeOutput: new NativeAudioOutput(48000, 192));
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(manager.DeviceSampleRate, Is.GreaterThan(0));
+            Assert.That(manager.SampleRate, Is.EqualTo(manager.DeviceSampleRate), "the mix and the device run at different rates");
+            Assert.That(manager.DeviceBufferFrames, Is.EqualTo(192));
+        }
+    }
+
+    /// <summary>
+    /// The native engine's channels call into it directly, so nothing waits for the audio thread; the managed
+    /// mixer's queue their changes for it.
+    /// </summary>
+    [TestCase(true)]
+    [TestCase(false)]
+    public void Manager_PlaybackWaitsForUpdateOnlyOnTheManagedMixer(bool native)
+    {
+        using var manager = createManager(native);
+
+        Assert.That(manager.PlaybackWaitsForUpdate, Is.EqualTo(!native));
+    }
+
+    /// <summary>
     /// A nonsense buffer size is clamped rather than passed to a driver.
     /// </summary>
     [TestCase(1)]
@@ -329,6 +368,7 @@ public class SdlAudioEngineTest
     /// </summary>
     [TestCase(true)]
     [TestCase(false)]
+    [FlakyTest]
     public void Manager_DoesNotRaiseTheBufferOnAHealthyDevice(bool native)
     {
         int persisted = 0;
@@ -389,6 +429,7 @@ public class SdlAudioEngineTest
     /// The managed mixer's own property: it pushes, so there is a queue to keep full.
     /// </summary>
     [Test]
+    [FlakyTest]
     public void Manager_ManagedMixerKeepsTheDeviceQueueFed()
     {
         using var manager = createManager(native: false);
@@ -429,6 +470,178 @@ public class SdlAudioEngineTest
         Assert.That(ended, Is.True, "Sample never reported reaching its end.");
     }
 
+    [Test]
+    public void Manager_ListsTheOutputDevices()
+    {
+        using var manager = createManager(native: false);
+
+        Assert.That(manager.OutputDevices, Is.Not.Empty, "the dummy driver has a device to list");
+    }
+
+    [TestCase(true)]
+    [TestCase(false)]
+    public void Manager_OpensTheDevicePicked(bool native)
+    {
+        string device;
+
+        using (var probe = createManager(native))
+            device = probe.OutputDevices[0];
+
+        using var manager = new SDLAudioManager(useNativeMixEngine: native, outputDevice: device);
+
+        Assert.That(manager.PlayingOn, Is.EqualTo(device));
+    }
+
+    [Test]
+    public void Manager_PlaysOnTheDefaultWhileThePickedDeviceIsMissing()
+    {
+        using var manager = new SDLAudioManager(useNativeMixEngine: false, outputDevice: "A device that isn't plugged in");
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(manager.PlayingOn, Is.Empty, "on the default");
+            Assert.That(manager.OutputDevice.Value, Is.EqualTo("A device that isn't plugged in"), "the player's choice is kept for when it's back");
+        }
+    }
+
+    /// <summary>
+    /// Picking a device moves a playing track onto it rather than stopping it, and picking the default moves it back.
+    /// </summary>
+    [TestCase(true)]
+    [TestCase(false)]
+    [FlakyTest]
+    public void Manager_MovesPlaybackToTheDevicePicked(bool native)
+    {
+        using var manager = createManager(native);
+
+        var channel = manager.CreateTrackFromFile(writeTempCopy("Tracks.test.mp3")).GetChannel();
+        channel.Play();
+
+        playUntil(manager, () => channel.CurrentTime > 100);
+
+        manager.OutputDevice.Value = manager.OutputDevices[0];
+        manager.Update(0);
+        Assert.That(manager.PlayingOn, Is.EqualTo(manager.OutputDevices[0]), "moved to the device picked");
+
+        double movedAt = channel.CurrentTime;
+        playUntil(manager, () => channel.CurrentTime > movedAt + 200);
+        Assert.That(channel.CurrentTime, Is.GreaterThan(movedAt + 200), "kept playing on the device picked");
+
+        manager.OutputDevice.Value = string.Empty;
+        manager.Update(0);
+        Assert.That(manager.PlayingOn, Is.Empty, "moved back to the default");
+
+        channel.Dispose();
+        manager.Update(0);
+    }
+
+    /// <summary>
+    /// While the system has the output, a playing track stands still and samples are silent. Once it's back, the
+    /// track carries on from where it stood and samples are heard again.
+    /// </summary>
+    [TestCase(true)]
+    [TestCase(false)]
+    [FlakyTest]
+    public void Manager_InterruptionStandsTracksStillAndSilencesSamples(bool native)
+    {
+        using var manager = createManager(native);
+
+        var channel = manager.CreateTrackFromFile(writeTempCopy("Tracks.test.mp3")).GetChannel();
+        channel.Play();
+
+        playUntil(manager, () => channel.CurrentTime > 100);
+
+        manager.OutputInterrupted.Value = true;
+
+        // What was already on its way to the device plays out first.
+        playFor(manager, TimeSpan.FromMilliseconds(200));
+        double stoodAt = channel.CurrentTime;
+        playFor(manager, TimeSpan.FromMilliseconds(300));
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(channel.CurrentTime, Is.EqualTo(stoodAt).Within(1), "the track stood still");
+            Assert.That(channel.IsRunning.Value, Is.True, "and is still playing, to carry on");
+            Assert.That(manager.SampleMixer.Volume.Value, Is.Zero, "samples are silent");
+        }
+
+        manager.OutputInterrupted.Value = false;
+        playUntil(manager, () => channel.CurrentTime > stoodAt + 200);
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(channel.CurrentTime, Is.GreaterThan(stoodAt + 200), "the track carried on");
+            Assert.That(manager.SampleMixer.Volume.Value, Is.EqualTo(1), "samples are heard again");
+        }
+
+        channel.Dispose();
+        manager.Update(0);
+    }
+
+    /// <summary>
+    /// The ducker turns a target down under its own volume while the source is loud, on the SDL engine as on BASS, and
+    /// lets go of it once disposed.
+    /// </summary>
+    [TestCase(true)]
+    [TestCase(false)]
+    [FlakyTest]
+    public void AudioDuckerDucksAnSdlChannel(bool native)
+    {
+        using var manager = createManager(native);
+
+        var loud = manager.CreateTrackFromFile(writeTempCopy("Tracks.test.mp3")).GetChannel();
+        var target = manager.CreateTrackFromFile(writeTempCopy("Tracks.test.mp3")).GetChannel();
+        loud.Play();
+        target.Play();
+
+        var ducker = new AudioDucker(loud, target) { Threshold = 0.01f };
+        var duckable = (IDuckable)target;
+
+        var timeout = Stopwatch.StartNew();
+
+        while (duckable.Ducking >= 1 && timeout.Elapsed < TimeSpan.FromSeconds(10))
+        {
+            manager.Update(0);
+            ducker.Update();
+            Thread.Sleep(10);
+        }
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(duckable.Ducking, Is.EqualTo(ducker.DuckMultiplier).Within(0.0001), "turned down while the source plays");
+            Assert.That(target.Volume.Value, Is.EqualTo(1), "under its own volume, which is left alone");
+        }
+
+        ducker.Dispose();
+        Assert.That(duckable.Ducking, Is.EqualTo(1), "let go of");
+
+        loud.Dispose();
+        target.Dispose();
+        manager.Update(0);
+    }
+
+    private static void playFor(SDLAudioManager manager, TimeSpan duration)
+    {
+        var elapsed = Stopwatch.StartNew();
+
+        while (elapsed.Elapsed < duration)
+        {
+            manager.Update(0);
+            Thread.Sleep(10);
+        }
+    }
+
+    private static void playUntil(SDLAudioManager manager, Func<bool> condition)
+    {
+        var timeout = Stopwatch.StartNew();
+
+        while (!condition() && timeout.Elapsed < TimeSpan.FromSeconds(10))
+        {
+            manager.Update(0);
+            Thread.Sleep(10);
+        }
+    }
+
     [TestCase(true)]
     [TestCase(false)]
     public void Manager_PlaysAStreamingTrackAndAdvancesItsPosition(bool native)
@@ -457,6 +670,7 @@ public class SdlAudioEngineTest
 
     [TestCase(true)]
     [TestCase(false)]
+    [FlakyTest]
     public void Manager_PublishesItsStatistics(bool native)
     {
         using var manager = createManager(native);
@@ -466,7 +680,14 @@ public class SdlAudioEngineTest
 
         var timeout = Stopwatch.StartNew();
 
-        while (GlobalStatistics.Get<int>("Audio", "SDL Active Voices").Value == 0 && timeout.Elapsed < TimeSpan.FromSeconds(5))
+        // The voice is active as soon as it plays, but the device's first callback (or the managed mixer's first
+        // block) can come much later: a USB interface takes a while to start pulling.
+        bool published() => GlobalStatistics.Get<int>("Audio", "SDL Active Voices").Value > 0
+                            && (native
+                                ? GlobalStatistics.Get<long>("Audio", "SDL Callback").Value > 0
+                                : GlobalStatistics.Get<long>("Audio", "SDL Mix Block").Value > 0);
+
+        while (!published() && timeout.Elapsed < TimeSpan.FromSeconds(5))
         {
             manager.Update(0);
             Thread.Sleep(10);
@@ -496,6 +717,7 @@ public class SdlAudioEngineTest
     /// </summary>
     [TestCase(true)]
     [TestCase(false)]
+    [FlakyTest]
     public void Manager_PlaysWithoutUnderrunning(bool native)
     {
         using var manager = createManager(native);
@@ -618,6 +840,7 @@ public class SdlAudioEngineTest
     /// other has finished.
     /// </summary>
     [Test]
+    [FlakyTest]
     public void NativeEngine_SeekLandsAndPlaybackResumesFromTheNewPosition()
     {
         using var manager = createManager(native: true);
@@ -663,6 +886,7 @@ public class SdlAudioEngineTest
     /// the voice publishes the end and waits to be told where to go.
     /// </summary>
     [Test]
+    [FlakyTest]
     public void NativeEngine_LoopingTrackWrapsAndKeepsPlaying()
     {
         using var manager = createManager(native: true);

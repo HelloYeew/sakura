@@ -26,6 +26,20 @@ public class HostOptions
     public AppType AppType { get; set; } = AppType.Game;
 
     /// <summary>
+    /// Whether the app has the sound output to itself on a phone while it's on screen: another app's music pauses for
+    /// it, and its own sound waits out a call or an alarm (<see cref="Audio.IAudioManager.OutputInterrupted"/>).
+    /// Without it, the app plays alongside whatever else is playing, and nothing interrupts it. Defaults to on for a
+    /// game, which someone else's song would spoil, and off for an application.
+    /// </summary>
+    public bool TakesAudioFocus
+    {
+        get => takesAudioFocus ?? AppType == AppType.Game;
+        set => takesAudioFocus = value;
+    }
+
+    private bool? takesAudioFocus;
+
+    /// <summary>
     /// Whether to limit the update thread FPS to maximum at 1000 FPS in order to prevent excessive CPU usage
     /// when the game is running with an unlimited update rate.
     /// </summary>
@@ -41,7 +55,11 @@ public class HostOptions
     /// window is inactive regardless of this setting, and the audio thread and multi-threaded input
     /// loop never spin. Only applies to <see cref="Platform.AppType.Game"/>.
     /// </summary>
-    public bool AllowThreadSpinning { get; set; } = true;
+    /// <remarks>
+    /// Off by default on phones and tablets, where a spinning core costs battery and heat, and a hot phone
+    /// slows its clocks down and misses more frames than spinning saved.
+    /// </remarks>
+    public bool AllowThreadSpinning { get; set; } = !RuntimeInfo.IsMobile;
 
     /// <summary>
     /// Windows only. Whether to register the update and draw threads with the Multimedia Class

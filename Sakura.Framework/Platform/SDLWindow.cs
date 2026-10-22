@@ -4,7 +4,9 @@
 #nullable disable
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -16,6 +18,7 @@ using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Platform.Dialogs;
 using Sakura.Framework.Reactive;
+using Sakura.Framework.Statistic;
 using Sakura.Framework.Timing;
 using SDL;
 using static SDL.SDL3;
@@ -73,6 +76,14 @@ public class SDLWindow : IWindow
     private int logicalWidth;
     private int logicalHeight;
 
+    /// <summary>
+    /// SDL window coordinates per framework unit. On Android SDL works in physical pixels and reports the
+    /// display's density on its own, so every position and size crossing into or out of SDL is scaled by it,
+    /// and an app lays out in density-independent units as it does elsewhere. Desktop systems already scale
+    /// window coordinates themselves, so there it stays 1.
+    /// </summary>
+    private float contentScale = 1;
+
     // Tracks the last size for which Resized was fired (main-thread only).
     // Separate from currentWidth/currentHeight which the watch callback updates
     // mid-drag so the renderer can draw at the correct size before PollEvents runs.
@@ -81,6 +92,7 @@ public class SDLWindow : IWindow
     private int lastNotifiedLogW;
     private int lastNotifiedLogH;
     private bool? pendingTextInputState;
+    private TextInputType pendingTextInputType;
     private RectangleF? pendingTextInputRect;
     private readonly Lock textInputLock = new Lock();
 
@@ -88,6 +100,17 @@ public class SDLWindow : IWindow
     // when the pending start/stop is applied. Used to gate the macOS emoji-palette shortcut so it
     // only opens when there's somewhere to insert.
     private bool textInputActive;
+
+    // The type the virtual keyboard was last opened with.
+    private TextInputType activeTextInputType;
+
+    // The text input area SDL has, in SDL window coordinates, so an unchanged one isn't sent again.
+    private SDL_Rect appliedTextInputArea;
+    private bool textInputAreaApplied;
+
+    // The area a virtual keyboard was placed by: SDL places it as it opens, and after that only
+    // RetargetScreenKeyboard moves it.
+    private SDL_Rect screenKeyboardArea;
 
     private WindowMode windowMode = WindowMode.Windowed;
 
@@ -131,6 +154,45 @@ public class SDLWindow : IWindow
     }
 
     public Reactive<WindowMode> WindowModeReactive { get; } = new Reactive<WindowMode>(WindowMode.Windowed);
+
+    public IReadOnlyList<WindowMode> SupportedWindowModes { get; } = fillsDisplay ? [WindowMode.Windowed, WindowMode.Borderless] : Enum.GetValues<WindowMode>();
+
+    /// <summary>
+    /// Whether the window always fills the screen, as on a phone: the system sizes it, so it has no size, position or
+    /// minimum of its own to apply or remember, and fullscreen only hides the system bars.
+    /// </summary>
+    private static bool fillsDisplay => RuntimeInfo.IsMobile;
+
+    // Only a desktop window in windowed mode has a size and position the user chose.
+    private bool remembersBounds => windowConfig != null && windowMode == WindowMode.Windowed && !fillsDisplay;
+
+    private static WindowMode supported(WindowMode mode) => fillsDisplay && mode == WindowMode.Fullscreen ? WindowMode.Borderless : mode;
+
+    private bool keepScreenOn = true;
+
+    public bool KeepScreenOn
+    {
+        get => keepScreenOn;
+        set
+        {
+            if (keepScreenOn == value)
+                return;
+
+            keepScreenOn = value;
+
+            if (!initialized)
+                return;
+
+            // On a phone this holds the screen on only while the app is in front; the system lets it sleep once it's
+            // not.
+            if (value)
+                SDL_DisableScreenSaver();
+            else
+                SDL_EnableScreenSaver();
+
+            Logger.Verbose(value ? "Keeping the screen on" : "Letting the screen sleep");
+        }
+    }
 
     public int Width => logicalWidth;
     public int Height => logicalHeight;
@@ -198,26 +260,124 @@ public class SDLWindow : IWindow
         if (window == null)
             return;
 
-        SDL_Rect safeRect;
-        if (!SDL_GetWindowSafeArea(window, &safeRect))
+        MarginPadding insets;
+
+        if (GetPlatformSafeAreaInsets() is MarginPadding platformInsets)
+            insets = platformInsets;
+        else
+        {
+            SDL_Rect safeRect;
+            if (!SDL_GetWindowSafeArea(window, &safeRect))
+                return;
+
+            int windowW, windowH;
+            SDL_GetWindowSize(window, &windowW, &windowH);
+
+            insets = new MarginPadding
+            {
+                Left = Math.Max(0, safeRect.x),
+                Top = Math.Max(0, safeRect.y),
+                Right = Math.Max(0, windowW - (safeRect.x + safeRect.w)),
+                Bottom = Math.Max(0, windowH - (safeRect.y + safeRect.h)),
+            };
+        }
+
+        var padding = new MarginPadding
+        {
+            Left = insets.Left / contentScale,
+            Top = insets.Top / contentScale,
+            Right = insets.Right / contentScale,
+            Bottom = insets.Bottom / contentScale,
+        };
+
+        if (padding.Equals(SafeAreaPadding.Value))
             return;
 
-        int windowW, windowH;
-        SDL_GetWindowSize(window, &windowW, &windowH);
+        SafeAreaPadding.Value = padding;
+        Logger.Verbose($"Safe area insets: {padding}");
+    }
 
-        SafeAreaPadding.Value = new MarginPadding
-        {
-            Left = Math.Max(0, safeRect.x),
-            Top = Math.Max(0, safeRect.y),
-            Right = Math.Max(0, windowW - (safeRect.x + safeRect.w)),
-            Bottom = Math.Max(0, windowH - (safeRect.y + safeRect.h)),
-        };
+    /// <summary>
+    /// Sets the SDL hints this platform needs. Called before SDL is initialised.
+    /// </summary>
+    protected virtual void ConfigureHints()
+    {
+    }
+
+    /// <summary>
+    /// The safe-area insets in SDL window coordinates when the platform knows them better than SDL does, or
+    /// null to use SDL's. Called on the event thread whenever the safe area may have changed.
+    /// </summary>
+    protected virtual MarginPadding? GetPlatformSafeAreaInsets() => null;
+
+    /// <summary>
+    /// Moves a virtual keyboard that's already up onto another text field. SDL places the keyboard and picks its
+    /// layout only as it opens, so a field that starts text input while it's up would otherwise get the previous
+    /// field's. Called on the event thread.
+    /// </summary>
+    /// <param name="type">The field's input type.</param>
+    /// <param name="area">Where the field's caret is, in SDL window coordinates.</param>
+    /// <param name="typeChanged">Whether the keyboard has to change layout too.</param>
+    /// <returns>Whether the platform did it. If not, a change of type closes the keyboard and opens it again.</returns>
+    protected virtual bool RetargetScreenKeyboard(TextInputType type, SDL_Rect area, bool typeChanged) => false;
+
+    /// <summary>
+    /// The refresh rate of the display the window is on when the platform knows it better than SDL does, or null
+    /// to use SDL's. Called on the event thread whenever the rate may have changed.
+    /// </summary>
+    protected virtual float? GetPlatformRefreshRate() => null;
+
+    /// <summary>
+    /// Has the refresh rate read again on the event thread. Safe to call from any thread, for a subclass whose
+    /// <see cref="GetPlatformRefreshRate"/> learns of a change SDL doesn't report.
+    /// </summary>
+    protected unsafe void InvalidateRefreshRate()
+    {
+        if (window == null)
+            return;
+
+        var e = new SDL_Event();
+        e.display.type = SDL_EventType.SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED;
+        SDL_PushEvent(&e);
+    }
+
+    /// <summary>
+    /// Has the safe area read again on the event thread. Safe to call from any thread, for a subclass whose
+    /// <see cref="GetPlatformSafeAreaInsets"/> learns of a change SDL doesn't report.
+    /// </summary>
+    protected unsafe void InvalidateSafeArea()
+    {
+        if (window == null)
+            return;
+
+        var e = new SDL_Event();
+        e.window.type = SDL_EventType.SDL_EVENT_WINDOW_SAFE_AREA_CHANGED;
+        e.window.windowID = SDL_GetWindowID(window);
+        SDL_PushEvent(&e);
+    }
+
+    /// <summary>
+    /// Re-reads <see cref="contentScale"/>. Returns whether it changed.
+    /// </summary>
+    private unsafe bool updateContentScale()
+    {
+        if (window == null || RuntimeInfo.OS != RuntimeInfo.Platform.Android)
+            return false;
+
+        float scale = SDL_GetWindowDisplayScale(window);
+
+        if (scale <= 0 || scale == contentScale)
+            return false;
+
+        contentScale = scale;
+        Logger.Verbose($"Content scale: {scale}");
+        return true;
     }
 
     private unsafe void applyMinimumSize()
     {
-        if (window == null) return;
-        SDL_SetWindowMinimumSize(window, (int)minimumSize.X, (int)minimumSize.Y);
+        if (window == null || fillsDisplay) return;
+        SDL_SetWindowMinimumSize(window, (int)(minimumSize.X * contentScale), (int)(minimumSize.Y * contentScale));
     }
 
     private unsafe void applyRelativeMouseMode()
@@ -237,7 +397,7 @@ public class SDLWindow : IWindow
             SDL_SetWindowRelativeMouseMode(window, false);
             // Hand the virtual cursor position back to the OS cursor so leaving
             // relative mode doesn't make the pointer jump.
-            SDL_WarpMouseInWindow(window, mouseState.Position.X, mouseState.Position.Y);
+            SDL_WarpMouseInWindow(window, mouseState.Position.X * contentScale, mouseState.Position.Y * contentScale);
             Logger.Debug("Relative (raw input) mouse mode disabled");
         }
     }
@@ -250,7 +410,11 @@ public class SDLWindow : IWindow
     {
         windowConfig = config;
 
-        var savedMode = config.Get<WindowMode>(FrameworkSetting.WindowMode).Value;
+        var savedModeConfig = config.Get<WindowMode>(FrameworkSetting.WindowMode);
+        var savedMode = supported(savedModeConfig.Value);
+
+        // So a settings screen shows the mode actually used.
+        savedModeConfig.Value = savedMode;
 
         windowMode = savedMode;
         WindowModeReactive.Value = savedMode;
@@ -323,13 +487,19 @@ public class SDLWindow : IWindow
     public event Action Minimized = delegate { };
     public event Action Restored = delegate { };
     public event Action ExitRequested = delegate { };
+    public event Action EnteringBackground = delegate { };
+    public event Action EnteredForeground = delegate { };
     public event Action Exited = delegate { };
 
     public event Action<KeyEvent> OnKeyDown = delegate { };
     public event Action<KeyEvent> OnKeyUp = delegate { };
     public event Action<int> DisplayChanged = delegate { };
+    public event Action LowMemory = delegate { };
     public event Action<int, int> Resized = delegate { };
 
+    public event Action<TouchEvent> OnTouchDown = delegate { };
+    public event Action<TouchEvent> OnTouchMove = delegate { };
+    public event Action<TouchEvent> OnTouchUp = delegate { };
     public event Action<SakuraMouseButtonEvent> OnMouseDown = delegate { };
     public event Action<SakuraMouseButtonEvent> OnMouseUp = delegate { };
     public event Action<MouseEvent> OnMouseMove = delegate { };
@@ -347,11 +517,12 @@ public class SDLWindow : IWindow
 
     public event Action RenderRequested = delegate { };
 
-    public void StartTextInput()
+    public void StartTextInput(TextInputType type = TextInputType.Text)
     {
         lock (textInputLock)
         {
             pendingTextInputState = true;
+            pendingTextInputType = type;
         }
     }
 
@@ -375,6 +546,15 @@ public class SDLWindow : IWindow
     {
         setApplicationName(applicationName);
 
+        // SDL would make the first finger a mouse that presses on touch-down; the framework turns fingers into
+        // mouse input itself, the way touchscreens behave (TouchMouseEmulation).
+        SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
+
+        // SDL keeps the display on from initialisation unless told otherwise; set so it starts the way the app asked.
+        SDL_SetHint(SDL_HINT_VIDEO_ALLOW_SCREENSAVER, keepScreenOn ? "0" : "1");
+
+        ConfigureHints();
+
         // Note: SDL3 is always per-monitor DPI aware; the SDL2-era Windows DPI hints are gone.
         // Make sure SDL video backend is fully initialized
         // To make it support for OpenGL context and process advance hint like profile version
@@ -385,18 +565,20 @@ public class SDLWindow : IWindow
 
         int version = SDL_GetVersion();
 
-        // Anchor SDL's event timestamp timeline (SDL_GetTicksNS, ns since SDL init) onto the
-        // framework's shared TimeSource timeline so input event timestamps are directly
-        // comparable with every framework clock.
-        sdlTimestampOffset = TimeSource.CurrentTime - SDL_GetTicksNS() / 1_000_000.0;
+        anchorEventTimestamps();
 
         Logger.Verbose("🪟 SDL initialized");
+
+        // From here, so a backgrounding that comes while the app is still starting isn't missed.
+        SDL_AddEventWatch(&lifecycleEventWatch, IntPtr.Zero);
+        AddTouchTimeWatch();
         Logger.Verbose($"SDL Version: {version / 1000000}.{version / 1000 % 1000}.{version % 1000}");
         Logger.Verbose($"SDL Revision: {SDL_GetRevision()}");
         Logger.Verbose($"SDL Video Driver: {SDL_GetCurrentVideoDriver()}");
 
         CursorState.ValueChanged += _ => pendingCursorChange = true;
 
+        eventThreadId = Environment.CurrentManagedThreadId;
         initialized = true;
     }
 
@@ -420,7 +602,7 @@ public class SDLWindow : IWindow
         int spawnW = 800;
         int spawnH = 600;
 
-        if (windowConfig != null && windowMode == WindowMode.Windowed)
+        if (remembersBounds)
         {
             int savedX = windowConfig.Get<int>(FrameworkSetting.WindowX).Value;
             int savedY = windowConfig.Get<int>(FrameworkSetting.WindowY).Value;
@@ -455,6 +637,9 @@ public class SDLWindow : IWindow
             throw new Exception("SDL window creation failed.");
         }
 
+        // Before anything converts a size or position between SDL's units and the framework's.
+        updateContentScale();
+
         applyMinimumSize();
 
         if (relativeMouseMode)
@@ -466,7 +651,8 @@ public class SDLWindow : IWindow
 
         updateSafeArea();
 
-        SDL_SetWindowPosition(window, spawnX, spawnY);
+        if (!fillsDisplay)
+            SDL_SetWindowPosition(window, spawnX, spawnY);
 
         if (windowMode == WindowMode.Fullscreen)
         {
@@ -481,15 +667,18 @@ public class SDLWindow : IWindow
             }
         }
 
-        SDL_AddEventWatch(&resizeEventWatch, IntPtr.Zero);
+        // It exists to keep drawing through a desktop window's live resize. On Android it would run on the UI
+        // thread, where no frame may run, and the polled resize events are enough there.
+        if (RuntimeInfo.OS != RuntimeInfo.Platform.Android)
+            SDL_AddEventWatch(&resizeEventWatch, IntPtr.Zero);
 
         DisplayHz = getDisplayRefreshRate();
         Logger.Verbose($"Display refresh rate: {DisplayHz} Hz");
 
         int w, h;
         SDL_GetWindowSize(window, &w, &h);
-        logicalWidth = w;
-        logicalHeight = h;
+        logicalWidth = (int)MathF.Round(w / contentScale);
+        logicalHeight = (int)MathF.Round(h / contentScale);
 
         // Physical size is resolved after the graphics context is initialised.
         currentWidth = w;
@@ -638,6 +827,14 @@ public class SDLWindow : IWindow
         return surface;
     }
 
+    internal unsafe bool TryCreateVulkanSurface(nint vkInstance, out ulong surface)
+    {
+        ulong created = 0;
+        bool ok = SDL_Vulkan_CreateSurface(window, (VkInstance_T*)vkInstance, null, (VkSurfaceKHR_T**)&created);
+        surface = created;
+        return ok;
+    }
+
     internal unsafe void DestroyVulkanSurface(nint vkInstance, ulong surface)
         => SDL_Vulkan_DestroySurface((VkInstance_T*)vkInstance, (VkSurfaceKHR_T*)surface, null);
 
@@ -704,6 +901,97 @@ public class SDLWindow : IWindow
         return ((float)drawableWidth / windowWidth, (float)drawableHeight / windowHeight);
     }
 
+    /// <summary>
+    /// Raises <see cref="EnteringBackground"/>, <see cref="EnteredForeground"/> and <see cref="LowMemory"/> the moment SDL
+    /// reports them. On Android that is on the UI thread, before SDL blocks its own thread for the background, so a
+    /// handler can still stop everything that draws to the window before its surface goes.
+    /// </summary>
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static unsafe SDLBool lifecycleEventWatch(IntPtr userdata, SDL_Event* e)
+    {
+        try
+        {
+            switch ((SDL_EventType)e->type)
+            {
+                case SDL_EventType.SDL_EVENT_WILL_ENTER_BACKGROUND:
+                    instance?.EnteringBackground.Invoke();
+                    break;
+
+                case SDL_EventType.SDL_EVENT_DID_ENTER_FOREGROUND:
+                    instance?.EnteredForeground.Invoke();
+                    break;
+
+                // Here rather than when polled: in the background, which is when Android asks most, SDL's thread is
+                // blocked until the app comes back.
+                case SDL_EventType.SDL_EVENT_LOW_MEMORY:
+                    instance?.LowMemory.Invoke();
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            // An exception can't cross back into SDL.
+            Logger.Error("Handling an app lifecycle event failed.", ex);
+        }
+
+        return true;
+    }
+
+    // When the touch being handed to SDL on this thread really happened, on the Stopwatch timeline, or 0 if unknown.
+    [ThreadStatic]
+    private static long pendingTouchTime;
+
+    private static readonly GlobalStatistic<double> stat_touch_delay = GlobalStatistics.Get<double>("Input", "Touch Delay", StatisticKind.Gauge, StatisticUnit.Milliseconds);
+
+    // A gap this long isn't a touch's delivery but a clock that doesn't match, and is left alone.
+    private const long max_touch_delay_ns = 1_000_000_000;
+
+    /// <summary>
+    /// For a platform that knows when a touch really happened. SDL stamps a touch with the time it's handed over,
+    /// which on Android comes after the system has passed it along, a few milliseconds later and by a varying amount;
+    /// a rhythm game judges on that time. Call on the thread that hands SDL the touch, just before it does, and again
+    /// with 0 once it has: every touch event SDL makes from it in between gets that time instead.
+    /// </summary>
+    /// <param name="stopwatchTimestamp">When the touch happened, on the <see cref="Stopwatch"/> timeline.</param>
+    protected static void SetTouchTime(long stopwatchTimestamp) => pendingTouchTime = stopwatchTimestamp;
+
+    internal static unsafe void AddTouchTimeWatch() => SDL_AddEventWatch(&touchTimeEventWatch, IntPtr.Zero);
+
+    internal static unsafe void RemoveTouchTimeWatch() => SDL_RemoveEventWatch(&touchTimeEventWatch, IntPtr.Zero);
+
+    /// <summary>
+    /// Moves the touch events SDL is queueing onto the time from <see cref="SetTouchTime"/>. Runs as SDL queues each
+    /// one, on the thread queueing it, with the event SDL is about to queue, so the change is what the app later reads.
+    /// </summary>
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static unsafe SDLBool touchTimeEventWatch(IntPtr userdata, SDL_Event* e)
+    {
+        long happened = pendingTouchTime;
+
+        if (happened == 0)
+            return true;
+
+        switch ((SDL_EventType)e->type)
+        {
+            case SDL_EventType.SDL_EVENT_FINGER_DOWN:
+            case SDL_EventType.SDL_EVENT_FINGER_MOTION:
+            case SDL_EventType.SDL_EVENT_FINGER_UP:
+            case SDL_EventType.SDL_EVENT_FINGER_CANCELED:
+                // SDL stamped it just now, so how long ago the touch happened comes off that stamp.
+                long delay = (long)Stopwatch.GetElapsedTime(happened).TotalNanoseconds;
+
+                if (delay > 0 && delay < max_touch_delay_ns && (ulong)delay < e->tfinger.timestamp)
+                {
+                    e->tfinger.timestamp -= (ulong)delay;
+                    stat_touch_delay.Value = delay / 1_000_000.0;
+                }
+
+                break;
+        }
+
+        return true;
+    }
+
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
     private static unsafe SDLBool resizeEventWatch(IntPtr userdata, SDL_Event* e)
     {
@@ -757,17 +1045,17 @@ public class SDLWindow : IWindow
         // GetPhysicalSize, so publish them with Interlocked.
         Interlocked.Exchange(ref currentWidth, drawW);
         Interlocked.Exchange(ref currentHeight, drawH);
-        logicalWidth = logW;
-        logicalHeight = logH;
+        logicalWidth = (int)MathF.Round(logW / contentScale);
+        logicalHeight = (int)MathF.Round(logH / contentScale);
 
         lastNotifiedDrawW = drawW;
         lastNotifiedDrawH = drawH;
         lastNotifiedLogW = logW;
         lastNotifiedLogH = logH;
 
-        Logger.Verbose($"Window resized to {drawW}x{drawH} (logical size: {logW}x{logH})");
+        Logger.Verbose($"Window resized to {drawW}x{drawH} (logical size: {logicalWidth}x{logicalHeight})");
 
-        if (windowConfig != null && windowMode == WindowMode.Windowed)
+        if (remembersBounds)
         {
             windowConfig.Get<int>(FrameworkSetting.WindowWidth).Value = logW;
             windowConfig.Get<int>(FrameworkSetting.WindowHeight).Value = logH;
@@ -821,6 +1109,8 @@ public class SDLWindow : IWindow
 
     private unsafe void setWindowMode(WindowMode newMode)
     {
+        newMode = supported(newMode);
+
         if (windowMode == newMode)
             return;
 
@@ -837,6 +1127,10 @@ public class SDLWindow : IWindow
             {
                 case WindowMode.Windowed:
                     SDL_SetWindowFullscreen(window, false);
+
+                    if (fillsDisplay)
+                        break;
+
                     SDL_SetWindowBordered(window, true);
 
                     if (windowConfig != null)
@@ -934,6 +1228,22 @@ public class SDLWindow : IWindow
                     handleMouseWheelEvent(sdlEvent.wheel);
                     break;
 
+                case SDL_EventType.SDL_EVENT_FINGER_DOWN:
+                    handleFingerDown(sdlEvent.tfinger);
+                    break;
+
+                case SDL_EventType.SDL_EVENT_FINGER_MOTION:
+                    handleFingerMotion(sdlEvent.tfinger);
+                    break;
+
+                case SDL_EventType.SDL_EVENT_FINGER_UP:
+                    handleFingerUp(sdlEvent.tfinger, false);
+                    break;
+
+                case SDL_EventType.SDL_EVENT_FINGER_CANCELED:
+                    handleFingerUp(sdlEvent.tfinger, true);
+                    break;
+
                 case SDL_EventType.SDL_EVENT_DROP_FILE:
                     handleDropFileEvent(sdlEvent.drop);
                     break;
@@ -948,6 +1258,13 @@ public class SDLWindow : IWindow
 
                 case SDL_EventType.SDL_EVENT_TEXT_EDITING:
                     handleTextEditingEvent(sdlEvent.edit);
+                    break;
+
+                // A display's mode changed: a refresh rate picked in the system's display settings, or a phone's
+                // panel switching between 60 and 120 Hz. It may be another display's, but re-reading the window's
+                // own costs little, and only a real change is reported.
+                case SDL_EventType.SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED:
+                    updateDisplayHz();
                     break;
 
                 case SDL_EventType.SDL_EVENT_GAMEPAD_ADDED:
@@ -1013,14 +1330,7 @@ public class SDLWindow : IWindow
                 break;
 
             case SDL_EventType.SDL_EVENT_WINDOW_DISPLAY_CHANGED:
-                int oldHz = DisplayHz;
-                DisplayHz = getDisplayRefreshRate();
-
-                if (oldHz != DisplayHz)
-                {
-                    Logger.Debug($"Display refresh rate changed from {oldHz} Hz to {DisplayHz} Hz");
-                    DisplayChanged.Invoke(DisplayHz);
-                }
+                updateDisplayHz();
 
                 // When the window moves to a display with a different pixel density (e.g. from
                 // a non-HiDPI external monitor to the HiDPI MacBook screen), SDL may or may not
@@ -1039,6 +1349,11 @@ public class SDLWindow : IWindow
             case SDL_EventType.SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
             case SDL_EventType.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
             case SDL_EventType.SDL_EVENT_WINDOW_RESIZED:
+                // A new density changes the size in framework units even when SDL's size stays the same,
+                // so the dedupe below must not swallow it.
+                if (updateContentScale())
+                    lastNotifiedLogW = -1;
+
                 // The event watch usually handled this already mid-drag; handleSizeChanged
                 // dedupes via lastNotified*, so this only fires for size changes the watch
                 // didn't see and is a no-op for queued duplicates of watch-handled events.
@@ -1053,7 +1368,7 @@ public class SDLWindow : IWindow
                 break;
 
             case SDL_EventType.SDL_EVENT_WINDOW_MOVED:
-                if (windowConfig != null && windowMode == WindowMode.Windowed)
+                if (remembersBounds)
                 {
                     int posX, posY;
                     SDL_GetWindowPosition(window, &posX, &posY);
@@ -1137,7 +1452,7 @@ public class SDLWindow : IWindow
         // In relative mode the OS position is meaningless (cursor is captured) —
         // the virtual cursor maintained by motion events is authoritative.
         if (!relativeMouseMode)
-            mouseState.Position = new Vector2(buttonEvent.x, buttonEvent.y);
+            mouseState.Position = new Vector2(buttonEvent.x / contentScale, buttonEvent.y / contentScale);
         mouseState.SetPressed(button, buttonEvent.down);
         action.Invoke(new SakuraMouseButtonEvent(mouseState.Clone(), button, buttonEvent.clicks, convertEventTimestamp(buttonEvent.timestamp)));
     }
@@ -1147,6 +1462,25 @@ public class SDLWindow : IWindow
     /// onto the shared <see cref="TimeSource"/> timeline in milliseconds.
     /// </summary>
     private double convertEventTimestamp(ulong timestampNs) => timestampNs / 1_000_000.0 + sdlTimestampOffset;
+
+    // How often SDL's event clock is anchored onto the framework's again.
+    private const double timestamp_anchor_interval_ms = 1000;
+
+    private double lastTimestampAnchor;
+
+    /// <summary>
+    /// Anchors SDL's event timestamps (SDL_GetTicksNS, ns since SDL init) onto the framework's shared
+    /// <see cref="TimeSource"/> timeline, so input times compare directly with every framework clock. Again each second:
+    /// SDL's clock can be another than .NET's (CLOCK_MONOTONIC_RAW against CLOCK_MONOTONIC on Linux and Android, which
+    /// the system slews), so anchored once, input times would drift from the music over a long session.
+    /// </summary>
+    private void anchorEventTimestamps()
+    {
+        double now = TimeSource.CurrentTime;
+
+        sdlTimestampOffset = now - SDL_GetTicksNS() / 1_000_000.0;
+        lastTimestampAnchor = now;
+    }
 
     private void handleMouseMotionEvent(SDL_MouseMotionEvent motionEvent)
     {
@@ -1165,18 +1499,80 @@ public class SDLWindow : IWindow
         }
         else
         {
-            mouseState.Position = new Vector2(motionEvent.x, motionEvent.y);
-            delta = new Vector2(motionEvent.xrel, motionEvent.yrel);
+            mouseState.Position = new Vector2(motionEvent.x / contentScale, motionEvent.y / contentScale);
+            delta = new Vector2(motionEvent.xrel / contentScale, motionEvent.yrel / contentScale);
         }
 
         OnMouseMove.Invoke(new MouseEvent(mouseState.Clone(), delta, convertEventTimestamp(motionEvent.timestamp)));
     }
 
+    /// <summary>
+    /// The SDL finger each <see cref="TouchSource"/> is, for the sources in <see cref="touchesDown"/>.
+    /// </summary>
+    private readonly ulong[] touchFingers = new ulong[InputState.MAX_TOUCHES];
+
+    /// <summary>
+    /// The <see cref="TouchSource"/>s with a finger down, as bits.
+    /// </summary>
+    private int touchesDown;
+
+    private void handleFingerDown(SDL_TouchFingerEvent finger)
+    {
+        // Only touchscreens. A trackpad's fingers (macOS) are positions on the pad, not the window, and the pad
+        // already moves the mouse.
+        if (SDL_GetTouchDeviceType(finger.touchID) != SDL_TouchDeviceType.SDL_TOUCH_DEVICE_DIRECT)
+            return;
+
+        // A finger beyond the last source is ignored until one lifts.
+        for (int i = 0; i < touchFingers.Length; i++)
+        {
+            if ((touchesDown & (1 << i)) != 0)
+                continue;
+
+            touchesDown |= 1 << i;
+            touchFingers[i] = (ulong)finger.fingerID;
+
+            OnTouchDown.Invoke(new TouchEvent((TouchSource)i, fingerPosition(finger), timestamp: convertEventTimestamp(finger.timestamp)));
+            return;
+        }
+    }
+
+    private void handleFingerMotion(SDL_TouchFingerEvent finger)
+    {
+        if (findTouch(finger) is TouchSource source)
+            OnTouchMove.Invoke(new TouchEvent(source, fingerPosition(finger), new Vector2(finger.dx * logicalWidth, finger.dy * logicalHeight), convertEventTimestamp(finger.timestamp)));
+    }
+
+    private void handleFingerUp(SDL_TouchFingerEvent finger, bool cancelled)
+    {
+        if (findTouch(finger) is not TouchSource source)
+            return;
+
+        touchesDown &= ~(1 << (int)source);
+        OnTouchUp.Invoke(new TouchEvent(source, fingerPosition(finger), timestamp: convertEventTimestamp(finger.timestamp), cancelled: cancelled));
+    }
+
+    private TouchSource? findTouch(SDL_TouchFingerEvent finger)
+    {
+        ulong id = (ulong)finger.fingerID;
+
+        for (int i = 0; i < touchFingers.Length; i++)
+        {
+            if ((touchesDown & (1 << i)) != 0 && touchFingers[i] == id)
+                return (TouchSource)i;
+        }
+
+        return null;
+    }
+
+    // SDL gives a finger's position as a fraction of the window.
+    private Vector2 fingerPosition(SDL_TouchFingerEvent finger) => new Vector2(finger.x * logicalWidth, finger.y * logicalHeight);
+
     private void handleMouseWheelEvent(SDL_MouseWheelEvent wheelEvent)
     {
         // SDL3 wheel events carry the mouse position directly (meaningless in relative mode).
         if (!relativeMouseMode)
-            mouseState.Position = new Vector2(wheelEvent.mouse_x, wheelEvent.mouse_y);
+            mouseState.Position = new Vector2(wheelEvent.mouse_x / contentScale, wheelEvent.mouse_y / contentScale);
         OnScroll.Invoke(new ScrollEvent(mouseState, new Vector2(wheelEvent.x, wheelEvent.y)));
     }
 
@@ -1186,7 +1582,7 @@ public class SDLWindow : IWindow
         string filePath = Marshal.PtrToStringUTF8((nint)dropEvent.data);
         if (string.IsNullOrEmpty(filePath))
             return;
-        OnDragDropFile.Invoke(new DragDropFileEvent(filePath, new Vector2(dropEvent.x, dropEvent.y)));
+        OnDragDropFile.Invoke(new DragDropFileEvent(filePath, new Vector2(dropEvent.x / contentScale, dropEvent.y / contentScale)));
     }
 
     private unsafe void handleDropTextEvent(SDL_DropEvent dropEvent)
@@ -1194,8 +1590,48 @@ public class SDLWindow : IWindow
         string text = Marshal.PtrToStringUTF8((nint)dropEvent.data);
         if (string.IsNullOrEmpty(text))
             return;
-        OnDragDropText.Invoke(new DragDropTextEvent(text, new Vector2(dropEvent.x, dropEvent.y)));
+        OnDragDropText.Invoke(new DragDropTextEvent(text, new Vector2(dropEvent.x / contentScale, dropEvent.y / contentScale)));
     }
+
+    private unsafe void startTextInput(TextInputType type)
+    {
+        bool typeChanged = type != activeTextInputType;
+        activeTextInputType = type;
+
+        // A virtual keyboard that's up stays on the field it opened for, with that field's layout.
+        bool retargeted = SDL_TextInputActive(window) && SDL_ScreenKeyboardShown(window)
+                          && (typeChanged || !sameArea(appliedTextInputArea, screenKeyboardArea))
+                          && RetargetScreenKeyboard(type, appliedTextInputArea, typeChanged);
+
+        // Without that, it only takes another field's layout by opening again.
+        if (typeChanged && !retargeted && SDL_TextInputActive(window))
+            SDL_StopTextInput(window);
+
+        screenKeyboardArea = appliedTextInputArea;
+
+        var props = SDL_CreateProperties();
+
+        fixed (byte* name = SDL_PROP_TEXTINPUT_TYPE_NUMBER)
+            SDL_SetNumberProperty(props, name, (long)toSdlTextInputType(type));
+
+        // Shows the virtual keyboard again if it's hidden. Dismissing it (Back on Android) stops SDL's text input
+        // while the field keeps its focus, so a tap on the field calls this again to bring it back.
+        SDL_StartTextInputWithProperties(window, props);
+        SDL_DestroyProperties(props);
+    }
+
+    private static bool sameArea(SDL_Rect a, SDL_Rect b) => a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
+
+    private static SDL_TextInputType toSdlTextInputType(TextInputType type) => type switch
+    {
+        TextInputType.Name => SDL_TextInputType.SDL_TEXTINPUT_TYPE_TEXT_NAME,
+        TextInputType.Email => SDL_TextInputType.SDL_TEXTINPUT_TYPE_TEXT_EMAIL,
+        TextInputType.Username => SDL_TextInputType.SDL_TEXTINPUT_TYPE_TEXT_USERNAME,
+        TextInputType.Password => SDL_TextInputType.SDL_TEXTINPUT_TYPE_TEXT_PASSWORD_HIDDEN,
+        TextInputType.Number => SDL_TextInputType.SDL_TEXTINPUT_TYPE_NUMBER,
+        TextInputType.NumberPassword => SDL_TextInputType.SDL_TEXTINPUT_TYPE_NUMBER_PASSWORD_HIDDEN,
+        _ => SDL_TextInputType.SDL_TEXTINPUT_TYPE_TEXT
+    };
 
     private unsafe void handleTextInputEvent(SDL_TextInputEvent textEvent)
     {
@@ -1212,16 +1648,78 @@ public class SDLWindow : IWindow
         OnTextEditing.Invoke(new TextEditingEvent(text ?? string.Empty, editEvent.start, editEvent.length));
     }
 
+    // The thread SDL was set up on, which its clipboard and cursor calls belong to.
+    private int eventThreadId;
+
+    // Clipboard work asked for from other threads, done in PollEvents.
+    private readonly ConcurrentQueue<ClipboardRead> clipboardReads = new ConcurrentQueue<ClipboardRead>();
+    private volatile string? pendingClipboardText;
+
+    /// <summary>
+    /// How long a paste from another thread waits for the event thread to read the clipboard.
+    /// </summary>
+    private static readonly TimeSpan clipboard_read_timeout = TimeSpan.FromSeconds(1);
+
+    /// <remarks>
+    /// Read on the event thread, as SDL needs, and only when asked for: Android tells the player each time an app reads
+    /// the clipboard, so it isn't read ahead. From another thread this waits for the event thread, which is woken for it.
+    /// </remarks>
     public string GetClipboardText()
     {
-        if (!SDL_HasClipboardText()) return string.Empty;
+        if (!initialized || Environment.CurrentManagedThreadId == eventThreadId)
+            return readClipboard();
 
-        return SDL_GetClipboardText() ?? string.Empty;
+        var read = new ClipboardRead();
+        clipboardReads.Enqueue(read);
+        wakeEventThread();
+
+        return read.Done.Wait(clipboard_read_timeout) ? read.Text : string.Empty;
     }
 
+    /// <remarks>
+    /// Set on the event thread, as SDL needs: from another thread, it's set there next.
+    /// </remarks>
     public void SetClipboardText(string text)
     {
-        SDL_SetClipboardText(text);
+        if (!initialized || Environment.CurrentManagedThreadId == eventThreadId)
+        {
+            SDL_SetClipboardText(text);
+            return;
+        }
+
+        pendingClipboardText = text;
+        wakeEventThread();
+    }
+
+    private static string readClipboard() => SDL_HasClipboardText() ? SDL_GetClipboardText() ?? string.Empty : string.Empty;
+
+    private void applyClipboardWork()
+    {
+        if (pendingClipboardText is string text)
+        {
+            pendingClipboardText = null;
+            SDL_SetClipboardText(text);
+        }
+
+        while (clipboardReads.TryDequeue(out var read))
+        {
+            read.Text = readClipboard();
+            read.Done.Set();
+        }
+    }
+
+    // An event nothing handles, to bring the event thread out of a wait for events.
+    private static unsafe void wakeEventThread()
+    {
+        var e = new SDL_Event();
+        e.type = (uint)SDL_EventType.SDL_EVENT_USER;
+        SDL_PushEvent(&e);
+    }
+
+    private sealed class ClipboardRead
+    {
+        public readonly ManualResetEventSlim Done = new ManualResetEventSlim();
+        public string Text = string.Empty;
     }
 
     public unsafe void ShowOpenFileDialog(FileDialogOptions options, Action<FileDialogResult> callback)
@@ -1271,8 +1769,23 @@ public class SDLWindow : IWindow
         return false;
     }
 
+    private void updateDisplayHz()
+    {
+        int oldHz = DisplayHz;
+        DisplayHz = getDisplayRefreshRate();
+
+        if (oldHz == DisplayHz)
+            return;
+
+        Logger.Debug($"Display refresh rate changed from {oldHz} Hz to {DisplayHz} Hz");
+        DisplayChanged.Invoke(DisplayHz);
+    }
+
     private unsafe int getDisplayRefreshRate()
     {
+        if (GetPlatformRefreshRate() is float platformRate && platformRate > 0)
+            return (int)Math.Round(platformRate);
+
         var mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window));
 
         if (mode != null && mode->refresh_rate > 0)
@@ -1284,6 +1797,13 @@ public class SDLWindow : IWindow
     /// <summary>
     /// Process all pending window events.
     /// </summary>
+    public unsafe void WaitForEvents(double timeoutMilliseconds)
+    {
+        // Rounded up, as SDL waits whole milliseconds: rounded down, a wait of under one would return at once.
+        int timeout = (int)Math.Ceiling(Math.Max(0, timeoutMilliseconds));
+        SDL_WaitEventTimeout(null, timeout);
+    }
+
     public unsafe void PollEvents()
     {
         // Apply relative mouse mode switches on the main thread (SDL window calls are not thread-safe).
@@ -1293,49 +1813,69 @@ public class SDLWindow : IWindow
             applyRelativeMouseMode();
         }
 
-        // Same reason: the cursor shape is chosen while dispatching hover, on the update thread.
+        // Same reason: the cursor shape is chosen while dispatching hover, on the update thread, and its visibility there too.
         if (pendingCursorChange)
         {
             pendingCursorChange = false;
             updateSdlCursor();
+
+            if (cursorVisible)
+                SDL_ShowCursor();
+            else
+                SDL_HideCursor();
         }
 
+        applyClipboardWork();
+
+        if (TimeSource.CurrentTime - lastTimestampAnchor >= timestamp_anchor_interval_ms)
+            anchorEventTimestamps();
+
         bool? targetState;
+        TextInputType targetType;
         RectangleF? targetRect;
 
         // drain background thread commands safely
         lock (textInputLock)
         {
             targetState = pendingTextInputState;
+            targetType = pendingTextInputType;
             pendingTextInputState = null;
 
             targetRect = pendingTextInputRect;
             pendingTextInputRect = null;
         }
 
-        // apply text input state switches on the main thread (SDL3: per-window)
-        if (targetState.HasValue)
-        {
-            if (targetState.Value)
-                SDL_StartTextInput(window);
-            else
-                SDL_StopTextInput(window);
-
-            textInputActive = targetState.Value;
-        }
-
-        // apply IME composition box positions on the main thread
+        // apply IME composition box positions on the main thread, before the state: a virtual keyboard
+        // places itself by the area SDL has as it opens
         if (targetRect.HasValue)
         {
             var rect = targetRect.Value;
             var sdlRect = new SDL_Rect
             {
-                x = (int)rect.X,
-                y = (int)rect.Y,
-                w = (int)rect.Width,
-                h = (int)rect.Height
+                x = (int)(rect.X * contentScale),
+                y = (int)(rect.Y * contentScale),
+                w = (int)(rect.Width * contentScale),
+                h = (int)(rect.Height * contentScale)
             };
-            SDL_SetTextInputArea(window, &sdlRect, 0);
+
+            // A focused field sends its caret every frame, but it rarely moves.
+            if (!textInputAreaApplied || !sameArea(sdlRect, appliedTextInputArea))
+            {
+                SDL_SetTextInputArea(window, &sdlRect, 0);
+                appliedTextInputArea = sdlRect;
+                textInputAreaApplied = true;
+            }
+        }
+
+        // apply text input state switches on the main thread (SDL3: per-window)
+        if (targetState.HasValue)
+        {
+            if (targetState.Value)
+                startTextInput(targetType);
+            else
+                SDL_StopTextInput(window);
+
+            textInputActive = targetState.Value;
         }
 
         // normal OS message processing
@@ -1513,14 +2053,13 @@ public class SDLWindow : IWindow
         get => cursorVisible;
         set
         {
+            if (cursorVisible == value)
+                return;
+
             cursorVisible = value;
-            if (initialized)
-            {
-                if (value)
-                    SDL_ShowCursor();
-                else
-                    SDL_HideCursor();
-            }
+
+            // Set where the cursor's shape is, on the event thread; this is set from the update thread.
+            pendingCursorChange = true;
         }
     }
 
@@ -1624,6 +2163,8 @@ public class SDLWindow : IWindow
     public unsafe void Dispose()
     {
         SDL_RemoveEventWatch(&resizeEventWatch, IntPtr.Zero);
+        SDL_RemoveEventWatch(&lifecycleEventWatch, IntPtr.Zero);
+        RemoveTouchTimeWatch();
 
         foreach (IntPtr ptr in openGamepads.Values)
             SDL_CloseGamepad((SDL_Gamepad*)ptr);

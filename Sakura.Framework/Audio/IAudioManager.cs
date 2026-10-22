@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using Sakura.Framework.Reactive;
 using Sakura.Framework.Timing;
@@ -29,6 +30,34 @@ public interface IAudioManager
     Reactive<double> SampleVolume { get; }
 
     /// <summary>
+    /// The output devices there are to play on, by name, as the system lists them. The system's default output isn't
+    /// among them: it's always there, as the empty name in <see cref="OutputDevice"/>. Changes as devices are plugged
+    /// in and out, raising <see cref="OutputDevicesChanged"/>. Empty where the system picks the output itself, as
+    /// Android does, so the default is the only choice there is.
+    /// </summary>
+    IReadOnlyList<string> OutputDevices { get; }
+
+    /// <summary>
+    /// Raised through <see cref="EventScheduler"/> when <see cref="OutputDevices"/> changes.
+    /// </summary>
+    event Action OutputDevicesChanged;
+
+    /// <summary>
+    /// The device to play on, by its name in <see cref="OutputDevices"/>, or empty for the system's default, which
+    /// follows the system as its default changes. A device that isn't there plays on the default until it's plugged
+    /// in again, and then moves back to it.
+    /// </summary>
+    Reactive<string> OutputDevice { get; }
+
+    /// <summary>
+    /// Whether the system has the output for something else for now, such as a call or an alarm. Until it's given
+    /// back, tracks stand still where they are and samples play silently, so the music picks up where it was and
+    /// nothing played meanwhile sounds all at once afterwards. An app's host sets it from what the platform says
+    /// (<see cref="Platform.HostOptions.TakesAudioFocus"/>); a game can watch it to pause itself.
+    /// </summary>
+    Reactive<bool> OutputInterrupted { get; }
+
+    /// <summary>
     /// Get the master mixer for track playbacks. All track playbacks will be routed through this mixer.
     /// </summary>
     IAudioMixer TrackMixer { get; }
@@ -46,6 +75,16 @@ public interface IAudioManager
     /// does report one, so treat 0 as "unknown" rather than "instant".
     /// </remarks>
     double OutputLatencyMs => 0;
+
+    /// <summary>
+    /// Whether playing, stopping or seeking a channel only takes effect at the next <see cref="Update"/>, so how often
+    /// that runs adds to how late a sound starts.
+    /// </summary>
+    /// <remarks>
+    /// True unless a backend says otherwise: one that hands those straight to its mixer only raises end-of-sound
+    /// events and tidies up in <see cref="Update"/>, which can run far less often.
+    /// </remarks>
+    bool PlaybackWaitsForUpdate => true;
 
     /// <summary>
     /// Loads a track from a <see cref="Stream"/>

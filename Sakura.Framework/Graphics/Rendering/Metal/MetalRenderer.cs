@@ -8,6 +8,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using Sakura.Framework.Graphics.Colors;
+using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering.Batches;
 using Sakura.Framework.Graphics.Rendering.Uniforms;
 using Sakura.Framework.Graphics.Textures;
@@ -154,7 +155,7 @@ public sealed class MetalRenderer : IMetalRenderer
 
         instance = this;
 
-        SakuraMetalNative.SetupLibraryResolvers();
+        NativeLibraryResolver.Install();
 
         device = SakuraMetalNative.sakura_metal_create(metalSurface.MetalLayer);
         if (device == nint.Zero)
@@ -225,7 +226,8 @@ public sealed class MetalRenderer : IMetalRenderer
 
     /// <summary>
     /// Maps each Vertex field to a shader attribute location, matching TriangleBatch's GL layout:
-    /// 0=Position, 1=TexCoords, 2=Color, 3=TexIndex, 4=ClipData, 5=ClipShearX, 6=ClipRadius.
+    /// 0=Position, 1=TexCoords, 2=Color, 3=TexIndex, 4=ClipData, 5=ClipShearX, 6=ClipRadius,
+    /// 7=ClipFadeEdges, 8=ClipFadeLength.
     /// </summary>
     private static MetalVertexAttribute[] buildVertexAttributes() =>
     [
@@ -236,6 +238,8 @@ public sealed class MetalRenderer : IMetalRenderer
         attr(4, 4, nameof(SakuraVertex.ClipData)),
         attr(5, 1, nameof(SakuraVertex.ClipShearX)),
         attr(6, 1, nameof(SakuraVertex.ClipRadius)),
+        attr(7, 4, nameof(SakuraVertex.ClipFadeEdges)),
+        attr(8, 4, nameof(SakuraVertex.ClipFadeLength)),
     ];
 
     private static MetalVertexAttribute attr(int index, int components, string field) =>
@@ -294,6 +298,43 @@ public sealed class MetalRenderer : IMetalRenderer
 
     private double blockedMilliseconds;
 
+    // When the update the frame being drawn shows was made, which the native side tags the frame with, and whether
+    // it can: a library from before frame timing can't.
+    private long frameContentTicks;
+    private bool framesTimed = true;
+
+    private readonly DisplayLatency displayLatency = new DisplayLatency("Metal's presented times");
+
+    public void SetFrameContentTime(long timestamp) => frameContentTicks = timestamp;
+
+    public double DisplayLatencyMilliseconds => displayLatency.Milliseconds ?? double.NaN;
+
+    /// <summary>
+    /// Measures the latest frame Metal has reported on screen, from the update it showed. Metal reports in host time,
+    /// lined up with <see cref="Stopwatch"/>'s here by reading both clocks at once.
+    /// </summary>
+    private void measurePresented()
+    {
+        if (!framesTimed)
+            return;
+
+        try
+        {
+            if (SakuraMetalNative.sakura_metal_take_presented(device, out long contentTicks, out double presentedTime) == 0)
+                return;
+
+            double hostNow = SakuraMetalNative.sakura_metal_host_time();
+            long now = Stopwatch.GetTimestamp();
+            long shown = now - (long)((hostNow - presentedTime) * Stopwatch.Frequency);
+
+            displayLatency.Add(DisplayLatency.Between(contentTicks, shown));
+        }
+        catch (EntryPointNotFoundException)
+        {
+            framesTimed = false;
+        }
+    }
+
     public void StartFrame()
     {
         blockedMilliseconds = 0;
@@ -311,6 +352,8 @@ public sealed class MetalRenderer : IMetalRenderer
 
         // Budgeted texture uploads spread a burst across frames (see TextureUploadQueue).
         textureUploadQueue.Process();
+
+        measurePresented();
 
         // Timed because this acquires the layer's next drawable, and the layer hands one back only
         // when the display has released it, so a frame waiting here is waiting on the display, not
@@ -436,6 +479,18 @@ public sealed class MetalRenderer : IMetalRenderer
         // next one's.
         TextureBindTracker.EndFrame();
 
+        if (framesTimed && frameContentTicks != 0)
+        {
+            try
+            {
+                SakuraMetalNative.sakura_metal_set_frame_tag(device, frameContentTicks);
+            }
+            catch (EntryPointNotFoundException)
+            {
+                framesTimed = false;
+            }
+        }
+
         // The other half of the device waits: committing the command buffer and scheduling the present.
         long blockStart = Stopwatch.GetTimestamp();
         SakuraMetalNative.sakura_metal_end_frame(device);
@@ -500,7 +555,7 @@ public sealed class MetalRenderer : IMetalRenderer
         // The clip state is injected per-vertex on the way into the batch (the fragment shader's
         // applyClipping reads v_ClipData/v_ClipShearX/v_ClipRadius), exactly as GL's batch does.
         var clip = clips.Current;
-        batch.AddRange(vertices, textureIndex, clip.ClipData, clip.ShearX, clip.Radius);
+        batch.AddRange(vertices, textureIndex, clip);
     }
 
     public void DrawQuads(ReadOnlySpan<SakuraVertex> vertices, Texture texture)
@@ -513,7 +568,7 @@ public sealed class MetalRenderer : IMetalRenderer
 
         // The batch is non-indexed, so AddQuad expands each quad (TL, TR, BR, BL) into two triangles.
         for (int i = 0; i + 4 <= vertices.Length; i += 4)
-            batch.AddQuad(vertices.Slice(i, 4), textureIndex, clip.ClipData, clip.ShearX, clip.Radius);
+            batch.AddQuad(vertices.Slice(i, 4), textureIndex, clip);
     }
 
     /// <summary>
@@ -537,6 +592,9 @@ public sealed class MetalRenderer : IMetalRenderer
     /// </summary>
     public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius)
         => clips.Push(maskCenter, maskHalfSize, shearX, cornerRadius);
+
+    public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, MarginPadding fade)
+        => clips.Push(maskCenter, maskHalfSize, shearX, cornerRadius, fade);
 
     /// <summary>
     /// Pops the clip region pushed by the matching <see cref="PushMask"/> and draws the container's

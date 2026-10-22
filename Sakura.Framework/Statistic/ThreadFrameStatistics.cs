@@ -98,6 +98,9 @@ public sealed class ThreadFrameStatistics
 
     private long writeCount;
 
+    // Frames the producer has started writing: one ahead of writeCount while a write is in progress.
+    private long startedCount;
+
     /// <summary>
     /// Total frames recorded since startup. Also, the cursor value a consumer should start from
     /// if it wants only frames from this point on, rather than replaying the retained history.
@@ -110,6 +113,11 @@ public sealed class ThreadFrameStatistics
     public void Record(in ThreadFrameSample sample)
     {
         long index = writeCount;
+
+        // Announced first, with a full fence so the slot can't be seen changing before it, for Drain to know which
+        // slot the producer may be in the middle of.
+        Interlocked.Exchange(ref startedCount, index + 1);
+
         samples[index & (CAPACITY - 1)] = sample;
 
         // Published last, so a consumer never sees a count covering a slot that is still being written.
@@ -166,8 +174,11 @@ public sealed class ThreadFrameStatistics
         // The producer may have wrapped past slots we were still reading, in which case those entries
         // are a mix of the frames we asked for and much newer ones - handing them back would put the
         // sequence out of order. A slot is only known intact if the producer could not have reached it
-        // at any point during the copy, which is everything from (latest - CAPACITY) on.
-        long safeOldest = Volatile.Read(ref writeCount) - CAPACITY;
+        // at any point during the copy: every frame from (started - CAPACITY) on, where started counts
+        // the frame being written too, if there is one. The fence keeps the copy's reads from moving
+        // past the count's.
+        Interlocked.MemoryBarrier();
+        long safeOldest = Volatile.Read(ref startedCount) - CAPACITY;
 
         if (safeOldest > oldest)
         {

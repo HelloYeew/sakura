@@ -73,6 +73,11 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
     /// </summary>
     public ulong LastPresentId { get; private set; }
 
+    /// <summary>
+    /// The display-timing ID the last present carried (<c>VK_GOOGLE_display_timing</c>), or 0 before the first.
+    /// </summary>
+    public uint LastTimingId { get; private set; }
+
     private VkImage[] images = [];
     private VkImageView[] views = [];
     private VkFramebuffer[] framebuffers = [];
@@ -127,14 +132,19 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
     /// to go idle first, since the old swapchain's images and semaphores are destroyed here; rebuilds
     /// happen on resizes and present-mode changes, not every frame.
     /// </summary>
-    /// <returns>False when the window has no drawable area (minimised), in which case nothing is
-    /// presented until a later call succeeds.</returns>
+    /// <returns>False when the window has no drawable area (minimised), or its surface is gone, in which case
+    /// nothing is presented until a later call succeeds.</returns>
     public bool Recreate()
     {
         var api = device.InstanceApi;
 
         VkSurfaceCapabilitiesKHR capabilities;
-        VulkanDevice.Check(api.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device.PhysicalDevice, Surface, &capabilities), "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
+        var queried = api.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device.PhysicalDevice, Surface, &capabilities);
+
+        if (queried == VkResult.ErrorSurfaceLostKHR)
+            return surfaceLost();
+
+        VulkanDevice.Check(queried, "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
 
         var extent = chooseExtent(capabilities);
 
@@ -200,7 +210,13 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
         };
 
         VkSwapchainKHR swapchain;
-        VulkanDevice.Check(device.Api.vkCreateSwapchainKHR(&createInfo, null, &swapchain), "vkCreateSwapchainKHR");
+        var created = device.Api.vkCreateSwapchainKHR(&createInfo, null, &swapchain);
+
+        // The old swapchain is retired even so, and goes with the surface.
+        if (created == VkResult.ErrorSurfaceLostKHR)
+            return surfaceLost();
+
+        VulkanDevice.Check(created, "vkCreateSwapchainKHR");
 
         destroyImageResources();
 
@@ -222,16 +238,53 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
     }
 
     /// <summary>
-    /// Replaces a lost surface (<c>VK_ERROR_SURFACE_LOST_KHR</c>) with a new one on the same window. The
-    /// swapchain is rebuilt by the next <see cref="Recreate"/>.
+    /// The window took its surface away while the swapchain was being built for it, as an Android window does going to
+    /// the background (a file picker opening over the app is enough), between the frame's acquire and this rebuild. The
+    /// surface is released, and the next frame makes a new one once the window has one to give.
     /// </summary>
-    public void RecreateSurface()
+    /// <returns>False: there's nothing to present to this frame.</returns>
+    private bool surfaceLost()
+    {
+        Logger.Verbose("Vulkan: the window surface was lost while rebuilding the swapchain; releasing it.");
+        ReleaseSurface();
+        return false;
+    }
+
+    /// <summary>
+    /// Whether there is a surface to build the swapchain on. There isn't after <see cref="ReleaseSurface"/>
+    /// until <see cref="TryCreateSurface"/> succeeds.
+    /// </summary>
+    public bool HasSurface => Surface.IsNotNull;
+
+    /// <summary>
+    /// Destroys the swapchain and its surface: the surface was lost (<c>VK_ERROR_SURFACE_LOST_KHR</c>), or the
+    /// window is about to lose it. <see cref="TryCreateSurface"/> makes a new one.
+    /// </summary>
+    public void ReleaseSurface()
     {
         device.WaitIdle();
         destroySwapchain();
-        window.DestroySurface(device.Instance.Handle, Surface);
 
-        Surface = window.CreateSurface(device.Instance.Handle);
+        if (Surface.IsNotNull)
+        {
+            window.DestroySurface(device.Instance.Handle, Surface);
+            Surface = VkSurfaceKHR.Null;
+        }
+
+        NeedsRecreate = true;
+    }
+
+    /// <summary>
+    /// Makes a new surface on the same window after <see cref="ReleaseSurface"/>. The swapchain is rebuilt by
+    /// the next <see cref="Recreate"/>.
+    /// </summary>
+    /// <returns>False while the window has no surface to give, as in an Android app's background.</returns>
+    public bool TryCreateSurface()
+    {
+        if (!window.TryCreateSurface(device.Instance.Handle, out ulong handle))
+            return false;
+
+        Surface = handle;
 
         VkBool32 supported;
         VulkanDevice.Check(device.InstanceApi.vkGetPhysicalDeviceSurfaceSupportKHR(device.PhysicalDevice, device.PresentQueueFamily, Surface, &supported), "vkGetPhysicalDeviceSurfaceSupportKHR");
@@ -241,6 +294,7 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
 
         surfaceFormatChosen = false;
         NeedsRecreate = true;
+        return true;
     }
 
     /// <summary>
@@ -265,6 +319,7 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
         var wait = renderFinished[imageIndex];
         var mode = PresentMode;
         ulong id = LastPresentId + 1;
+        uint timingId = LastTimingId + 1;
 
         var modeInfo = new VkSwapchainPresentModeInfoKHR
         {
@@ -279,9 +334,19 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
             pPresentIds = &id,
         };
 
-        var presentInfo = new VkPresentInfoKHR
+        // As soon as it can be shown: the ID only asks for when it was, for ReadPastPresentationTimings.
+        var time = new VkPresentTimeGOOGLE { presentID = timingId };
+
+        var timesInfo = new VkPresentTimesInfoGOOGLE
         {
             pNext = device.SupportsPresentWait ? &idInfo : switchesModes ? &modeInfo : null,
+            swapchainCount = 1,
+            pTimes = &time,
+        };
+
+        var presentInfo = new VkPresentInfoKHR
+        {
+            pNext = device.SupportsDisplayTiming ? &timesInfo : timesInfo.pNext,
             waitSemaphoreCount = 1,
             pWaitSemaphores = &wait,
             swapchainCount = 1,
@@ -295,7 +360,32 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
         if (device.SupportsPresentWait && result >= VkResult.Success)
             LastPresentId = id;
 
+        if (device.SupportsDisplayTiming && result >= VkResult.Success)
+            LastTimingId = timingId;
+
         return result;
+    }
+
+    /// <summary>
+    /// Fills <paramref name="timings"/> with when the presents not reported yet reached the screen, oldest first,
+    /// and returns how many there were. Their times are nanoseconds of the presentation engine's clock, which on
+    /// Android is the monotonic clock <see cref="System.Diagnostics.Stopwatch"/> reads. Needs
+    /// <c>VK_GOOGLE_display_timing</c>.
+    /// </summary>
+    public int ReadPastPresentationTimings(Span<VkPastPresentationTimingGOOGLE> timings)
+    {
+        uint count = (uint)timings.Length;
+
+        fixed (VkPastPresentationTimingGOOGLE* first = timings)
+        {
+            var result = device.Api.vkGetPastPresentationTimingGOOGLE(Handle, &count, first);
+
+            // Incomplete: more were waiting than there was room for, and the rest come next time.
+            if (result != VkResult.Success && result != VkResult.Incomplete)
+                return 0;
+        }
+
+        return (int)count;
     }
 
     /// <summary>

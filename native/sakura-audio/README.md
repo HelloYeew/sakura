@@ -39,6 +39,15 @@ That collapses the CI story to "compile one C file per RID", and it removes any 
 linked against to differ from the SDL3 the managed side loaded. **Any future need for another SDL
 call should be injected the same way rather than adding a link dependency.**
 
+## The AAudio boundary
+
+On Android the engine plays without SDL in between. `sakura_audio_get_aaudio_callback` returns a function
+with AAudio's data callback signature, which the managed side hands to
+`AAudioStreamBuilder_setDataCallback` with the engine as its user data. The callback mixes straight into
+the buffer AAudio gives it, on AAudio's own high-priority thread. Everything else (opening, starting,
+pausing and closing the stream, its underrun count, its timestamps) is AAudio called from managed code, so
+this library still needs no AAudio header and links nothing new.
+
 ## Real-time discipline
 
 Non-negotiable for anything reachable from the audio callback. Every one of these is a latency or
@@ -64,9 +73,9 @@ stutter bug if broken:
 The one deliberate exception is `timespec_get`, used to measure callback duration. A callback whose
 cost is not measured is a callback whose latency budget is guesswork; C11's `timespec_get` needs no
 platform header, which is why it and not `clock_gettime` or `QueryPerformanceCounter`. CMake
-feature-checks it rather than the C branching on the platform — bionic only declares it from API 29
-and the Android legs target 21 to match the shipped FFmpeg, so on those `callbackMicroseconds` reads
-zero and nothing else changes.
+feature-checks it rather than the C branching on the platform. bionic only declares it from API 29,
+which is the level the Android legs target (the framework's minimum); a build for an older level
+gets `callbackMicroseconds` reading zero and nothing else changes.
 
 ## Threading
 
@@ -74,7 +83,7 @@ zero and nothing else changes.
 |---|---|---|
 | control | create/destroy, parameters, transport | non-blocking; graph and transport changes post a command |
 | writer | `sakura_audio_stream_*` | one per voice, wait-free against the audio thread |
-| audio | the callback from `sakura_audio_get_stream_callback` | SDL's, and never anything else |
+| audio | the callback from `sakura_audio_get_stream_callback`, or on Android `sakura_audio_get_aaudio_callback` | SDL's or AAudio's, and never anything else |
 | readers | `..._get_state`, `..._read_spectrum`, `..._get_stats` | any thread, never blocks the audio thread |
 
 The seek path is the only part that needs the three of them to cooperate. A discard cannot be done by

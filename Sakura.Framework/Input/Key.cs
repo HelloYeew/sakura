@@ -362,6 +362,12 @@ public enum Key
     /// <summary> The next track media key. </summary>
     TrackNext,
 
+    /// <summary>
+    /// The system's back action: Android's back button or back gesture. Not <see cref="Back"/>, which is
+    /// <see cref="BackSpace"/>. Left unhandled, the host does what the system does by default.
+    /// </summary>
+    SystemBack,
+
     /// <summary>Indicates the last available keyboard key.</summary>
     LastKey
 }

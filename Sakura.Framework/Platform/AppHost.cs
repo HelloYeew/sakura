@@ -20,6 +20,7 @@ using Sakura.Framework.Extensions.ExceptionExtensions;
 using Sakura.Framework.Extensions.IEnumerableExtensions;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Rendering;
+using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Input;
 using Sakura.Framework.IO;
 using Sakura.Framework.Logging;
@@ -53,12 +54,36 @@ public abstract class AppHost : IDisposable
     public IRenderer Renderer { get; private set; }
 
     [CanBeNull]
-    public IAudioManager AudioManager { get; set; }
+    public IAudioManager AudioManager
+    {
+        get => audioManager;
+        set
+        {
+            audioManager = value;
+
+            // A manager made during a call starts out knowing it.
+            if (value != null)
+                value.OutputInterrupted.Value = audioInterrupted;
+        }
+    }
+
+    [CanBeNull]
+    private IAudioManager audioManager;
+
+    // What the platform last said, on the update thread: whether something else has the audio output for now.
+    private bool audioInterrupted;
 
     private App app;
 
     public Reactive<FrameSync> FrameLimiter { get; set; }
     public Reactive<ExecutionMode> ExecutionMode { get; set; }
+
+    /// <summary>
+    /// Whether the display stays on while the app runs, rather than dimming and sleeping on the system's timer. On
+    /// for a game, which is often watched without being touched, and off for an application. Either can change it:
+    /// an application while it plays a video, say, or a game only during play.
+    /// </summary>
+    public Reactive<bool> KeepScreenOn { get; }
     protected internal Clock UpdateClock { get; private set; }
     protected internal Clock DrawClock { get; private set; }
     protected internal Clock AudioClock { get; private set; }
@@ -102,6 +127,9 @@ public abstract class AppHost : IDisposable
         MouseDown,
         MouseUp,
         MouseMove,
+        TouchDown,
+        TouchMove,
+        TouchUp,
         Scroll,
         DragDropFile,
         DragDropText,
@@ -128,6 +156,7 @@ public abstract class AppHost : IDisposable
         public KeyEvent Key;
         public MouseButtonEvent MouseButton;
         public MouseEvent Mouse;
+        public TouchEvent Touch;
         public ScrollEvent Scroll;
         public TextInputEvent TextInput;
         public TextEditingEvent TextEditing;
@@ -175,6 +204,21 @@ public abstract class AppHost : IDisposable
             case PendingInputType.Scroll:
                 if (!isFileDialogOpen)
                     OnScroll(input.Scroll);
+                break;
+
+            case PendingInputType.TouchDown:
+                if (!isFileDialogOpen)
+                    app?.OnTouchDown(input.Touch);
+                break;
+
+            case PendingInputType.TouchMove:
+                if (!isFileDialogOpen)
+                    app?.OnTouchMove(input.Touch);
+                break;
+
+            // Delivered even with a dialog open, so a finger that went down before it can't stay down for good.
+            case PendingInputType.TouchUp:
+                app?.OnTouchUp(input.Touch);
                 break;
 
             case PendingInputType.DragDropFile:
@@ -229,6 +273,10 @@ public abstract class AppHost : IDisposable
 
     private readonly FrameBufferManager frameBufferManager = new FrameBufferManager();
     private readonly DrawNode[] rootDrawNodes = new DrawNode[3];
+
+    // When the update each of rootDrawNodes came from began, for the renderer to measure how long its frames take to
+    // reach the screen from (IRenderer.SetFrameContentTime).
+    private readonly long[] rootDrawNodeTimes = new long[3];
     private DrawNode currentFrameDrawNode;
 
     private ThreadRunner threadRunner;
@@ -237,7 +285,7 @@ public abstract class AppHost : IDisposable
     private AppThread audioThread;
 
     // TODO: This "should" not be accessible from outside the framework.
-    public Storage FrameworkStorage { get; private set; } = new EmbeddedResourceStorage(typeof(AppHost).Assembly, "Sakura.Framework.Resources");
+    public Storage FrameworkStorage { get => field ??= new EmbeddedResourceStorage(typeof(AppHost).Assembly, "Sakura.Framework.Resources"); private set; }
 
     public FrameworkConfigManager FrameworkConfigManager { get; private set; }
 
@@ -247,6 +295,19 @@ public abstract class AppHost : IDisposable
     /// </summary>
     public virtual bool IsHeadless => false;
 
+    /// <summary>
+    /// The audio output's native format, where the platform knows it before a device is opened, or null to ask
+    /// SDL. On Android SDL only reports a placeholder until a stream is open, so the audio device would open at a
+    /// rate the output then has to resample from.
+    /// </summary>
+    public virtual NativeAudioOutput? NativeAudioOutput => null;
+
+    /// <summary>
+    /// The platform's performance services: the frame threads report their work through it, and an app can read how
+    /// hot the device is running.
+    /// </summary>
+    public virtual IPlatformPerformance Performance { get; } = new NoPlatformPerformance();
+
     [NotNull]
     public HostOptions Options { get; private set; }
 
@@ -254,9 +315,9 @@ public abstract class AppHost : IDisposable
 
     /// <summary>
     /// The assembly containing the application's embedded resources.
-    /// Defaults to the entry assembly.
+    /// Defaults to the entry assembly (<see cref="RuntimeInfo.EntryAssembly"/>).
     /// </summary>
-    public virtual Assembly ResourceAssembly => Assembly.GetEntryAssembly();
+    public virtual Assembly ResourceAssembly => RuntimeInfo.EntryAssembly;
 
     private ExecutionState executionState = ExecutionState.Idle;
 
@@ -272,6 +333,7 @@ public abstract class AppHost : IDisposable
         }
 
         Name = appName;
+        KeepScreenOn = new Reactive<bool>(Options.AppType == AppType.Game);
     }
 
     /// <summary>
@@ -378,14 +440,126 @@ public abstract class AppHost : IDisposable
 
     private static readonly SemaphoreSlim host_running_mutex = new SemaphoreSlim(1);
 
+    private readonly object lifecycleLock = new object();
+    private bool inBackground;
+
+    /// <summary>
+    /// Stops every per-frame thread and lets go of the window's surface, for an app leaving the screen. Runs on
+    /// whichever thread the system reports it on, and is done by the time it returns, as the system needs.
+    /// </summary>
+    private void enterBackground()
+    {
+        lock (lifecycleLock)
+        {
+            if (inBackground || threadRunner == null)
+                return;
+
+            inBackground = true;
+
+            threadRunner.Pause();
+
+            (AudioManager as IStopsInBackground)?.EnterBackground();
+
+            // Time spent in the background isn't the app's: the first frame back carries none of it.
+            UpdateClock.Stop();
+            DrawClock.Stop();
+            AudioClock.Stop();
+
+            Renderer?.ReleaseSurface();
+
+            // From here the system may end the process without another word: every setting is saved, the app's too.
+            ConfigManagers.FlushAll();
+
+            Logger.Verbose("Entered the background: frames stopped and the window surface released.");
+
+            // Long enough for what's queued, which is a few lines; the system allows a background move about five seconds.
+            Logger.Flush(TimeSpan.FromMilliseconds(500));
+        }
+    }
+
+    /// <summary>
+    /// Raised on the update thread once the system has said it's short of memory: drop whatever can be made again, such
+    /// as loaded-ahead content and caches of things not on screen. Android says so as an app goes to the background
+    /// too, and the update thread is stopped there, so this comes once the app is back. By then the framework has
+    /// compacted the managed heap and handed what was free back to the system.
+    /// </summary>
+    public event Action LowMemory;
+
+    /// <summary>
+    /// Compacts the managed heap where the system said it's short of memory: on Android its UI thread, usually with
+    /// the app in the background, which is when a big process is the first to be ended. A full collection stops every
+    /// managed thread, but in the background they're stopped anyway.
+    /// </summary>
+    private void onLowMemory()
+    {
+        long before = GC.GetTotalMemory(false);
+
+        // Before the collection, so it frees them.
+        ImageRawData.TrimPool();
+
+        // Aggressive gives back the memory the collection frees rather than keeping it for the next allocations.
+        GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+
+        Logger.Verbose($"Short of memory: the managed heap went from {before / 1048576.0:0.#} MB to {GC.GetTotalMemory(false) / 1048576.0:0.#} MB "
+                       + $"({GC.GetGCMemoryInfo().TotalCommittedBytes / 1048576.0:0.#} MB still held from the system).");
+
+        updateScheduler.Add(() => LowMemory?.Invoke());
+    }
+
+    /// <summary>
+    /// Says the system has taken the audio output for something else for now, such as a call, or given it back. It
+    /// reaches the app as <see cref="IAudioManager.OutputInterrupted"/>, on the update thread. Safe to call from any
+    /// thread.
+    /// </summary>
+    protected void SetAudioInterrupted(bool interrupted) => updateScheduler.Add(() =>
+    {
+        audioInterrupted = interrupted;
+
+        if (AudioManager != null)
+            AudioManager.OutputInterrupted.Value = interrupted;
+    });
+
+    private void enterForeground()
+    {
+        lock (lifecycleLock)
+        {
+            if (!inBackground)
+                return;
+
+            inBackground = false;
+
+            UpdateClock.Start();
+            DrawClock.Start();
+            AudioClock.Start();
+
+            (AudioManager as IStopsInBackground)?.EnterForeground();
+
+            threadRunner.Resume();
+
+            Logger.Verbose("Back in the foreground: frames resumed.");
+        }
+    }
+
     /// <summary>
     /// The <see cref="Console.CancelKeyPress"/> handler, kept so it can be detached on disposal.
     /// </summary>
     private ConsoleCancelEventHandler? cancelKeyPressHandler;
 
+    /// <summary>
+    /// Where the logs are written. The app's storage, unless the platform keeps them apart from the data it backs up.
+    /// </summary>
+    protected virtual Storage GetLogStorage() => Storage.GetStorageForDirectory("logs");
+
+    /// <summary>
+    /// Where what can be made again is kept, such as compiled shaders. The app's storage, unless the platform has a
+    /// place it clears when it's short of space and leaves out of backups.
+    /// </summary>
+    protected virtual Storage GetCacheStorage() => Storage.GetStorageForDirectory("cache");
+
     protected virtual void SetupForRun()
     {
-        Logger.Storage = Storage.GetStorageForDirectory("logs");
+        Logger.Storage = GetLogStorage();
 
         FrameworkConfigManager = new FrameworkConfigManager(Storage, Options.AppType);
         FrameworkConfigManager.Load();
@@ -423,6 +597,12 @@ public abstract class AppHost : IDisposable
             GCSettings.LatencyMode = GCLatencyMode.SustainedLowLatency;
         }
 
+        // A process started from Java (Android) has no managed entry point, so the app's assembly stands in
+        // for it. Everything below reads it, the logger first.
+        RuntimeInfo.EntryAssembly ??= app.GetType().Assembly;
+
+        bool ownsHostRunning = false;
+
         try
         {
             Logger.AppIdentifier = Name;
@@ -436,6 +616,8 @@ public abstract class AppHost : IDisposable
                 return;
             }
 
+            ownsHostRunning = true;
+
             AppDomain.CurrentDomain.UnhandledException += unhandledExceptionHandler;
             TaskScheduler.UnobservedTaskException += unobservedTaskExceptionHandler;
 
@@ -444,15 +626,23 @@ public abstract class AppHost : IDisposable
 
             SetupForRun();
 
-            cancelKeyPressHandler = (_, _) =>
-            {
-                // Try to gracefully stop the application without missing any events before exiting.
-                Window.Close();
-                Dispose(true);
-                exitEvent.Set();
-            };
+            // Startup is a game's first loading screen: the system can raise the CPU for it.
+            if (Options.AppType == AppType.Game)
+                Performance.SetGameState(GameState.None, loading: true);
 
-            Console.CancelKeyPress += cancelKeyPressHandler;
+            // Mobile platforms have no console to press Ctrl+C in, and don't support subscribing to it.
+            if (RuntimeInfo.IsDesktop)
+            {
+                cancelKeyPressHandler = (_, _) =>
+                {
+                    // Try to gracefully stop the application without missing any events before exiting.
+                    Window.Close();
+                    Dispose(true);
+                    exitEvent.Set();
+                };
+
+                Console.CancelKeyPress += cancelKeyPressHandler;
+            }
 
             FrameLimiter = FrameworkConfigManager.Get<FrameSync>(FrameworkSetting.FrameLimiter);
             updateTargetUpdateHz();
@@ -473,9 +663,14 @@ public abstract class AppHost : IDisposable
             Window = CreateWindow();
             Window.Title = Options.FriendlyAppName;
             Window.ApplicationName = Name;
+            Window.KeepScreenOn = KeepScreenOn.Value;
+            KeepScreenOn.ValueChanged += e => mainThreadActions.Enqueue(() => Window.KeepScreenOn = e.NewValue);
 
             Window.OnKeyDown += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.KeyDown, Key = e });
             Window.OnKeyUp += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.KeyUp, Key = e });
+            Window.OnTouchDown += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.TouchDown, Touch = e });
+            Window.OnTouchMove += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.TouchMove, Touch = e });
+            Window.OnTouchUp += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.TouchUp, Touch = e });
             Window.OnMouseDown += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.MouseDown, MouseButton = e });
             Window.OnMouseUp += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.MouseUp, MouseButton = e });
             Window.OnMouseMove += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.MouseMove, Mouse = e });
@@ -518,6 +713,9 @@ public abstract class AppHost : IDisposable
             Window.Minimized += updateTargetUpdateHz;
             Window.Restored += updateTargetUpdateHz;
             Window.DisplayChanged += _ => updateTargetUpdateHz();
+            Window.EnteringBackground += enterBackground;
+            Window.EnteredForeground += enterForeground;
+            Window.LowMemory += onLowMemory;
 
             Window.RenderRequested += () =>
             {
@@ -542,12 +740,18 @@ public abstract class AppHost : IDisposable
             Func<bool> usePreciseTiming = () => allowSpinning && Window?.IsActive != false;
             bool useMultimediaClassScheduler = Options.AppType == AppType.Game && Options.UseMultimediaClassScheduler;
 
+            // The two threads a frame waits on. An application only has to run smoothly, so the system may favour the
+            // battery for it.
+            bool preferPowerEfficiency = Options.AppType == AppType.Application;
+            Func<string, double, IFrameWorkHint> createWorkHint = (name, target) => Performance.CreateFrameWorkHint(name, target, preferPowerEfficiency);
+
             updateThread = new AppThread("UpdateThread", PerformUpdate, getUpdateTargetHz)
             {
                 GetDeadlineMilliseconds = GetPresentationDeadlineMs,
                 Priority = ThreadPriority.AboveNormal,
                 UsePreciseTiming = usePreciseTiming,
-                UseMultimediaClassScheduler = useMultimediaClassScheduler
+                UseMultimediaClassScheduler = useMultimediaClassScheduler,
+                CreateWorkHint = createWorkHint
             };
             drawThread = new AppThread("DrawThread", PerformDraw, getDrawTargetHz)
             {
@@ -555,7 +759,8 @@ public abstract class AppHost : IDisposable
                 UsePreciseTiming = usePreciseTiming,
                 UseMultimediaClassScheduler = useMultimediaClassScheduler,
                 GetBlockedMilliseconds = () => lastPresentMilliseconds,
-                GetDeadlineMilliseconds = GetPresentationDeadlineMs
+                GetDeadlineMilliseconds = GetPresentationDeadlineMs,
+                CreateWorkHint = createWorkHint
             };
             audioThread = new AppThread("AudioThread", PerformSoundUpdate, getAudioTargetHz)
             {
@@ -623,6 +828,9 @@ public abstract class AppHost : IDisposable
             renderPrimingFrame();
 
             Window.Show();
+
+            if (Options.AppType == AppType.Game)
+                Performance.SetGameState(GameState.None, loading: false);
 
             if (ExecutionMode.Value == Threading.ExecutionMode.MultiThread)
             {
@@ -705,7 +913,14 @@ public abstract class AppHost : IDisposable
                         threadRunner.RunSingleThreadedFrame(mainBudgetMs, deadlineMs);
                     }
 
-                    if (currentHz > 0)
+                    if (currentHz > 0 && Window != null && ExecutionMode.Value == Threading.ExecutionMode.MultiThread && pacing.InputWaitsForEvents)
+                    {
+                        // Woken by the next event, or after a frame to act on what other threads asked of this
+                        // one (text input, cursor changes, scheduled actions).
+                        Window.WaitForEvents(mainBudgetMs);
+                        nextMainFrameTime = Stopwatch.GetTimestamp();
+                    }
+                    else if (currentHz > 0)
                     {
                         long targetMainTicks = (long)(mainBudgetMs / ms_per_tick);
 
@@ -749,7 +964,10 @@ public abstract class AppHost : IDisposable
         {
             threadRunner?.Dispose();
             Dispose(true);
-            host_running_mutex.Release();
+
+            // Releasing a wait that timed out would let two hosts run at once from then on.
+            if (ownsHostRunning)
+                host_running_mutex.Release();
         }
     }
 
@@ -771,6 +989,12 @@ public abstract class AppHost : IDisposable
     private double lastExitRequestMs = double.NegativeInfinity;
 
     /// <summary>
+    /// Whether the app may block a close request (<see cref="App.OnExitRequested"/>, <see cref="ExitRequested"/>).
+    /// A host whose system closes the app without waiting for it (an Android activity being destroyed) says no.
+    /// </summary>
+    protected virtual bool CanBlockExit => true;
+
+    /// <summary>
     /// Handles a close request on the update thread: honors a veto on the first request, but forces an
     /// immediate exit if a second request arrives quickly (double-clicking the close button).
     /// </summary>
@@ -780,7 +1004,7 @@ public abstract class AppHost : IDisposable
         bool isSecondRequest = now - lastExitRequestMs <= force_exit_threshold_ms;
         lastExitRequestMs = now;
 
-        if (isSecondRequest || !shouldBlockExit())
+        if (!CanBlockExit || isSecondRequest || !shouldBlockExit())
         {
             // Close the window; the main loop's IsExiting check then drives Exit().
             Window?.Close();
@@ -810,6 +1034,14 @@ public abstract class AppHost : IDisposable
     }
 
     /// <summary>
+    /// Called when nothing in the app handled <see cref="Key.SystemBack"/>. A host for a system with a back
+    /// action does what that system does by default; an Android app leaves the screen.
+    /// </summary>
+    protected virtual void OnUnhandledSystemBack()
+    {
+    }
+
+    /// <summary>
     /// Requests the host to exit gracefully.
     /// </summary>
     public virtual void Exit()
@@ -819,7 +1051,10 @@ public abstract class AppHost : IDisposable
 
     protected virtual void OnKeyDown(KeyEvent e)
     {
-        app?.OnKeyDown(e);
+        bool handled = app?.OnKeyDown(e) ?? false;
+
+        if (!handled && !e.IsRepeat && e.Key == Key.SystemBack)
+            OnUnhandledSystemBack();
 
         // Global hotkey
         // TODO: Global hotkey should be in list (don't have to be able to change since it's framework level)
@@ -834,18 +1069,17 @@ public abstract class AppHost : IDisposable
         {
             ScheduleToMainThread(() =>
             {
-                switch (Window.WindowMode)
+                // Cycles through the modes the platform has: windowed, borderless, then fullscreen on desktop.
+                var modes = Window.SupportedWindowModes;
+                int current = 0;
+
+                for (int i = 0; i < modes.Count; i++)
                 {
-                    case WindowMode.Windowed:
-                        Window.WindowMode = WindowMode.Borderless;
-                        break;
-                    case WindowMode.Borderless:
-                        Window.WindowMode = WindowMode.Fullscreen;
-                        break;
-                    case WindowMode.Fullscreen:
-                        Window.WindowMode = WindowMode.Windowed;
-                        break;
+                    if (modes[i] == Window.WindowMode)
+                        current = i;
                 }
+
+                Window.WindowMode = modes[(current + 1) % modes.Count];
             });
         }
         if (!e.IsRepeat && e.Key == Key.F12 && (e.Modifiers & KeyModifiers.Control) > 0)
@@ -920,7 +1154,7 @@ public abstract class AppHost : IDisposable
         Renderer.ShaderStorage = FrameworkStorage.GetStorageForDirectory("Shaders");
 
         if (Storage != null)
-            Renderer.ShaderCache = new DiskCache(Storage.GetStorageForDirectory("cache/shader"));
+            Renderer.ShaderCache = new DiskCache(GetCacheStorage().GetStorageForDirectory("shader"));
 
         InitializeGraphicsContext(Window, Renderer);
         Renderer.Initialize(Window.GraphicsSurface);
@@ -1063,12 +1297,43 @@ public abstract class AppHost : IDisposable
         PerformDraw();
     }
 
+    private GlobalStatistic<double> statThermalHeadroom;
+    private GlobalStatistic<string> statBatterySaver;
+    private GlobalStatistic<string> statGameMode;
+
+    // Each listed only once the platform reports it, so they aren't lines of nothing everywhere else.
+    private void publishPlatformState()
+    {
+        float headroom = Performance.ThermalHeadroom;
+
+        if (!float.IsNaN(headroom))
+        {
+            statThermalHeadroom ??= GlobalStatistics.Get<double>("Host", "Thermal Headroom");
+            statThermalHeadroom.Value = headroom;
+        }
+
+        if (Performance.PowerSaving is bool saving)
+        {
+            statBatterySaver ??= GlobalStatistics.Get<string>("Host", "Battery Saver");
+            statBatterySaver.Value = saving ? "On" : "Off";
+        }
+
+        if (Performance.GameMode is GameMode mode)
+        {
+            statGameMode ??= GlobalStatistics.Get<string>("Host", "Game Mode");
+            statGameMode.Value = mode.ToString();
+        }
+    }
+
     /// <summary>
     /// This method runs the main game logic updates. It uses a fixed-step approach
     /// to ensure updates are deterministic and independent of the draw rate.
     /// </summary>
     protected virtual void PerformUpdate()
     {
+        // Before anything reads a clock: this is the moment the frame's drawn as of.
+        long updateTime = Stopwatch.GetTimestamp();
+
         while (inputQueue.TryDequeue(out var input))
         {
             dispatchInput(in input);
@@ -1076,6 +1341,7 @@ public abstract class AppHost : IDisposable
 
         stat_uptime.Value = UpdateClock.CurrentTime;
         stat_target_update_hz.Value = targetUpdateHz;
+        publishPlatformState();
 
         // Run any actions marshalled onto the update thread (e.g. file dialog result callbacks).
         updateScheduler.Update();
@@ -1093,6 +1359,7 @@ public abstract class AppHost : IDisposable
 
         int updateIndex = frameBufferManager.GetUpdateIndex();
         rootDrawNodes[updateIndex] = app?.GenerateDrawNodeSubtree(updateIndex);
+        rootDrawNodeTimes[updateIndex] = updateTime;
         frameBufferManager.FinishUpdate();
     }
 
@@ -1112,6 +1379,7 @@ public abstract class AppHost : IDisposable
         if (currentFrameNode != null)
         {
             Renderer?.SetRoot(currentFrameNode);
+            Renderer?.SetFrameContentTime(rootDrawNodeTimes[drawIndex]);
         }
 
         Renderer?.Draw(DrawClock);
@@ -1154,22 +1422,14 @@ public abstract class AppHost : IDisposable
 
     private bool allowSpinning => Options.AppType == AppType.Game && Options.AllowThreadSpinning;
 
+    private FramePacing pacing => FramePacing.Current(Options.AppType);
+
     private double getDisplayHz() => Window?.DisplayHz > 0 ? Window.DisplayHz : 60;
 
-    private double getInputTargetHz() => getPollingTargetHz();
-    private double getAudioTargetHz() => getPollingTargetHz();
+    private bool windowInactive => Window != null && !Window.IsActive;
 
-    /// <summary>
-    /// The rate input is polled and audio state advanced at. An application polls no faster than it can show
-    /// the result: input events carry their own timestamps, and nobody hears a click sound start a frame late.
-    /// </summary>
-    private double getPollingTargetHz()
-    {
-        if (Window != null && !Window.IsActive)
-            return 60;
-
-        return Options.AppType == AppType.Game ? 1000 : getDisplayHz();
-    }
+    private double getInputTargetHz() => windowInactive ? 60 : pacing.InputHz(getDisplayHz());
+    private double getAudioTargetHz() => windowInactive ? 60 : pacing.AudioHz(getDisplayHz(), AudioManager?.PlaybackWaitsForUpdate ?? true);
 
     private double getDrawTargetHz()
     {
@@ -1196,22 +1456,7 @@ public abstract class AppHost : IDisposable
         }
     }
 
-    private double getUpdateTargetHz()
-    {
-        double drawHz = getDrawTargetHz();
-
-        if (drawHz == 0)
-            return Options.LimitUnlimitedUpdateRate ? 1000 : 0;
-
-        if (Window != null && !Window.IsActive)
-            return 60;
-
-        // A game updates between drawn frames for input and physics precision. An application's updates
-        // only matter once they are drawn.
-        double updateHz = Options.AppType == AppType.Game ? drawHz * 2 : drawHz;
-
-        return Options.LimitUnlimitedUpdateRate ? Math.Min(updateHz, 1000) : updateHz;
-    }
+    private double getUpdateTargetHz() => windowInactive ? 60 : pacing.UpdateHz(getDrawTargetHz(), Options.LimitUnlimitedUpdateRate);
 
     private void unhandledExceptionHandler(object sender, UnhandledExceptionEventArgs args)
     {

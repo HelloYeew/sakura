@@ -9,6 +9,8 @@ layout(location = 3) in float v_TexIndex;
 layout(location = 4) in vec4 v_ClipData;
 layout(location = 5) in float v_ClipShearX;
 layout(location = 6) in float v_ClipRadius;
+layout(location = 7) in vec4 v_ClipFadeEdges;
+layout(location = 8) in vec4 v_ClipFadeLength;
 
 layout(location = 0) out vec4 FragColor;
 
@@ -72,7 +74,8 @@ void main()
 
         FragColor = finalColor;
 
-        // Edge effects still honour any enclosing parent mask.
+        // Edge effects still honour any enclosing parent mask, and fade with it.
+        FragColor.a *= clipFade(v_FragPos, v_ClipFadeEdges, v_ClipFadeLength);
         if (!applyClipping(v_FragPos, v_ClipData, v_ClipShearX, v_ClipRadius, FragColor))
             discard;
         return;
@@ -97,6 +100,7 @@ void main()
         // Borders must honour any enclosing parent mask, exactly like the edge-effect path above.
         // Without this the border quad is drawn everywhere its own geometry reaches, so a bordered
         // masking child leaks its border past a rectangular ancestor mask.
+        FragColor.a *= clipFade(v_FragPos, v_ClipFadeEdges, v_ClipFadeLength);
         if (!applyClipping(v_FragPos, v_ClipData, v_ClipShearX, v_ClipRadius, FragColor))
             discard;
         return;
@@ -126,6 +130,7 @@ void main()
     texColor *= v_Color;
 
     FragColor = texColor;
+    FragColor.a *= clipFade(v_FragPos, v_ClipFadeEdges, v_ClipFadeLength);
 
     if (!applyClipping(v_FragPos, v_ClipData, v_ClipShearX, v_ClipRadius, FragColor))
         discard;

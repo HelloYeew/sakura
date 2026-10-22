@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Generic;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Input;
 using Sakura.Framework.Platform.Dialogs;
@@ -69,6 +70,17 @@ public interface IWindow : IDisposable
     /// A reactive wrapper around the current window mode.
     /// </summary>
     Reactive<WindowMode> WindowModeReactive { get; }
+
+    /// <summary>
+    /// The window modes this platform has, for a settings screen to offer. A phone's window always fills the screen,
+    /// so it has <see cref="Platform.WindowMode.Windowed"/> and <see cref="Platform.WindowMode.Borderless"/> only.
+    /// </summary>
+    IReadOnlyList<WindowMode> SupportedWindowModes { get; }
+
+    /// <summary>
+    /// Whether the display stays on while the app runs, rather than dimming and sleeping on the system's timer.
+    /// </summary>
+    bool KeepScreenOn { get; set; }
 
     /// <summary>
     /// Whether the OS hardware cursor is visible
@@ -164,6 +176,12 @@ public interface IWindow : IDisposable
 
     void PollEvents();
 
+    /// <summary>
+    /// Sleeps until an event is waiting for <see cref="PollEvents"/>, or <paramref name="timeoutMilliseconds"/> has
+    /// passed. Takes no event out of the queue. Called on the thread that calls <see cref="PollEvents"/>.
+    /// </summary>
+    void WaitForEvents(double timeoutMilliseconds);
+
     void SwapBuffers();
 
     void SetVSync(bool enabled);
@@ -193,6 +211,18 @@ public interface IWindow : IDisposable
     event Action Exited;
 
     /// <summary>
+    /// Invoked when the app is about to go to the background (a mobile app leaving the screen), on whichever
+    /// thread the system reports it. Whatever has to happen first must be done before the handler returns: on
+    /// Android the window's surface is taken away right after.
+    /// </summary>
+    event Action EnteringBackground;
+
+    /// <summary>
+    /// Invoked when the app is back in the foreground, on whichever thread the system reports it.
+    /// </summary>
+    event Action EnteredForeground;
+
+    /// <summary>
     /// Invoked when a key is pressed.
     /// </summary>
     event Action<KeyEvent> OnKeyDown;
@@ -203,7 +233,28 @@ public interface IWindow : IDisposable
     event Action<KeyEvent> OnKeyUp;
 
     event Action<int> DisplayChanged;
+
+    /// <summary>
+    /// Raised when the system is short of memory and wants some back, on the thread it says so on: Android's UI thread,
+    /// often while the app's own threads are stopped for the background. Desktop systems don't send it.
+    /// </summary>
+    event Action LowMemory;
     event Action<int, int> Resized;
+
+    /// <summary>
+    /// Invoked when a finger goes down on a touchscreen.
+    /// </summary>
+    event Action<TouchEvent> OnTouchDown;
+
+    /// <summary>
+    /// Invoked when a finger that is down moves.
+    /// </summary>
+    event Action<TouchEvent> OnTouchMove;
+
+    /// <summary>
+    /// Invoked when a finger lifts, or the system takes it (<see cref="TouchEvent.Cancelled"/>).
+    /// </summary>
+    event Action<TouchEvent> OnTouchUp;
 
     event Action<MouseButtonEvent> OnMouseDown;
     event Action<MouseButtonEvent> OnMouseUp;
@@ -253,8 +304,10 @@ public interface IWindow : IDisposable
 
     /// <summary>
     /// Start text input mode, which will show the OS virtual keyboard on mobile platforms and allow IME input on desktop platforms.
+    /// Calling it again while text input is on shows the virtual keyboard again if the user dismissed it.
     /// </summary>
-    void StartTextInput();
+    /// <param name="type">The kind of text, which picks the virtual keyboard's layout and whether it suggests words.</param>
+    void StartTextInput(TextInputType type = TextInputType.Text);
 
     /// <summary>
     /// Stop text input mode, which will hide the OS virtual keyboard on mobile platforms and disable IME input on desktop platforms.

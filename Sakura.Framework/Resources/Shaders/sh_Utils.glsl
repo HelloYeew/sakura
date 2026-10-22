@@ -37,6 +37,22 @@ float sdRoundParallelogram(in vec2 p, in vec2 b, in float sk, in float r) {
     return sqrt(d.x) * sign(-d.y) - r;
 }
 
+// How much of a fragment a mask's soft edge leaves: 1 well inside, easing to 0 at each edge that fades.
+//
+// fragPos : screen-space position of the fragment (v_FragPos)
+// edges   : the edges the fade is measured from (Left, Top, Right, Bottom)
+// lengths : how far in from each edge the fade reaches; 0 on a side is no fade there
+float clipFade(in vec2 fragPos, in vec4 edges, in vec4 lengths) {
+    vec4 inward = vec4(fragPos.x - edges.x, fragPos.y - edges.y, edges.z - fragPos.x, edges.w - fragPos.y);
+    vec4 t = clamp(inward / max(lengths, vec4(0.0001)), 0.0, 1.0);
+
+    // A side without a fade leaves the fragment whole.
+    t = mix(vec4(1.0), t, step(vec4(0.0001), lengths));
+    t = t * t * (3.0 - 2.0 * t);
+
+    return t.x * t.y * t.z * t.w;
+}
+
 // Applies the software clip rect and optional sheared rounded-corner alpha fade.
 //
 // fragPos    : screen-space position of the fragment (v_FragPos)

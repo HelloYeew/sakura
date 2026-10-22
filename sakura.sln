@@ -20,6 +20,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SampleApp.Desktop", "Sample
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sakura.Framework.Templates", "Sakura.Framework.Templates\Sakura.Framework.Templates.csproj", "{D2A3B4C5-E6F7-8901-BCDE-F01234567891}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sakura.Framework.Android", "Sakura.Framework.Android\Sakura.Framework.Android.csproj", "{24D72416-E4F2-4D7F-AC98-BCDF20335AEA}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SampleApp.Android", "SampleApp.Android\SampleApp.Android.csproj", "{7FE3A4D2-7BEC-4C1D-B70E-DFB2B5BB6C06}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sakura.Framework.Tests.Android", "Sakura.Framework.Tests.Android\Sakura.Framework.Tests.Android.csproj", "{4ACDD8DF-8E7C-4C39-8DC2-D75C3C4EA7DC}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -66,5 +72,21 @@ Global
 		{D2A3B4C5-E6F7-8901-BCDE-F01234567891}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D2A3B4C5-E6F7-8901-BCDE-F01234567891}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D2A3B4C5-E6F7-8901-BCDE-F01234567891}.Release|Any CPU.Build.0 = Release|Any CPU
+		{24D72416-E4F2-4D7F-AC98-BCDF20335AEA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{24D72416-E4F2-4D7F-AC98-BCDF20335AEA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{24D72416-E4F2-4D7F-AC98-BCDF20335AEA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{24D72416-E4F2-4D7F-AC98-BCDF20335AEA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7FE3A4D2-7BEC-4C1D-B70E-DFB2B5BB6C06}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7FE3A4D2-7BEC-4C1D-B70E-DFB2B5BB6C06}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7FE3A4D2-7BEC-4C1D-B70E-DFB2B5BB6C06}.Debug|Any CPU.Deploy.0 = Debug|Any CPU
+		{7FE3A4D2-7BEC-4C1D-B70E-DFB2B5BB6C06}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7FE3A4D2-7BEC-4C1D-B70E-DFB2B5BB6C06}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7FE3A4D2-7BEC-4C1D-B70E-DFB2B5BB6C06}.Release|Any CPU.Deploy.0 = Release|Any CPU
+		{4ACDD8DF-8E7C-4C39-8DC2-D75C3C4EA7DC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4ACDD8DF-8E7C-4C39-8DC2-D75C3C4EA7DC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4ACDD8DF-8E7C-4C39-8DC2-D75C3C4EA7DC}.Debug|Any CPU.Deploy.0 = Debug|Any CPU
+		{4ACDD8DF-8E7C-4C39-8DC2-D75C3C4EA7DC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4ACDD8DF-8E7C-4C39-8DC2-D75C3C4EA7DC}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4ACDD8DF-8E7C-4C39-8DC2-D75C3C4EA7DC}.Release|Any CPU.Deploy.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

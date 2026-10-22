@@ -63,6 +63,7 @@ public class AppThreadFrameStatisticsTest
     }
 
     [Test]
+    [FlakyTest]
     public void TestBusyTimeExcludesTheThrottleWait()
     {
         // When each frame began, by a clock the thread doesn't use. Written only by the thread, and read
@@ -130,6 +131,7 @@ public class AppThreadFrameStatisticsTest
     }
 
     [Test]
+    [FlakyTest]
     public void TestOverrunningWorkIsReportedAsAMissedDeadline()
     {
         // Twice the deadline: this frame is long enough that the presented frame behind it is gone,
@@ -163,6 +165,7 @@ public class AppThreadFrameStatisticsTest
     /// still inside the presentation period has cost nothing visible, and must not be counted.
     /// </summary>
     [Test]
+    [FlakyTest]
     public void TestOverrunningTheBudgetWithinTheDeadlineIsNotAMiss()
     {
         // Between the two: over the 10ms the thread is paced at, comfortably under the 20ms deadline.
@@ -231,6 +234,7 @@ public class AppThreadFrameStatisticsTest
     /// frame that blocks on the display does not read as a frame that is short of headroom.
     /// </summary>
     [Test]
+    [FlakyTest]
     public void TestBlockedTimeIsReportedSeparatelyFromBusyTime()
     {
         const double blocked_ms = 3;

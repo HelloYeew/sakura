@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- A game to the system, as the browser runs as one: Android's game mode and game state then apply to it. -->
+  <application android:allowBackup="true" android:label="Sakura Tests" android:supportsRtl="true" android:appCategory="game">
+    <meta-data android:name="android.game_mode_config" android:resource="@xml/game_mode_config" />
+  </application>
+  <!-- Vulkan 1.1, the only renderer on Android. -->
+  <uses-feature android:name="android.hardware.vulkan.version" android:version="0x401000" android:required="true" />
+</manifest>

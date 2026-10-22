@@ -4,6 +4,7 @@
 using System;
 using System.Runtime.InteropServices;
 using Sakura.Framework.Logging;
+using Sakura.Framework.Platform;
 
 namespace Sakura.Framework.Audio.SdlEngine;
 
@@ -85,7 +86,7 @@ internal static class SakuraAudioNative
     // Unprefixed on purpose: the runtime adds the "lib" prefix and the platform suffix on Unix, so
     // this one name resolves libsakura-audio.dylib, libsakura-audio.so and sakura-audio.dll -- which
     // is what CMake produces by default on each, and what every other native in runtimes/win-* looks
-    // like. iOS does not probe at all; see SetupLibraryResolvers.
+    // like. iOS does not probe at all; see NativeLibraryResolver.
     private const string lib_name = "sakura-audio";
 
     /// <summary>
@@ -127,7 +128,7 @@ internal static class SakuraAudioNative
 
             try
             {
-                SetupLibraryResolvers();
+                NativeLibraryResolver.Install();
 
                 int version = sakura_audio_abi_version();
 
@@ -149,29 +150,6 @@ internal static class SakuraAudioNative
             }
 
             return available.Value;
-        }
-    }
-
-    private static bool resolversInstalled;
-
-    /// <summary>
-    /// Installs the iOS DLL import resolver (the library is embedded as
-    /// <c>sakura-audio.framework</c> under <c>@rpath</c>). No-op on other platforms, where the
-    /// dylib/so/dll is found by name. Call once before any other entry point.
-    /// </summary>
-    public static void SetupLibraryResolvers()
-    {
-        if (resolversInstalled)
-            return;
-
-        resolversInstalled = true;
-
-        if (OperatingSystem.IsIOS())
-        {
-            NativeLibrary.SetDllImportResolver(
-                typeof(SakuraAudioNative).Assembly,
-                (_, assembly, path) =>
-                    NativeLibrary.Load("@rpath/sakura-audio.framework/sakura-audio", assembly, path));
         }
     }
 
@@ -201,6 +179,14 @@ internal static class SakuraAudioNative
     /// </summary>
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern nint sakura_audio_get_stream_callback();
+
+    /// <summary>
+    /// The <c>AAudioStream_dataCallback</c>-compatible function pointer to hand to
+    /// <c>AAudioStreamBuilder_setDataCallback</c>, with the engine pointer as its userdata. A library from before the
+    /// AAudio output doesn't have it, which throws <see cref="EntryPointNotFoundException"/>.
+    /// </summary>
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern nint sakura_audio_get_aaudio_callback();
 
     #endregion
 

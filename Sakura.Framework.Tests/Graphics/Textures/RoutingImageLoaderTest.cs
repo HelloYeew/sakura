@@ -106,6 +106,50 @@ public class RoutingImageLoaderTest : ImageLoaderTest
         }
     }
 
+    private static byte[] jpeg(int width, int height)
+    {
+        using var stream = new MemoryStream();
+
+        using (var image = new Image<Rgba32>(width, height))
+            image.SaveAsJpeg(stream);
+
+        return stream.ToArray();
+    }
+
+    /// <summary>
+    /// A photo far bigger than it's shown is decoded reduced, in ImageSharp, rather than whole in stb: the same time,
+    /// without holding the whole image at once.
+    /// </summary>
+    [Test]
+    public void ABigJpegWantedSmallIsDecodedReduced()
+    {
+        byte[] photo = jpeg(4000, 4000);
+        var small = ImageLoadOptions.FillTarget(new Vector2(500, 500));
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(loader.WouldUseStb(photo, small), Is.False, "wanted small: reduced");
+            Assert.That(loader.WouldUseStb(photo, ImageLoadOptions.FullSize), Is.True, "wanted whole: stb");
+        }
+
+        using var raw = loader.Load(new MemoryStream(photo), small);
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(raw.Width, Is.EqualTo(500));
+            Assert.That(raw.Height, Is.EqualTo(500));
+        }
+    }
+
+    /// <summary>
+    /// A cover-sized JPEG stays with stb, which is as fast or faster at that size and holds little either way.
+    /// </summary>
+    [Test]
+    public void ASmallJpegWantedSmallerStaysWithStb()
+    {
+        Assert.That(loader.WouldUseStb(jpeg(1000, 1000), ImageLoadOptions.FillTarget(new Vector2(250, 250))), Is.True);
+    }
+
     [Test]
     public void DataNeitherLoaderCanReadStillThrows()
     {

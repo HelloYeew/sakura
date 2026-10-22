@@ -71,7 +71,7 @@ public class GLTextureManager : ITextureManager
             using var stream = storage.GetStream(path);
             if (stream == null) throw new FileNotFoundException($"Texture not found: {path}");
 
-            var rawImage = imageLoader.Load(stream, decode);
+            var rawImage = imageLoader.Load(stream, decode.FitWithin(renderer.MaxTextureSize));
             int imageWidth = rawImage.Width;
             int imageHeight = rawImage.Height;
 

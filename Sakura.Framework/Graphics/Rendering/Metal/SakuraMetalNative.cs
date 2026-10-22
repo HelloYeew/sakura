@@ -41,22 +41,6 @@ internal static class SakuraMetalNative
 {
     private const string lib_name = "libsakura-metal";
 
-    /// <summary>
-    /// Installs the iOS DLL import resolver (the framework is embedded as
-    /// <c>sakura-metal.framework</c> under <c>@rpath</c>). No-op on other platforms, where the
-    /// dylib/so is found by name. Call once before any other entry point.
-    /// </summary>
-    public static void SetupLibraryResolvers()
-    {
-        if (OperatingSystem.IsIOS())
-        {
-            NativeLibrary.SetDllImportResolver(
-                typeof(SakuraMetalNative).Assembly,
-                (_, assembly, path) =>
-                    NativeLibrary.Load("@rpath/sakura-metal.framework/sakura-metal", assembly, path));
-        }
-    }
-
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern nint sakura_metal_create(nint caMetalLayer);
 
@@ -71,6 +55,17 @@ internal static class SakuraMetalNative
 
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern void sakura_metal_end_frame(nint device);
+
+    // Frame timing (SakuraMetal.h). Newer than the rest: a library from before them throws EntryPointNotFoundException.
+
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void sakura_metal_set_frame_tag(nint device, long tag);
+
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int sakura_metal_take_presented(nint device, out long tag, out double presentedTime);
+
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern double sakura_metal_host_time();
 
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern void sakura_metal_resize(nint device, int width, int height, float contentsScale);

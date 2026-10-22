@@ -3,6 +3,7 @@
 
 #nullable disable
 
+using System;
 using System.IO;
 
 namespace Sakura.Framework.Platform;
@@ -40,10 +41,10 @@ public class SafeWriteStream : FileStream
         {
             // this was added to work around some hardware writing zeroes to a file
             // before writing actual content, causing corrupt files to exist on disk.
-            // as of .NET 6, flushing is very expensive on macOS so this is limited to only Windows,
-            // but it may also be entirely unnecessary due to the temporary file copying performed on this class.
             // see: https://github.com/ppy/osu-framework/issues/5231
-            if (RuntimeInfo.OS == RuntimeInfo.Platform.Windows)
+            // Down to the disk before the rename, too, so a phone losing power just after can't be left with the new name
+            // on an empty file. Not on Apple's platforms, where .NET's flush to the disk is very expensive.
+            if (!OperatingSystem.IsMacOS() && !OperatingSystem.IsIOS())
             {
                 try
                 {
@@ -61,7 +62,8 @@ public class SafeWriteStream : FileStream
 
         if (!isDisposed)
         {
-            storage.Delete(finalPath);
+            // In one step, over the old file: deleting it first left a moment with no file at all, and a process ended
+            // in it lost the file.
             storage.Move(temporaryPath, finalPath);
 
             isDisposed = true;

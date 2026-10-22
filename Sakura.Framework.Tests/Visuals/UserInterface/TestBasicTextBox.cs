@@ -399,6 +399,53 @@ public partial class TestBasicTextBox : ManualInputManagerTestScene
     }
 
     [Test]
+    public void TestBoxesAlongTheBottom()
+    {
+        BasicTextBox nameBox = null!;
+        BasicTextBox numberBox = null!;
+
+        // Where a phone's keyboard opens over them: the screen should move up to keep the focused one above it,
+        // and switch to a number pad for the second.
+        AddStep("Add a box and a number box along the bottom", () =>
+        {
+            TestContent.Add(nameBox = new BasicTextBox
+            {
+                Anchor = Anchor.BottomCentre,
+                Origin = Anchor.BottomCentre,
+                Y = -80,
+                Width = 300,
+                Height = 40,
+                PlaceholderText = "Name"
+            });
+
+            TestContent.Add(numberBox = new BasicTextBox
+            {
+                Anchor = Anchor.BottomCentre,
+                Origin = Anchor.BottomCentre,
+                Y = -20,
+                Width = 300,
+                Height = 40,
+                PlaceholderText = "Number",
+                InputType = TextInputType.Number
+            });
+        });
+
+        AddStep("Focus the box", () =>
+        {
+            InputManager.MoveMouseTo(nameBox);
+            InputManager.Click(MouseButton.Left);
+        });
+        AddAssert("Box focused", () => nameBox.HasFocus);
+
+        AddStep("Focus the number box", () =>
+        {
+            InputManager.MoveMouseTo(numberBox);
+            InputManager.Click(MouseButton.Left);
+        });
+        AddAssert("Number box focused instead", () => numberBox.HasFocus && !nameBox.HasFocus);
+    }
+
+    [Test]
     public void TestEmptyCopyDoesNotClobberClipboard()
     {
         AddStep("Focus and type", () =>

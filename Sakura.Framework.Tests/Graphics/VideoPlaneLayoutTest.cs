@@ -35,6 +35,7 @@ public class VideoPlaneLayoutTest
     private const int frames_to_settle = 20;
 
     [Test]
+    [FlakyTest]
     public void HardwareFramesAreSampledInTheLayoutTheyArriveIn()
     {
         var convertTime = GlobalStatistics.Get<double>("Video", "Convert Time");

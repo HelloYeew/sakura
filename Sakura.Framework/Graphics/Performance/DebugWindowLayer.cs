@@ -135,9 +135,10 @@ public partial class DebugWindowLayer : Container, IRemoveFromDrawVisualiser
     {
         DebugWindow? hit = null;
 
-        foreach (var window in OpenWindows)
+        for (int i = 0; i < Children.Count; i++)
         {
-            if (window.Contains(screenSpacePosition) && (hit == null || window.Depth > hit.Depth))
+            if (Children[i] is DebugWindow { IsClosing: false } window && window.Contains(screenSpacePosition)
+                && (hit == null || window.Depth > hit.Depth))
                 hit = window;
         }
 

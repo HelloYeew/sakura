@@ -5,12 +5,27 @@
 $csproj = "Sakura.Framework/Sakura.Framework.csproj"
 $content = Get-Content $csproj -Raw
 
-# Remove the PackageReference block for SourceGenerators
-$content = $content -replace '(?s)\s*<PackageReference Include="Sakura\.Framework\.SourceGenerators"[^>]*>.*?</PackageReference>\s*\n', "`n"
-$content = $content -replace '\s*<PackageReference Include="Sakura\.Framework\.SourceGenerators"[^/]*/>\s*\n', "`n"
+# The csproj references the generator project already, without OutputItemType, only so it builds before packing;
+# that reference runs nothing. Only one marked as an analyzer runs the generator.
+$analyzer = '<ProjectReference Include="[^"]*Sakura\.Framework\.SourceGenerators\.csproj"[^>]*OutputItemType="Analyzer"'
+$package = '<PackageReference Include="Sakura\.Framework\.SourceGenerators"'
+$anchor = '  <ItemGroup>\r?\n    <None Include="\.\.\\icon\.png"'
 
-# Add ProjectReference if not already present
-if ($content -notmatch 'Sakura\.Framework\.SourceGenerators\.csproj') {
+if (($content -match $analyzer) -and ($content -notmatch $package)) {
+    Write-Host "$csproj already uses the local source generators."
+    exit 0
+}
+
+if (($content -notmatch $analyzer) -and ($content -notmatch $anchor)) {
+    Write-Error "Couldn't find where to add the generator reference in $csproj; nothing changed."
+    exit 1
+}
+
+# Remove the PackageReference block for SourceGenerators
+$content = $content -replace '(?s)\s*<PackageReference Include="Sakura\.Framework\.SourceGenerators"[^>]*>.*?</PackageReference>[ \t]*\r?\n', "`n"
+$content = $content -replace '\s*<PackageReference Include="Sakura\.Framework\.SourceGenerators"[^>]*/>[ \t]*\r?\n', "`n"
+
+if ($content -notmatch $analyzer) {
     $projectRef = @"
   <ItemGroup>
     <ProjectReference Include="../Sakura.Framework.SourceGenerators/Sakura.Framework.SourceGenerators.csproj"
@@ -18,7 +33,7 @@ if ($content -notmatch 'Sakura\.Framework\.SourceGenerators\.csproj') {
                       OutputItemType="Analyzer" />
   </ItemGroup>
 "@
-    $content = $content -replace '  <ItemGroup>\r?\n    <None Include="\.\.\\icon\.png"', "$projectRef`n  <ItemGroup>`n    <None Include=""..\icon.png"""
+    $content = ([regex]$anchor).Replace($content, "$projectRef`n  <ItemGroup>`n    <None Include=""..\icon.png""", 1)
 }
 
 Set-Content $csproj $content -NoNewline

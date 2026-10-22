@@ -36,4 +36,16 @@
 // allocation is attempted rather than after.
 #define STBI_MAX_DIMENSIONS 32768
 
+// stb_image leaves its NEON loops (JPEG's inverse DCT and colour conversion) to a build flag, because 32-bit ARM
+// chips once came with and without NEON. A compiler targeting one that has it says so with __ARM_NEON, which
+// every 64-bit ARM target defines: Android phones, Apple silicon, Linux on ARM. A feature check rather than a
+// list of platforms, so a leg without NEON keeps the C loops; stb_image_resize2 already makes the same check.
+// About 1.6x faster on a 1196x822 JPEG on Apple silicon, with byte-identical output.
+//
+// Not under MSVC: its ARM64 leg builds on an x64 runner that can't run the tests, so nothing would check the
+// NEON loops it compiled.
+#if defined(__ARM_NEON) && !defined(_MSC_VER) && !defined(STBI_NO_SIMD)
+#define STBI_NEON
+#endif
+
 #endif // SAKURA_IMAGE_STB_CONFIG_H

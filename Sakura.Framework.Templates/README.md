@@ -6,3 +6,9 @@ A project template for create app/game using Sakura Framework
 dotnet new install Sakura.Framework.Templates
 dotnet new sakura -n MyAwesomeGame
 ```
+
+To make an Android project as well (it needs the .NET Android workload, `dotnet workload install android`):
+
+```bash
+dotnet new sakura -n MyAwesomeGame --android
+```

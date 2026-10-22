@@ -4,6 +4,7 @@
 using System;
 using System.Diagnostics;
 using System.Threading;
+using Sakura.Framework.Platform;
 using Sakura.Framework.Statistic;
 using Sakura.Framework.Timing;
 
@@ -59,10 +60,27 @@ public class AppThread
     /// </summary>
     public bool UseMultimediaClassScheduler { get; set; }
 
+    /// <summary>
+    /// Optional. Opens, on this thread as it starts running on its own, a session that reports each frame's work
+    /// against its target to the platform (<see cref="IPlatformPerformance.CreateFrameWorkHint"/>). Passed the
+    /// thread's name and the first frame's target in milliseconds.
+    /// </summary>
+    public Func<string, double, IFrameWorkHint?>? CreateWorkHint { get; set; }
+
     private Thread? internalThread;
-    private readonly ManualResetEventSlim pauseEvent = new ManualResetEventSlim(true);
     private volatile bool isRunning;
-    private volatile bool isPaused;
+
+    /// <summary>
+    /// Guards <see cref="pauseRequested"/> and <see cref="parked"/>, and is what a paused thread waits on.
+    /// </summary>
+    private readonly object pauseLock = new object();
+
+    private bool pauseRequested;
+
+    /// <summary>
+    /// Whether the thread is waiting between frames because a pause was asked for.
+    /// </summary>
+    private bool parked;
 
     public AppThread(string name, Action frameAction, Func<double> getTargetHz)
     {
@@ -76,8 +94,6 @@ public class AppThread
     {
         if (isRunning) return;
         isRunning = true;
-        isPaused = false;
-        pauseEvent.Set();
 
         internalThread = new Thread(runLoop)
         {
@@ -91,21 +107,55 @@ public class AppThread
     public void StopMultiThreaded()
     {
         isRunning = false;
-        pauseEvent.Set(); // unblock if paused
+
+        // Wake it if it's paused, so it can see it should stop.
+        lock (pauseLock)
+            Monitor.PulseAll(pauseLock);
+
         internalThread?.Join(2000);
         internalThread = null;
     }
 
+    /// <summary>
+    /// Asks the thread to stop between frames, which it does once the frame it is on finishes. Use
+    /// <see cref="WaitUntilPaused"/> to know when it has.
+    /// </summary>
     public void PauseMultiThreaded()
     {
-        isPaused = true;
-        pauseEvent.Reset();
+        lock (pauseLock)
+            pauseRequested = true;
     }
 
     public void ResumeMultiThreaded()
     {
-        isPaused = false;
-        pauseEvent.Set();
+        lock (pauseLock)
+        {
+            pauseRequested = false;
+            Monitor.PulseAll(pauseLock);
+        }
+    }
+
+    /// <summary>
+    /// Waits until a paused thread has finished its frame and stopped, so nothing it does can overlap with
+    /// what the caller does next. True straight away for a thread that isn't running on its own.
+    /// </summary>
+    /// <returns>False if it hadn't stopped within <paramref name="timeout"/>.</returns>
+    public bool WaitUntilPaused(TimeSpan timeout)
+    {
+        long deadline = Environment.TickCount64 + (long)timeout.TotalMilliseconds;
+
+        lock (pauseLock)
+        {
+            while (pauseRequested && !parked && isRunning && internalThread != null)
+            {
+                long remaining = deadline - Environment.TickCount64;
+
+                if (remaining <= 0 || !Monitor.Wait(pauseLock, (int)remaining))
+                    return parked;
+            }
+
+            return true;
+        }
     }
 
     /// <summary>
@@ -123,7 +173,7 @@ public class AppThread
     public void RunSingleFrame(double budgetMilliseconds = 0, double deadlineMilliseconds = 0)
     {
         Clock.Update();
-        invokeFrameAction(budgetMilliseconds, deadlineMilliseconds > 0 ? deadlineMilliseconds : GetDeadlineMilliseconds?.Invoke() ?? 0);
+        invokeFrameAction(budgetMilliseconds, deadlineMilliseconds > 0 ? deadlineMilliseconds : GetDeadlineMilliseconds?.Invoke() ?? 0, out _);
     }
 
     private static readonly double ms_per_tick = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
@@ -132,11 +182,12 @@ public class AppThread
     /// Invokes <see cref="FrameAction"/> and records how long its work took, separating out any GC
     /// pause that landed inside it.
     /// </summary>
+    /// <param name="workMilliseconds">How long the frame took, less the time it was blocked on a device.</param>
     /// <returns>
     /// The timestamp taken immediately after the frame's work, so the pacing code can reuse it
     /// instead of reading the clock again.
     /// </returns>
-    private long invokeFrameAction(double budgetMilliseconds, double deadlineMilliseconds)
+    private long invokeFrameAction(double budgetMilliseconds, double deadlineMilliseconds, out double workMilliseconds)
     {
         long startTicks = Stopwatch.GetTimestamp();
         double pauseBefore = GC.GetTotalPauseDuration().TotalMilliseconds;
@@ -165,6 +216,9 @@ public class AppThread
             DeadlineMilliseconds = deadlineMilliseconds
         });
 
+        // A GC pause stays in: the CPU has to get through it too.
+        workMilliseconds = Math.Max(0, frameMilliseconds - blockedMilliseconds);
+
         return endTicks;
     }
 
@@ -182,6 +236,10 @@ public class AppThread
             ? WindowsMultimediaScheduler.Register(Name)
             : null;
 
+        // Likewise: the session describes the thread that opens it.
+        double firstHz = GetTargetHz();
+        using var workHint = CreateWorkHint?.Invoke(Name, firstHz > 0 ? 1000.0 / firstHz : 1000.0 / 60);
+
         // Absolute next-frame deadline, expressed in stopwatch ticks. We advance it by exactly one
         // frame quantum each iteration so cadence is locked to wall-clock time rather than drifting
         // with however long each sleep happens to overshoot.
@@ -189,14 +247,27 @@ public class AppThread
 
         while (isRunning)
         {
-            pauseEvent.Wait();
+            lock (pauseLock)
+            {
+                while (pauseRequested && isRunning)
+                {
+                    parked = true;
+                    Monitor.PulseAll(pauseLock);
+                    Monitor.Wait(pauseLock);
+                }
+
+                parked = false;
+            }
+
             if (!isRunning) break;
 
             Clock.Update();
             double currentHz = GetTargetHz();
             double targetFrameTimeMs = currentHz > 0 ? 1000.0 / currentHz : 0;
 
-            long now = invokeFrameAction(targetFrameTimeMs, GetDeadlineMilliseconds?.Invoke() ?? 0);
+            long now = invokeFrameAction(targetFrameTimeMs, GetDeadlineMilliseconds?.Invoke() ?? 0, out double workMilliseconds);
+
+            workHint?.ReportFrame(targetFrameTimeMs, workMilliseconds);
 
             if (currentHz > 0)
             {

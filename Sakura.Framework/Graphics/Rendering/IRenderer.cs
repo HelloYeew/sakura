@@ -3,6 +3,7 @@
 
 using System;
 using Sakura.Framework.Graphics.Colors;
+using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.IO;
 using Sakura.Framework.Maths;
@@ -53,6 +54,13 @@ public interface IRenderer
     /// </summary>
     void SetVSync(bool enabled) { }
 
+    /// <summary>
+    /// Lets go of everything tied to the window's surface, before the system takes the surface away (an Android
+    /// app going to the background). Drawing picks the surface up again once the window has one. Called with the
+    /// draw thread stopped. Backends whose surface outlives backgrounding leave this a no-op.
+    /// </summary>
+    void ReleaseSurface() { }
+
     void DrawVertices(ReadOnlySpan<Vertex.Vertex> vertices, Texture textureGl);
 
     /// <summary>
@@ -62,6 +70,14 @@ public interface IRenderer
     void DrawQuads(ReadOnlySpan<Vertex.Vertex> vertices, Texture textureGl);
 
     void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius);
+
+    /// <summary>
+    /// Pushes a mask whose content also fades out towards its edges: transparent at each edge, opaque
+    /// <paramref name="fade"/>'s distance in from it (screen space; 0 on a side is no fade there). A
+    /// renderer that can't fade masks only masks.
+    /// </summary>
+    void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, MarginPadding fade)
+        => PushMask(maskCenter, maskHalfSize, shearX, cornerRadius);
 
     /// <summary>
     /// Stamps the mask currently pushed on this renderer onto <paramref name="vertices"/>.
@@ -185,6 +201,29 @@ public interface IRenderer
     /// managers, the glyph/sprite atlas) create textures without knowing the concrete backend.
     /// </summary>
     INativeTexture CreateNativeTexture(int width, int height);
+
+    /// <summary>
+    /// The longest edge a texture can have on this GPU, which decoded images are reduced to fit. Known once the
+    /// renderer is initialised; a phone's Vulkan may allow no more than 4096.
+    /// </summary>
+    int MaxTextureSize => int.MaxValue;
+
+    /// <summary>
+    /// When the update whose draw nodes the next <see cref="Draw"/> draws was made, as a
+    /// <see cref="System.Diagnostics.Stopwatch"/> timestamp: what <see cref="DisplayLatencyMilliseconds"/> is
+    /// measured from. The host sets it before each draw.
+    /// </summary>
+    void SetFrameContentTime(long timestamp)
+    {
+    }
+
+    /// <summary>
+    /// How long a frame takes from the update it shows to being on screen, in milliseconds, settled over the frames
+    /// before: how far ahead anything drawn in time with something else (music) has to be drawn, for it to be seen on
+    /// time. Everything but the panel's own response is in it. NaN where the backend can't tell when a frame
+    /// reached the screen.
+    /// </summary>
+    double DisplayLatencyMilliseconds => double.NaN;
 
     /// <summary>
     /// The physical-pixels-per-logical-unit scale of the current output

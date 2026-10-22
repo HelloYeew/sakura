@@ -965,6 +965,53 @@ static void test_device_callback(void)
     sakura_audio_engine_destroy(engine);
 }
 
+// The AAudio callback path: the mix lands in the buffer handed over, exactly as sakura_audio_engine_mix
+// would have written it, and the callback is counted and timed like SDL's.
+static void test_aaudio_callback(void)
+{
+    SakuraAudioEngine *engine = make_engine(128);
+    SakuraAudioEngine *reference = make_engine(128);
+
+    const int frames = 1024;
+    static float pcm[1024 * CHANNELS];
+
+    for (int i = 0; i < frames * CHANNELS; i++)
+        pcm[i] = (float)sin(i * 0.01) * 0.5f;
+
+    attach_static_voice(engine, pcm, frames, NULL);
+    attach_static_voice(reference, pcm, frames, NULL);
+
+    int32_t (*callback)(void *, void *, void *, int32_t) = (int32_t (*)(void *, void *, void *, int32_t))sakura_audio_get_aaudio_callback();
+    CHECK(callback != NULL);
+
+    // A burst that isn't a whole number of mix blocks, as AAudio's often aren't.
+    static float out[333 * CHANNELS];
+    static float expected[333 * CHANNELS];
+
+    put_calls = 0;
+    CHECK(callback(NULL, engine, out, 333) == 0);
+    sakura_audio_engine_mix(reference, expected, 333);
+
+    CHECK(memcmp(out, expected, sizeof(out)) == 0);
+    CHECK(put_calls == 0);
+
+    SakuraAudioStats stats;
+    sakura_audio_engine_get_stats(engine, &stats);
+    CHECK(stats.callbacks == 1);
+    CHECK(stats.framesMixed == 333);
+    CHECK(stats.activeVoices == 1);
+
+    // Nothing asked for, nowhere to write or no engine: carry on without touching anything.
+    CHECK(callback(NULL, engine, out, 0) == 0);
+    CHECK(callback(NULL, engine, NULL, 333) == 0);
+    CHECK(callback(NULL, NULL, out, 333) == 0);
+    sakura_audio_engine_get_stats(engine, &stats);
+    CHECK(stats.callbacks == 1);
+
+    sakura_audio_engine_destroy(reference);
+    sakura_audio_engine_destroy(engine);
+}
+
 // The unity path copies whole runs instead of interpolating each frame. It has to be a copy of exactly
 // the right frames, across block boundaries, and it has to leave the interpolation window where the
 // per-frame path would have, so that a rate change mid-stream carries straight on.
@@ -1534,6 +1581,7 @@ int main(void)
     RUN(test_buffer_reference_counting);
     RUN(test_invalid_arguments);
     RUN(test_device_callback);
+    RUN(test_aaudio_callback);
     RUN(test_unity_runs_and_rate_handover);
     RUN(test_resampler_paths_match_the_per_frame_algorithm);
     RUN(test_stream_runs_across_the_wrap);

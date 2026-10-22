@@ -66,9 +66,9 @@ if(APPLE)
 endif()
 
 # The one thing about the host that has to be discovered rather than assumed. timespec_get is C11,
-# but bionic only declares it from API 29 and the Android legs target 21 to match the shipped FFmpeg,
-# so a compile-time check is the difference between "no callback timing on old Android" and "does not
-# build for Android". A feature check, not a platform branch.
+# but bionic only declares it from API 29. The Android legs target 29, the framework's minimum, so
+# they have it; the check keeps a lower target building, without callback timing, rather than failing.
+# A feature check, not a platform branch.
 include(CheckSymbolExists)
 check_symbol_exists(timespec_get "time.h" SAKURA_AUDIO_HAVE_TIMESPEC_GET)
 

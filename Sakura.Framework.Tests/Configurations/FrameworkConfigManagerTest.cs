@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using NUnit.Framework;
+using Sakura.Framework.Audio.SdlEngine;
 using Sakura.Framework.Configurations;
 using Sakura.Framework.Platform;
 
@@ -16,5 +17,46 @@ public class FrameworkConfigManagerTest
         var config = new FrameworkConfigManager(null!, appType);
 
         Assert.That(config.Get<FrameSync>(FrameworkSetting.FrameLimiter).Value, Is.EqualTo(expected));
+    }
+
+    [TestCase(AppType.Game)]
+    [TestCase(AppType.Application)]
+    public void TestPhoneStartsInVSync(AppType appType)
+    {
+        var config = new FrameworkConfigManager(null!, new FramePacing(appType, Mobile: true));
+
+        Assert.That(config.Get<FrameSync>(FrameworkSetting.FrameLimiter).Value, Is.EqualTo(FrameSync.VSync));
+    }
+
+    [TestCase(AppType.Game, false, WindowMode.Windowed)]
+    [TestCase(AppType.Application, false, WindowMode.Windowed)]
+    [TestCase(AppType.Game, true, WindowMode.Borderless)]
+    [TestCase(AppType.Application, true, WindowMode.Windowed)]
+    public void TestOnlyAPhoneGameStartsWithoutSystemBars(AppType appType, bool mobile, WindowMode expected)
+    {
+        var config = new FrameworkConfigManager(null!, new FramePacing(appType, mobile));
+
+        Assert.That(config.Get<WindowMode>(FrameworkSetting.WindowMode).Value, Is.EqualTo(expected));
+    }
+
+    [Test]
+    public void TestAudioPlaysOnTheSystemDefaultUntilADeviceIsPicked()
+    {
+        var config = new FrameworkConfigManager(null!, AppType.Game);
+
+        Assert.That(config.Get<string>(FrameworkSetting.AudioDevice).Value, Is.Empty);
+    }
+
+    [Test]
+    public void TestPhoneAsksForTheOutputsOwnBuffer()
+    {
+        var phone = new FrameworkConfigManager(null!, new FramePacing(AppType.Game, Mobile: true));
+        var desktop = new FrameworkConfigManager(null!, new FramePacing(AppType.Game, Mobile: false));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(phone.Get<int>(FrameworkSetting.AudioDeviceBufferFrames).Value, Is.Zero);
+            Assert.That(desktop.Get<int>(FrameworkSetting.AudioDeviceBufferFrames).Value, Is.EqualTo(SDLAudioManager.DEFAULT_DEVICE_BUFFER_FRAMES));
+        });
     }
 }

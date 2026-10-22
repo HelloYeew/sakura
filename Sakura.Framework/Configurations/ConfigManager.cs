@@ -19,7 +19,7 @@ namespace Sakura.Framework.Configurations;
 /// A manager for handling application configurations.
 /// </summary>
 /// <typeparam name="TLookup"></typeparam>
-public abstract class ConfigManager<TLookup> where TLookup : struct, Enum
+public abstract class ConfigManager<TLookup> : IFlushableConfig where TLookup : struct, Enum
 {
     /// <summary>
     /// How long to wait after a change before writing to disk, to collapse bursts of changes into one write.
@@ -45,6 +45,7 @@ public abstract class ConfigManager<TLookup> where TLookup : struct, Enum
     protected ConfigManager(Storage? storage)
     {
         this.storage = storage;
+        ConfigManagers.Add(this);
 
         if (storage != null)
         {
@@ -279,10 +280,9 @@ public abstract class ConfigManager<TLookup> where TLookup : struct, Enum
         {
             lock (mutex)
             {
-                // FileMode.Create rather than the storage default of OpenOrCreate: without truncation, writing a file
-                // shorter than the one already on disk leaves the tail of the old content behind, producing garbage
-                // lines like "rsorSensitivity = 1" after the real settings.
-                using var stream = storage.GetStream(fileName, FileAccess.Write, FileMode.Create);
+                // Written aside and put in place whole, so a process ended mid-write (an app in the background on a phone)
+                // leaves the settings as they were rather than cut short.
+                using var stream = storage.CreateFileSafely(fileName);
                 using var writer = new StreamWriter(stream);
 
                 var lines = settings

@@ -12,6 +12,10 @@ namespace Sakura.Framework.Graphics.Containers;
 /// A container that allows panning and zooming of its content.
 /// Useful for things like node editors or maps.
 /// </summary>
+/// <remarks>
+/// With a mouse, the right or middle button drags and the wheel zooms. With touch, a finger dragged over the
+/// background drags, and two fingers pinch to zoom and pan together.
+/// </remarks>
 public partial class PanZoomContainer : Container
 {
     /// <summary>
@@ -30,6 +34,15 @@ public partial class PanZoomContainer : Container
     public float ZoomSpeed { get; set; } = 0.1f;
 
     private bool isPanning;
+    private MouseButton panButton;
+
+    // The pinch in progress: the finger this took, the other finger, and where they started.
+    private TouchSource? pinchFinger;
+    private TouchSource pinchAnchor;
+    private bool pinching;
+    private float pinchStartDistance;
+    private float pinchStartZoom;
+    private Vector2 pinchContentPoint;
 
     private readonly Container contentLayer;
 
@@ -103,9 +116,11 @@ public partial class PanZoomContainer : Container
         // Let children handle mouse down first (e.g., clicking a node)
         if (base.OnMouseDown(e)) return true;
 
-        if (e.Button == MouseButton.Middle || e.Button == MouseButton.Right)
+        // A finger has no other buttons, so its drag over the background pans.
+        if (e.Button == MouseButton.Middle || e.Button == MouseButton.Right || e.Button == MouseButton.Left && e.MouseState.FromTouch)
         {
             isPanning = true;
+            panButton = e.Button;
             return true;
         }
 
@@ -114,7 +129,7 @@ public partial class PanZoomContainer : Container
 
     public override bool OnMouseUp(MouseButtonEvent e)
     {
-        if ((e.Button == MouseButton.Middle || e.Button == MouseButton.Right) && isPanning)
+        if (isPanning && e.Button == panButton)
         {
             isPanning = false;
             return true;
@@ -128,12 +143,97 @@ public partial class PanZoomContainer : Container
         // Let children handle mouse moves first
         bool handled = base.OnMouseMove(e);
 
-        if (isPanning)
+        // While two fingers pinch, the first one (which is the mouse) only moves as part of the pinch.
+        if (isPanning && !pinching)
         {
             contentLayer.Position += e.Delta;
             handled = true;
         }
 
         return handled;
+    }
+
+    public override bool OnTouchDown(TouchEvent e)
+    {
+        var manager = GetContainingInputManager();
+
+        // Only the second finger of a gesture, and only while the first is on this too.
+        if (pinchFinger != null || manager == null || manager.CurrentState.ActiveTouchCount != 2)
+            return false;
+
+        for (int i = 0; i < InputState.MAX_TOUCHES; i++)
+        {
+            var other = (TouchSource)i;
+
+            if (other == e.Source || !manager.CurrentState.IsTouchActive(other) || !Contains(manager.CurrentState.GetTouchPosition(other)))
+                continue;
+
+            pinchFinger = e.Source;
+            pinchAnchor = other;
+            beginPinch(manager.CurrentState.GetTouchPosition(other), e.ScreenSpacePosition);
+            return true;
+        }
+
+        return false;
+    }
+
+    public override bool OnTouchMove(TouchEvent e)
+    {
+        if (e.Source != pinchFinger)
+            return false;
+
+        // The other finger lifted first, so this one carries on alone and pans.
+        if (!pinching)
+            contentLayer.Position += ToLocalSpace(e.ScreenSpacePosition) - ToLocalSpace(e.ScreenSpacePosition - e.Delta);
+
+        return true;
+    }
+
+    public override bool OnTouchUp(TouchEvent e)
+    {
+        if (e.Source != pinchFinger)
+            return false;
+
+        pinchFinger = null;
+        pinching = false;
+        return true;
+    }
+
+    public override void Update()
+    {
+        base.Update();
+
+        if (!pinching)
+            return;
+
+        var state = GetContainingInputManager()?.CurrentState;
+
+        if (state == null || !state.IsTouchActive(pinchAnchor))
+        {
+            pinching = false;
+            return;
+        }
+
+        // Both fingers are read here rather than from their events: the first finger's moves go to the mouse.
+        Vector2 a = ToLocalSpace(state.GetTouchPosition(pinchAnchor));
+        Vector2 b = ToLocalSpace(state.GetTouchPosition(pinchFinger!.Value));
+        float distance = Vector2.Distance(a, b);
+
+        if (pinchStartDistance > 0)
+            Zoom = pinchStartZoom * distance / pinchStartDistance;
+
+        // What was under the point between the fingers when they started stays under it.
+        contentLayer.Position = (a + b) / 2 - pinchContentPoint * Zoom;
+    }
+
+    private void beginPinch(Vector2 screenSpaceA, Vector2 screenSpaceB)
+    {
+        Vector2 a = ToLocalSpace(screenSpaceA);
+        Vector2 b = ToLocalSpace(screenSpaceB);
+
+        pinching = true;
+        pinchStartDistance = Vector2.Distance(a, b);
+        pinchStartZoom = Zoom;
+        pinchContentPoint = ((a + b) / 2 - contentLayer.Position) / Zoom;
     }
 }

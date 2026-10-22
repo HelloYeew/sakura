@@ -36,6 +36,14 @@ public sealed class VideoTexture : IVideoTexture
     /// </summary>
     internal VideoTextureShape Shape { get; }
 
+    /// <summary>
+    /// The size-only <see cref="Texture"/> a frame in this texture is laid out by (<see cref="DecodedFrame.Texture"/>),
+    /// made once for the texture rather than once a frame: each is an entry in the texture registry.
+    /// </summary>
+    internal Texture LayoutProxy => layoutProxy ??= new Texture(Shape.Width, Shape.Height);
+
+    private Texture? layoutProxy;
+
     public TextureBindCounter Binds => NativeTexture.Binds;
 
     /// <summary>
@@ -142,6 +150,7 @@ public sealed class VideoTexture : IVideoTexture
         pendingUpload = null;
 
         textureManager.UnregisterVideoTexture(this);
+        layoutProxy?.Dispose();
 
         var tex = NativeTexture;
         renderer.ScheduleToDrawThread(tex.Dispose);

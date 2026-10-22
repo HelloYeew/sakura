@@ -8,6 +8,7 @@
 #import <CoreVideo/CoreVideo.h>
 #import <TargetConditionals.h>
 #include <string.h> // strlcpy
+#include <os/lock.h>
 #if TARGET_OS_IPHONE
 #import <UIKit/UIKit.h>
 #else
@@ -77,6 +78,23 @@ typedef struct SakuraMetalTarget
     __unsafe_unretained id<MTLCommandBuffer> commandBuffer;
     __unsafe_unretained id<MTLRenderCommandEncoder> encoder;
 } SakuraMetalTarget;
+
+// When the last drawable known to have reached the screen did, and the host's tag for its frame. Written by
+// Metal's presented handler, on a thread of its own; read by the host's draw thread. Its own object, retained by
+// each handler, so a presentation landing during teardown still has somewhere to go.
+__attribute__((visibility("hidden")))
+@interface SakuraMetalPresentTimes : NSObject
+{
+@public
+    os_unfair_lock lock;
+    int64_t tag;
+    double presentedTime; // host time, seconds (CACurrentMediaTime's clock)
+    uint64_t sequence;    // counts presentations recorded, so each is taken once
+}
+@end
+
+@implementation SakuraMetalPresentTimes
+@end
 
 struct SakuraMetalDevice
 {
@@ -148,6 +166,12 @@ struct SakuraMetalDevice
     NSUInteger vertexBufferOffset;   // bump pointer within the current frame
     NSUInteger vertexBytesThisFrame; // total large-draw bytes requested this frame (peak tracking)
     NSUInteger vertexBytesLastFrame; // previous frame's peak, used to size the buffer in begin_frame
+
+    // Frame timing: the host's tag for the frame being drawn (set_frame_tag; 0 asks for none), where the
+    // presented handler records when frames reach the screen, and the last presentation taken from it.
+    int64_t frameTag;
+    __unsafe_unretained SakuraMetalPresentTimes* presentTimes;
+    uint64_t presentationsTaken;
 };
 
 // Hands a CoreVideo object to the device's deferred-release list: it is released when the GPU has
@@ -282,6 +306,9 @@ SakuraMetalDevice* sakura_metal_create(void* caMetalLayer)
     // __unsafe_unretained (plain C struct), so take a manual +1 and balance it in destroy.
     dispatch_semaphore_t sem = dispatch_semaphore_create(SAKURA_METAL_MAX_FRAMES_IN_FLIGHT);
     d->frameSemaphore = sem; CFRetain((__bridge CFTypeRef)sem);
+
+    SakuraMetalPresentTimes* times = [SakuraMetalPresentTimes new];
+    d->presentTimes = times; CFRetain((__bridge CFTypeRef)times);
     d->frameIndex = 0;
 
     return d;
@@ -340,6 +367,10 @@ void sakura_metal_destroy(SakuraMetalDevice* device)
 
     if (device->frameSemaphore)
         CFRelease((__bridge CFTypeRef)device->frameSemaphore);
+
+    // Handlers still to run hold their own reference to it.
+    if (device->presentTimes)
+        CFRelease((__bridge CFTypeRef)device->presentTimes);
 
     // Safe here and only here: the drain above has waited for every in-flight frame, so nothing the
     // GPU is reading is in this list. A frame that never ended leaves its entries here too.
@@ -520,7 +551,37 @@ void sakura_metal_end_frame(SakuraMetalDevice* device)
         [top->encoder endEncoding];
 
     if (device->drawable && top->commandBuffer)
+    {
+        // Recorded when it reaches the screen, against the host's tag for the frame, for the host to tell how
+        // long its frames take to show. Has to be added before the drawable is presented. The simulator's SDK has no
+        // presented times (there's no display of its own to have shown anything), so there frames go untimed.
+#if !TARGET_OS_SIMULATOR
+        if (@available(macOS 10.15.4, iOS 10.3, *))
+        {
+            SakuraMetalPresentTimes* times = device->presentTimes;
+            int64_t tag = device->frameTag;
+
+            if (times != nil && tag != 0)
+            {
+                [device->drawable addPresentedHandler:^(id<MTLDrawable> _Nonnull presented) {
+                    CFTimeInterval at = presented.presentedTime;
+
+                    // 0 for a drawable that was never shown: dropped, or the window was hidden.
+                    if (at <= 0)
+                        return;
+
+                    os_unfair_lock_lock(&times->lock);
+                    times->tag = tag;
+                    times->presentedTime = at;
+                    times->sequence++;
+                    os_unfair_lock_unlock(&times->lock);
+                }];
+            }
+        }
+#endif
+
         [top->commandBuffer presentDrawable:device->drawable];
+    }
 
     // Signal the frame semaphore when this frame's FINAL command buffer (the drawable's) completes on
     // the GPU — at which point the GPU is done reading this frame's ring buffer, freeing the slot for
@@ -1349,4 +1410,37 @@ void sakura_metal_set_fragment_texture_wrap(SakuraMetalDevice* device, SakuraMet
     id<MTLSamplerState> s = (repeat != 0) ? device->sampler : device->clampSampler;
     if (s)
         [device->encoder setFragmentSamplerState:s atIndex:(NSUInteger)slot];
+}
+
+void sakura_metal_set_frame_tag(SakuraMetalDevice* device, int64_t tag)
+{
+    if (device != NULL)
+        device->frameTag = tag;
+}
+
+int sakura_metal_take_presented(SakuraMetalDevice* device, int64_t* tag, double* presentedTime)
+{
+    if (device == NULL || device->presentTimes == nil || tag == NULL || presentedTime == NULL)
+        return 0;
+
+    SakuraMetalPresentTimes* times = device->presentTimes;
+    int taken = 0;
+
+    os_unfair_lock_lock(&times->lock);
+
+    if (times->sequence != device->presentationsTaken)
+    {
+        device->presentationsTaken = times->sequence;
+        *tag = times->tag;
+        *presentedTime = times->presentedTime;
+        taken = 1;
+    }
+
+    os_unfair_lock_unlock(&times->lock);
+    return taken;
+}
+
+double sakura_metal_host_time(void)
+{
+    return CACurrentMediaTime();
 }

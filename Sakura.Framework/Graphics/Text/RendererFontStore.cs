@@ -313,21 +313,29 @@ public class RendererFontStore : IFontStore
         {
             string normalFileName = $"{family}-{weight}.ttf";
 
-            // AddFont already has a try-catch and checks if the stream is null,
-            // so it will safely skip weights that don't exist in the storage.
+            // A family rarely ships every weight. One it doesn't have stays unregistered, so asking for it falls back
+            // to the family, rather than registering a font that can only fail, and say so as an error, when first used.
+            if (!storage.Exists(normalFileName))
+                continue;
+
             AddFont(storage, normalFileName, alias: $"{family}-{weight}");
 
             // Add regular font as normal fallback too
             if (weight == nameof(FontWeights.Regular))
                 addFontAlias($"{family}-{weight}", family);
 
+            bool italic = false;
+
             if (hasItalics)
             {
                 string italicFileName = weight == "Regular" ? $"{family}-Italic.ttf" : $"{family}-{weight}Italic.ttf";
-                AddFont(storage, italicFileName, alias: $"{family}-{weight}Italic");
+                italic = storage.Exists(italicFileName);
+
+                if (italic)
+                    AddFont(storage, italicFileName, alias: $"{family}-{weight}Italic");
             }
 
-            Logger.Debug($"[FontLoader] loaded '{family}' weight '{weight}'{(hasItalics ? " with italics" : "")}.");
+            Logger.Debug($"[FontLoader] loaded '{family}' weight '{weight}'{(italic ? " with italics" : "")}.");
         }
     }
 
@@ -401,7 +409,14 @@ public class RendererFontStore : IFontStore
     /// key/bare-family match. For loading a font family prefer <see cref="AddFontFamily"/>; reach for
     /// <see cref="AddFont"/> only when you deliberately want manual control over a single key.
     /// </summary>
-    public void AddFont(Storage storage, string filename, string alias = null!)
+    public void AddFont(Storage storage, string filename, string alias = null!) => AddFont(storage, filename, alias, 0);
+
+    /// <inheritdoc cref="AddFont(Storage, string, string)"/>
+    /// <param name="storage">Where the file is.</param>
+    /// <param name="filename">The font file.</param>
+    /// <param name="alias">The lookup key, or null for the filename without extension.</param>
+    /// <param name="faceIndex">Which face of a collection (<c>.ttc</c>/<c>.otc</c>) to load, from 0.</param>
+    public void AddFont(Storage storage, string filename, string? alias, int faceIndex)
     {
         invalidateFallbackCache();
 
@@ -418,7 +433,7 @@ public class RendererFontStore : IFontStore
 
                 if (filePath != null)
                 {
-                    var mapped = loadFontFromFile(name, filePath);
+                    var mapped = loadFontFromFile(name, filePath, faceIndex);
 
                     if (mapped != null)
                     {
@@ -427,14 +442,26 @@ public class RendererFontStore : IFontStore
                     }
                 }
 
-                using var stream = storage.GetStream(filename);
+                var stream = storage.GetStream(filename);
                 if (stream == null)
                 {
                     Logger.Error($"Could not find font file: {filename}");
                     return null!;
                 }
 
-                var font = loadFontFromStream(name, stream);
+                // An embedded resource is already in memory, in the loaded assembly: read where it is, not copied.
+                if (NativeResourceBytes.TryFrom(stream) is NativeResourceBytes resource)
+                {
+                    Logger.Debug($"Loaded font {name} from {filename} ({resource.Length / 1024} KB in place, no copy)");
+                    GlobalStatistics.Get<int>("Fonts", "Loaded Fonts", StatisticKind.Cumulative).Value++;
+
+                    return new Font(name, resource, atlas, faceIndex);
+                }
+
+                Font font;
+
+                using (stream)
+                    font = loadFontFromStream(name, stream, faceIndex);
                 Logger.Debug($"Loaded font {name} from {filename}");
 
                 GlobalStatistics.Get<int>("Fonts", "Loaded Fonts", StatisticKind.Cumulative).Value++;
@@ -456,7 +483,16 @@ public class RendererFontStore : IFontStore
     /// </summary>
     /// <param name="filePath">Absolute path to the font file.</param>
     /// <param name="alias">Cache key for the font. If null, uses the filename without extension.</param>
-    public void AddFontFromFile(string filePath, string alias = null!)
+    public void AddFontFromFile(string filePath, string alias = null!) => AddFontFromFile(filePath, alias, 0);
+
+    /// <inheritdoc cref="AddFontFromFile(string, string)"/>
+    /// <param name="filePath">Absolute path to the font file.</param>
+    /// <param name="alias">Cache key for the font. If null, uses the filename without extension.</param>
+    /// <param name="faceIndex">
+    /// Which face of a collection (<c>.ttc</c>/<c>.otc</c>) to load, from 0: system fonts often come as collections of a
+    /// family's weights.
+    /// </param>
+    public void AddFontFromFile(string filePath, string? alias, int faceIndex)
     {
         invalidateFallbackCache();
 
@@ -472,7 +508,7 @@ public class RendererFontStore : IFontStore
                     return null!;
                 }
 
-                var font = loadFontFromFile(name, filePath);
+                var font = loadFontFromFile(name, filePath, faceIndex);
 
                 if (font == null)
                 {
@@ -522,7 +558,7 @@ public class RendererFontStore : IFontStore
     /// </para>
     /// </remarks>
     /// <returns>The face, or null if the file could not be read at all.</returns>
-    private Font? loadFontFromFile(string name, string filePath)
+    private Font? loadFontFromFile(string name, string filePath, int faceIndex)
     {
         INativeBytes? fontData = NativeFileMapping.CreateFrom(filePath);
 
@@ -538,19 +574,19 @@ public class RendererFontStore : IFontStore
             Logger.Debug($"Read font {name} from {filePath} ({fontData.Length / 1024} KB into unmanaged memory)");
         }
 
-        return new Font(name, fontData, atlas);
+        return new Font(name, fontData, atlas, faceIndex);
     }
 
     /// <summary>
     /// Reads a font from a stream into unmanaged memory and builds the face from it.
     /// </summary>
     /// <exception cref="InvalidDataException">If the stream held no bytes.</exception>
-    private Font loadFontFromStream(string name, Stream stream)
+    private Font loadFontFromStream(string name, Stream stream, int faceIndex)
     {
         var fontData = NativeMemoryBuffer.CreateFrom(stream, NativeMemoryCategory.Fonts)
                        ?? throw new InvalidDataException($"Font stream for '{name}' held no bytes.");
 
-        return new Font(name, fontData, atlas);
+        return new Font(name, fontData, atlas, faceIndex);
     }
 
     public Font Get(FontUsage usage)

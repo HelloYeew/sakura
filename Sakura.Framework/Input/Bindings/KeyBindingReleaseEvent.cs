@@ -14,9 +14,17 @@ public readonly struct KeyBindingReleaseEvent<T> where T : struct
     /// </summary>
     public readonly T Action;
 
-    public KeyBindingReleaseEvent(T action)
+    /// <summary>
+    /// When the input that ended this press was let go, in milliseconds on the shared
+    /// <see cref="Sakura.Framework.Timing.TimeSource"/> timeline. <see cref="double.NaN"/> when that event carries no
+    /// timestamp, or when the press ended for another reason (the bindings changed).
+    /// </summary>
+    public readonly double Timestamp;
+
+    public KeyBindingReleaseEvent(T action, double timestamp = double.NaN)
     {
         Action = action;
+        Timestamp = timestamp;
     }
 
     public override string ToString() => $"KeyBindingReleaseEvent: Action={Action}";

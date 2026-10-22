@@ -119,4 +119,20 @@ public class SchedulerTest
         advanceTo(600);
         Assert.That(secondRan, Is.False, "A task cancelled by an earlier task must not run.");
     }
+
+    [Test]
+    public void TestTaskAddedBeforeAClockRunsOnceThereIsOne()
+    {
+        var unclocked = new Scheduler();
+        bool ran = false;
+
+        Assert.DoesNotThrow(() => unclocked.Add(() => ran = true));
+
+        unclocked.Update();
+        Assert.That(ran, Is.False, "nothing runs without a clock");
+
+        unclocked.SetClock(new ManualClock { CurrentTime = 5000 });
+        unclocked.Update();
+        Assert.That(ran, Is.True);
+    }
 }

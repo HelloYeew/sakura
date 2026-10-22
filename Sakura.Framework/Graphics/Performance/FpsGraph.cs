@@ -30,13 +30,30 @@ namespace Sakura.Framework.Graphics.Performance;
 public enum PerformanceOverlayState
 {
     Hidden,
+
+    /// <summary>
+    /// One small line in the corner: the draw and update threads' frame rates, red while they miss deadlines.
+    /// Small enough to leave on while playing.
+    /// </summary>
+    Minimal,
+
+    /// <summary>
+    /// A row of figures for each thread, under the frame limiter, window, renderer and audio in use.
+    /// </summary>
     Compact,
+
+    /// <summary>
+    /// <see cref="Compact"/>, with a graph of the last two seconds behind each thread's row.
+    /// </summary>
     Expanded
 }
 
 public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
 {
     private const float overlay_width = 420;
+
+    // From the screen's bottom-right corner, and the least room left at the other side.
+    private const float edge_margin = 10;
 
     private const float header_height = 40;
 
@@ -66,6 +83,11 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
     private SpriteText backendText;
     private ThreadStatisticsDisplay[] displays;
 
+    private Container minimal;
+    private SpriteText minimalDrawText;
+    private SpriteText minimalUpdateText;
+    private double lastMinimalRefresh;
+
     private double lastBackendRefresh;
 
     private static readonly FontUsage header_font = FontUsage.Default.With(size: 13);
@@ -82,7 +104,7 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
         AutoSizeAxes = Axes.Both;
         Anchor = Anchor.BottomRight;
         Origin = Anchor.BottomRight;
-        Position = new Vector2(-10, -10);
+        Position = new Vector2(-edge_margin);
     }
 
     public override void Load()
@@ -152,6 +174,44 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
         foreach (var display in displays)
             displaysFlow.Add(display);
 
+        var minimalFont = FontUsage.Default.With(size: 13);
+        var minimalLabelFont = FontUsage.Default.With(size: 13, weight: "Bold");
+
+        // In the corner whatever size the full rows (hidden, but still counting) leave this container at.
+        Add(minimal = new Container
+        {
+            Anchor = Anchor.BottomRight,
+            Origin = Anchor.BottomRight,
+            AutoSizeAxes = Axes.Both,
+            Masking = true,
+            CornerRadius = 4,
+            Alpha = 0,
+            Children = new Drawable[]
+            {
+                new Box
+                {
+                    RelativeSizeAxes = Axes.Both,
+                    Size = new Vector2(1),
+                    Color = Color.Black,
+                    Alpha = 0.75f
+                },
+                new FlowContainer
+                {
+                    Direction = FlowDirection.Horizontal,
+                    AutoSizeAxes = Axes.Both,
+                    Padding = new MarginPadding { Left = 6, Right = 6, Top = 2, Bottom = 2 },
+                    Spacing = new Vector2(4, 0),
+                    Children = new Drawable[]
+                    {
+                        new SpriteText { Text = "Draw", Font = minimalLabelFont, Color = Color.Cyan },
+                        minimalDrawText = new SpriteText { Text = "--fps", Font = minimalFont, Color = Color.White, Margin = new MarginPadding { Right = 6 } },
+                        new SpriteText { Text = "Update", Font = minimalLabelFont, Color = Color.Violet },
+                        minimalUpdateText = new SpriteText { Text = "--fps", Font = minimalFont, Color = Color.White }
+                    }
+                }
+            }
+        });
+
         state = host.FrameworkConfigManager.Get(FrameworkSetting.ShowFpsGraph, PerformanceOverlayState.Hidden);
         state.ValueChanged += e => updateState(e.NewValue);
 
@@ -182,6 +242,24 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
         if (state?.Value == PerformanceOverlayState.Hidden)
             return;
 
+        bool isMinimal = state?.Value == PerformanceOverlayState.Minimal;
+
+        // A phone held upright is narrower than the full overlay.
+        if (Parent != null && DrawSize.X > 0)
+        {
+            float fit = isMinimal ? 1 : Math.Clamp((Parent.ChildSize.X - 2 * edge_margin) / DrawSize.X, 0.1f, 1);
+
+            if (Scale.X != fit)
+                Scale = new Vector2(fit);
+        }
+
+        if (isMinimal && Clock.CurrentTime - lastMinimalRefresh >= text_refresh_ms)
+        {
+            showMinimal(minimalDrawText, displays[3]);
+            showMinimal(minimalUpdateText, displays[2]);
+            lastMinimalRefresh = Clock.CurrentTime;
+        }
+
         // The audio backend's output latency is a live device figure, unlike everything else on this
         // line, so it needs re-reading. Twice a second is plenty for a number that moves when the
         // device buffer is renegotiated.
@@ -190,6 +268,12 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
             updateBackendText();
             lastBackendRefresh = Clock.CurrentTime;
         }
+    }
+
+    private static void showMinimal(SpriteText text, ThreadStatisticsDisplay display)
+    {
+        text.Text = display.Fps > 0 ? $"{display.Fps:F0}fps" : "--fps";
+        text.Color = display.Misses > 0 ? Color.Red : Color.White;
     }
 
     private void updateContextText()
@@ -287,6 +371,10 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
         else
             this.FadeIn(200, Easing.OutQuint);
 
+        bool isMinimal = newState == PerformanceOverlayState.Minimal;
+        displaysFlow.Alpha = isMinimal ? 0 : 1;
+        minimal.Alpha = isMinimal ? 1 : 0;
+
         foreach (var display in displays)
             display.SetState(newState);
     }
@@ -367,6 +455,16 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
         private readonly ThreadBarGraph barGraph;
 
         private PerformanceOverlayState currentState;
+
+        /// <summary>
+        /// The thread's frame rate, as of the last text refresh.
+        /// </summary>
+        public double Fps { get; private set; }
+
+        /// <summary>
+        /// Deadlines the thread missed in the last second, as of the last text refresh.
+        /// </summary>
+        public int Misses { get; private set; }
 
         /// <summary>
         /// Budget to measure against when the thread is unthrottled
@@ -615,6 +713,9 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
             double budget = throttled ? latestBudget : fallbackBudgetMs;
 
             double fps = clock?.FramesPerSecond ?? 0;
+
+            Fps = fps;
+            Misses = misses;
 
             fpsText.Text = fps > 0 ? $"{fps:F0}fps" : "--fps";
 

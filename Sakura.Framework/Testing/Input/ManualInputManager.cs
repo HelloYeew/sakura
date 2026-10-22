@@ -6,6 +6,7 @@ using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Input;
 using Sakura.Framework.Maths;
+using Sakura.Framework.Timing;
 
 namespace Sakura.Framework.Testing.Input;
 
@@ -35,34 +36,44 @@ public partial class ManualInputManager : Container, IInputManagerProvider, IFoc
     public void TriggerFocusContention(Drawable? triggerSource) => InputManager.TriggerFocusContention(triggerSource);
     public bool MoveFocusToNextTabStop(bool reverse = false) => InputManager.MoveFocusToNextTabStop(reverse);
 
+    private readonly TouchMouseEmulation touchEmulation;
+
     public ManualInputManager()
     {
         RelativeSizeAxes = Axes.Both;
         Size = new Vector2(1);
+        touchEmulation = new TouchMouseEmulation(this, InputManager, dispatchMouseMove, dispatchMouseDown, dispatchMouseUp);
+    }
+
+    public override void Update()
+    {
+        base.Update();
+        touchEmulation.Update();
     }
 
     public override bool HandleNonPositionalInput => UseParentInput && base.HandleNonPositionalInput;
     public override bool HandlePositionalInput => UseParentInput && base.HandlePositionalInput;
 
 
-    public override bool OnMouseMove(MouseEvent e)
-    {
-        if (!UseParentInput)
-            return true;
+    public override bool OnMouseMove(MouseEvent e) => !UseParentInput || dispatchMouseMove(e);
 
+    public override bool OnMouseDown(MouseButtonEvent e) => !UseParentInput || dispatchMouseDown(e);
+
+    public override bool OnMouseUp(MouseButtonEvent e) => !UseParentInput || dispatchMouseUp(e);
+
+    private bool dispatchMouseMove(MouseEvent e)
+    {
         currentMouseState.Position = e.MouseState.Position;
-        InputManager.HandleMouseMove(e.MouseState.Position);
+        InputManager.HandleMouseMove(e.MouseState.Position, e.MouseState.FromTouch);
         rebuildQueues();
         return InputManager.DispatchMouseMove(e);
     }
 
-    public override bool OnMouseDown(MouseButtonEvent e)
+    private bool dispatchMouseDown(MouseButtonEvent e)
     {
-        if (!UseParentInput)
-            return true;
-
+        currentMouseState.Position = e.ScreenSpaceMousePosition;
         currentMouseState.SetPressed(e.Button, true);
-        InputManager.HandleMouseDown(e.Button, e.ScreenSpaceMousePosition);
+        InputManager.HandleMouseDown(e.Button, e.ScreenSpaceMousePosition, e.MouseState.FromTouch);
         rebuildQueues();
         BeginMouseDownFocusTracking();
         bool handled = InputManager.DispatchMouseDown(e);
@@ -71,15 +82,112 @@ public partial class ManualInputManager : Container, IInputManagerProvider, IFoc
         return handled;
     }
 
-    public override bool OnMouseUp(MouseButtonEvent e)
+    private bool dispatchMouseUp(MouseButtonEvent e)
+    {
+        currentMouseState.SetPressed(e.Button, false);
+        InputManager.HandleMouseUp(e.Button, e.ScreenSpaceMousePosition, e.MouseState.FromTouch);
+        rebuildQueues();
+        return InputManager.DispatchMouseUp(e);
+    }
+
+    // The parent's input reaches what's in here directly, so the parent stops hovering this when the pointer leaves it
+    // or a finger lifts, and with no pointer over this, nothing in it is hovered either. This manager's own hover
+    // changes (it hovers itself as its queue's root) are already taking care of that.
+    public override bool OnHoverLost(MouseEvent e)
+    {
+        if (!InputManager.UpdatingHover)
+            InputManager.ClearHover();
+
+        return base.OnHoverLost(e);
+    }
+
+    // Real fingers reach a drawable in here that takes them; one nothing takes is the parent's to turn into
+    // mouse input, which then comes in through the mouse handlers above.
+    public override bool OnTouchDown(TouchEvent e)
     {
         if (!UseParentInput)
             return true;
 
-        currentMouseState.SetPressed(e.Button, false);
-        InputManager.HandleMouseUp(e.Button, e.ScreenSpaceMousePosition);
-        rebuildQueues();
-        return InputManager.DispatchMouseUp(e);
+        InputManager.HandleTouch(e.Source, e.ScreenSpacePosition, true);
+        InputManager.BuildQueues(this, e.ScreenSpacePosition);
+        return InputManager.DispatchTouchDown(e);
+    }
+
+    public override bool OnTouchMove(TouchEvent e)
+    {
+        if (!UseParentInput)
+            return true;
+
+        InputManager.HandleTouch(e.Source, e.ScreenSpacePosition, true);
+        return InputManager.DispatchTouchMove(e);
+    }
+
+    public override bool OnTouchUp(TouchEvent e)
+    {
+        if (!UseParentInput)
+            return true;
+
+        InputManager.HandleTouch(e.Source, e.ScreenSpacePosition, false);
+        return InputManager.DispatchTouchUp(e);
+    }
+
+    /// <summary>
+    /// Synthesizes a finger going down at <paramref name="position"/> (screen space). As with a real finger,
+    /// one nothing takes acts as the mouse.
+    /// </summary>
+    public void TouchDown(TouchSource source, Vector2 position)
+    {
+        var e = new TouchEvent(source, position, timestamp: TimeSource.CurrentTime);
+
+        InputManager.HandleTouch(source, position, true);
+        InputManager.BuildQueues(this, position);
+
+        touchEmulation.TouchDown(e, InputManager.DispatchTouchDown(e));
+    }
+
+    /// <summary>
+    /// Synthesizes a finger that is down moving to <paramref name="position"/> (screen space).
+    /// </summary>
+    public void MoveTouchTo(TouchSource source, Vector2 position)
+    {
+        var e = new TouchEvent(source, position, position - InputManager.CurrentState.GetTouchPosition(source), TimeSource.CurrentTime);
+
+        InputManager.HandleTouch(source, position, true);
+
+        if (!InputManager.DispatchTouchMove(e))
+            touchEmulation.TouchMove(e);
+    }
+
+    /// <summary>
+    /// Synthesizes a finger lifting where it is. <paramref name="cancelled"/> has the system take it instead.
+    /// </summary>
+    public void TouchUp(TouchSource source, bool cancelled = false)
+    {
+        var position = InputManager.CurrentState.GetTouchPosition(source);
+        var e = new TouchEvent(source, position, timestamp: TimeSource.CurrentTime, cancelled: cancelled);
+
+        InputManager.HandleTouch(source, position, false);
+
+        if (!InputManager.DispatchTouchUp(e))
+            touchEmulation.TouchUp(e);
+    }
+
+    /// <summary>
+    /// Synthesizes a tap: a finger down and straight back up at <paramref name="position"/>.
+    /// </summary>
+    public void Tap(Vector2 position, TouchSource source = TouchSource.Touch1)
+    {
+        TouchDown(source, position);
+        TouchUp(source);
+    }
+
+    /// <summary>
+    /// Synthesizes a tap on the centre of <paramref name="target"/>.
+    /// </summary>
+    public void Tap(Drawable target, TouchSource source = TouchSource.Touch1)
+    {
+        var rect = target.DrawRectangle;
+        Tap(new Vector2(rect.X + rect.Width / 2f, rect.Y + rect.Height / 2f), source);
     }
 
     public override bool OnKeyDown(KeyEvent e)

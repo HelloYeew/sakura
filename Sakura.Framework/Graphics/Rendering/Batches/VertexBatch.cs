@@ -115,21 +115,26 @@ public sealed class VertexBatch
     /// Adds a quad of exactly 4 vertices ordered top-left, top-right, bottom-right, bottom-left.
     /// </summary>
     public void AddQuad(ReadOnlySpan<SakuraVertex> quad, float textureIndex = 0f, Vector4? clipData = null, float clipShearX = 0f, float clipRadius = 0f)
-    {
-        Vector4 actualClipData = clipData ?? no_clip;
+        => AddQuad(quad, textureIndex, new ClipState(clipData ?? no_clip, clipShearX, clipRadius));
 
+    /// <summary>
+    /// Adds a quad of exactly 4 vertices ordered top-left, top-right, bottom-right, bottom-left, clipped
+    /// by <paramref name="clip"/>.
+    /// </summary>
+    internal void AddQuad(ReadOnlySpan<SakuraVertex> quad, float textureIndex, in ClipState clip)
+    {
         if (!Indexed)
         {
             // No index buffer to fan the four corners out with, so write the two triangles directly,
             // in the same winding the indexed path uses (TL, TR, BR / BR, BL, TL).
             ensureCapacity(6, 0);
 
-            add(quad[0], textureIndex, actualClipData, clipShearX, clipRadius);
-            add(quad[1], textureIndex, actualClipData, clipShearX, clipRadius);
-            add(quad[2], textureIndex, actualClipData, clipShearX, clipRadius);
-            add(quad[2], textureIndex, actualClipData, clipShearX, clipRadius);
-            add(quad[3], textureIndex, actualClipData, clipShearX, clipRadius);
-            add(quad[0], textureIndex, actualClipData, clipShearX, clipRadius);
+            add(quad[0], textureIndex, clip);
+            add(quad[1], textureIndex, clip);
+            add(quad[2], textureIndex, clip);
+            add(quad[2], textureIndex, clip);
+            add(quad[3], textureIndex, clip);
+            add(quad[0], textureIndex, clip);
             return;
         }
 
@@ -138,7 +143,7 @@ public sealed class VertexBatch
         uint baseIndex = (uint)vertexCount;
 
         for (int i = 0; i < 4; i++)
-            add(quad[i], textureIndex, actualClipData, clipShearX, clipRadius);
+            add(quad[i], textureIndex, clip);
 
         indices[indexCount++] = baseIndex;
         indices[indexCount++] = baseIndex + 1;
@@ -152,12 +157,17 @@ public sealed class VertexBatch
     /// Adds an arbitrary triangle list (sequentially indexed when <see cref="Indexed"/>).
     /// </summary>
     public void AddRange(ReadOnlySpan<SakuraVertex> newVertices, float textureIndex = 0f, Vector4? clipData = null, float clipShearX = 0f, float clipRadius = 0f)
+        => AddRange(newVertices, textureIndex, new ClipState(clipData ?? no_clip, clipShearX, clipRadius));
+
+    /// <summary>
+    /// Adds an arbitrary triangle list (sequentially indexed when <see cref="Indexed"/>), clipped by
+    /// <paramref name="clip"/>.
+    /// </summary>
+    internal void AddRange(ReadOnlySpan<SakuraVertex> newVertices, float textureIndex, in ClipState clip)
     {
         // Triangle-list vertices break the quad alignment, so this flush must use the dynamic index
         // buffer rather than a static quad pattern.
         HasNonQuad = true;
-
-        Vector4 actualClipData = clipData ?? no_clip;
 
         // Added a triangle at a time so a capacity flush can never split one across two draws (which
         // would leave a draw with a vertex count that isn't a multiple of three, silently dropping the
@@ -172,20 +182,18 @@ public sealed class VertexBatch
                 if (Indexed)
                     indices[indexCount++] = (uint)vertexCount;
 
-                add(newVertices[i + j], textureIndex, actualClipData, clipShearX, clipRadius);
+                add(newVertices[i + j], textureIndex, clip);
             }
         }
     }
 
-    private void add(in SakuraVertex vertex, float textureIndex, Vector4 clipData, float clipShearX, float clipRadius)
+    private void add(in SakuraVertex vertex, float textureIndex, in ClipState clip)
     {
         ref var v = ref vertices[vertexCount++];
 
         v = vertex;
         v.TexIndex = textureIndex;
-        v.ClipData = clipData;
-        v.ClipShearX = clipShearX;
-        v.ClipRadius = clipRadius;
+        clip.ApplyTo(ref v);
     }
 
     /// <summary>

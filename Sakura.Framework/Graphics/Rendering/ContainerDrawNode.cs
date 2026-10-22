@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
+using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Statistic;
 
@@ -26,6 +27,7 @@ public class ContainerDrawNode : DrawNode
     public List<DrawNode> Children { get; } = new();
     public bool Masking { get; private set; }
     public float CornerRadius { get; private set; }
+    public MarginPadding MaskingFade { get; private set; }
     public float BorderThickness { get; private set; }
     public Color BorderColor { get; private set; }
 
@@ -41,6 +43,7 @@ public class ContainerDrawNode : DrawNode
         var container = (Container)source;
         Masking = container.Masking;
         CornerRadius = container.CornerRadius;
+        MaskingFade = container.MaskingFade;
         BorderThickness = container.BorderThickness;
         BorderColor = container.BorderColor;
         ShearX = container.Shear.X;
@@ -92,7 +95,23 @@ public class ContainerDrawNode : DrawNode
             drawEdgeEffect(renderer, screenCenter, screenHalfSize, scaleX, scaleY, uniformScale, cornerRadiusScreen);
 
         if (Masking)
-            renderer.PushMask(screenCenter, screenHalfSize, ShearX, cornerRadiusScreen);
+        {
+            var fade = MaskingFade;
+
+            if (fade.Equals(default(MarginPadding)))
+                renderer.PushMask(screenCenter, screenHalfSize, ShearX, cornerRadiusScreen);
+            else
+            {
+                // Authored in local pixels like the corner radius; each side scales along its own axis.
+                renderer.PushMask(screenCenter, screenHalfSize, ShearX, cornerRadiusScreen, new MarginPadding
+                {
+                    Left = fade.Left * scaleX,
+                    Right = fade.Right * scaleX,
+                    Top = fade.Top * scaleY,
+                    Bottom = fade.Bottom * scaleY
+                });
+            }
+        }
 
         foreach (var child in Children)
         {

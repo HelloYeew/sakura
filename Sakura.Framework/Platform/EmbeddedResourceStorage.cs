@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 
 namespace Sakura.Framework.Platform;
 
@@ -14,9 +15,17 @@ namespace Sakura.Framework.Platform;
 /// </summary>
 public class EmbeddedResourceStorage : Storage
 {
+    /// <summary>
+    /// Each assembly's resource names, listed once: every storage over the assembly, and every directory of one, reads
+    /// the same list rather than asking the assembly for a new copy of it.
+    /// </summary>
+    private static readonly ConditionalWeakTable<Assembly, ResourceNames> names_by_assembly = new ConditionalWeakTable<Assembly, ResourceNames>();
+
     private readonly Assembly assembly;
     private readonly string rootNamespace; // e.g., "MyGame.Resources"
-    private readonly string[] manifestResourceNames;
+    private readonly ResourceNames names;
+
+    private string[] manifestResourceNames => names.All;
 
     /// <summary>
     /// Creates a new storage for embedded resources.
@@ -27,7 +36,7 @@ public class EmbeddedResourceStorage : Storage
     {
         this.assembly = assembly;
         this.rootNamespace = rootNamespace.Trim('.');
-        this.manifestResourceNames = assembly.GetManifestResourceNames();
+        names = names_by_assembly.GetValue(assembly, a => new ResourceNames(a.GetManifestResourceNames()));
     }
 
     /// <summary>
@@ -59,7 +68,7 @@ public class EmbeddedResourceStorage : Storage
     public override bool Exists(string path)
     {
         string manifestName = toManifestName(path);
-        return manifestResourceNames.Contains(manifestName);
+        return names.Set.Contains(manifestName);
     }
 
     public override bool ExistsDirectory(string path)
@@ -135,4 +144,16 @@ public class EmbeddedResourceStorage : Storage
         => throw new NotSupportedException("Cannot delete embedded resources.");
 
     #endregion
+
+    private sealed class ResourceNames
+    {
+        public readonly string[] All;
+        public readonly HashSet<string> Set;
+
+        public ResourceNames(string[] all)
+        {
+            All = all;
+            Set = new HashSet<string>(all, StringComparer.Ordinal);
+        }
+    }
 }

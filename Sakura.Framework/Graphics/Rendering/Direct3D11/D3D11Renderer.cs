@@ -6,6 +6,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering.Batches;
 using Sakura.Framework.Graphics.Rendering.Uniforms;
 using Sakura.Framework.Graphics.Textures;
@@ -464,6 +465,8 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         element(4, Format.R32G32B32A32_Float, nameof(SakuraVertex.ClipData)),
         element(5, Format.R32_Float, nameof(SakuraVertex.ClipShearX)),
         element(6, Format.R32_Float, nameof(SakuraVertex.ClipRadius)),
+        element(7, Format.R32G32B32A32_Float, nameof(SakuraVertex.ClipFadeEdges)),
+        element(8, Format.R32G32B32A32_Float, nameof(SakuraVertex.ClipFadeLength)),
     ];
 
     private static InputElementDescription element(int location, Format format, string field) =>
@@ -523,12 +526,52 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
     private double blockedMilliseconds;
 
+    // When the update the frame being drawn shows was made, and for the latest presents, by the count DXGI gives
+    // each, which update they showed: for the frame statistics to measure from once DXGI reports them shown.
+    private long frameContentTicks;
+
+    private const int max_timed_presents = 16;
+    private readonly (uint PresentCount, long ContentTicks)[] timedPresents = new (uint, long)[max_timed_presents];
+    private int timedPresentNext;
+    private uint lastShownPresentCount;
+
+    private readonly DisplayLatency displayLatency = new DisplayLatency("DXGI frame statistics");
+
+    public void SetFrameContentTime(long timestamp) => frameContentTicks = timestamp;
+
+    public double DisplayLatencyMilliseconds => displayLatency.Milliseconds ?? double.NaN;
+
+    /// <summary>
+    /// Measures the latest present DXGI reports on screen, from the update it showed. Its time is a
+    /// QueryPerformanceCounter reading, which is what <see cref="Stopwatch"/> reads on Windows.
+    /// </summary>
+    private void measureShown()
+    {
+        // Fails before the first present reaches the screen, and once when the statistics start over (a display mode
+        // change, the window moving to another output): the next frame tries again.
+        if (swapChain!.GetFrameStatistics(out FrameStatistics statistics).Failure || statistics.PresentCount == lastShownPresentCount)
+            return;
+
+        lastShownPresentCount = statistics.PresentCount;
+
+        foreach (var (presentCount, contentTicks) in timedPresents)
+        {
+            if (presentCount == statistics.PresentCount && contentTicks != 0)
+            {
+                displayLatency.Add(DisplayLatency.Between(contentTicks, statistics.SyncQPCTime));
+                return;
+            }
+        }
+    }
+
     public void StartFrame()
     {
         blockedMilliseconds = 0;
 
         if (device == null || swapChain == null)
             return;
+
+        measureShown();
 
         // Low-latency pacing: block until the swapchain is ready for a new frame (max latency 1), so
         // the CPU doesn't run ahead of the display. Timeout-guarded so a lost/uninitialised handle can
@@ -675,6 +718,13 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
             swapChain.Present(1, PresentFlags.None);
 
         blockedMilliseconds += Stopwatch.GetElapsedTime(blockStart).TotalMilliseconds;
+
+        // Which update the present just made showed, by the count DXGI will report it shown under.
+        if (frameContentTicks != 0)
+        {
+            timedPresents[timedPresentNext] = (swapChain.LastPresentCount, frameContentTicks);
+            timedPresentNext = (timedPresentNext + 1) % max_timed_presents;
+        }
     }
 
     /// <summary>
@@ -746,7 +796,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         // The clip state is injected per-vertex on the way into the batch (the pixel shader's
         // applyClipping reads it from the interpolators), exactly as GL's batch does.
         var clip = clips.Current;
-        batch.AddRange(vertices, textureIndex, clip.ClipData, clip.ShearX, clip.Radius);
+        batch.AddRange(vertices, textureIndex, clip);
     }
 
     public void DrawQuads(ReadOnlySpan<SakuraVertex> vertices, Texture texture)
@@ -758,7 +808,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         var clip = clips.Current;
 
         for (int i = 0; i + 4 <= vertices.Length; i += 4)
-            batch.AddQuad(vertices.Slice(i, 4), textureIndex, clip.ClipData, clip.ShearX, clip.Radius);
+            batch.AddQuad(vertices.Slice(i, 4), textureIndex, clip);
     }
 
     public void DrawVerticesRaw(ReadOnlySpan<SakuraVertex> vertices)
@@ -915,6 +965,9 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
     public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius)
         => clips.Push(maskCenter, maskHalfSize, shearX, cornerRadius);
+
+    public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, MarginPadding fade)
+        => clips.Push(maskCenter, maskHalfSize, shearX, cornerRadius, fade);
 
     public void PopMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<SakuraVertex> maskVertices = default)
     {

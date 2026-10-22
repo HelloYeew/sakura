@@ -139,6 +139,19 @@ public class Font : IDisposable
     /// </param>
     /// <param name="atlas">The atlas glyphs are rasterized into.</param>
     public Font(string name, INativeBytes fontData, TextureAtlas atlas)
+        : this(name, fontData, atlas, 0)
+    {
+    }
+
+    /// <inheritdoc cref="Font(string, INativeBytes, TextureAtlas)"/>
+    /// <param name="name">The family name this face is registered under.</param>
+    /// <param name="fontData">The face's raw bytes, which this font takes over (see the other constructor).</param>
+    /// <param name="atlas">The atlas glyphs are rasterized into.</param>
+    /// <param name="faceIndex">
+    /// Which face of a collection (<c>.ttc</c>/<c>.otc</c>) to load, from 0: a collection holds several, often a family's
+    /// weights. 0 for a file of one face.
+    /// </param>
+    public Font(string name, INativeBytes fontData, TextureAtlas atlas, int faceIndex)
     {
         ArgumentNullException.ThrowIfNull(fontData);
 
@@ -163,13 +176,13 @@ public class Font : IDisposable
             unsafe
             {
                 IntPtr facePtr = IntPtr.Zero;
-                FT_Error err = FT.FT_New_Memory_Face(library.Native, (byte*)fontPtr, length, 0, (FT_FaceRec_**)&facePtr);
+                FT_Error err = FT.FT_New_Memory_Face(library.Native, (byte*)fontPtr, length, faceIndex, (FT_FaceRec_**)&facePtr);
                 if (err != FT_Error.FT_Err_Ok) throw new Exception($"Failed to load font face: {err}");
                 faceHandle = facePtr;
             }
 
             hbBlob = new Blob(fontPtr, length, MemoryMode.ReadOnly);
-            hbFace = new Face(hbBlob, 0);
+            hbFace = new Face(hbBlob, faceIndex);
             hbFont = new HarfBuzzSharp.Font(hbFace);
         }
         catch
@@ -819,7 +832,10 @@ public class Font : IDisposable
 
         int width = (int)bitmap.width;
         int height = (int)bitmap.rows;
-        byte[] rgba = new byte[width * height * 4];
+        // Rasterised straight into the pooled buffer the atlas takes over: a managed array a glyph would be garbage
+        // the moment it's uploaded, and a large emoji's goes to the large object heap.
+        var pixels = ImageRawData.Rent(width, height);
+        var rgba = pixels.GetWritableSpan();
         byte* buffer = bitmap.buffer;
 
         int pitch = Math.Abs(bitmap.pitch);
@@ -858,7 +874,7 @@ public class Font : IDisposable
             }
         }
 
-        var texture = atlas.AddRegion(width, height, rgba);
+        var texture = atlas.AddRegion(width, height, pixels);
         if (texture == null) return null;
 
         return new GlyphData

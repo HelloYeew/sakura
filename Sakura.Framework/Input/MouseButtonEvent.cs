@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Timing;
 
@@ -20,12 +21,19 @@ public readonly struct MouseButtonEvent : IMouseEvent
     /// </summary>
     public double Timestamp { get; }
 
-    public MouseButtonEvent(MouseState mouseState, MouseButton button, int clicks, double timestamp = double.NaN)
+    /// <summary>
+    /// When set, only this drawable takes the press, and input managers on the way to it pass it on. Touch emulation
+    /// uses it to hand a finger's drag to the scroll container under it rather than the button the finger landed on.
+    /// </summary>
+    public Drawable? Target { get; }
+
+    public MouseButtonEvent(MouseState mouseState, MouseButton button, int clicks, double timestamp = double.NaN, Drawable? target = null)
     {
         MouseState = mouseState;
         Button = button;
         Clicks = clicks;
         Timestamp = timestamp;
+        Target = target;
     }
 
     public override string ToString()

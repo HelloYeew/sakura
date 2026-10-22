@@ -2,6 +2,8 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Generic;
+using System.Threading;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
@@ -23,6 +25,8 @@ public class HeadlessWindow : IWindow
     public int Height => 600;
     public WindowMode WindowMode { get; set; } = WindowMode.Windowed;
     public Reactive<WindowMode> WindowModeReactive { get; } = new Reactive<WindowMode>(WindowMode.Windowed);
+    public IReadOnlyList<WindowMode> SupportedWindowModes { get; } = Enum.GetValues<WindowMode>();
+    public bool KeepScreenOn { get; set; }
     public bool CursorVisible { get; set; } = true;
     public Reactive<CursorState> CursorState { get; } = new Reactive<CursorState>(Input.CursorState.Default);
     public bool CursorInWindow { get; } = true;
@@ -55,6 +59,9 @@ public class HeadlessWindow : IWindow
     {
         Update?.Invoke();
     }
+
+    // No events ever arrive here.
+    public void WaitForEvents(double timeoutMilliseconds) => Thread.Sleep(TimeSpan.FromMilliseconds(Math.Max(0, timeoutMilliseconds)));
 
     public void SwapBuffers()
     {
@@ -94,7 +101,7 @@ public class HeadlessWindow : IWindow
         ExitRequested?.Invoke();
         Exited?.Invoke();
     }
-    public void StartTextInput()
+    public void StartTextInput(TextInputType type = TextInputType.Text)
     {
 
     }
@@ -148,10 +155,21 @@ public class HeadlessWindow : IWindow
     public event Action? Restored;
     public event Action? ExitRequested;
     public event Action? Exited;
+    public event Action? EnteringBackground;
+    public event Action? EnteredForeground;
     public event Action<KeyEvent>? OnKeyDown;
     public event Action<KeyEvent>? OnKeyUp;
     public event Action<int>? DisplayChanged;
+    public event Action? LowMemory;
+
+    /// <summary>
+    /// Says the system is short of memory, as a phone does.
+    /// </summary>
+    internal void RaiseLowMemory() => LowMemory?.Invoke();
     public event Action<int, int>? Resized;
+    public event Action<TouchEvent>? OnTouchDown;
+    public event Action<TouchEvent>? OnTouchMove;
+    public event Action<TouchEvent>? OnTouchUp;
     public event Action<MouseButtonEvent>? OnMouseDown;
     public event Action<MouseButtonEvent>? OnMouseUp;
     public event Action<MouseEvent>? OnMouseMove;

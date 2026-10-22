@@ -136,4 +136,35 @@ public class PixelBufferPoolTest
             second.Dispose();
         }
     }
+
+    /// <summary>
+    /// Short of memory, the pool lets go of what it keeps: the next rental is a new buffer, and one that was out across the
+    /// trim still goes back without trouble and is reused after.
+    /// </summary>
+    [Test]
+    public void TrimmingLetsGoOfKeptBuffersAndTakesOutstandingOnesBack()
+    {
+        var kept = ImageRawData.Rent(width, height);
+        byte[] keptArray = kept.BackingArray!;
+        kept.Dispose();
+
+        var outstanding = ImageRawData.Rent(width, height);
+        byte[] outstandingArray = outstanding.BackingArray!;
+
+        ImageRawData.TrimPool();
+
+        var afterTrim = ImageRawData.Rent(width, height);
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(afterTrim.BackingArray, Is.Not.SameAs(keptArray), "what the pool kept is gone");
+            Assert.That(() => outstanding.Dispose(), Throws.Nothing, "a buffer out across the trim still goes back");
+        }
+
+        afterTrim.Dispose();
+
+        var reused = ImageRawData.Rent(width, height);
+        Assert.That(reused.BackingArray, Is.SameAs(afterTrim.BackingArray).Or.SameAs(outstandingArray), "the new pool keeps buffers again");
+        reused.Dispose();
+    }
 }

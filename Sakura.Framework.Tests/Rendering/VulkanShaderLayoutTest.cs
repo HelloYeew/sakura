@@ -10,6 +10,7 @@ using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Rendering.Uniforms;
 using Sakura.Framework.Graphics.Rendering.Vulkan;
 using Sakura.Framework.Platform;
+using SakuraVertex = Sakura.Framework.Graphics.Rendering.Vertex.Vertex;
 
 namespace Sakura.Framework.Tests.Rendering;
 
@@ -182,13 +183,18 @@ public class VulkanShaderLayoutTest
         Assert.That(seen, Is.EquivalentTo(structs.Keys), "every uniform block struct should be used by some framework shader");
     }
 
-    [TestCase("shader.vert")]
-    [TestCase("video.vert")]
-    public void FrameworkVertexShader_ReadsTheVertexFormat(string vert)
+    /// <summary>
+    /// The main vertex shader reads the whole vertex format; the video one all of it up to the clip's
+    /// fade, which video doesn't apply.
+    /// </summary>
+    [TestCase("shader.vert", nameof(SakuraVertex.ClipFadeLength))]
+    [TestCase("video.vert", nameof(SakuraVertex.ClipRadius))]
+    public void FrameworkVertexShader_ReadsTheVertexFormat(string vert, string lastField)
     {
         var (vs, _) = reflect(vert, "shader.frag");
+        int count = VulkanShaderLayout.VertexAttributes.Select(a => a.Field).ToList().IndexOf(lastField) + 1;
 
-        Assert.That(vs.VertexInputs.Select(i => i.Location), Is.EqualTo(Enumerable.Range(0, VulkanShaderLayout.VertexAttributes.Count).Select(i => (uint)i)));
+        Assert.That(vs.VertexInputs.Select(i => i.Location), Is.EqualTo(Enumerable.Range(0, count).Select(i => (uint)i)));
 
         foreach (var input in vs.VertexInputs)
         {
@@ -305,12 +311,13 @@ public class VulkanShaderLayoutTest
     [Test]
     public void VertexInput_PastTheVertexFormat_IsRejected()
     {
-        const string vert =
+        int past = VulkanShaderLayout.VertexAttributes.Count;
+        string vert =
             "#version 450\n" +
-            "layout(location = 7) in vec2 aExtra;\n" +
+            $"layout(location = {past}) in vec2 aExtra;\n" +
             "void main() { gl_Position = vec4(aExtra, 0.0, 1.0); }\n";
 
-        assertRejected(vert, fragment(string.Empty, "vec4(1.0)"), "'aExtra'", "location 7");
+        assertRejected(vert, fragment(string.Empty, "vec4(1.0)"), "'aExtra'", $"location {past}");
     }
 
     #endregion

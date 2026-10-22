@@ -89,6 +89,14 @@ public class TriangleBatch : IDisposable
         gl.EnableVertexAttribArray(6);
         gl.VertexAttribPointer(6, 1, VertexAttribPointerType.Float, false, (uint)vertexSize, (void*)Marshal.OffsetOf<SakuraVertex>(nameof(SakuraVertex.ClipRadius)));
 
+        // Location 7: Clip fade edges
+        gl.EnableVertexAttribArray(7);
+        gl.VertexAttribPointer(7, 4, VertexAttribPointerType.Float, false, (uint)vertexSize, (void*)Marshal.OffsetOf<SakuraVertex>(nameof(SakuraVertex.ClipFadeEdges)));
+
+        // Location 8: Clip fade lengths
+        gl.EnableVertexAttribArray(8);
+        gl.VertexAttribPointer(8, 4, VertexAttribPointerType.Float, false, (uint)vertexSize, (void*)Marshal.OffsetOf<SakuraVertex>(nameof(SakuraVertex.ClipFadeLength)));
+
         gl.BindVertexArray(0);
 
         // Fill the static quad index buffer once. Done with no VAO bound so it doesn't disturb the
@@ -126,6 +134,14 @@ public class TriangleBatch : IDisposable
     /// </summary>
     public void AddRange(ReadOnlySpan<SakuraVertex> newVertices, float textureIndex = 0f, Vector4? clipData = null, float clipShearX = 0f, float clipRadius = 0f)
         => batch.AddRange(newVertices, textureIndex, clipData, clipShearX, clipRadius);
+
+    /// <inheritdoc cref="VertexBatch.AddQuad(ReadOnlySpan{SakuraVertex}, float, in ClipState)"/>
+    internal void AddQuad(ReadOnlySpan<SakuraVertex> quad, float textureIndex, in ClipState clip)
+        => batch.AddQuad(quad, textureIndex, clip);
+
+    /// <inheritdoc cref="VertexBatch.AddRange(ReadOnlySpan{SakuraVertex}, float, in ClipState)"/>
+    internal void AddRange(ReadOnlySpan<SakuraVertex> newVertices, float textureIndex, in ClipState clip)
+        => batch.AddRange(newVertices, textureIndex, clip);
 
     /// <summary>
     /// Uploads the provided vertices directly into the VBO and issues a non-indexed

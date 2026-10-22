@@ -9,6 +9,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using System.Text;
+using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering.Batches;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.IO;
@@ -121,13 +122,14 @@ public class GLRenderer : IGLRenderer, IDisposable
     /// </summary>
     private int textureSlotCount = max_texture_slots;
 
+    public int MaxTextureSize { get; private set; } = int.MaxValue;
+
     private float renderScaleX = 1.0f;
     private float renderScaleY = 1.0f;
 
     private BlendingMode currentBlendMode = BlendingMode.Alpha;
 
-    private readonly Stack<ClipState> clipStack = new Stack<ClipState>();
-    private ClipState currentClip;
+    private readonly ClipStack clips = new ClipStack();
 
     private DrawNode rootNode;
 
@@ -155,13 +157,6 @@ public class GLRenderer : IGLRenderer, IDisposable
     /// and populated with <c>0..textureSlotCount-1</c> at initialization.
     /// </summary>
     private int[] textureSamplers = { 0, 1, 2, 3, 4, 5, 6, 7 };
-
-    private struct ClipState
-    {
-        public Vector4 ClipData;
-        public float ShearX;
-        public float Radius;
-    }
 
     public unsafe void Initialize(IGraphicsSurface graphicsSurface)
     {
@@ -195,6 +190,11 @@ public class GLRenderer : IGLRenderer, IDisposable
         gl.GetInteger(GetPName.MaxTextureImageUnits, out int maxTextureImageUnits);
         textureSlotCount = Math.Clamp(maxTextureImageUnits, 1, max_texture_slots);
         Logger.Verbose($"GL Max Texture Image Units: {maxTextureImageUnits} (using {textureSlotCount} batch slots)");
+
+        gl.GetInteger(GetPName.MaxTextureSize, out int maxTextureSize);
+        if (maxTextureSize > 0)
+            MaxTextureSize = maxTextureSize;
+        Logger.Verbose($"GL Max Texture Size: {MaxTextureSize}");
 
         textureSamplers = new int[textureSlotCount];
         for (int i = 0; i < textureSlotCount; i++)
@@ -271,11 +271,49 @@ public class GLRenderer : IGLRenderer, IDisposable
         gl.StencilMask(0x00);
     }
 
+    // When the update the frame being drawn shows was made, and on Android, when frames reach the screen, for the
+    // surface it was set up for (a new one comes back from the background).
+    private long frameContentTicks;
+    private EglFrameTimestamps? frameTimestamps;
+    private nint timedSurface;
+
+    private readonly DisplayLatency displayLatency = new DisplayLatency("EGL_ANDROID_get_frame_timestamps");
+
+    public void SetFrameContentTime(long timestamp) => frameContentTicks = timestamp;
+
+    public double DisplayLatencyMilliseconds => displayLatency.Milliseconds ?? double.NaN;
+
+    /// <summary>
+    /// Measures the frames Android's EGL reports on screen by now, setting up for the surface drawn to first if it's
+    /// new. Nothing anywhere else: no other window system says when a GL frame was shown.
+    /// </summary>
+    private void measureShown()
+    {
+        nint surface = EglFrameTimestamps.CurrentSurface();
+
+        if (surface == 0)
+            return;
+
+        if (surface != timedSurface)
+        {
+            timedSurface = surface;
+            frameTimestamps = EglFrameTimestamps.TryCreate();
+
+            Logger.Verbose(frameTimestamps != null
+                ? "OpenGL frame timing: EGL present times on"
+                : "OpenGL frame timing: unavailable, EGL can't report when frames are shown here");
+        }
+
+        frameTimestamps?.Measure(displayLatency);
+    }
+
     public void StartFrame()
     {
         // Release native resources orphaned by the GC (a missed Dispose) before anything else this
         // frame, so their memory is freed before new allocations are made against it.
         Textures.NativeDisposalQueue.Process();
+
+        measureShown();
 
         while (drawThreadQueue.TryDequeue(out var action))
         {
@@ -384,13 +422,7 @@ public class GLRenderer : IGLRenderer, IDisposable
 
         stencilLevel = 0;
         scissorStack.Clear();
-        clipStack.Clear();
-        currentClip = new ClipState
-        {
-            ClipData = new Vector4(0, 0, -1, -1), // -1 HalfWidth means inactive
-            ShearX = 0,
-            Radius = 0
-        };
+        clips.Reset();
         maskState.IsBorder = 0;
         uploadMaskState();
         maskBuffer.Bind();
@@ -415,6 +447,10 @@ public class GLRenderer : IGLRenderer, IDisposable
         // Publish a stable snapshot of this frame's totals for cross-thread consumers (e.g. the
         // texture viewer). Done after the final batch flush so all binds for the frame are counted.
         TextureBindTracker.EndFrame();
+
+        // The host swaps right after this.
+        if (frameContentTicks != 0)
+            frameTimestamps?.FrameSwapping(frameContentTicks);
 
         insertFrameFence();
     }
@@ -477,7 +513,7 @@ public class GLRenderer : IGLRenderer, IDisposable
             ViewportWidth = currentViewportWidth,
             ViewportHeight = currentViewportHeight,
             Projection = projectionMatrix,
-            Clip = currentClip
+            Clip = clips.Current
         });
 
         currentFrameBufferHandle = glFrameBuffer.Handle;
@@ -497,12 +533,7 @@ public class GLRenderer : IGLRenderer, IDisposable
 
         // Content inside the buffer starts from a clean clip state; the outer clip applies
         // to the final composited quad instead.
-        currentClip = new ClipState
-        {
-            ClipData = new Vector4(0, 0, -1, -1),
-            ShearX = 0,
-            Radius = 0
-        };
+        clips.Current = ClipState.None;
 
         gl.ClearColor(clearColor.R / 255f, clearColor.G / 255f, clearColor.B / 255f, clearColor.A / 255f);
         gl.Clear(ClearBufferMask.ColorBufferBit);
@@ -529,7 +560,7 @@ public class GLRenderer : IGLRenderer, IDisposable
         projectionMatrix = state.Projection;
         uploadProjection();
 
-        currentClip = state.Clip;
+        clips.Current = state.Clip;
     }
 
     /// <summary>
@@ -578,7 +609,7 @@ public class GLRenderer : IGLRenderer, IDisposable
 
         float textureIndex = prepareTexture(texture);
 
-        triangleBatch.AddRange(vertices, textureIndex, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
+        triangleBatch.AddRange(vertices, textureIndex, clips.Current);
     }
 
     public void DrawQuads(ReadOnlySpan<SakuraVertex> vertices, Texture texture)
@@ -589,7 +620,7 @@ public class GLRenderer : IGLRenderer, IDisposable
         float textureIndex = prepareTexture(texture);
 
         for (int i = 0; i + 4 <= vertices.Length; i += 4)
-            triangleBatch.AddQuad(vertices.Slice(i, 4), textureIndex, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
+            triangleBatch.AddQuad(vertices.Slice(i, 4), textureIndex, clips.Current);
     }
 
     private void drawBorder(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<SakuraVertex> vertices)
@@ -619,7 +650,7 @@ public class GLRenderer : IGLRenderer, IDisposable
 
         // The mask geometry is a single quad (TL, TR, BR, BL).
         if (vertices.Length >= 4)
-            triangleBatch.AddQuad(vertices.Slice(0, 4), 0f, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
+            triangleBatch.AddQuad(vertices.Slice(0, 4), 0f, clips.Current);
 
         triangleBatch.Draw();
 
@@ -660,7 +691,7 @@ public class GLRenderer : IGLRenderer, IDisposable
             if (boundTextureCount == 0) boundTextureCount = 1;
         }
 
-        triangleBatch.AddQuad(quadVertices.Slice(0, 4), 0f, currentClip.ClipData, currentClip.ShearX, currentClip.Radius);
+        triangleBatch.AddQuad(quadVertices.Slice(0, 4), 0f, clips.Current);
         triangleBatch.Draw();
 
         maskState.IsEdgeEffect = 0;
@@ -671,68 +702,17 @@ public class GLRenderer : IGLRenderer, IDisposable
             SetBlendMode(previousBlend);
     }
 
-    public void ApplyCurrentClip(Span<SakuraVertex> vertices)
-    {
-        for (int i = 0; i < vertices.Length; i++)
-        {
-            vertices[i].ClipData = currentClip.ClipData;
-            vertices[i].ClipShearX = currentClip.ShearX;
-            vertices[i].ClipRadius = currentClip.Radius;
-        }
-    }
+    public void ApplyCurrentClip(Span<SakuraVertex> vertices) => clips.ApplyTo(vertices);
 
     public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius)
-    {
-        clipStack.Push(currentClip);
+        => clips.Push(maskCenter, maskHalfSize, shearX, cornerRadius);
 
-        // calculate the true AABB of this new mask, taking horizontal shear into account
-        float skewOffset = Math.Abs(shearX * maskHalfSize.Y);
-        float left = maskCenter.X - maskHalfSize.X - skewOffset;
-        float right = maskCenter.X + maskHalfSize.X + skewOffset;
-        float top = maskCenter.Y - maskHalfSize.Y;
-        float bottom = maskCenter.Y + maskHalfSize.Y;
-
-        // if we are already inside a parent mask (Z > 0), intersect their bounding boxes
-        if (currentClip.ClipData.Z > 0)
-        {
-            float parentSkew = Math.Abs(currentClip.ShearX * currentClip.ClipData.W);
-            float pLeft = currentClip.ClipData.X - currentClip.ClipData.Z - parentSkew;
-            float pRight = currentClip.ClipData.X + currentClip.ClipData.Z + parentSkew;
-            float pTop = currentClip.ClipData.Y - currentClip.ClipData.W;
-            float pBottom = currentClip.ClipData.Y + currentClip.ClipData.W;
-
-            left = Math.Max(left, pLeft);
-            right = Math.Min(right, pRight);
-            top = Math.Max(top, pTop);
-            bottom = Math.Min(bottom, pBottom);
-        }
-
-        Vector2 newCenter = new Vector2((left + right) / 2f, (top + bottom) / 2f);
-        Vector2 newHalfSize = new Vector2((right - left) / 2f, (bottom - top) / 2f);
-
-        // if the intersection collapses (the child is completely outside the parent mask),
-        // we shrink the mask to practically zero so the shader correctly discards all fragments.
-        if (left >= right || top >= bottom)
-        {
-            newHalfSize = new Vector2(0.0001f, 0.0001f);
-        }
-        else
-        {
-            // remove the skew offset again so the shader receives the true un-sheared half-size
-            newHalfSize.X = Math.Max(0.0001f, newHalfSize.X - skewOffset);
-        }
-
-        currentClip = new ClipState
-        {
-            ClipData = new Vector4(newCenter.X, newCenter.Y, newHalfSize.X, newHalfSize.Y),
-            ShearX = shearX,
-            Radius = cornerRadius
-        };
-    }
+    public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, MarginPadding fade)
+        => clips.Push(maskCenter, maskHalfSize, shearX, cornerRadius, fade);
 
     public void PopMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, float borderThickness, Color borderColor, ReadOnlySpan<SakuraVertex> maskVertices = default)
     {
-        currentClip = clipStack.Pop();
+        clips.Pop();
         drawBorder(maskCenter, maskHalfSize, shearX, cornerRadius, borderThickness, borderColor, maskVertices);
     }
 

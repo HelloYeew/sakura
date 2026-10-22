@@ -124,6 +124,7 @@ internal static class SDLEnumMapping
             case SDL_Scancode.SDL_SCANCODE_RSHIFT: return Key.ShiftRight;
             case SDL_Scancode.SDL_SCANCODE_RALT: return Key.AltRight;
             case SDL_Scancode.SDL_SCANCODE_RGUI: return Key.WinRight;
+            case SDL_Scancode.SDL_SCANCODE_AC_BACK: return Key.SystemBack;
             default: return Key.Unknown;
         }
     }

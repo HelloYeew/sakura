@@ -13,6 +13,7 @@ using Sakura.Framework.Audio.Headless;
 using Sakura.Framework.Audio.SdlEngine;
 using Sakura.Framework.Configurations;
 using Sakura.Framework.Development;
+using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Performance;
 using Sakura.Framework.Graphics.Rendering;
@@ -54,6 +55,34 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
     protected VideoStore VideoStore { get; private set; }
 
     private Reactive<PerformanceOverlayState> fpsGraphState;
+
+    /// <summary>
+    /// Holds everything added to the app, laid out in the window's safe area so nothing lands under a notch,
+    /// a cutout or the system bars. A background reaches the edge of the screen with <see cref="Drawable.Bleed"/>.
+    /// </summary>
+    private readonly SafeAreaDefiningContainer safeArea = new SafeAreaDefiningContainer();
+
+    private Reactive<SafeAreaPreview> safeAreaPreview;
+    private Reactive<bool> logOverlayShown;
+
+    protected override Container Content => safeArea;
+
+    /// <summary>
+    /// Stands a gesture's first finger in for the mouse when nothing takes it.
+    /// </summary>
+    private readonly TouchMouseEmulation touchEmulation;
+    private readonly MultiFingerTap multiFingerTap = new MultiFingerTap();
+
+    /// <summary>
+    /// How many fingers tap together to open the debug tools on a touchscreen, in a debug build.
+    /// </summary>
+    private const int debug_tools_fingers = 4;
+
+    public App()
+    {
+        AddInternal(safeArea);
+        touchEmulation = new TouchMouseEmulation(this, InputManager, OnMouseMove, OnMouseDown, OnMouseUp);
+    }
 
     /// <summary>
     /// The Assembly where embedded resources are stored.
@@ -156,6 +185,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
         AudioManager.MasterVolume.BindTo(masterVolume);
         AudioManager.TrackVolume.BindTo(trackVolume);
         AudioManager.SampleVolume.BindTo(sampleVolume);
+        AudioManager.OutputDevice.BindTo(Host.FrameworkConfigManager.Get<string>(FrameworkSetting.AudioDevice));
 
         Cache(AudioManager);
 
@@ -223,12 +253,23 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
         Cache(Host.FrameworkConfigManager);
 
         fpsGraphState = Host.FrameworkConfigManager.Get(FrameworkSetting.ShowFpsGraph, PerformanceOverlayState.Hidden);
+        safeAreaPreview = Host.FrameworkConfigManager.Get(FrameworkSetting.SafeAreaPreview, SafeAreaPreview.Off);
+        logOverlayShown = Host.FrameworkConfigManager.Get(FrameworkSetting.ShowLogOverlay, false);
+
+        AddInternal(new SafeAreaPreviewOverlay(safeArea, safeAreaPreview)
+        {
+            Depth = float.MaxValue
+        });
 
         Add(debugWindows = new DebugWindowLayer
         {
             Depth = float.MaxValue - 5
         });
         Add(new FpsGraph()
+        {
+            Depth = float.MaxValue
+        });
+        Add(new LogOverlay
         {
             Depth = float.MaxValue
         });
@@ -264,27 +305,15 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
 
         var backend = Host.FrameworkConfigManager.Get<AudioBackend>(FrameworkSetting.AudioBackend).Value;
 
-        switch (backend)
-        {
-            case AudioBackend.Automatic:
-            case AudioBackend.SDL:
-            case AudioBackend.SDLManaged:
-                try
-                {
-                    var deviceBufferFrames = Host.FrameworkConfigManager.Get<int>(FrameworkSetting.AudioDeviceBufferFrames);
+        // Opened on the device picked from the start, rather than on the default and then moved.
+        string outputDevice = Host.FrameworkConfigManager.Get<string>(FrameworkSetting.AudioDevice).Value;
+        var deviceBufferFrames = Host.FrameworkConfigManager.Get<int>(FrameworkSetting.AudioDeviceBufferFrames);
 
-                    return new SDLAudioManager(backend != AudioBackend.SDLManaged, deviceBufferFrames.Value,
-                        next => deviceBufferFrames.Value = next);
-                }
-                catch (Exception e)
-                {
-                    Logger.Error("Failed to initialise the SDL audio backend, falling back to BASS.", e);
-                }
-
-                break;
-        }
-
-        return new BassAudioManager();
+        return AudioBackends.Create(backend,
+            () => new SDLAudioManager(backend != AudioBackend.SDLManaged, deviceBufferFrames.Value,
+                next => deviceBufferFrames.Value = next, Host.NativeAudioOutput, outputDevice),
+            () => new BassAudioManager(outputDevice: outputDevice),
+            AudioBackends.BassAvailable);
     }
 
     protected override void Dispose(bool isDisposing)
@@ -301,6 +330,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
     {
         base.Update();
         Scheduler?.Update();
+        touchEmulation.Update();
     }
 
     /// <summary>
@@ -329,38 +359,84 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
             if ((e.Modifiers & KeyModifiers.Shift) > 0)
                 debugWindows.Open(() => new DrawVisualiser(this)).ToggleInspectMode();
             else
-                debugWindows.Toggle(() => new DrawVisualiser(this));
+                toggleDrawVisualiser();
 
             return true;
         }
         else if (!e.IsRepeat && e.Key == Key.F2 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
-            debugWindows.Toggle(() => new GlobalStatisticsDisplay());
+            toggleStatistics();
             return true;
         }
         else if (!e.IsRepeat && e.Key == Key.F3 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
-            debugWindows.Toggle(() => new TextureViewerDisplay());
+            toggleTextureViewer();
+            return true;
+        }
+        else if (!e.IsRepeat && e.Key == Key.F6 && (e.Modifiers & KeyModifiers.Control) > 0)
+        {
+            cycleSafeAreaPreview();
             return true;
         }
         else if (!e.IsRepeat && e.Key == Key.F7 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
-            Host.ExecutionMode.Value = Host.ExecutionMode.Value == ExecutionMode.MultiThread ? ExecutionMode.SingleThread : ExecutionMode.MultiThread;
+            toggleExecutionMode();
+        }
+        // Not on a function key like the rest: macOS keeps Ctrl+F3 to Ctrl+F8 for its own keyboard navigation by
+        // default, and those left are taken.
+        else if (!e.IsRepeat && e.Key == Key.L && (e.Modifiers & KeyModifiers.Control) > 0 && (e.Modifiers & KeyModifiers.Shift) > 0)
+        {
+            toggleLogOverlay();
+            return true;
         }
         else if (!e.IsRepeat && e.Key == Key.F9 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
-            debugWindows.Toggle(() => new AudioMixerVisualiser(AudioManager));
+            toggleAudioMixer();
             return true;
         }
         if (!e.IsRepeat && e.Key == Key.F11 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
-            int nextState = ((int)fpsGraphState.Value + 1) % 3;
-            fpsGraphState.Value = (PerformanceOverlayState)nextState;
+            cycleFpsGraph();
             return true;
         }
 
         return InputManager.DispatchKeyDownWithFocus(e);
     }
+
+    private void toggleDrawVisualiser() => debugWindows.Toggle(() => new DrawVisualiser(this));
+
+    private void toggleStatistics() => debugWindows.Toggle(() => new GlobalStatisticsDisplay());
+
+    private void toggleTextureViewer() => debugWindows.Toggle(() => new TextureViewerDisplay());
+
+    private void toggleAudioMixer() => debugWindows.Toggle(() => new AudioMixerVisualiser(AudioManager));
+
+    private void toggleLogOverlay() => logOverlayShown.Value = !logOverlayShown.Value;
+
+    private void cycleSafeAreaPreview() =>
+        safeAreaPreview.Value = (SafeAreaPreview)(((int)safeAreaPreview.Value + 1) % Enum.GetValues<SafeAreaPreview>().Length);
+
+    private void toggleExecutionMode() =>
+        Host.ExecutionMode.Value = Host.ExecutionMode.Value == ExecutionMode.MultiThread ? ExecutionMode.SingleThread : ExecutionMode.MultiThread;
+
+    private void cycleFpsGraph() =>
+        fpsGraphState.Value = (PerformanceOverlayState)(((int)fpsGraphState.Value + 1) % Enum.GetValues<PerformanceOverlayState>().Length);
+
+    private void cycleFrameLimiter() =>
+        Host.FrameLimiter.Value = (FrameSync)(((int)Host.FrameLimiter.Value + 1) % Enum.GetValues<FrameSync>().Length);
+
+    private void toggleDebugTools() => debugWindows.Toggle(() => new DebugToolsWindow(new (string, Action)[]
+    {
+        ("Frame graph (Ctrl+F11)", cycleFpsGraph),
+        ("Draw visualiser (Ctrl+F1)", toggleDrawVisualiser),
+        ("Statistics (Ctrl+F2)", toggleStatistics),
+        ("Textures (Ctrl+F3)", toggleTextureViewer),
+        ("Audio mixer (Ctrl+F9)", toggleAudioMixer),
+        ("Log (Ctrl+Shift+L)", toggleLogOverlay),
+        ("Safe area preview (Ctrl+F6)", cycleSafeAreaPreview),
+        ("Frame limiter (Ctrl+F10)", cycleFrameLimiter),
+        ("Execution mode (Ctrl+F7)", toggleExecutionMode),
+    }));
 
     public override bool OnKeyUp(KeyEvent e)
     {
@@ -371,7 +447,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
 
     public override bool OnMouseDown(MouseButtonEvent e)
     {
-        InputManager.HandleMouseDown(e.Button, e.ScreenSpaceMousePosition);
+        InputManager.HandleMouseDown(e.Button, e.ScreenSpaceMousePosition, e.MouseState.FromTouch);
         rebuildInputQueues();
 
         debugWindows?.NotifyMouseDown(e.ScreenSpaceMousePosition);
@@ -391,7 +467,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
 
     public override bool OnMouseUp(MouseButtonEvent e)
     {
-        InputManager.HandleMouseUp(e.Button, e.ScreenSpaceMousePosition);
+        InputManager.HandleMouseUp(e.Button, e.ScreenSpaceMousePosition, e.MouseState.FromTouch);
         rebuildInputQueues();
         return InputManager.DispatchMouseUp(e);
     }
@@ -407,9 +483,49 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
             OnKeyUp(new KeyEvent(key, state.Modifiers, false));
     }
 
+    public override bool OnTouchDown(TouchEvent e)
+    {
+        InputManager.HandleTouch(e.Source, e.ScreenSpacePosition, true);
+        InputManager.BuildQueues(this, e.ScreenSpacePosition);
+
+        bool taken = InputManager.DispatchTouchDown(e);
+        touchEmulation.TouchDown(e, taken);
+        multiFingerTap.TouchDown(e, taken, Clock.CurrentTime);
+        return taken;
+    }
+
+    public override bool OnTouchMove(TouchEvent e)
+    {
+        InputManager.HandleTouch(e.Source, e.ScreenSpacePosition, true);
+        multiFingerTap.TouchMove(e);
+
+        if (InputManager.DispatchTouchMove(e))
+            return true;
+
+        touchEmulation.TouchMove(e);
+        return false;
+    }
+
+    public override bool OnTouchUp(TouchEvent e)
+    {
+        InputManager.HandleTouch(e.Source, e.ScreenSpacePosition, false);
+
+        bool handled = InputManager.DispatchTouchUp(e);
+
+        if (!handled)
+            touchEmulation.TouchUp(e);
+
+        // There are no Ctrl+F keys on a phone. Only in a debug build, since a player's four fingers landing together
+        // is ordinary play in a game with lanes.
+        if (multiFingerTap.TouchUp(e, Clock.CurrentTime, out _) == debug_tools_fingers && DebugUtils.IsDebugBuild)
+            toggleDebugTools();
+
+        return handled;
+    }
+
     public override bool OnMouseMove(MouseEvent e)
     {
-        InputManager.HandleMouseMove(e.MouseState.Position);
+        InputManager.HandleMouseMove(e.MouseState.Position, e.MouseState.FromTouch);
         rebuildInputQueues();
         return InputManager.DispatchMouseMove(e);
     }

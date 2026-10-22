@@ -488,6 +488,48 @@ public class InputManagerPositionalDispatchTest
         Assert.That(box.LastClicks, Is.EqualTo(1), "A press nothing handled breaks the chain.");
     }
 
+    /// <summary>
+    /// A press that only passes through a drawable (one that runs the base mouse-down, which starts a drag, without
+    /// handling it) leaves it undragged: it never gets the mouse-up that would end the drag.
+    /// </summary>
+    [Test]
+    public void TestPressPassingThroughLeavesNothingDragged()
+    {
+        var back = new RecordingBox { Position = new Vector2(100, 100), Size = new Vector2(100), HandleMouseDown = true };
+        var front = new PassiveBox { Position = new Vector2(100, 100), Size = new Vector2(100) };
+        root.Add(back);
+        root.Add(front);
+        settle();
+
+        manager.BuildQueues(root, new Vector2(150, 150));
+        manager.DispatchMouseDown(mouseDown(new Vector2(150, 150)));
+        manager.DispatchMouseUp(mouseUp(new Vector2(150, 150)));
+
+        manager.BuildQueues(root, new Vector2(160, 160));
+        manager.DispatchMouseMove(mouseMove(new Vector2(160, 160)));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(back.MouseDownCount, Is.EqualTo(1), "the press went through to the box behind");
+            Assert.That(front.IsDragged, Is.False);
+            Assert.That(front.DragCount, Is.Zero, "a later plain move isn't a drag");
+        });
+    }
+
+    /// <summary>
+    /// Takes the base mouse handling as it is.
+    /// </summary>
+    private partial class PassiveBox : Box
+    {
+        public int DragCount;
+
+        public override bool OnDrag(MouseEvent e)
+        {
+            DragCount++;
+            return false;
+        }
+    }
+
     private partial class RecordingBox : Box
     {
         public bool HandleMouseDown;

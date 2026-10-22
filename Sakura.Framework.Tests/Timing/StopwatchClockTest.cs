@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System.Diagnostics;
 using System.Threading;
 using NUnit.Framework;
 using Sakura.Framework.Timing;
@@ -63,8 +64,12 @@ public class StopwatchClockTest
     {
         var clock = new StopwatchClock(start: true);
         Thread.Sleep(30);
+
+        // The clock runs on after the seek, by however long the thread takes to read it back.
+        var sinceSeek = Stopwatch.StartNew();
         clock.Seek(9000);
-        Assert.That(clock.CurrentTime, Is.EqualTo(9000).Within(5));
+        double current = clock.CurrentTime;
+        Assert.That(current, Is.InRange(9000, 9000 + sinceSeek.Elapsed.TotalMilliseconds + 1));
         Assert.That(clock.IsRunning, Is.True);
         Thread.Sleep(30);
         Assert.That(clock.CurrentTime, Is.GreaterThan(9000));

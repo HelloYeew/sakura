@@ -8,7 +8,8 @@ permissions:
 
 env:
   BUILD_DIR: build-ci
-  ANDROID_API_LEVEL: 21
+  # The framework's Android minimum, and the first level whose bionic declares timespec_get.
+  ANDROID_API_LEVEL: 29
 
 jobs:
   build-apple:
@@ -454,9 +455,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          # API 21 to match the shipped FFmpeg build, which is what the audio backend decodes with.
-          # bionic only declares timespec_get from API 29, so the callback-duration statistic is
-          # compiled out here -- CMake feature-checks it rather than the C branching on the platform.
+          # API 29, the framework's Android minimum. That's also where bionic starts declaring
+          # timespec_get, which times the callback for the underrun watchdog. CMake feature-checks it
+          # rather than the C branching on the platform, so a lower level would build without the timing.
           cmake -S . -B "$BUILD_DIR" \
             -DCMAKE_BUILD_TYPE=Release \
             -DSAKURA_AUDIO_BUILD_TESTS=OFF \

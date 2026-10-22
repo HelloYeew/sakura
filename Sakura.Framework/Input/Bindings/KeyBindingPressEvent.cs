@@ -27,11 +27,23 @@ public readonly struct KeyBindingPressEvent<T> where T : struct
     /// </summary>
     public readonly Vector2 ScrollDelta;
 
-    public KeyBindingPressEvent(T action, bool repeat = false, Vector2 scrollDelta = default)
+    /// <summary>
+    /// When the key, button or touch that made this press happened, in milliseconds on the shared
+    /// <see cref="Sakura.Framework.Timing.TimeSource"/> timeline, as the input event that made it reports it.
+    /// <see cref="double.NaN"/> when that event carries no timestamp (a scroll, or synthesized test input).
+    /// </summary>
+    /// <remarks>
+    /// For hit judgement, use <see cref="Sakura.Framework.Timing.GameplayClock.GetTimeAt"/> to translate this into gameplay
+    /// time, as with a raw key event's.
+    /// </remarks>
+    public readonly double Timestamp;
+
+    public KeyBindingPressEvent(T action, bool repeat = false, Vector2 scrollDelta = default, double timestamp = double.NaN)
     {
         Action = action;
         Repeat = repeat;
         ScrollDelta = scrollDelta;
+        Timestamp = timestamp;
     }
 
     public override string ToString() => $"KeyBindingPressEvent: Action={Action}, Repeat={Repeat}";

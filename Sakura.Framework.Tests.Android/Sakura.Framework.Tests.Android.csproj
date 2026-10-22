@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-android</TargetFramework>
+    <SupportedOSPlatformVersion>29</SupportedOSPlatformVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <ApplicationId>dev.helloyeew.sakura.tests</ApplicationId>
+    <ApplicationTitle>Sakura Tests</ApplicationTitle>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <RuntimeIdentifiers>android-arm64</RuntimeIdentifiers>
+    <!-- The visual tests come from the desktop test runner, an executable; only its assembly is wanted here. -->
+    <ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
+  </PropertyGroup>
+  <PropertyGroup Label="Runtime">
+    <UseMonoRuntime>false</UseMonoRuntime>
+    <!-- Uncompressed assemblies are memory-mapped from the APK instead of being inflated into memory at launch. -->
+    <AndroidEnableAssemblyCompression>false</AndroidEnableAssemblyCompression>
+  </PropertyGroup>
+  <ItemGroup Label="Resources">
+    <!-- Resources/ is where Android keeps its own resources, so it isn't embedded the way it is elsewhere. -->
+    <EmbeddedResource Remove="Resources\**" />
+  </ItemGroup>
+  <ItemGroup Label="Project References">
+    <ProjectReference Include="..\Sakura.Framework.Tests\Sakura.Framework.Tests.csproj" />
+    <ProjectReference Include="..\Sakura.Framework.Android\Sakura.Framework.Android.csproj" />
+  </ItemGroup>
+</Project>

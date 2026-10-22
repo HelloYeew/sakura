@@ -100,7 +100,49 @@ public unsafe class VideoDecoder : IDisposable
     // layout, so the two layouts coexist.
     private VideoTextureShape? poolShape;
 
-    private const int io_buffer_size = 4096;
+    // Each fill of this buffer is a call from FFmpeg back into the stream: 4 KB made a high-bitrate video hundreds a
+    // second.
+    private const int io_buffer_size = 32 * 1024;
+
+    private static readonly GlobalStatistic<int> stat_pool_available = GlobalStatistics.Get<int>("Video", "Pool Available");
+    private static readonly GlobalStatistic<int> stat_pending_frames = GlobalStatistics.Get<int>("Video", "Pending Frames");
+    private static readonly GlobalStatistic<int> stat_frames_waiting = GlobalStatistics.Get<int>("Video", "Frames Waiting (Pool Empty)", StatisticKind.Cumulative);
+    private static readonly GlobalStatistic<int> stat_frames_decoded = GlobalStatistics.Get<int>("Video", "Frames Decoded", StatisticKind.Cumulative);
+
+    /// <summary>
+    /// How long the decode thread waits for a texture to come back or a command to arrive before looking again anyway.
+    /// Either one wakes it straight away; this only bounds a wake that was missed.
+    /// </summary>
+    private const int wake_timeout_ms = 10;
+
+    private readonly object wakeLock = new object();
+    private bool wakePending;
+
+    /// <summary>
+    /// Wakes the decode thread from <see cref="waitForWake"/>: a texture is back in the pool, or a command is queued.
+    /// </summary>
+    private void wake()
+    {
+        lock (wakeLock)
+        {
+            wakePending = true;
+            Monitor.Pulse(wakeLock);
+        }
+    }
+
+    /// <summary>
+    /// Parks the decode thread until <see cref="wake"/>, rather than looking again every millisecond.
+    /// </summary>
+    private void waitForWake(int timeoutMs)
+    {
+        lock (wakeLock)
+        {
+            if (!wakePending)
+                Monitor.Wait(wakeLock, timeoutMs);
+
+            wakePending = false;
+        }
+    }
 
     /// <summary>
     /// How many textures the pool holds, on either path.
@@ -210,6 +252,7 @@ public unsafe class VideoDecoder : IDisposable
         // (user toggling a setting) or the main thread (config load).
         // Route through decoderCommands so it runs safely in the decode loop.
         decoderCommands.Enqueue(recreateCodecContext);
+        wake();
     }
 
     /// <summary>
@@ -327,6 +370,8 @@ public unsafe class VideoDecoder : IDisposable
             decodeGeneration = generation;
             State = DecoderState.Ready;
         });
+
+        wake();
     }
 
     /// <summary>
@@ -340,6 +385,8 @@ public unsafe class VideoDecoder : IDisposable
             f.NativeTexture.Reset();
             availableTextures.Enqueue(f.NativeTexture);
         }
+
+        wake();
     }
 
     /// <summary>
@@ -397,11 +444,15 @@ public unsafe class VideoDecoder : IDisposable
         // one every frame that reached this code before the range was read at all was treated under.
         bool fullRange = range == AVColorRange.AVCOL_RANGE_JPEG;
 
-        if (fullRange)
-            return affineFrom(useHdtv ? rec709_full : rec601_full, 0f);
+        // Four transforms in all, made once each rather than for every frame; nothing writes into one handed out.
+        int index = (useHdtv ? 2 : 0) + (fullRange ? 1 : 0);
 
-        return affineFrom(useHdtv ? rec709_limited : rec601_limited, limited_luma_offset);
+        return affine_transforms[index] ??= fullRange
+            ? affineFrom(useHdtv ? rec709_full : rec601_full, 0f)
+            : affineFrom(useHdtv ? rec709_limited : rec601_limited, limited_luma_offset);
     }
+
+    private static readonly float[]?[] affine_transforms = new float[4][];
 
     // Column-major 3x3 YUV->RGB coefficients: m[0..2] is the Y column, m[3..5] Cb, m[6..8] Cr, so the
     // shader's mat * (y, cb, cr) reads them straight through.
@@ -894,8 +945,8 @@ public unsafe class VideoDecoder : IDisposable
                 {
                     case DecoderState.Ready:
                     case DecoderState.Running:
-                        GlobalStatistics.Get<int>("Video", "Pool Available").Value = availableTextures.Count;
-                        GlobalStatistics.Get<int>("Video", "Pending Frames").Value = decodedFrames.Count;
+                        stat_pool_available.Value = availableTextures.Count;
+                        stat_pending_frames.Value = decodedFrames.Count;
 
                         // First, retry any frame that was decoded but couldn't be uploaded last
                         // time because the pool was empty. Only drop it if it now belongs to a
@@ -914,7 +965,7 @@ public unsafe class VideoDecoder : IDisposable
                             else
                             {
                                 // Pool still empty — wait for the draw thread to recycle a texture.
-                                Thread.Sleep(1);
+                                waitForWake(wake_timeout_ms);
                                 break;
                             }
                         }
@@ -924,12 +975,13 @@ public unsafe class VideoDecoder : IDisposable
                         else
                         {
                             State = DecoderState.Ready;
-                            Thread.Sleep(1);
+                            waitForWake(wake_timeout_ms);
                         }
                         break;
 
                     case DecoderState.EndOfStream:
-                        Thread.Sleep(50);
+                        // A seek back (a loop, a replay) is a command, which wakes this at once.
+                        waitForWake(50);
                         break;
 
                     default:
@@ -1003,9 +1055,48 @@ public unsafe class VideoDecoder : IDisposable
 
         if (result == 0 || result == -ffmpeg.EAGAIN)
             readDecodedFrames(receiveFrame);
-        else
-            Logger.Warning($"[VideoDecoder] avcodec_send_packet error: {result}");
+        else if (result != ffmpeg.AVERROR_EOF)
+            noteCodecFailure(result, "avcodec_send_packet");
+
         return result;
+    }
+
+    // Codec calls that failed in a row with no frame between, and rebuilds since the last frame: what tells a decoder
+    // that's gone from one bad packet.
+    private int codecFailures;
+    private int codecRebuilds;
+    private const int failures_before_rebuild = 3;
+    private const int rebuilds_before_giving_up = 3;
+
+    /// <summary>
+    /// Rebuilds the codec once its calls keep failing, and carries on from the last frame: Android takes a hardware
+    /// decoder from an app in the background, and every call fails once it's back. Gives up after a few rebuilds
+    /// that didn't produce a frame either.
+    /// </summary>
+    private void noteCodecFailure(int result, string call)
+    {
+        if (++codecFailures < failures_before_rebuild)
+        {
+            Logger.Warning($"[VideoDecoder] {call} error: {result}");
+            return;
+        }
+
+        codecFailures = 0;
+
+        if (++codecRebuilds > rebuilds_before_giving_up)
+        {
+            Logger.Error($"[VideoDecoder] The decoder keeps failing ({call}: {result}) even rebuilt, so the video stops here.");
+            State = DecoderState.Faulted;
+            return;
+        }
+
+        Logger.Warning($"[VideoDecoder] The decoder stopped working ({call}: {result}), so it's rebuilt and carries on from {lastDecodedFrameTime:0} ms.");
+
+        recreateCodecContext();
+
+        // A new decoder has to start from a keyframe, and a seek finds the one before.
+        if (CanSeek)
+            Seek(lastDecodedFrameTime);
     }
 
     private void readDecodedFrames(AVFrame* receiveFrame)
@@ -1018,6 +1109,12 @@ public unsafe class VideoDecoder : IDisposable
 
             if (result < 0)
             {
+                if (result != -ffmpeg.EAGAIN && result != ffmpeg.AVERROR_EOF)
+                {
+                    noteCodecFailure(result, "avcodec_receive_frame");
+                    break;
+                }
+
                 // Codec fully drained (EOF) while still in a post-seek skip means the seek target
                 // was at or past the last frame. Emit the held frame so we show the final frame
                 // instead of freezing on blank. EAGAIN just means "need more input" — keep holding.
@@ -1046,6 +1143,9 @@ public unsafe class VideoDecoder : IDisposable
 
             long startTime = avStream->start_time != ffmpeg.AV_NOPTS_VALUE ? avStream->start_time : 0;
             double frameTime = (ts - startTime) * timeBaseInSeconds * 1000.0;
+
+            codecFailures = 0;
+            codecRebuilds = 0;
 
             // Resolve pixel format — transfer from HW memory if needed
             FFmpegFrame frame;
@@ -1141,6 +1241,8 @@ public unsafe class VideoDecoder : IDisposable
                 {
                     for (int i = 0; i < max_pending_frames; i++)
                         availableTextures.Enqueue(new VideoTexture(renderer, textureManager, shape));
+
+                    wake();
                 });
             }
 
@@ -1187,7 +1289,7 @@ public unsafe class VideoDecoder : IDisposable
 
         if (tex == null)
         {
-            GlobalStatistics.Get<int>("Video", "Frames Waiting (Pool Empty)", StatisticKind.Cumulative).Value++;
+            stat_frames_waiting.Value++;
             return false;
         }
 
@@ -1197,15 +1299,14 @@ public unsafe class VideoDecoder : IDisposable
 
         // Texture is a dimension-only proxy — no GL handles, no Video namespace import needed.
         // VideoSprite reads NativeTexture directly for rendering.
-        var texture = new Texture(shape.Width, shape.Height);
         decodedFrames.Enqueue(new DecodedFrame
         {
             Time = frameTime,
-            Texture = texture,
+            Texture = tex.LayoutProxy,
             NativeTexture = tex,
             Generation = generation,
         });
-        GlobalStatistics.Get<int>("Video", "Frames Decoded", StatisticKind.Cumulative).Value++;
+        stat_frames_decoded.Value++;
         return true;
     }
 
@@ -1331,6 +1432,7 @@ public unsafe class VideoDecoder : IDisposable
 
         decoderCommands.Clear();
         cts?.Cancel();
+        wake();
         decodeTask?.Wait();
 
         if (formatContext != null && inputOpened)

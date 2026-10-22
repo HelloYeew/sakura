@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Maths;
 using SakuraVertex = Sakura.Framework.Graphics.Rendering.Vertex.Vertex;
 
@@ -10,7 +11,8 @@ namespace Sakura.Framework.Graphics.Rendering;
 
 /// <summary>
 /// One clip region as the fragment shader's <c>applyClipping</c> reads it from each vertex: the
-/// rounded parallelogram's center and un-sheared half size, its horizontal shear and corner radius.
+/// rounded parallelogram's center and un-sheared half size, its horizontal shear and corner radius, and
+/// the soft fade (<c>clipFade</c>) at its edges.
 /// </summary>
 internal readonly struct ClipState
 {
@@ -18,15 +20,45 @@ internal readonly struct ClipState
     public readonly float ShearX;
     public readonly float Radius;
 
+    /// <summary>
+    /// The edges the fade is measured from (Left, Top, Right, Bottom), in screen space.
+    /// </summary>
+    public readonly Vector4 FadeEdges;
+
+    /// <summary>
+    /// How far in from each of <see cref="FadeEdges"/> the content fades in (Left, Top, Right, Bottom).
+    /// 0 on a side is no fade there.
+    /// </summary>
+    public readonly Vector4 FadeLength;
+
     public ClipState(Vector4 clipData, float shearX, float radius)
+        : this(clipData, shearX, radius, default, default)
+    {
+    }
+
+    public ClipState(Vector4 clipData, float shearX, float radius, Vector4 fadeEdges, Vector4 fadeLength)
     {
         ClipData = clipData;
         ShearX = shearX;
         Radius = radius;
+        FadeEdges = fadeEdges;
+        FadeLength = fadeLength;
     }
 
     // (0,0,-1,-1) means "no active clip" to the fragment shader's applyClipping.
     public static ClipState None => new ClipState(new Vector4(0, 0, -1, -1), 0, 0);
+
+    /// <summary>
+    /// Writes this clip onto <paramref name="vertex"/>.
+    /// </summary>
+    public void ApplyTo(ref SakuraVertex vertex)
+    {
+        vertex.ClipData = ClipData;
+        vertex.ClipShearX = ShearX;
+        vertex.ClipRadius = Radius;
+        vertex.ClipFadeEdges = FadeEdges;
+        vertex.ClipFadeLength = FadeLength;
+    }
 }
 
 /// <summary>
@@ -56,7 +88,9 @@ internal sealed class ClipStack
     /// intersection is taken between axis-aligned bounding boxes, accounting for horizontal shear, and
     /// the new mask's own shear and corner radius are kept.
     /// </summary>
-    public void Push(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius)
+    /// <param name="fade">How far in from each of the mask's edges its content fades in, in screen
+    /// space. See <see cref="Fade"/>.</param>
+    public void Push(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, MarginPadding fade = default)
     {
         stack.Push(Current);
 
@@ -68,6 +102,7 @@ internal sealed class ClipStack
         float bottom = maskCenter.Y + maskHalfSize.Y;
 
         var parent = Current;
+        var (fadeEdges, fadeLength) = Fade(parent, left, top, right, bottom, fade);
 
         // If already inside a parent mask (Z > 0), intersect their bounding boxes.
         if (parent.ClipData.Z > 0)
@@ -95,7 +130,47 @@ internal sealed class ClipStack
             // Remove the skew offset again so the shader receives the true un-sheared half-size.
             newHalfSize.X = Math.Max(0.0001f, newHalfSize.X - skewOffset);
 
-        Current = new ClipState(new Vector4(newCenter.X, newCenter.Y, newHalfSize.X, newHalfSize.Y), shearX, cornerRadius);
+        Current = new ClipState(new Vector4(newCenter.X, newCenter.Y, newHalfSize.X, newHalfSize.Y), shearX, cornerRadius, fadeEdges, fadeLength);
+    }
+
+    /// <summary>
+    /// The fade for the content of a mask with the bounding box (<paramref name="left"/>,
+    /// <paramref name="top"/>, <paramref name="right"/>, <paramref name="bottom"/>) and its own
+    /// <paramref name="fade"/>, pushed inside <paramref name="parent"/>: the mask's own on each side it
+    /// fades, measured from its bounding box (a sheared mask's slanted sides aren't followed), and the
+    /// enclosing mask's on the rest, so content inside a nested mask (a rounded cover in a faded list)
+    /// still fades.
+    /// </summary>
+    internal static (Vector4 Edges, Vector4 Length) Fade(ClipState parent, float left, float top, float right, float bottom, MarginPadding fade)
+    {
+        var edges = parent.FadeEdges;
+        var length = parent.FadeLength;
+
+        if (fade.Left > 0)
+        {
+            edges.X = left;
+            length.X = fade.Left;
+        }
+
+        if (fade.Top > 0)
+        {
+            edges.Y = top;
+            length.Y = fade.Top;
+        }
+
+        if (fade.Right > 0)
+        {
+            edges.Z = right;
+            length.Z = fade.Right;
+        }
+
+        if (fade.Bottom > 0)
+        {
+            edges.W = bottom;
+            length.W = fade.Bottom;
+        }
+
+        return (edges, length);
     }
 
     /// <summary>
@@ -116,10 +191,6 @@ internal sealed class ClipStack
         var clip = Current;
 
         for (int i = 0; i < vertices.Length; i++)
-        {
-            vertices[i].ClipData = clip.ClipData;
-            vertices[i].ClipShearX = clip.ShearX;
-            vertices[i].ClipRadius = clip.Radius;
-        }
+            clip.ApplyTo(ref vertices[i]);
     }
 }

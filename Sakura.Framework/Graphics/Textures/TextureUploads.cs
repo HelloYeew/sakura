@@ -56,7 +56,11 @@ internal static class TextureUploads
     /// How many decoded images may be waiting for their GPU upload before a new decode is made to wait.
     /// Zero or less disables the limit.
     /// </summary>
-    public static int MaxOutstandingUploads { get; set; }
+    /// <remarks>
+    /// Four on a phone, where a screenful of covers decoding faster than they're uploaded would otherwise hold every
+    /// decoded image in memory at once, and a background can be 33 MB of them. No limit elsewhere.
+    /// </remarks>
+    public static int MaxOutstandingUploads { get; set; } = RuntimeInfo.IsMobile ? 4 : 0;
 
     /// <summary>
     /// How long a decode waits for upload headroom before giving up and proceeding anyway.
@@ -219,7 +223,7 @@ internal static class TextureUploads
     /// <summary>
     /// Runs one decode under <see cref="MaxConcurrentDecodes"/>.
     /// </summary>
-    private static ImageRawData decode(IImageLoader imageLoader, Stream stream, TextureCreationOptions options)
+    private static ImageRawData decode(IImageLoader imageLoader, Stream stream, TextureCreationOptions options, int maxTextureSize)
     {
         // Before the gate, and before anything is rented: this waits for buffers already decoded to be
         // uploaded and returned to the pool, so it must not itself be holding one or a permit to make one.
@@ -234,7 +238,7 @@ internal static class TextureUploads
 
         try
         {
-            return imageLoader.Load(stream, options.Decode);
+            return imageLoader.Load(stream, options.Decode.FitWithin(maxTextureSize));
         }
         finally
         {
@@ -306,7 +310,7 @@ internal static class TextureUploads
             // it would serialize every texture load behind an unrelated one. The gate below bounds decode
             // concurrency without contending on the store — see MaxConcurrentDecodes for why bounding it
             // at all is the point.
-            raw = decode(imageLoader, stream, options);
+            raw = decode(imageLoader, stream, options, renderer.MaxTextureSize);
 
             if (!raw.IsValid || raw.Width <= 0 || raw.Height <= 0)
             {
