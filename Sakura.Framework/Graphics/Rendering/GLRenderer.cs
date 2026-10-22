@@ -271,11 +271,49 @@ public class GLRenderer : IGLRenderer, IDisposable
         gl.StencilMask(0x00);
     }
 
+    // When the update the frame being drawn shows was made, and on Android, when frames reach the screen, for the
+    // surface it was set up for (a new one comes back from the background).
+    private long frameContentTicks;
+    private EglFrameTimestamps? frameTimestamps;
+    private nint timedSurface;
+
+    private readonly DisplayLatency displayLatency = new DisplayLatency("EGL_ANDROID_get_frame_timestamps");
+
+    public void SetFrameContentTime(long timestamp) => frameContentTicks = timestamp;
+
+    public double DisplayLatencyMilliseconds => displayLatency.Milliseconds ?? double.NaN;
+
+    /// <summary>
+    /// Measures the frames Android's EGL reports on screen by now, setting up for the surface drawn to first if it's
+    /// new. Nothing anywhere else: no other window system says when a GL frame was shown.
+    /// </summary>
+    private void measureShown()
+    {
+        nint surface = EglFrameTimestamps.CurrentSurface();
+
+        if (surface == 0)
+            return;
+
+        if (surface != timedSurface)
+        {
+            timedSurface = surface;
+            frameTimestamps = EglFrameTimestamps.TryCreate();
+
+            Logger.Verbose(frameTimestamps != null
+                ? "OpenGL frame timing: EGL present times on"
+                : "OpenGL frame timing: unavailable, EGL can't report when frames are shown here");
+        }
+
+        frameTimestamps?.Measure(displayLatency);
+    }
+
     public void StartFrame()
     {
         // Release native resources orphaned by the GC (a missed Dispose) before anything else this
         // frame, so their memory is freed before new allocations are made against it.
         Textures.NativeDisposalQueue.Process();
+
+        measureShown();
 
         while (drawThreadQueue.TryDequeue(out var action))
         {
@@ -409,6 +447,10 @@ public class GLRenderer : IGLRenderer, IDisposable
         // Publish a stable snapshot of this frame's totals for cross-thread consumers (e.g. the
         // texture viewer). Done after the final batch flush so all binds for the frame are counted.
         TextureBindTracker.EndFrame();
+
+        // The host swaps right after this.
+        if (frameContentTicks != 0)
+            frameTimestamps?.FrameSwapping(frameContentTicks);
 
         insertFrameFence();
     }

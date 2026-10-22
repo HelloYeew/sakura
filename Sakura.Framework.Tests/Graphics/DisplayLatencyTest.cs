@@ -70,6 +70,17 @@ public class DisplayLatencyTest
         Assert.That(latency.Milliseconds, Is.EqualTo(16).Within(0.001), "vsync turned off");
     }
 
+    /// <summary>
+    /// Present times that come in nanoseconds of the monotonic clock (Android, Linux) as Stopwatch timestamps.
+    /// </summary>
+    [Test]
+    public void TestNanosecondsAsStopwatchTicks()
+    {
+        long ticks = DisplayLatency.TicksFromNanoseconds(2_500_000_000);
+
+        Assert.That(ticks / (double)Stopwatch.Frequency, Is.EqualTo(2.5).Within(1e-6));
+    }
+
     [Test]
     public void TestBetweenTwoTimestamps()
     {

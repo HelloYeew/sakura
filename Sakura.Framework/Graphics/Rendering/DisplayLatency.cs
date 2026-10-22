@@ -69,6 +69,14 @@ internal sealed class DisplayLatency
     /// </summary>
     public static double Between(long contentTimestamp, long shownTimestamp) => (shownTimestamp - contentTimestamp) * 1000.0 / Stopwatch.Frequency;
 
+    /// <summary>
+    /// A time in nanoseconds of the monotonic clock as a <see cref="Stopwatch"/> timestamp: the same clock on Android and
+    /// Linux, where present times come in nanoseconds.
+    /// </summary>
+    public static long TicksFromNanoseconds(long nanoseconds) => Stopwatch.Frequency == 1_000_000_000
+        ? nanoseconds
+        : (long)(nanoseconds * (Stopwatch.Frequency / 1_000_000_000.0));
+
     public void Add(double milliseconds)
     {
         if (milliseconds <= 0 || milliseconds > max_ms)

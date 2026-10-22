@@ -807,7 +807,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
             long contentTicks = contentTicksOf(timings[i].presentID);
 
             if (contentTicks != 0)
-                displayLatency.Add(DisplayLatency.Between(contentTicks, stopwatchTicks(timings[i].actualPresentTime)));
+                displayLatency.Add(DisplayLatency.Between(contentTicks, DisplayLatency.TicksFromNanoseconds((long)timings[i].actualPresentTime)));
         }
     }
 
@@ -821,11 +821,6 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
         return 0;
     }
-
-    // The swapchain's nanoseconds as Stopwatch ticks, which on Android read the same monotonic clock.
-    private static long stopwatchTicks(ulong nanoseconds) => Stopwatch.Frequency == 1_000_000_000
-        ? (long)nanoseconds
-        : (long)(nanoseconds * (Stopwatch.Frequency / 1_000_000_000.0));
 
     /// <summary>
     /// Follows the present just made until it reaches the screen; the oldest one is dropped when too many
