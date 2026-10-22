@@ -578,6 +578,48 @@ public class SdlAudioEngineTest
         manager.Update(0);
     }
 
+    /// <summary>
+    /// The ducker turns a target down under its own volume while the source is loud, on the SDL engine as on BASS, and
+    /// lets go of it once disposed.
+    /// </summary>
+    [TestCase(true)]
+    [TestCase(false)]
+    [FlakyTest]
+    public void AudioDuckerDucksAnSdlChannel(bool native)
+    {
+        using var manager = createManager(native);
+
+        var loud = manager.CreateTrackFromFile(writeTempCopy("Tracks.test.mp3")).GetChannel();
+        var target = manager.CreateTrackFromFile(writeTempCopy("Tracks.test.mp3")).GetChannel();
+        loud.Play();
+        target.Play();
+
+        var ducker = new AudioDucker(loud, target) { Threshold = 0.01f };
+        var duckable = (IDuckable)target;
+
+        var timeout = Stopwatch.StartNew();
+
+        while (duckable.Ducking >= 1 && timeout.Elapsed < TimeSpan.FromSeconds(10))
+        {
+            manager.Update(0);
+            ducker.Update();
+            Thread.Sleep(10);
+        }
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(duckable.Ducking, Is.EqualTo(ducker.DuckMultiplier).Within(0.0001), "turned down while the source plays");
+            Assert.That(target.Volume.Value, Is.EqualTo(1), "under its own volume, which is left alone");
+        }
+
+        ducker.Dispose();
+        Assert.That(duckable.Ducking, Is.EqualTo(1), "let go of");
+
+        loud.Dispose();
+        target.Dispose();
+        manager.Update(0);
+    }
+
     private static void playFor(SDLAudioManager manager, TimeSpan duration)
     {
         var elapsed = Stopwatch.StartNew();

@@ -2,8 +2,6 @@
 // See the LICENSE file for full license text.
 
 using System;
-using ManagedBass;
-using Sakura.Framework.Audio.BassEngine;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Reactive;
 
@@ -13,12 +11,14 @@ namespace Sakura.Framework.Audio;
 /// A component that monitors a source audio channel and duck the volume
 /// of a target audio channel based on the source's output level.
 /// </summary>
+/// <remarks>
+/// The target is turned down under its own <see cref="IAudioChannel.Volume"/>, which is left as its owner set it, on
+/// every backend. Removed or disposed, the ducker lets go of it.
+/// </remarks>
 public partial class AudioDucker : Component
 {
     private readonly IAudioChannel source;
     private readonly IAudioChannel target;
-
-    private readonly Reactive<double> targetVolumeBindable;
 
     /// <summary>
     /// How loud the source must be (0.0 to 1.0) to trigger maximum ducking.
@@ -43,54 +43,55 @@ public partial class AudioDucker : Component
     /// </summary>
     public double CurrentDuckFactor => currentDuckFactor;
 
-    public AudioDucker(IAudioChannel source, IAudioChannel target, Reactive.Reactive<double> targetVolumeBindable)
+    public AudioDucker(IAudioChannel source, IAudioChannel target)
     {
         this.source = source;
         this.target = target;
-        this.targetVolumeBindable = targetVolumeBindable;
 
         AlwaysPresent = true; // Ensure this updates even if hidden
+    }
+
+    [Obsolete("The target is ducked under its own volume, which needn't be passed: use the constructor that takes the two channels.")]
+    public AudioDucker(IAudioChannel source, IAudioChannel target, Reactive.Reactive<double> targetVolumeBindable)
+        : this(source, target)
+    {
     }
 
     public override void Update()
     {
         base.Update();
 
-        if (source is BassAudioChannel bassSource)
+        float peak = Math.Max(source.AmplitudeLeft, source.AmplitudeRight);
+
+        double targetDuckFactor = 1.0;
+        if (peak > Threshold)
         {
-            float peak = Math.Max(bassSource.AmplitudeLeft, bassSource.AmplitudeRight);
-
-            double targetDuckFactor = 1.0;
-            if (peak > Threshold)
-            {
-                // If it's loud, snap the duck factor down
-                targetDuckFactor = DuckMultiplier;
-            }
-
-            // Smoothly ease the current duck factor towards the target
-            if (currentDuckFactor > targetDuckFactor)
-            {
-                // Attack instantly
-                currentDuckFactor = targetDuckFactor;
-            }
-            else
-            {
-                // Recover smoothly over time (incorporate Clock for frame-rate independence)
-                currentDuckFactor += RecoverySpeed * (Clock.ElapsedFrameTime / 16.66f);
-                currentDuckFactor = Math.Min(1.0, currentDuckFactor);
-            }
-
-            // Apply the ducked multiplier to the original volume value
-            // Note: We bypass the Value setter to avoid triggering a feedback loop if needed,
-            // but since we are writing to the channel directly here:
-            if (target is BassAudioChannel bassTarget)
-            {
-                // Calculate the final volume: (Framework Target Volume) * (Ducking Factor)
-                double finalVolume = targetVolumeBindable.Value * currentDuckFactor;
-
-                // Apply directly to BASS to avoid mutating the user's Reactive value
-                Bass.ChannelSetAttribute(bassTarget.ChannelHandle, ChannelAttribute.Volume, (float)finalVolume);
-            }
+            // If it's loud, snap the duck factor down
+            targetDuckFactor = DuckMultiplier;
         }
+
+        // Smoothly ease the current duck factor towards the target
+        if (currentDuckFactor > targetDuckFactor)
+        {
+            // Attack instantly
+            currentDuckFactor = targetDuckFactor;
+        }
+        else
+        {
+            // Recover smoothly over time (incorporate Clock for frame-rate independence)
+            currentDuckFactor += RecoverySpeed * (Clock.ElapsedFrameTime / 16.66f);
+            currentDuckFactor = Math.Min(1.0, currentDuckFactor);
+        }
+
+        if (target is IDuckable duckable)
+            duckable.Ducking = currentDuckFactor;
+    }
+
+    protected override void Dispose(bool isDisposing)
+    {
+        if (target is IDuckable duckable)
+            duckable.Ducking = 1;
+
+        base.Dispose(isDisposing);
     }
 }
