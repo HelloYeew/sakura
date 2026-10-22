@@ -3,7 +3,9 @@
 
 using System;
 using Android.Content;
+using Android.Graphics;
 using Android.OS;
+using Android.Views;
 using Org.Libsdl.App;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Platform;
@@ -77,6 +79,33 @@ public abstract class SakuraActivity : SDLActivity
         System.Environment.CurrentDirectory = FilesDir!.AbsolutePath;
 
         base.OnCreate(savedInstanceState);
+
+        showSurfaceUnderSystemBars();
+    }
+
+    /// <summary>
+    /// The surface sits under the window, which draws backgrounds of its own behind the status and navigation
+    /// bars, over whatever the app drew there (a background that bleeds, for one). Those are made see-through,
+    /// with no contrast scrim either.
+    /// </summary>
+    private void showSurfaceUnderSystemBars()
+    {
+        var window = Window!;
+
+        window.AddFlags(WindowManagerFlags.DrawsSystemBarBackgrounds);
+
+        // Obsolete from API 35, where enforced edge-to-edge is meant to make the bars clear, but this theme's
+        // still came out black on an API 35 emulator without them.
+#pragma warning disable CA1422
+        window.SetStatusBarColor(Color.Transparent);
+        window.SetNavigationBarColor(Color.Transparent);
+
+        if (OperatingSystem.IsAndroidVersionAtLeast(29))
+        {
+            window.StatusBarContrastEnforced = false;
+            window.NavigationBarContrastEnforced = false;
+        }
+#pragma warning restore CA1422
     }
 
     protected override void Main()

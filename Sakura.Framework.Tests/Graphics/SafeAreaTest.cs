@@ -388,6 +388,30 @@ public class SafeAreaTest
     }
 
     [Test]
+    public void TestNestedBleedFollowsTheWindow()
+    {
+        Box headerBackground;
+        screen.OverrideSafeArea = null;
+        screen.Add(new Container
+        {
+            RelativeSizeAxes = Axes.Both,
+            Size = new Vector2(1),
+            Child = new Container
+            {
+                RelativeSizeAxes = Axes.X,
+                Size = new Vector2(1, 40),
+                Child = headerBackground = new Box { RelativeSizeAxes = Axes.Both, Size = new Vector2(1), Bleed = Edges.All }
+            }
+        });
+        settle();
+
+        root.Window.SafeAreaPadding.Value = new MarginPadding { Top = 30, Bottom = 10 };
+        settle();
+
+        assertRect(headerBackground.DrawRectangle, 0, 0, 800, 70);
+    }
+
+    [Test]
     public void TestPreviewFollowsOrientationAndScalesWithTheWindow()
     {
         // Twice an iPhone's short side, so twice its insets.
