@@ -123,6 +123,12 @@ public abstract partial class TextBox : Container, ITabStop, IHasCursor
     /// </summary>
     public int? LengthLimit { get; set; }
 
+    /// <summary>
+    /// The kind of text this box takes, which picks a touchscreen keyboard's layout and whether it suggests and
+    /// remembers words. It doesn't change how the text is drawn. Takes effect the next time the box gains focus.
+    /// </summary>
+    public TextInputType InputType { get; set; } = TextInputType.Text;
+
     private double caretBlinkDuration = 750;
 
     // When the caret last moved (or focus arrived), the start of the default blink cycle.
@@ -427,7 +433,7 @@ public abstract partial class TextBox : Container, ITabStop, IHasCursor
         base.OnFocus(e);
         resetCaretBlink();
         OnFocusGained();
-        window?.StartTextInput();
+        window?.StartTextInput(InputType);
         Invalidate(InvalidationFlags.DrawInfo);
     }
 
@@ -490,6 +496,10 @@ public abstract partial class TextBox : Container, ITabStop, IHasCursor
 
         if (e.Button == MouseButton.Left)
         {
+            // Focus doesn't change on a press in a box that has it, but the user may have put the virtual keyboard away.
+            if (HasFocus)
+                window?.StartTextInput(InputType);
+
             if (e.Clicks == 1)
             {
                 caretIndex = getIndexFromMouseX(e.ScreenSpaceMousePosition);

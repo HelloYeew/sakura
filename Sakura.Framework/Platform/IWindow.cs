@@ -280,8 +280,10 @@ public interface IWindow : IDisposable
 
     /// <summary>
     /// Start text input mode, which will show the OS virtual keyboard on mobile platforms and allow IME input on desktop platforms.
+    /// Calling it again while text input is on shows the virtual keyboard again if the user dismissed it.
     /// </summary>
-    void StartTextInput();
+    /// <param name="type">The kind of text, which picks the virtual keyboard's layout and whether it suggests words.</param>
+    void StartTextInput(TextInputType type = TextInputType.Text);
 
     /// <summary>
     /// Stop text input mode, which will hide the OS virtual keyboard on mobile platforms and disable IME input on desktop platforms.

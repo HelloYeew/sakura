@@ -94,7 +94,7 @@ public class HeadlessWindow : IWindow
         ExitRequested?.Invoke();
         Exited?.Invoke();
     }
-    public void StartTextInput()
+    public void StartTextInput(TextInputType type = TextInputType.Text)
     {
 
     }

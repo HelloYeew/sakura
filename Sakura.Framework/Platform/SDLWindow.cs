@@ -89,6 +89,7 @@ public class SDLWindow : IWindow
     private int lastNotifiedLogW;
     private int lastNotifiedLogH;
     private bool? pendingTextInputState;
+    private TextInputType pendingTextInputType;
     private RectangleF? pendingTextInputRect;
     private readonly Lock textInputLock = new Lock();
 
@@ -96,6 +97,13 @@ public class SDLWindow : IWindow
     // when the pending start/stop is applied. Used to gate the macOS emoji-palette shortcut so it
     // only opens when there's somewhere to insert.
     private bool textInputActive;
+
+    // The type the virtual keyboard was last opened with.
+    private TextInputType activeTextInputType;
+
+    // The text input area SDL has, in pixels, so an unchanged one isn't sent again.
+    private SDL_Rect appliedTextInputArea;
+    private bool textInputAreaApplied;
 
     private WindowMode windowMode = WindowMode.Windowed;
 
@@ -427,11 +435,12 @@ public class SDLWindow : IWindow
 
     public event Action RenderRequested = delegate { };
 
-    public void StartTextInput()
+    public void StartTextInput(TextInputType type = TextInputType.Text)
     {
         lock (textInputLock)
         {
             pendingTextInputState = true;
+            pendingTextInputType = type;
         }
     }
 
@@ -1413,6 +1422,36 @@ public class SDLWindow : IWindow
         OnDragDropText.Invoke(new DragDropTextEvent(text, new Vector2(dropEvent.x / contentScale, dropEvent.y / contentScale)));
     }
 
+    private unsafe void startTextInput(TextInputType type)
+    {
+        // A virtual keyboard takes its layout when it opens, so a field of another kind reopens it.
+        if (type != activeTextInputType && SDL_TextInputActive(window))
+            SDL_StopTextInput(window);
+
+        activeTextInputType = type;
+
+        var props = SDL_CreateProperties();
+
+        fixed (byte* name = SDL_PROP_TEXTINPUT_TYPE_NUMBER)
+            SDL_SetNumberProperty(props, name, (long)toSdlTextInputType(type));
+
+        // Shows the virtual keyboard again if it's hidden. Dismissing it (Back on Android) stops SDL's text input
+        // while the field keeps its focus, so a tap on the field calls this again to bring it back.
+        SDL_StartTextInputWithProperties(window, props);
+        SDL_DestroyProperties(props);
+    }
+
+    private static SDL_TextInputType toSdlTextInputType(TextInputType type) => type switch
+    {
+        TextInputType.Name => SDL_TextInputType.SDL_TEXTINPUT_TYPE_TEXT_NAME,
+        TextInputType.Email => SDL_TextInputType.SDL_TEXTINPUT_TYPE_TEXT_EMAIL,
+        TextInputType.Username => SDL_TextInputType.SDL_TEXTINPUT_TYPE_TEXT_USERNAME,
+        TextInputType.Password => SDL_TextInputType.SDL_TEXTINPUT_TYPE_TEXT_PASSWORD_HIDDEN,
+        TextInputType.Number => SDL_TextInputType.SDL_TEXTINPUT_TYPE_NUMBER,
+        TextInputType.NumberPassword => SDL_TextInputType.SDL_TEXTINPUT_TYPE_NUMBER_PASSWORD_HIDDEN,
+        _ => SDL_TextInputType.SDL_TEXTINPUT_TYPE_TEXT
+    };
+
     private unsafe void handleTextInputEvent(SDL_TextInputEvent textEvent)
     {
         string text = Marshal.PtrToStringUTF8((nint)textEvent.text);
@@ -1517,12 +1556,14 @@ public class SDLWindow : IWindow
         }
 
         bool? targetState;
+        TextInputType targetType;
         RectangleF? targetRect;
 
         // drain background thread commands safely
         lock (textInputLock)
         {
             targetState = pendingTextInputState;
+            targetType = pendingTextInputType;
             pendingTextInputState = null;
 
             targetRect = pendingTextInputRect;
@@ -1533,7 +1574,7 @@ public class SDLWindow : IWindow
         if (targetState.HasValue)
         {
             if (targetState.Value)
-                SDL_StartTextInput(window);
+                startTextInput(targetType);
             else
                 SDL_StopTextInput(window);
 
@@ -1551,7 +1592,15 @@ public class SDLWindow : IWindow
                 w = (int)(rect.Width * contentScale),
                 h = (int)(rect.Height * contentScale)
             };
-            SDL_SetTextInputArea(window, &sdlRect, 0);
+
+            // A focused field sends its caret every frame, but it rarely moves.
+            if (!textInputAreaApplied || sdlRect.x != appliedTextInputArea.x || sdlRect.y != appliedTextInputArea.y
+                || sdlRect.w != appliedTextInputArea.w || sdlRect.h != appliedTextInputArea.h)
+            {
+                SDL_SetTextInputArea(window, &sdlRect, 0);
+                appliedTextInputArea = sdlRect;
+                textInputAreaApplied = true;
+            }
         }
 
         // normal OS message processing
