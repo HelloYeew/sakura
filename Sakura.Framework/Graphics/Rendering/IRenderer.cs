@@ -203,6 +203,12 @@ public interface IRenderer
     INativeTexture CreateNativeTexture(int width, int height);
 
     /// <summary>
+    /// The longest edge a texture can have on this GPU, which decoded images are reduced to fit. Known once the
+    /// renderer is initialised; a phone's Vulkan may allow no more than 4096.
+    /// </summary>
+    int MaxTextureSize => int.MaxValue;
+
+    /// <summary>
     /// The physical-pixels-per-logical-unit scale of the current output
     /// (e.g. 2.0 on HiDPI displays). Use to size offscreen buffers in physical pixels.
     /// </summary>

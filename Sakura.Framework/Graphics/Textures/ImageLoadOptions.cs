@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.Textures;
@@ -50,6 +51,25 @@ public readonly struct ImageLoadOptions
     /// aspect first, the correct choice for a texture drawn with <see cref="TextureFillMode.Fill"/>.
     /// </summary>
     public static ImageLoadOptions FillTarget(Vector2 targetSize) => new ImageLoadOptions(targetSize, TextureFillMode.Fill);
+
+    /// <summary>
+    /// These options with the decoded size kept within <paramref name="maxDimension"/> on its longest edge: the largest
+    /// texture a GPU takes (<see cref="Rendering.IRenderer.MaxTextureSize"/>). A target box over it shrinks whole,
+    /// keeping its shape and so what a <see cref="TextureFillMode.Fill"/> crops.
+    /// </summary>
+    public ImageLoadOptions FitWithin(int maxDimension)
+    {
+        if (maxDimension <= 0 || maxDimension == int.MaxValue)
+            return this;
+
+        if (!HasTarget)
+            return new ImageLoadOptions(new Vector2(maxDimension), FillMode);
+
+        var target = TargetSize!.Value;
+        float longest = Math.Max(target.X, target.Y);
+
+        return longest <= maxDimension ? this : new ImageLoadOptions(target * (maxDimension / longest), FillMode);
+    }
 
     /// <summary>
     /// Whether a usable target size is set (at least one pixel on both axes).

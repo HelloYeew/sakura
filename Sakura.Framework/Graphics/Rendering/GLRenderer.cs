@@ -122,6 +122,8 @@ public class GLRenderer : IGLRenderer, IDisposable
     /// </summary>
     private int textureSlotCount = max_texture_slots;
 
+    public int MaxTextureSize { get; private set; } = int.MaxValue;
+
     private float renderScaleX = 1.0f;
     private float renderScaleY = 1.0f;
 
@@ -188,6 +190,11 @@ public class GLRenderer : IGLRenderer, IDisposable
         gl.GetInteger(GetPName.MaxTextureImageUnits, out int maxTextureImageUnits);
         textureSlotCount = Math.Clamp(maxTextureImageUnits, 1, max_texture_slots);
         Logger.Verbose($"GL Max Texture Image Units: {maxTextureImageUnits} (using {textureSlotCount} batch slots)");
+
+        gl.GetInteger(GetPName.MaxTextureSize, out int maxTextureSize);
+        if (maxTextureSize > 0)
+            MaxTextureSize = maxTextureSize;
+        Logger.Verbose($"GL Max Texture Size: {MaxTextureSize}");
 
         textureSamplers = new int[textureSlotCount];
         for (int i = 0; i < textureSlotCount; i++)

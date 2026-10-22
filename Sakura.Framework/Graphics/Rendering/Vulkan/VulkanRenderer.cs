@@ -326,6 +326,8 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     private VkCommandPool immediateCommandPool;
 
     private ulong uniformAlignment;
+
+    public int MaxTextureSize { get; private set; } = int.MaxValue;
     private ulong stagingAlignment;
     private bool mipmapsSupported;
 
@@ -402,6 +404,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
             swapchain = new VulkanSwapchain(device, vulkanSurface, renderPasses, surface);
 
         var limits = device.Properties.limits;
+        MaxTextureSize = (int)Math.Min(limits.maxImageDimension2D, int.MaxValue);
         uniformAlignment = Math.Max(limits.minUniformBufferOffsetAlignment, 16);
         // Copies from a buffer into a color image need the offset to be a multiple of the texel size.
         stagingAlignment = Math.Max(limits.optimalBufferCopyOffsetAlignment, 4);
