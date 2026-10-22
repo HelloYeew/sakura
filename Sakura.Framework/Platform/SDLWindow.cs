@@ -152,6 +152,45 @@ public class SDLWindow : IWindow
 
     public Reactive<WindowMode> WindowModeReactive { get; } = new Reactive<WindowMode>(WindowMode.Windowed);
 
+    public IReadOnlyList<WindowMode> SupportedWindowModes { get; } = fillsDisplay ? [WindowMode.Windowed, WindowMode.Borderless] : Enum.GetValues<WindowMode>();
+
+    /// <summary>
+    /// Whether the window always fills the screen, as on a phone: the system sizes it, so it has no size, position or
+    /// minimum of its own to apply or remember, and fullscreen only hides the system bars.
+    /// </summary>
+    private static bool fillsDisplay => RuntimeInfo.IsMobile;
+
+    // Only a desktop window in windowed mode has a size and position the user chose.
+    private bool remembersBounds => windowConfig != null && windowMode == WindowMode.Windowed && !fillsDisplay;
+
+    private static WindowMode supported(WindowMode mode) => fillsDisplay && mode == WindowMode.Fullscreen ? WindowMode.Borderless : mode;
+
+    private bool keepScreenOn = true;
+
+    public bool KeepScreenOn
+    {
+        get => keepScreenOn;
+        set
+        {
+            if (keepScreenOn == value)
+                return;
+
+            keepScreenOn = value;
+
+            if (!initialized)
+                return;
+
+            // On a phone this holds the screen on only while the app is in front; the system lets it sleep once it's
+            // not.
+            if (value)
+                SDL_DisableScreenSaver();
+            else
+                SDL_EnableScreenSaver();
+
+            Logger.Verbose(value ? "Keeping the screen on" : "Letting the screen sleep");
+        }
+    }
+
     public int Width => logicalWidth;
     public int Height => logicalHeight;
 
@@ -334,7 +373,7 @@ public class SDLWindow : IWindow
 
     private unsafe void applyMinimumSize()
     {
-        if (window == null) return;
+        if (window == null || fillsDisplay) return;
         SDL_SetWindowMinimumSize(window, (int)(minimumSize.X * contentScale), (int)(minimumSize.Y * contentScale));
     }
 
@@ -368,7 +407,11 @@ public class SDLWindow : IWindow
     {
         windowConfig = config;
 
-        var savedMode = config.Get<WindowMode>(FrameworkSetting.WindowMode).Value;
+        var savedModeConfig = config.Get<WindowMode>(FrameworkSetting.WindowMode);
+        var savedMode = supported(savedModeConfig.Value);
+
+        // So a settings screen shows the mode actually used.
+        savedModeConfig.Value = savedMode;
 
         windowMode = savedMode;
         WindowModeReactive.Value = savedMode;
@@ -503,6 +546,9 @@ public class SDLWindow : IWindow
         // mouse input itself, the way touchscreens behave (TouchMouseEmulation).
         SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
 
+        // SDL keeps the display on from initialisation unless told otherwise; set so it starts the way the app asked.
+        SDL_SetHint(SDL_HINT_VIDEO_ALLOW_SCREENSAVER, keepScreenOn ? "0" : "1");
+
         ConfigureHints();
 
         // Note: SDL3 is always per-monitor DPI aware; the SDL2-era Windows DPI hints are gone.
@@ -553,7 +599,7 @@ public class SDLWindow : IWindow
         int spawnW = 800;
         int spawnH = 600;
 
-        if (windowConfig != null && windowMode == WindowMode.Windowed)
+        if (remembersBounds)
         {
             int savedX = windowConfig.Get<int>(FrameworkSetting.WindowX).Value;
             int savedY = windowConfig.Get<int>(FrameworkSetting.WindowY).Value;
@@ -602,7 +648,8 @@ public class SDLWindow : IWindow
 
         updateSafeArea();
 
-        SDL_SetWindowPosition(window, spawnX, spawnY);
+        if (!fillsDisplay)
+            SDL_SetWindowPosition(window, spawnX, spawnY);
 
         if (windowMode == WindowMode.Fullscreen)
         {
@@ -944,7 +991,7 @@ public class SDLWindow : IWindow
 
         Logger.Verbose($"Window resized to {drawW}x{drawH} (logical size: {logicalWidth}x{logicalHeight})");
 
-        if (windowConfig != null && windowMode == WindowMode.Windowed)
+        if (remembersBounds)
         {
             windowConfig.Get<int>(FrameworkSetting.WindowWidth).Value = logW;
             windowConfig.Get<int>(FrameworkSetting.WindowHeight).Value = logH;
@@ -998,6 +1045,8 @@ public class SDLWindow : IWindow
 
     private unsafe void setWindowMode(WindowMode newMode)
     {
+        newMode = supported(newMode);
+
         if (windowMode == newMode)
             return;
 
@@ -1014,6 +1063,10 @@ public class SDLWindow : IWindow
             {
                 case WindowMode.Windowed:
                     SDL_SetWindowFullscreen(window, false);
+
+                    if (fillsDisplay)
+                        break;
+
                     SDL_SetWindowBordered(window, true);
 
                     if (windowConfig != null)
@@ -1251,7 +1304,7 @@ public class SDLWindow : IWindow
                 break;
 
             case SDL_EventType.SDL_EVENT_WINDOW_MOVED:
-                if (windowConfig != null && windowMode == WindowMode.Windowed)
+                if (remembersBounds)
                 {
                     int posX, posY;
                     SDL_GetWindowPosition(window, &posX, &posY);

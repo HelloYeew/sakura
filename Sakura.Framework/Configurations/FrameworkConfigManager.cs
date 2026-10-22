@@ -38,7 +38,9 @@ public class FrameworkConfigManager : ConfigManager<FrameworkSetting>
         // A phone's output takes audio in bursts of its own size (0 asks for that); a buffer that doesn't line up
         // with them keeps the stream off the low-latency path.
         Get(FrameworkSetting.AudioDeviceBufferFrames, pacing.Mobile ? 0 : SDLAudioManager.DEFAULT_DEVICE_BUFFER_FRAMES);
-        Get(FrameworkSetting.WindowMode, WindowMode.Windowed);
+        // A game on a phone hides the system bars, so an edge swipe in play only shows them rather than leaving; an
+        // application keeps them, like the phone's other apps.
+        Get(FrameworkSetting.WindowMode, pacing.Mobile && pacing.AppType == AppType.Game ? WindowMode.Borderless : WindowMode.Windowed);
         Get(FrameworkSetting.HardwareAcceleration, true);
         Get(FrameworkSetting.VideoZeroCopy, true);
         Get(FrameworkSetting.RendererType, RendererType.Automatic);

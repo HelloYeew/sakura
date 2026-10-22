@@ -28,6 +28,17 @@ public class FrameworkConfigManagerTest
         Assert.That(config.Get<FrameSync>(FrameworkSetting.FrameLimiter).Value, Is.EqualTo(FrameSync.VSync));
     }
 
+    [TestCase(AppType.Game, false, WindowMode.Windowed)]
+    [TestCase(AppType.Application, false, WindowMode.Windowed)]
+    [TestCase(AppType.Game, true, WindowMode.Borderless)]
+    [TestCase(AppType.Application, true, WindowMode.Windowed)]
+    public void TestOnlyAPhoneGameStartsWithoutSystemBars(AppType appType, bool mobile, WindowMode expected)
+    {
+        var config = new FrameworkConfigManager(null!, new FramePacing(appType, mobile));
+
+        Assert.That(config.Get<WindowMode>(FrameworkSetting.WindowMode).Value, Is.EqualTo(expected));
+    }
+
     [Test]
     public void TestPhoneAsksForTheOutputsOwnBuffer()
     {

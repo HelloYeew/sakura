@@ -59,6 +59,13 @@ public abstract class AppHost : IDisposable
 
     public Reactive<FrameSync> FrameLimiter { get; set; }
     public Reactive<ExecutionMode> ExecutionMode { get; set; }
+
+    /// <summary>
+    /// Whether the display stays on while the app runs, rather than dimming and sleeping on the system's timer. On
+    /// for a game, which is often watched without being touched, and off for an application. Either can change it:
+    /// an application while it plays a video, say, or a game only during play.
+    /// </summary>
+    public Reactive<bool> KeepScreenOn { get; }
     protected internal Clock UpdateClock { get; private set; }
     protected internal Clock DrawClock { get; private set; }
     protected internal Clock AudioClock { get; private set; }
@@ -298,6 +305,7 @@ public abstract class AppHost : IDisposable
         }
 
         Name = appName;
+        KeepScreenOn = new Reactive<bool>(Options.AppType == AppType.Game);
     }
 
     /// <summary>
@@ -562,6 +570,8 @@ public abstract class AppHost : IDisposable
             Window = CreateWindow();
             Window.Title = Options.FriendlyAppName;
             Window.ApplicationName = Name;
+            Window.KeepScreenOn = KeepScreenOn.Value;
+            KeepScreenOn.ValueChanged += e => mainThreadActions.Enqueue(() => Window.KeepScreenOn = e.NewValue);
 
             Window.OnKeyDown += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.KeyDown, Key = e });
             Window.OnKeyUp += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.KeyUp, Key = e });
@@ -955,18 +965,17 @@ public abstract class AppHost : IDisposable
         {
             ScheduleToMainThread(() =>
             {
-                switch (Window.WindowMode)
+                // Cycles through the modes the platform has: windowed, borderless, then fullscreen on desktop.
+                var modes = Window.SupportedWindowModes;
+                int current = 0;
+
+                for (int i = 0; i < modes.Count; i++)
                 {
-                    case WindowMode.Windowed:
-                        Window.WindowMode = WindowMode.Borderless;
-                        break;
-                    case WindowMode.Borderless:
-                        Window.WindowMode = WindowMode.Fullscreen;
-                        break;
-                    case WindowMode.Fullscreen:
-                        Window.WindowMode = WindowMode.Windowed;
-                        break;
+                    if (modes[i] == Window.WindowMode)
+                        current = i;
                 }
+
+                Window.WindowMode = modes[(current + 1) % modes.Count];
             });
         }
         if (!e.IsRepeat && e.Key == Key.F12 && (e.Modifiers & KeyModifiers.Control) > 0)

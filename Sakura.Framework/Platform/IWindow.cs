@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Generic;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Input;
 using Sakura.Framework.Platform.Dialogs;
@@ -69,6 +70,17 @@ public interface IWindow : IDisposable
     /// A reactive wrapper around the current window mode.
     /// </summary>
     Reactive<WindowMode> WindowModeReactive { get; }
+
+    /// <summary>
+    /// The window modes this platform has, for a settings screen to offer. A phone's window always fills the screen,
+    /// so it has <see cref="Platform.WindowMode.Windowed"/> and <see cref="Platform.WindowMode.Borderless"/> only.
+    /// </summary>
+    IReadOnlyList<WindowMode> SupportedWindowModes { get; }
+
+    /// <summary>
+    /// Whether the display stays on while the app runs, rather than dimming and sleeping on the system's timer.
+    /// </summary>
+    bool KeepScreenOn { get; set; }
 
     /// <summary>
     /// Whether the OS hardware cursor is visible

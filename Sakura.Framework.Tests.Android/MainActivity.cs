@@ -12,7 +12,7 @@ namespace Sakura.Framework.Tests.Android;
     MainLauncher = true,
     Exported = true,
     LaunchMode = LaunchMode.SingleInstance,
-    Theme = "@android:style/Theme.Black.NoTitleBar.Fullscreen",
+    Theme = "@android:style/Theme.Black.NoTitleBar",
     // Rotating, resizing or folding would otherwise restart the activity; the app lays itself out again instead.
     ConfigurationChanges = ConfigChanges.Keyboard | ConfigChanges.KeyboardHidden | ConfigChanges.Navigation | ConfigChanges.Orientation
                            | ConfigChanges.ScreenLayout | ConfigChanges.ScreenSize | ConfigChanges.SmallestScreenSize | ConfigChanges.UiMode

@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Input;
@@ -24,6 +25,8 @@ public class HeadlessWindow : IWindow
     public int Height => 600;
     public WindowMode WindowMode { get; set; } = WindowMode.Windowed;
     public Reactive<WindowMode> WindowModeReactive { get; } = new Reactive<WindowMode>(WindowMode.Windowed);
+    public IReadOnlyList<WindowMode> SupportedWindowModes { get; } = Enum.GetValues<WindowMode>();
+    public bool KeepScreenOn { get; set; }
     public bool CursorVisible { get; set; } = true;
     public Reactive<CursorState> CursorState { get; } = new Reactive<CursorState>(Input.CursorState.Default);
     public bool CursorInWindow { get; } = true;

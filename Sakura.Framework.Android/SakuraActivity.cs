@@ -174,6 +174,17 @@ public abstract class SakuraActivity : SDLActivity
     }
 
     /// <summary>
+    /// SDL would pick the orientation from the window as it's made, allowing every one unless the app set
+    /// <c>SDL_HINT_ORIENTATIONS</c>, over whatever the activity's manifest entry asks for. The manifest decides
+    /// instead: it applies before the activity shows, so an app made for landscape doesn't start upright and turn.
+    /// </summary>
+    public override void SetOrientationBis(int w, int h, bool resizable, string? hint)
+    {
+        if (!string.IsNullOrEmpty(hint))
+            base.SetOrientationBis(w, h, resizable, hint);
+    }
+
+    /// <summary>
     /// The surface sits under the window, which draws backgrounds of its own behind the status and navigation
     /// bars, over whatever the app drew there (a background that bleeds, for one). Those are made see-through,
     /// with no contrast scrim either.
@@ -183,6 +194,12 @@ public abstract class SakuraActivity : SDLActivity
         var window = Window!;
 
         window.AddFlags(WindowManagerFlags.DrawsSystemBarBackgrounds);
+
+        // Up to Android 14 the cutout is letterboxed in black once the bars are hidden (Borderless), unless the window
+        // asks to draw there; the safe area keeps content clear of it. Android 15 does this for every app targeting it.
+        var attributes = window.Attributes!;
+        attributes.LayoutInDisplayCutoutMode = OperatingSystem.IsAndroidVersionAtLeast(30) ? LayoutInDisplayCutoutMode.Always : LayoutInDisplayCutoutMode.ShortEdges;
+        window.Attributes = attributes;
 
         // Obsolete from API 35, where enforced edge-to-edge is meant to make the bars clear, but this theme's
         // still came out black on an API 35 emulator without them.
