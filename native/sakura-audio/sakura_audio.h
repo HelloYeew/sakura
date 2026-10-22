@@ -33,7 +33,8 @@ extern "C" {
 //   * any number of *writer* threads call sakura_audio_stream_* , at most one per voice. That is the
 //     decode thread, and it is the only producer for that voice's ring.
 //   * the *audio* thread is SDL's, and only ever enters through the callback returned by
-//     sakura_audio_get_stream_callback.
+//     sakura_audio_get_stream_callback -- or on Android, AAudio's, through the one returned by
+//     sakura_audio_get_aaudio_callback.
 //   * reads of published state -- sakura_audio_node_get_state, sakura_audio_node_read_spectrum,
 //     sakura_audio_engine_get_stats -- are safe from any thread and never block the audio thread.
 //     The FFT behind read_spectrum runs on the calling thread by design; it must never be moved
@@ -93,6 +94,14 @@ void sakura_audio_set_sdl_put(sakura_sdl_put_fn function);
 // The SDL_AudioStreamCallback-compatible entry point to hand to SDL_OpenAudioDeviceStream, with an
 // engine pointer as its userdata. Returned as void* so that no SDL type appears in this header.
 void *sakura_audio_get_stream_callback(void);
+
+// --- AAudio --------------------------------------------------------------------------------------
+
+// The AAudioStream_dataCallback-compatible entry point to hand to AAudioStreamBuilder_setDataCallback,
+// with an engine pointer as its userData, for a float stream config.channels wide. On Android the engine
+// plays this way, straight into AAudio's buffer, with nothing of SDL's in between. The managed side opens,
+// starts and closes the stream; this library still calls no platform API, and no AAudio type appears here.
+void *sakura_audio_get_aaudio_callback(void);
 
 // --- Engine --------------------------------------------------------------------------------------
 

@@ -1653,6 +1653,33 @@ static void stream_callback(void *userdata, void *stream, int additionalAmount, 
 
 void *sakura_audio_get_stream_callback(void) { return (void *)stream_callback; }
 
+// AAudio's data callback (AAudioStream_dataCallback), for Android, where the engine plays without SDL in
+// between: the mix goes straight into the buffer AAudio hands over. Same discipline as stream_callback.
+// The stream is a pointer and the result an int32_t, so no AAudio header is needed, and 0 is
+// AAUDIO_CALLBACK_RESULT_CONTINUE: stopping is the managed side's to do, through the stream.
+static int32_t aaudio_callback(void *stream, void *userdata, void *audioData, int32_t numFrames)
+{
+    (void)stream;
+
+    SakuraAudioEngine *engine = (SakuraAudioEngine *)userdata;
+
+    if (engine == NULL || audioData == NULL || numFrames <= 0)
+        return 0;
+
+    int64_t started = now_microseconds();
+
+    process_commands(engine);
+    sync_streams(engine);
+
+    mix_frames(engine, (float *)audioData, numFrames);
+
+    sakura_atomic_add_i64(&engine->statCallbacks, 1);
+    sakura_atomic_store_i64(&engine->statCallbackMicroseconds, now_microseconds() - started);
+    return 0;
+}
+
+void *sakura_audio_get_aaudio_callback(void) { return (void *)aaudio_callback; }
+
 int sakura_audio_engine_mix(SakuraAudioEngine *engine, float *destination, int frames)
 {
     if (engine == NULL || destination == NULL || frames <= 0)
