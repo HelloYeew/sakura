@@ -466,7 +466,14 @@ public class SdlAudioEngineTest
 
         var timeout = Stopwatch.StartNew();
 
-        while (GlobalStatistics.Get<int>("Audio", "SDL Active Voices").Value == 0 && timeout.Elapsed < TimeSpan.FromSeconds(5))
+        // The voice is active as soon as it plays, but the device's first callback (or the managed mixer's first
+        // block) can come much later: a USB interface takes a while to start pulling.
+        bool published() => GlobalStatistics.Get<int>("Audio", "SDL Active Voices").Value > 0
+                            && (native
+                                ? GlobalStatistics.Get<long>("Audio", "SDL Callback").Value > 0
+                                : GlobalStatistics.Get<long>("Audio", "SDL Mix Block").Value > 0);
+
+        while (!published() && timeout.Elapsed < TimeSpan.FromSeconds(5))
         {
             manager.Update(0);
             Thread.Sleep(10);
