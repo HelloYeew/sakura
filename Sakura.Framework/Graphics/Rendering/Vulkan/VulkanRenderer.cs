@@ -256,13 +256,31 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     private bool waitReported;
 
     /// <summary>
-    /// Presents not yet seen on screen, oldest first, each with when the frame it shows started its work.
+    /// Presents not yet seen on screen, oldest first, each with when the frame it shows started its work, and when
+    /// the update it shows was made.
     /// </summary>
-    private readonly (ulong Id, long StartTicks)[] pendingPresents = new (ulong, long)[max_pending_presents];
+    private readonly (ulong Id, long StartTicks, long ContentTicks)[] pendingPresents = new (ulong, long, long)[max_pending_presents];
 
     private int pendingPresentFirst;
     private int pendingPresentCount;
     private long frameStartTicks;
+
+    // When the update the frame being drawn shows was made (SetFrameContentTime), and when the presents were last
+    // looked for on screen.
+    private long frameContentTicks;
+    private long lastPresentCheckTicks;
+
+    private const int max_timed_presents = 16;
+
+    /// <summary>
+    /// The display-timing IDs of the latest presents, each with when the update it shows was made, for their times on
+    /// screen to be measured from once the swapchain reports them. Round and round: by the time one is overwritten,
+    /// it's long been reported or never will be.
+    /// </summary>
+    private readonly (uint Id, long ContentTicks)[] timedPresents = new (uint, long)[max_timed_presents];
+
+    private int timedPresentNext;
+    private DisplayLatency? displayLatency;
 
     /// <summary>
     /// Two timestamps per frame slot, at the start of the frame's first command buffer and the end of its
@@ -328,6 +346,10 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     private ulong uniformAlignment;
 
     public int MaxTextureSize { get; private set; } = int.MaxValue;
+
+    public void SetFrameContentTime(long timestamp) => frameContentTicks = timestamp;
+
+    public double DisplayLatencyMilliseconds => displayLatency?.Milliseconds ?? double.NaN;
     private ulong stagingAlignment;
     private bool mipmapsSupported;
 
@@ -405,6 +427,10 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
         var limits = device.Properties.limits;
         MaxTextureSize = (int)Math.Min(limits.maxImageDimension2D, int.MaxValue);
+
+        // Exactly when each frame was shown where the swapchain reports it, or about when it was seen to have been.
+        if (device.SupportsDisplayTiming || device.SupportsPresentWait)
+            displayLatency = new DisplayLatency(device.SupportsDisplayTiming ? "VK_GOOGLE_display_timing" : "VK_KHR_present_wait");
         uniformAlignment = Math.Max(limits.minUniformBufferOffsetAlignment, 16);
         // Copies from a buffer into a color image need the offset to be a multiple of the texel size.
         stagingAlignment = Math.Max(limits.optimalBufferCopyOffsetAlignment, 4);
@@ -734,9 +760,17 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     /// </summary>
     private void checkPresents()
     {
+        long now = Stopwatch.GetTimestamp();
+
+        // A present seen on screen now got there some time since the last look: halfway, on average.
+        long seenAround = lastPresentCheckTicks == 0 ? now : lastPresentCheckTicks + (now - lastPresentCheckTicks) / 2;
+        lastPresentCheckTicks = now;
+
+        readPresentationTimings();
+
         while (pendingPresentCount > 0)
         {
-            var (id, startTicks) = pendingPresents[pendingPresentFirst];
+            var (id, startTicks, contentTicks) = pendingPresents[pendingPresentFirst];
             var result = swapchain!.WaitForPresent(id, 0);
 
             if (result == VkResult.Timeout)
@@ -744,12 +778,54 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
             // Anything else but success (out of date, lost) means this present will never be reported.
             if (result == VkResult.Success)
+            {
                 stat_present_latency.Value = Stopwatch.GetElapsedTime(startTicks).TotalMilliseconds;
+
+                // Display timing says when exactly, where there is any.
+                if (!device!.SupportsDisplayTiming && contentTicks != 0)
+                    displayLatency?.Add(DisplayLatency.Between(contentTicks, seenAround));
+            }
 
             pendingPresentFirst = (pendingPresentFirst + 1) % max_pending_presents;
             pendingPresentCount--;
         }
     }
+
+    /// <summary>
+    /// Measures the frames the swapchain reports the times on screen of, from the updates they showed.
+    /// </summary>
+    private void readPresentationTimings()
+    {
+        if (swapchain == null || displayLatency == null || !device!.SupportsDisplayTiming)
+            return;
+
+        Span<VkPastPresentationTimingGOOGLE> timings = stackalloc VkPastPresentationTimingGOOGLE[max_timed_presents];
+        int count = swapchain.ReadPastPresentationTimings(timings);
+
+        for (int i = 0; i < count; i++)
+        {
+            long contentTicks = contentTicksOf(timings[i].presentID);
+
+            if (contentTicks != 0)
+                displayLatency.Add(DisplayLatency.Between(contentTicks, stopwatchTicks(timings[i].actualPresentTime)));
+        }
+    }
+
+    private long contentTicksOf(uint timingId)
+    {
+        foreach (var (id, contentTicks) in timedPresents)
+        {
+            if (id == timingId)
+                return contentTicks;
+        }
+
+        return 0;
+    }
+
+    // The swapchain's nanoseconds as Stopwatch ticks, which on Android read the same monotonic clock.
+    private static long stopwatchTicks(ulong nanoseconds) => Stopwatch.Frequency == 1_000_000_000
+        ? (long)nanoseconds
+        : (long)(nanoseconds * (Stopwatch.Frequency / 1_000_000_000.0));
 
     /// <summary>
     /// Follows the present just made until it reaches the screen; the oldest one is dropped when too many
@@ -763,7 +839,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
             pendingPresentCount--;
         }
 
-        pendingPresents[(pendingPresentFirst + pendingPresentCount) % max_pending_presents] = (id, frameStartTicks);
+        pendingPresents[(pendingPresentFirst + pendingPresentCount) % max_pending_presents] = (id, frameStartTicks, frameContentTicks);
         pendingPresentCount++;
     }
 
@@ -1059,6 +1135,12 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
         if (device.SupportsPresentWait && result >= VkResult.Success)
             trackPresent(swapchain.LastPresentId);
+
+        if (device.SupportsDisplayTiming && result >= VkResult.Success)
+        {
+            timedPresents[timedPresentNext] = (swapchain.LastTimingId, frameContentTicks);
+            timedPresentNext = (timedPresentNext + 1) % max_timed_presents;
+        }
 
         switch (result)
         {

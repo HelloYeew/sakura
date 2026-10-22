@@ -273,6 +273,10 @@ public abstract class AppHost : IDisposable
 
     private readonly FrameBufferManager frameBufferManager = new FrameBufferManager();
     private readonly DrawNode[] rootDrawNodes = new DrawNode[3];
+
+    // When the update each of rootDrawNodes came from began, for the renderer to measure how long its frames take to
+    // reach the screen from (IRenderer.SetFrameContentTime).
+    private readonly long[] rootDrawNodeTimes = new long[3];
     private DrawNode currentFrameDrawNode;
 
     private ThreadRunner threadRunner;
@@ -1327,6 +1331,9 @@ public abstract class AppHost : IDisposable
     /// </summary>
     protected virtual void PerformUpdate()
     {
+        // Before anything reads a clock: this is the moment the frame's drawn as of.
+        long updateTime = Stopwatch.GetTimestamp();
+
         while (inputQueue.TryDequeue(out var input))
         {
             dispatchInput(in input);
@@ -1352,6 +1359,7 @@ public abstract class AppHost : IDisposable
 
         int updateIndex = frameBufferManager.GetUpdateIndex();
         rootDrawNodes[updateIndex] = app?.GenerateDrawNodeSubtree(updateIndex);
+        rootDrawNodeTimes[updateIndex] = updateTime;
         frameBufferManager.FinishUpdate();
     }
 
@@ -1371,6 +1379,7 @@ public abstract class AppHost : IDisposable
         if (currentFrameNode != null)
         {
             Renderer?.SetRoot(currentFrameNode);
+            Renderer?.SetFrameContentTime(rootDrawNodeTimes[drawIndex]);
         }
 
         Renderer?.Draw(DrawClock);

@@ -73,6 +73,11 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
     /// </summary>
     public ulong LastPresentId { get; private set; }
 
+    /// <summary>
+    /// The display-timing ID the last present carried (<c>VK_GOOGLE_display_timing</c>), or 0 before the first.
+    /// </summary>
+    public uint LastTimingId { get; private set; }
+
     private VkImage[] images = [];
     private VkImageView[] views = [];
     private VkFramebuffer[] framebuffers = [];
@@ -314,6 +319,7 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
         var wait = renderFinished[imageIndex];
         var mode = PresentMode;
         ulong id = LastPresentId + 1;
+        uint timingId = LastTimingId + 1;
 
         var modeInfo = new VkSwapchainPresentModeInfoKHR
         {
@@ -328,9 +334,19 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
             pPresentIds = &id,
         };
 
-        var presentInfo = new VkPresentInfoKHR
+        // As soon as it can be shown: the ID only asks for when it was, for ReadPastPresentationTimings.
+        var time = new VkPresentTimeGOOGLE { presentID = timingId };
+
+        var timesInfo = new VkPresentTimesInfoGOOGLE
         {
             pNext = device.SupportsPresentWait ? &idInfo : switchesModes ? &modeInfo : null,
+            swapchainCount = 1,
+            pTimes = &time,
+        };
+
+        var presentInfo = new VkPresentInfoKHR
+        {
+            pNext = device.SupportsDisplayTiming ? &timesInfo : timesInfo.pNext,
             waitSemaphoreCount = 1,
             pWaitSemaphores = &wait,
             swapchainCount = 1,
@@ -344,7 +360,32 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
         if (device.SupportsPresentWait && result >= VkResult.Success)
             LastPresentId = id;
 
+        if (device.SupportsDisplayTiming && result >= VkResult.Success)
+            LastTimingId = timingId;
+
         return result;
+    }
+
+    /// <summary>
+    /// Fills <paramref name="timings"/> with when the presents not reported yet reached the screen, oldest first,
+    /// and returns how many there were. Their times are nanoseconds of the presentation engine's clock, which on
+    /// Android is the monotonic clock <see cref="System.Diagnostics.Stopwatch"/> reads. Needs
+    /// <c>VK_GOOGLE_display_timing</c>.
+    /// </summary>
+    public int ReadPastPresentationTimings(Span<VkPastPresentationTimingGOOGLE> timings)
+    {
+        uint count = (uint)timings.Length;
+
+        fixed (VkPastPresentationTimingGOOGLE* first = timings)
+        {
+            var result = device.Api.vkGetPastPresentationTimingGOOGLE(Handle, &count, first);
+
+            // Incomplete: more were waiting than there was room for, and the rest come next time.
+            if (result != VkResult.Success && result != VkResult.Incomplete)
+                return 0;
+        }
+
+        return (int)count;
     }
 
     /// <summary>

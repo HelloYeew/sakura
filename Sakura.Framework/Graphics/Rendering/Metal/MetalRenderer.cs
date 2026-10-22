@@ -298,6 +298,43 @@ public sealed class MetalRenderer : IMetalRenderer
 
     private double blockedMilliseconds;
 
+    // When the update the frame being drawn shows was made, which the native side tags the frame with, and whether
+    // it can: a library from before frame timing can't.
+    private long frameContentTicks;
+    private bool framesTimed = true;
+
+    private readonly DisplayLatency displayLatency = new DisplayLatency("Metal's presented times");
+
+    public void SetFrameContentTime(long timestamp) => frameContentTicks = timestamp;
+
+    public double DisplayLatencyMilliseconds => displayLatency.Milliseconds ?? double.NaN;
+
+    /// <summary>
+    /// Measures the latest frame Metal has reported on screen, from the update it showed. Metal reports in host time,
+    /// lined up with <see cref="Stopwatch"/>'s here by reading both clocks at once.
+    /// </summary>
+    private void measurePresented()
+    {
+        if (!framesTimed)
+            return;
+
+        try
+        {
+            if (SakuraMetalNative.sakura_metal_take_presented(device, out long contentTicks, out double presentedTime) == 0)
+                return;
+
+            double hostNow = SakuraMetalNative.sakura_metal_host_time();
+            long now = Stopwatch.GetTimestamp();
+            long shown = now - (long)((hostNow - presentedTime) * Stopwatch.Frequency);
+
+            displayLatency.Add(DisplayLatency.Between(contentTicks, shown));
+        }
+        catch (EntryPointNotFoundException)
+        {
+            framesTimed = false;
+        }
+    }
+
     public void StartFrame()
     {
         blockedMilliseconds = 0;
@@ -315,6 +352,8 @@ public sealed class MetalRenderer : IMetalRenderer
 
         // Budgeted texture uploads spread a burst across frames (see TextureUploadQueue).
         textureUploadQueue.Process();
+
+        measurePresented();
 
         // Timed because this acquires the layer's next drawable, and the layer hands one back only
         // when the display has released it, so a frame waiting here is waiting on the display, not
@@ -439,6 +478,18 @@ public sealed class MetalRenderer : IMetalRenderer
         // Done after the final flush, so the batch's binds land in this frame's count rather than the
         // next one's.
         TextureBindTracker.EndFrame();
+
+        if (framesTimed && frameContentTicks != 0)
+        {
+            try
+            {
+                SakuraMetalNative.sakura_metal_set_frame_tag(device, frameContentTicks);
+            }
+            catch (EntryPointNotFoundException)
+            {
+                framesTimed = false;
+            }
+        }
 
         // The other half of the device waits: committing the command buffer and scheduling the present.
         long blockStart = Stopwatch.GetTimestamp();

@@ -40,6 +40,9 @@ internal sealed unsafe class VulkanDevice : IDisposable
     private const string video_maintenance1_extension = "VK_KHR_video_maintenance1";
     private const string present_id_extension = "VK_KHR_present_id";
     private const string present_wait_extension = "VK_KHR_present_wait";
+
+    // When each present actually reached the screen. Android's own swapchain offers it on every device.
+    private const string display_timing_extension = "VK_GOOGLE_display_timing";
     private const string surface_capabilities2_extension = "VK_KHR_get_surface_capabilities2";
 
     /// <summary>
@@ -95,6 +98,7 @@ internal sealed unsafe class VulkanDevice : IDisposable
     [
         "VK_KHR_present_id",
         "VK_KHR_present_wait",
+        "VK_GOOGLE_display_timing",
         "VK_KHR_swapchain_maintenance1",
         "VK_EXT_swapchain_maintenance1",
         "VK_EXT_memory_budget",
@@ -173,6 +177,12 @@ internal sealed unsafe class VulkanDevice : IDisposable
     /// (<c>VK_KHR_present_id</c> and <c>VK_KHR_present_wait</c>).
     /// </summary>
     public bool SupportsPresentWait { get; private set; }
+
+    /// <summary>
+    /// Whether presents can carry an ID that the swapchain later reports the time it reached the screen for
+    /// (<c>VK_GOOGLE_display_timing</c>).
+    /// </summary>
+    public bool SupportsDisplayTiming { get; private set; }
 
     /// <summary>
     /// Whether a swapchain can be created to switch between compatible present modes from one present to
@@ -841,6 +851,12 @@ internal sealed unsafe class VulkanDevice : IDisposable
         if (presents)
             extensions.Add(swapchain_extension);
 
+        if (presents && candidate.Extensions.Contains(display_timing_extension))
+        {
+            extensions.Add(display_timing_extension);
+            SupportsDisplayTiming = true;
+        }
+
         // The spec requires enabling this whenever a device offers it: it is how a portability driver
         // says which parts of Vulkan it doesn't implement.
         if (candidate.Extensions.Contains(portability_subset_extension))
@@ -1106,7 +1122,7 @@ internal sealed unsafe class VulkanDevice : IDisposable
             ? $"Vulkan video: decodes {DecodeOperations} on queue family {decodeFamily}, into frames the renderer samples in place"
             : $"Vulkan video: no decode queue{(SharesVideoFrames ? string.Empty : ", and decoded frames couldn't be shared (needs Vulkan 1.3 with timeline semaphores and synchronization2)")}");
         Logger.Verbose($"Vulkan optional extensions available: {(optional.Length > 0 ? optional : "none")}");
-        Logger.Verbose($"Vulkan presentation: present wait {(SupportsPresentWait ? "on" : "unavailable")}, present-mode switching {(SupportsPresentModeSwitching ? "on" : "unavailable")}, GPU timestamps {(GraphicsTimestampBits > 0 ? $"{GraphicsTimestampBits} bits" : "unavailable")}");
+        Logger.Verbose($"Vulkan presentation: present wait {(SupportsPresentWait ? "on" : "unavailable")}, display timing {(SupportsDisplayTiming ? "on" : "unavailable")}, present-mode switching {(SupportsPresentModeSwitching ? "on" : "unavailable")}, GPU timestamps {(GraphicsTimestampBits > 0 ? $"{GraphicsTimestampBits} bits" : "unavailable")}");
         Logger.Verbose($"Vulkan validation: {(ValidationEnabled ? syncValidation ? "on, with synchronization validation" : "on" : "off")}");
     }
 

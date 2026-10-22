@@ -209,6 +209,23 @@ public interface IRenderer
     int MaxTextureSize => int.MaxValue;
 
     /// <summary>
+    /// When the update whose draw nodes the next <see cref="Draw"/> draws was made, as a
+    /// <see cref="System.Diagnostics.Stopwatch"/> timestamp: what <see cref="DisplayLatencyMilliseconds"/> is
+    /// measured from. The host sets it before each draw.
+    /// </summary>
+    void SetFrameContentTime(long timestamp)
+    {
+    }
+
+    /// <summary>
+    /// How long a frame takes from the update it shows to being on screen, in milliseconds, settled over the frames
+    /// before: how far ahead anything drawn in time with something else (music) has to be drawn, for it to be seen on
+    /// time. Everything but the panel's own response is in it. NaN where the backend can't tell when a frame
+    /// reached the screen.
+    /// </summary>
+    double DisplayLatencyMilliseconds => double.NaN;
+
+    /// <summary>
     /// The physical-pixels-per-logical-unit scale of the current output
     /// (e.g. 2.0 on HiDPI displays). Use to size offscreen buffers in physical pixels.
     /// </summary>
