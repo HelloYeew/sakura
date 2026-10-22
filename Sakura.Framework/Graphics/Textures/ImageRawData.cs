@@ -45,7 +45,13 @@ public readonly struct ImageRawData : IDisposable
     /// <summary>
     /// Pixel buffers come from a dedicated pool rather than <see cref="ArrayPool{T}.Shared"/>.
     /// </summary>
-    private static readonly ArrayPool<byte> pixel_pool = ArrayPool<byte>.Create(max_pooled_length, max_buffers_per_bucket);
+    private static ArrayPool<byte> pixelPool = ArrayPool<byte>.Create(max_pooled_length, max_buffers_per_bucket);
+
+    /// <summary>
+    /// Lets go of every buffer kept for reuse, which can be a hundred megabytes and more, for a system short of memory:
+    /// the next images rent new ones. A buffer out now goes back to the new pool, which takes buffers of the same sizes.
+    /// </summary>
+    internal static void TrimPool() => Volatile.Write(ref pixelPool, ArrayPool<byte>.Create(max_pooled_length, max_buffers_per_bucket));
 
     private static readonly GlobalStatistic<long> stat_live_bytes = GlobalStatistics.Get<long>("Textures", "Pixel Buffer Bytes (live)", StatisticKind.Gauge, StatisticUnit.Bytes);
     private static readonly GlobalStatistic<long> stat_peak_bytes = GlobalStatistics.Get<long>("Textures", "Pixel Buffer Bytes (peak)", StatisticKind.Gauge, StatisticUnit.Bytes);
@@ -109,7 +115,7 @@ public readonly struct ImageRawData : IDisposable
     public static ImageRawData Rent(int width, int height)
     {
         int length = checked(width * height * 4);
-        byte[] rented = pixel_pool.Rent(length);
+        byte[] rented = Volatile.Read(ref pixelPool).Rent(length);
 
         accountRent(rented.Length);
 
@@ -215,7 +221,7 @@ public readonly struct ImageRawData : IDisposable
             if (claimed == null || !pooled)
                 return;
 
-            pixel_pool.Return(claimed);
+            Volatile.Read(ref pixelPool).Return(claimed);
             accountRelease(claimed.Length);
         }
     }
