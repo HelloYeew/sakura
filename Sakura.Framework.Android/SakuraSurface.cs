@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Diagnostics;
 using Android.Content;
 using Android.Graphics;
 using Android.Views;
@@ -51,6 +52,39 @@ internal class SakuraSurface : SDLSurface
 
         RequestUnbufferedDispatch((int)InputSourceType.Touchscreen);
         Logger.Verbose("Touches are dispatched as they happen");
+    }
+
+    public override bool OnTouch(View? view, MotionEvent? e)
+    {
+        if (e == null)
+            return base.OnTouch(view, e);
+
+        // SDL would stamp the touches with when they reach it; they get when they happened instead.
+        AndroidWindow.SetMotionEventTime(happenedAt(e));
+
+        try
+        {
+            return base.OnTouch(view, e);
+        }
+        finally
+        {
+            AndroidWindow.SetMotionEventTime(0);
+        }
+    }
+
+    /// <summary>
+    /// When <paramref name="e"/> happened, on the <see cref="Stopwatch"/> timeline. Both count from the same monotonic
+    /// clock the system's uptime does.
+    /// </summary>
+    private static long happenedAt(MotionEvent e)
+    {
+        double ticksPerNanosecond = Stopwatch.Frequency / 1e9;
+
+        if (OperatingSystem.IsAndroidVersionAtLeast(34))
+            return (long)(e.EventTimeNanos * ticksPerNanosecond);
+
+        // Whole milliseconds before Android 14, cut down rather than rounded; the middle of the millisecond is closer.
+        return (long)((e.EventTime * 1_000_000 + 500_000) * ticksPerNanosecond);
     }
 
     public override void SurfaceChanged(ISurfaceHolder? holder, Format format, int width, int height)

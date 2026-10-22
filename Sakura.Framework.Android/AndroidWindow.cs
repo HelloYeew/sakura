@@ -35,6 +35,12 @@ internal class AndroidWindow : SDLWindow
 
     protected override MarginPadding? GetPlatformSafeAreaInsets() => activity.CoveredInsets;
 
+    /// <summary>
+    /// Gives the touches SDL makes from the next <c>MotionEvent</c> the time it happened; 0 once SDL has it. Called on
+    /// the UI thread, around SDL's handling of the event.
+    /// </summary>
+    internal static void SetMotionEventTime(long stopwatchTimestamp) => SetTouchTime(stopwatchTimestamp);
+
     protected override float? GetPlatformRefreshRate() => activity.RefreshRate > 0 ? activity.RefreshRate : null;
 
     protected override void ConfigureHints()
