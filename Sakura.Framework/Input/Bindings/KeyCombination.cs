@@ -29,7 +29,7 @@ public readonly struct KeyCombination : IEquatable<KeyCombination>
 
     public KeyCombination(IEnumerable<InputKey> keys)
     {
-        this.keys = normalise(keys);
+        this.keys = Normalise(keys);
     }
 
     public KeyCombination(params InputKey[] keys)
@@ -95,11 +95,16 @@ public readonly struct KeyCombination : IEquatable<KeyCombination>
     /// are folded to logical form before comparison.</param>
     /// <param name="matchingMode">How strictly the pressed set must match.</param>
     public bool IsPressed(IReadOnlyCollection<InputKey> pressedKeys, KeyCombinationMatchingMode matchingMode)
+        => !Keys.IsEmpty && IsPressedNormalised(Normalise(pressedKeys), matchingMode);
+
+    /// <summary>
+    /// <see cref="IsPressed"/> for keys already through <see cref="Normalise"/>, so an event matched against every
+    /// binding there is normalises the keys held once rather than once a binding.
+    /// </summary>
+    internal bool IsPressedNormalised(ImmutableArray<InputKey> pressed, KeyCombinationMatchingMode matchingMode)
     {
         if (Keys.IsEmpty)
             return false;
-
-        var pressed = normalise(pressedKeys);
 
         switch (matchingMode)
         {
@@ -114,10 +119,15 @@ public readonly struct KeyCombination : IEquatable<KeyCombination>
                 if (!containsAll(pressed, Keys))
                     return false;
 
-                // ...and the pressed modifier set must equal the combination's modifier set.
-                var pressedMods = pressed.Where(k => k.IsLogicalModifier()).ToHashSet();
-                var requiredMods = Keys.Where(k => k.IsLogicalModifier()).ToHashSet();
-                return pressedMods.SetEquals(requiredMods);
+                // ...and the pressed modifier set must equal the combination's modifier set: every one the combination
+                // has is pressed (above), so no modifier may be pressed that it doesn't have.
+                foreach (var key in pressed)
+                {
+                    if (key.IsLogicalModifier() && !Keys.Contains(key))
+                        return false;
+                }
+
+                return true;
 
             default:
                 return false;
@@ -146,7 +156,11 @@ public readonly struct KeyCombination : IEquatable<KeyCombination>
         return Keys.Contains(folded);
     }
 
-    private static ImmutableArray<InputKey> normalise(IEnumerable<InputKey> keys)
+    /// <summary>
+    /// The keys as a combination holds them: physical modifiers folded to logical ones, no <see cref="InputKey.None"/>,
+    /// each once, in order.
+    /// </summary>
+    internal static ImmutableArray<InputKey> Normalise(IEnumerable<InputKey> keys)
     {
         var set = new SortedSet<InputKey>();
 

@@ -85,9 +85,7 @@ public abstract partial class KeyBindingContainer<T> : KeyBindingContainer where
     {
         var result = new List<InputKey>();
 
-        var manager = GetContainingInputManager();
-        if (manager != null)
-            result.AddRange(manager.CurrentState.GetPressedInputKeys());
+        GetContainingInputManager()?.CurrentState.AddPressedInputKeys(result);
 
         foreach (var modifier in modifierKeys(eventModifiers))
         {
@@ -110,16 +108,16 @@ public abstract partial class KeyBindingContainer<T> : KeyBindingContainer where
         // The pressed state already lives in the shared InputState; just recompute matches. Repeats
         // are driven off the event's IsRepeat flag (and only forwarded when SendRepeats is set).
         if (e.IsRepeat)
-            return SendRepeats && updatePressedBindings(currentPressedKeys(e.Modifiers), repeat: true, scrollDelta: Vector2.Zero);
+            return SendRepeats && updatePressedBindings(currentPressedKeys(e.Modifiers), repeat: true, scrollDelta: Vector2.Zero, e.Timestamp);
 
-        return updatePressedBindings(currentPressedKeys(e.Modifiers), repeat: false, scrollDelta: Vector2.Zero);
+        return updatePressedBindings(currentPressedKeys(e.Modifiers), repeat: false, scrollDelta: Vector2.Zero, e.Timestamp);
     }
 
     public override bool OnKeyUp(KeyEvent e)
     {
         base.OnKeyUp(e);
 
-        releaseBindingsNoLongerMatched(currentPressedKeys(e.Modifiers));
+        releaseBindingsNoLongerMatched(currentPressedKeys(e.Modifiers), e.Timestamp);
         return false;
     }
 
@@ -128,14 +126,14 @@ public abstract partial class KeyBindingContainer<T> : KeyBindingContainer where
         if (base.OnMouseDown(e))
             return true;
 
-        return updatePressedBindings(currentPressedKeys(), repeat: false, scrollDelta: Vector2.Zero);
+        return updatePressedBindings(currentPressedKeys(), repeat: false, scrollDelta: Vector2.Zero, e.Timestamp);
     }
 
     public override bool OnMouseUp(MouseButtonEvent e)
     {
         base.OnMouseUp(e);
 
-        releaseBindingsNoLongerMatched(currentPressedKeys());
+        releaseBindingsNoLongerMatched(currentPressedKeys(), e.Timestamp);
         return false;
     }
 
@@ -158,8 +156,8 @@ public abstract partial class KeyBindingContainer<T> : KeyBindingContainer where
             return false;
 
         var pressed = currentPressedKeys(transient: scrollKey);
-        bool handled = updatePressedBindings(pressed, repeat: false, scrollDelta: delta);
-        releaseBindingsNoLongerMatched(currentPressedKeys());
+        bool handled = updatePressedBindings(pressed, repeat: false, scrollDelta: delta, double.NaN);
+        releaseBindingsNoLongerMatched(currentPressedKeys(), double.NaN);
 
         return handled;
     }
@@ -169,14 +167,14 @@ public abstract partial class KeyBindingContainer<T> : KeyBindingContainer where
         if (base.OnGamepadButtonDown(e))
             return true;
 
-        return updatePressedBindings(currentPressedKeys(), repeat: false, scrollDelta: Vector2.Zero);
+        return updatePressedBindings(currentPressedKeys(), repeat: false, scrollDelta: Vector2.Zero, e.Timestamp);
     }
 
     public override bool OnGamepadButtonUp(GamepadButtonEvent e)
     {
         base.OnGamepadButtonUp(e);
 
-        releaseBindingsNoLongerMatched(currentPressedKeys());
+        releaseBindingsNoLongerMatched(currentPressedKeys(), e.Timestamp);
         return false;
     }
 
@@ -184,21 +182,25 @@ public abstract partial class KeyBindingContainer<T> : KeyBindingContainer where
     /// Recomputes which bindings are satisfied by <paramref name="pressedKeys"/> and fires press
     /// events for any newly-satisfied bindings, subject to the simultaneous-binding mode.
     /// </summary>
-    private bool updatePressedBindings(IReadOnlyCollection<InputKey> pressedKeys, bool repeat, Vector2 scrollDelta)
+    private bool updatePressedBindings(IReadOnlyCollection<InputKey> pressedKeys, bool repeat, Vector2 scrollDelta, double timestamp)
     {
-        var newlyPressed = KeyBindings
-                           .Where(b => b.KeyCombination.IsPressed(pressedKeys, MatchingMode))
-                           .Where(b => repeat || !isBindingActive(b))
-                           .ToList();
+        List<KeyBinding>? newlyPressed = null;
+        var pressed = KeyCombination.Normalise(pressedKeys);
 
-        if (newlyPressed.Count == 0)
+        foreach (var binding in KeyBindings)
+        {
+            if (binding.KeyCombination.IsPressedNormalised(pressed, MatchingMode) && (repeat || !isBindingActive(binding)))
+                (newlyPressed ??= new List<KeyBinding>()).Add(binding);
+        }
+
+        if (newlyPressed == null)
             return false;
 
         // In None mode, only the most specific (largest) combination should win, and any existing
         // active binding is released first.
         if (SimultaneousMode == SimultaneousBindingMode.None)
         {
-            releaseAllPressedBindings();
+            releaseAllPressedBindings(timestamp);
             newlyPressed = newlyPressed
                            .OrderByDescending(b => b.KeyCombination.Keys.Length)
                            .Take(1)
@@ -216,7 +218,7 @@ public abstract partial class KeyBindingContainer<T> : KeyBindingContainer where
                 continue;
             }
 
-            var (claimed, handler) = dispatchPress(binding.GetAction<T>(), repeat, scrollDelta);
+            var (claimed, handler) = dispatchPress(binding.GetAction<T>(), repeat, scrollDelta, timestamp);
             handled |= claimed;
 
             if (!repeat)
@@ -227,32 +229,42 @@ public abstract partial class KeyBindingContainer<T> : KeyBindingContainer where
     }
 
     private bool isBindingActive(KeyBinding binding)
-        => pressedBindings.Any(p => ReferenceEquals(p.Binding, binding));
+    {
+        foreach (var pressed in pressedBindings)
+        {
+            if (ReferenceEquals(pressed.Binding, binding))
+                return true;
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// Releases any active binding whose combination is no longer satisfied by
     /// <paramref name="pressedKeys"/>.
     /// </summary>
-    private void releaseBindingsNoLongerMatched(IReadOnlyCollection<InputKey> pressedKeys)
+    private void releaseBindingsNoLongerMatched(IReadOnlyCollection<InputKey> pressedKeys, double timestamp)
     {
+        var normalised = KeyCombination.Normalise(pressedKeys);
+
         for (int i = pressedBindings.Count - 1; i >= 0; i--)
         {
             var pressed = pressedBindings[i];
 
-            if (!pressed.Binding.KeyCombination.IsPressed(pressedKeys, MatchingMode))
+            if (!pressed.Binding.KeyCombination.IsPressedNormalised(normalised, MatchingMode))
             {
-                releasePressedBinding(i);
+                releasePressedBinding(i, timestamp);
             }
         }
     }
 
-    private void releaseAllPressedBindings()
+    private void releaseAllPressedBindings(double timestamp = double.NaN)
     {
         for (int i = pressedBindings.Count - 1; i >= 0; i--)
-            releasePressedBinding(i);
+            releasePressedBinding(i, timestamp);
     }
 
-    private void releasePressedBinding(int index)
+    private void releasePressedBinding(int index, double timestamp)
     {
         var pressed = pressedBindings[index];
         pressedBindings.RemoveAt(index);
@@ -264,7 +276,7 @@ public abstract partial class KeyBindingContainer<T> : KeyBindingContainer where
             return;
         }
 
-        pressed.Handler?.OnReleased(new KeyBindingReleaseEvent<T>(pressed.Binding.GetAction<T>()));
+        pressed.Handler?.OnReleased(new KeyBindingReleaseEvent<T>(pressed.Binding.GetAction<T>(), timestamp));
     }
 
     private static IEnumerable<InputKey> modifierKeys(KeyModifiers modifiers)
@@ -276,9 +288,9 @@ public abstract partial class KeyBindingContainer<T> : KeyBindingContainer where
         if ((modifiers & KeyModifiers.Alt) != 0)
             yield return InputKey.Alt;
     }
-    private (bool handled, IKeyBindingHandler<T>? handler) dispatchPress(T action, bool repeat, Vector2 scrollDelta)
+    private (bool handled, IKeyBindingHandler<T>? handler) dispatchPress(T action, bool repeat, Vector2 scrollDelta, double timestamp)
     {
-        var e = new KeyBindingPressEvent<T>(action, repeat, scrollDelta);
+        var e = new KeyBindingPressEvent<T>(action, repeat, scrollDelta, timestamp);
 
         foreach (var handler in getHandlers())
         {

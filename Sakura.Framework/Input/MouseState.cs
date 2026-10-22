@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using System.Collections.Generic;
 using Sakura.Framework.Maths;
 
@@ -16,36 +17,41 @@ public class MouseState
     /// </summary>
     public bool FromTouch { get; set; }
 
-    private readonly HashSet<MouseButton> pressedButtons = new HashSet<MouseButton>();
+    /// <summary>
+    /// One bit per <see cref="MouseButton"/>. Every mouse event carries a copy of the state, and a set would be an
+    /// allocation of its own in each one.
+    /// </summary>
+    private int pressedButtons;
 
-    public bool IsPressed(MouseButton button) => pressedButtons.Contains(button);
+    private static int bit(MouseButton button) => (uint)button < 32 ? 1 << (int)button : 0;
 
-    public MouseState Clone()
+    public bool IsPressed(MouseButton button) => (pressedButtons & bit(button)) != 0;
+
+    public MouseState Clone() => new MouseState
     {
-        var clone = new MouseState
-        {
-            Position = Position,
-            FromTouch = FromTouch
-        };
-
-        foreach (var button in pressedButtons)
-        {
-            clone.pressedButtons.Add(button);
-        }
-
-        return clone;
-    }
+        Position = Position,
+        FromTouch = FromTouch,
+        pressedButtons = pressedButtons
+    };
 
     public void SetPressed(MouseButton button, bool pressed)
     {
         if (pressed)
-            pressedButtons.Add(button);
+            pressedButtons |= bit(button);
         else
-            pressedButtons.Remove(button);
+            pressedButtons &= ~bit(button);
     }
 
     public override string ToString()
     {
-        return $"MouseState: Position={Position}, PressedButtons=[{string.Join(", ", pressedButtons)}]";
+        var pressed = new List<MouseButton>();
+
+        foreach (var button in Enum.GetValues<MouseButton>())
+        {
+            if (IsPressed(button))
+                pressed.Add(button);
+        }
+
+        return $"MouseState: Position={Position}, PressedButtons=[{string.Join(", ", pressed)}]";
     }
 }

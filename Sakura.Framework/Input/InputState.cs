@@ -81,7 +81,16 @@ public class InputState
     public IReadOnlyList<InputKey> GetPressedInputKeys()
     {
         var result = new List<InputKey>();
+        AddPressedInputKeys(result);
+        return result;
+    }
 
+    /// <summary>
+    /// Adds what <see cref="GetPressedInputKeys"/> returns to <paramref name="result"/>, for a caller building a list
+    /// of its own.
+    /// </summary>
+    internal void AddPressedInputKeys(List<InputKey> result)
+    {
         foreach (var key in pressedKeys)
         {
             var input = InputKeyExtensions.FromKey(key);
@@ -105,8 +114,6 @@ public class InputState
                     result.Add(input);
             }
         }
-
-        return result;
     }
 
     #region Mutation (manager-only)
