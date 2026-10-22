@@ -53,6 +53,15 @@ void sakura_metal_begin_frame(SakuraMetalDevice* device, float r, float g, float
 // end frame: closes the render encoder, presents the drawable, and commits the command buffer.
 void sakura_metal_end_frame(SakuraMetalDevice* device);
 
+// Frame timing, for how long frames take to reach the screen. The host tags each frame before end_frame (any
+// nonzero value; 0 asks for none); take_presented hands back the tag of the last frame known to have reached the
+// screen and when it did, in host time (seconds, CACurrentMediaTime's clock), once for each such frame: 1 when
+// there's one to take, else 0. host_time reads that clock now, to line it up with the host's own. Needs macOS
+// 10.15.4 or iOS 10.3; earlier, nothing is ever taken.
+void sakura_metal_set_frame_tag(SakuraMetalDevice* device, int64_t tag);
+int sakura_metal_take_presented(SakuraMetalDevice* device, int64_t* tag, double* presentedTime);
+double sakura_metal_host_time(void);
+
 // handles a backbuffer resize, width/height are in physical pixels. contentsScale is the backing
 // scale factor (physical / logical, e.g. 2.0 on Retina) so Core Animation composites the layer at
 // native resolution instead of upscaling.
