@@ -24,6 +24,7 @@ public class AndroidAppHost : SDLAppHost
         : base(appName, options)
     {
         this.activity = activity;
+        Performance = new AndroidPerformance(activity);
 
         Logger.ConsoleOutput = AndroidLog.For(appName);
     }
@@ -41,7 +42,7 @@ public class AndroidAppHost : SDLAppHost
 
     protected override IWindow CreateWindow() => new AndroidWindow(activity, Options.AppType);
 
-    public override IPlatformPerformance Performance { get; } = new AndroidPerformance();
+    public override IPlatformPerformance Performance { get; }
 
     // What the speaker or headphones run at, which a stream needs to match for the low-latency path: usually
     // 48 kHz, in bursts of 96 to 240 frames. SDL only knows a placeholder (44.1 kHz) until a stream is open.

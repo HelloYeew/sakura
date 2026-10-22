@@ -3,16 +3,25 @@
 
 using System;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
+using Android.App;
+using Android.Content;
+using Android.OS;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
+using AndroidGameMode = Android.App.GameMode;
+using AndroidGameState = Android.App.GameState;
+using GameMode = Sakura.Framework.Platform.GameMode;
+using GameState = Sakura.Framework.Platform.GameState;
 
 namespace Sakura.Framework.Android;
 
 /// <summary>
 /// Android's performance services: hint sessions (ADPF) for the frame threads and, for a game, a higher priority for
-/// them, and the thermal headroom; from the NDK and libc. A hint session tells the system how long each frame's work
-/// took against its target, so it raises the clocks before frames run late instead of after; without one, a thread
-/// that has to finish in time could only spin.
+/// them, from the NDK and libc; the thermal headroom from the NDK; battery saver, the game mode and the game state from
+/// the system's managers. A hint session tells the system how long each frame's work took against its target, so it
+/// raises the clocks before frames run late instead of after; without one, a thread that has to finish in time could
+/// only spin.
 /// </summary>
 internal sealed class AndroidPerformance : IPlatformPerformance
 {
@@ -21,47 +30,89 @@ internal sealed class AndroidPerformance : IPlatformPerformance
     // How far ahead the thermal headroom is forecast: far enough to do less before throttling, near enough to be right.
     private const int thermal_forecast_seconds = 10;
 
-    // Android answers with NaN when asked more often than about once a second.
-    private const long thermal_poll_interval_ms = 1000;
-
     private readonly IntPtr thermalManager;
-    private readonly object thermalLock = new object();
-    private float thermalHeadroom = float.NaN;
-    private long lastThermalPoll = long.MinValue;
+    private readonly GameManager? gameManager;
 
-    public AndroidPerformance()
+    private readonly Polled<float> thermalHeadroom;
+    private readonly Polled<bool?> powerSaving;
+    private readonly Polled<GameMode?> gameMode;
+
+    public AndroidPerformance(Context context)
     {
         // The headroom came in API 31; the manager in 30.
         if (OperatingSystem.IsAndroidVersionAtLeast(31))
+        {
             thermalManager = AThermal_acquireManager();
-    }
+            gameManager = context.GetSystemService(Context.GameService) as GameManager;
+        }
 
-    public float ThermalHeadroom
-    {
-        get
+        var powerManager = context.GetSystemService(Context.PowerService) as PowerManager;
+
+        thermalHeadroom = new Polled<float>(float.NaN, last =>
         {
             if (thermalManager == IntPtr.Zero)
                 return float.NaN;
 
-            long now = Environment.TickCount64;
+            float headroom = AThermal_getThermalHeadroom(thermalManager, thermal_forecast_seconds);
 
-            lock (thermalLock)
-            {
-                if (now - lastThermalPoll < thermal_poll_interval_ms)
-                    return thermalHeadroom;
+            // A NaN from asking too soon keeps the last answer; one from the start means the device doesn't say.
+            return float.IsNaN(headroom) ? last : headroom;
+        });
 
-                lastThermalPoll = now;
+        powerSaving = new Polled<bool?>(null, last =>
+        {
+            bool? saving = powerManager?.IsPowerSaveMode;
 
-                float headroom = AThermal_getThermalHeadroom(thermalManager, thermal_forecast_seconds);
+            if (saving != last)
+                Logger.Verbose($"Battery saver is {(saving == true ? "on" : "off")}");
 
-                // A NaN from asking too soon keeps the last answer; one from the start means the device doesn't say.
-                if (!float.IsNaN(headroom))
-                    thermalHeadroom = headroom;
+            return saving;
+        });
 
-                return thermalHeadroom;
-            }
-        }
+        gameMode = new Polled<GameMode?>(null, last =>
+        {
+            var mode = OperatingSystem.IsAndroidVersionAtLeast(31) && gameManager != null ? gameModeOf((AndroidGameMode)gameManager.GameMode) : null;
+
+            if (mode != last)
+                Logger.Verbose($"Game mode: {mode?.ToString() ?? "none (not a game to the system)"}");
+
+            return mode;
+        });
     }
+
+    public float ThermalHeadroom => thermalHeadroom.Value;
+
+    public bool? PowerSaving => powerSaving.Value;
+
+    public GameMode? GameMode => gameMode.Value;
+
+    public void SetGameState(GameState state, bool loading)
+    {
+        // The state came in API 33, after the manager.
+        if (gameManager == null || !OperatingSystem.IsAndroidVersionAtLeast(33))
+            return;
+
+        var mode = state switch
+        {
+            GameState.Gameplay => GameStateMode.GameplayInterruptible,
+            GameState.UninterruptibleGameplay => GameStateMode.GameplayUninterruptible,
+            GameState.Content => GameStateMode.Content,
+            _ => GameStateMode.None
+        };
+
+        gameManager.SetGameState(new AndroidGameState(loading, (int)mode));
+    }
+
+    // Custom is the player's own mix of resolution and frame rate, which the system applies itself. Unsupported is an app
+    // the system doesn't take for a game.
+    [SupportedOSPlatform("android31.0")]
+    private static GameMode? gameModeOf(AndroidGameMode mode) => mode switch
+    {
+        AndroidGameMode.Unsupported => null,
+        AndroidGameMode.Performance => Platform.GameMode.Performance,
+        AndroidGameMode.Battery => Platform.GameMode.Battery,
+        _ => Platform.GameMode.Standard
+    };
 
     public IFrameWorkHint? CreateFrameWorkHint(string threadName, double targetMilliseconds, bool preferPowerEfficiency)
     {
@@ -130,6 +181,49 @@ internal sealed class AndroidPerformance : IPlatformPerformance
     }
 
     private static long nanoseconds(double milliseconds) => (long)(milliseconds * 1_000_000);
+
+    /// <summary>
+    /// A value read from the system at most once a second, so it's cheap enough to read every frame. Android answers the
+    /// thermal headroom with NaN when asked more often than that, and the others go through binder calls.
+    /// </summary>
+    private sealed class Polled<T>
+    {
+        private const long interval_ms = 1000;
+
+        private readonly Func<T, T> read;
+        private readonly object gate = new object();
+        private T value;
+
+        // Null until the first read, rather than a time long ago, which would overflow when subtracted from now.
+        private long? lastRead;
+
+        /// <param name="initial">The value before the first read.</param>
+        /// <param name="read">Reads the value, given the last one.</param>
+        public Polled(T initial, Func<T, T> read)
+        {
+            value = initial;
+            this.read = read;
+        }
+
+        public T Value
+        {
+            get
+            {
+                long now = System.Environment.TickCount64;
+
+                lock (gate)
+                {
+                    if (lastRead == null || now - lastRead >= interval_ms)
+                    {
+                        lastRead = now;
+                        value = read(value);
+                    }
+
+                    return value;
+                }
+            }
+        }
+    }
 
     private sealed class FrameWorkHint : IFrameWorkHint
     {

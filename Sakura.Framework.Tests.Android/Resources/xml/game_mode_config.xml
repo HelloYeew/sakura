@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The browser takes the player's game mode itself (IPlatformPerformance.GameMode), so the system offers the
+  performance and battery modes and leaves the resolution and frame rate to it.
+-->
+<game-mode-config xmlns:android="http://schemas.android.com/apk/res/android"
+    android:supportsPerformanceGameMode="true"
+    android:supportsBatteryGameMode="true"
+    android:allowGameDownscaling="false"
+    android:allowGameFpsOverride="false" />
