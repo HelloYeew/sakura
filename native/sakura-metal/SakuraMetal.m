@@ -553,7 +553,9 @@ void sakura_metal_end_frame(SakuraMetalDevice* device)
     if (device->drawable && top->commandBuffer)
     {
         // Recorded when it reaches the screen, against the host's tag for the frame, for the host to tell how
-        // long its frames take to show. Has to be added before the drawable is presented.
+        // long its frames take to show. Has to be added before the drawable is presented. The simulator's SDK has no
+        // presented times (there's no display of its own to have shown anything), so there frames go untimed.
+#if !TARGET_OS_SIMULATOR
         if (@available(macOS 10.15.4, iOS 10.3, *))
         {
             SakuraMetalPresentTimes* times = device->presentTimes;
@@ -576,6 +578,7 @@ void sakura_metal_end_frame(SakuraMetalDevice* device)
                 }];
             }
         }
+#endif
 
         [top->commandBuffer presentDrawable:device->drawable];
     }
