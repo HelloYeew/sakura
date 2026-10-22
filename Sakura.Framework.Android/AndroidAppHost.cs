@@ -44,6 +44,13 @@ public class AndroidAppHost : SDLAppHost
 
     public override bool PresentFileExternally(string filename) => false;
 
+    // SDL only asks to quit when the activity is being destroyed, and nothing can stop that or wait on a dialog.
+    // The app has already been told it was going to the background, which is its chance to save.
+    protected override bool CanBlockExit => false;
+
+    // What the system does with Back on an app's first screen: it goes to the background, still running.
+    protected override void OnUnhandledSystemBack() => activity.RunOnUiThread(() => activity.MoveTaskToBack(true));
+
     public override void OpenUrlExternally(string url)
     {
         if (!url.CheckIsValidUrl())

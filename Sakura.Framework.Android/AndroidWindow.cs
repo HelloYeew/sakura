@@ -3,6 +3,7 @@
 
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Platform;
+using static SDL.SDL3;
 
 namespace Sakura.Framework.Android;
 
@@ -20,4 +21,11 @@ internal class AndroidWindow : SDLWindow
     }
 
     protected override MarginPadding? GetPlatformSafeAreaInsets() => activity.CoveredInsets;
+
+    protected override void ConfigureHints()
+    {
+        // Back comes to the app as a key (Key.SystemBack) rather than straight to the system, so the app can
+        // close a menu or pause first. The host hands an unhandled one back to the system.
+        SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");
+    }
 }
