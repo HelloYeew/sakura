@@ -453,6 +453,8 @@ public abstract class AppHost : IDisposable
 
             threadRunner.Pause();
 
+            (AudioManager as IStopsInBackground)?.EnterBackground();
+
             // Time spent in the background isn't the app's: the first frame back carries none of it.
             UpdateClock.Stop();
             DrawClock.Stop();
@@ -519,6 +521,8 @@ public abstract class AppHost : IDisposable
             UpdateClock.Start();
             DrawClock.Start();
             AudioClock.Start();
+
+            (AudioManager as IStopsInBackground)?.EnterForeground();
 
             threadRunner.Resume();
 
