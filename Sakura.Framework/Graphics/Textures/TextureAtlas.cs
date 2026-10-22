@@ -85,6 +85,25 @@ public class TextureAtlas : IDisposable
         if (!CanFit(regionWidth, regionHeight))
             return null;
 
+        // Pooled rather than allocated: the blit is deferred to the draw thread, so the caller's span has
+        // to be copied to survive until then, and glyph/sprite additions are frequent enough that
+        // allocating each copy is pure GC churn.
+        return AddRegion(regionWidth, regionHeight, ImageRawData.CopyFrom(regionWidth, regionHeight, rgbaData));
+    }
+
+    /// <summary>
+    /// <see cref="AddRegion(int, int, ReadOnlySpan{byte})"/> for pixels the caller filled in a buffer of their own, so
+    /// they aren't copied again on the way. The atlas takes the buffer over, and disposes it whatever happens, a
+    /// <c>null</c> return included.
+    /// </summary>
+    public Texture? AddRegion(int regionWidth, int regionHeight, ImageRawData pixels)
+    {
+        if (!CanFit(regionWidth, regionHeight))
+        {
+            pixels.Dispose();
+            return null;
+        }
+
         var page = pages[^1];
 
         if (!canFitInPage(page, regionWidth, regionHeight))
@@ -95,7 +114,10 @@ public class TextureAtlas : IDisposable
         }
 
         if (!canFitInPage(page, regionWidth, regionHeight))
+        {
+            pixels.Dispose();
             return null;
+        }
 
         // Move cursor for new row if needed
         if (page.CurrentX + regionWidth + padding > width)
@@ -104,11 +126,6 @@ public class TextureAtlas : IDisposable
             page.CurrentY += page.RowHeight + padding;
             page.RowHeight = 0;
         }
-
-        // Pooled rather than allocated: the blit is deferred to the draw thread, so the caller's span has
-        // to be copied to survive until then, and glyph/sprite additions are frequent enough that
-        // allocating each copy is pure GC churn.
-        var pixels = ImageRawData.CopyFrom(regionWidth, regionHeight, rgbaData);
 
         int destX = page.CurrentX;
         int destY = page.CurrentY;
