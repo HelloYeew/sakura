@@ -23,10 +23,14 @@ internal class AndroidWindow : SDLWindow
         activity.CoveredInsetsChanged += InvalidateSafeArea;
         activity.RefreshRateChanged += InvalidateRefreshRate;
 
-        // A game wants every frame the panel can show. An application leaves the rate to the system, which can drop
-        // it while nothing moves to save power.
+        // A game wants every frame the panel can show, and every touch as it happens rather than gathered up for the
+        // next frame. An application leaves both to the system, which can drop the rate while nothing moves to save
+        // power, and hands it touches once a frame.
         if (appType == AppType.Game)
+        {
             activity.PreferHighestRefreshRate();
+            activity.RequestUnbufferedTouch();
+        }
     }
 
     protected override MarginPadding? GetPlatformSafeAreaInsets() => activity.CoveredInsets;

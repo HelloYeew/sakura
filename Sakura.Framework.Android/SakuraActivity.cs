@@ -96,6 +96,12 @@ public abstract class SakuraActivity : SDLActivity
     /// </summary>
     internal void PreferHighestRefreshRate() => RunOnUiThread(() => (MSurface as SakuraSurface)?.PreferHighestRefreshRate());
 
+    /// <summary>
+    /// Has touches reach the app as they happen, rather than gathered up and handed over once a frame. Safe to call
+    /// from any thread.
+    /// </summary>
+    internal void RequestUnbufferedTouch() => RunOnUiThread(() => (MSurface as SakuraSurface)?.RequestUnbufferedTouch());
+
     private void updateRefreshRate()
     {
         // Display moved from the window manager to the context in API 30.

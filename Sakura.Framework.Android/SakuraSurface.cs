@@ -37,6 +37,22 @@ internal class SakuraSurface : SDLSurface
         askForHighestRefreshRate(Holder?.Surface);
     }
 
+    /// <summary>
+    /// Has touches reach the app as they happen. Android otherwise gathers a finger's moves up and hands them over once
+    /// a frame, as the last position with the rest as history SDL doesn't read. SDL also stamps a touch with the time
+    /// it arrives rather than when it happened, so a gathered tap would be timed up to a frame late, and a fast swipe
+    /// would lose its path. Called on the UI thread.
+    /// </summary>
+    internal void RequestUnbufferedTouch()
+    {
+        // Android 10 can only ask from inside an event, which comes too late for the first touch.
+        if (!OperatingSystem.IsAndroidVersionAtLeast(30))
+            return;
+
+        RequestUnbufferedDispatch((int)InputSourceType.Touchscreen);
+        Logger.Verbose("Touches are dispatched as they happen");
+    }
+
     public override void SurfaceChanged(ISurfaceHolder? holder, Format format, int width, int height)
     {
         base.SurfaceChanged(holder, format, width, height);
