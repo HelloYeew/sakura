@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-android</TargetFramework>
+    <SupportedOSPlatformVersion>29</SupportedOSPlatformVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <ApplicationId>com.companyname.myapp</ApplicationId>
+    <ApplicationTitle>MyApp</ApplicationTitle>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <!-- Every phone of the last several years. -->
+    <RuntimeIdentifiers>android-arm64</RuntimeIdentifiers>
+  </PropertyGroup>
+  <PropertyGroup Label="Runtime">
+    <!-- CoreCLR, the runtime the framework is tuned for on desktop too, rather than Mono. -->
+    <UseMonoRuntime>false</UseMonoRuntime>
+    <!-- Uncompressed assemblies are memory-mapped from the APK instead of being inflated into memory at launch. -->
+    <AndroidEnableAssemblyCompression>false</AndroidEnableAssemblyCompression>
+  </PropertyGroup>
+  <ItemGroup Label="Resources">
+    <!-- Resources/ is where Android keeps its own resources, so it isn't embedded the way it is elsewhere. -->
+    <EmbeddedResource Remove="Resources\**" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Sakura.Framework.Android" Version="*-*" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\MyApp\MyApp.csproj" />
+  </ItemGroup>
+</Project>

@@ -5,13 +5,30 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+  <PropertyGroup Label="Nuget">
+    <Title>Sakura Framework for Android</Title>
+    <PackageId>Sakura.Framework.Android</PackageId>
+    <Description>Runs a Sakura Framework app on Android: the activity, window, touch, lifecycle and the platform's performance and audio services.</Description>
+    <Authors>HelloYeew</Authors>
+    <Copyright>Copyright (c) 2026 HelloYeew</Copyright>
+    <PackageReleaseNotes>Automated build</PackageReleaseNotes>
+    <PackageTags>sakura framework ui game android vulkan sdl</PackageTags>
+    <RepositoryUrl>https://github.com/HelloYeew/sakura</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/HelloYeew/sakura</PackageProjectUrl>
+    <PackageIcon>icon.png</PackageIcon>
+  </PropertyGroup>
   <ItemGroup Label="Resources">
     <EmbeddedResource Remove="Resources\**" />
   </ItemGroup>
   <ItemGroup Label="Project References">
-    <ProjectReference Include="..\Sakura.Framework\Sakura.Framework.csproj" />
+    <!-- Everything of the framework's reaches an app through this package too, its source generator included: an app
+         written in its Android project alone still gets its dependency injection generated rather than reflected. -->
+    <ProjectReference Include="..\Sakura.Framework\Sakura.Framework.csproj" PrivateAssets="none" />
   </ItemGroup>
   <ItemGroup Label="Package">
+    <None Include="..\icon.png" Pack="true" PackagePath="/" Visible="false" />
     <None Include="buildTransitive\Sakura.Framework.Android.targets" Pack="true" PackagePath="buildTransitive/" />
   </ItemGroup>
 </Project>

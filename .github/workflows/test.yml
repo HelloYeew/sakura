@@ -114,3 +114,25 @@ jobs:
 
       - name: Build
         run: dotnet build SampleApp.Android/SampleApp.Android.csproj --configuration Release -p:AndroidSdkDirectory=$ANDROID_HOME
+
+      # What the APK carries, by part, and a budget it has to stay within: most of it is the bundled fonts and FFmpeg, so a
+      # jump means something new was bundled, which is worth noticing before a phone has to download it.
+      - name: APK size
+        run: |
+          set -euo pipefail
+          apk=$(ls SampleApp.Android/bin/Release/net10.0-android/*-Signed.apk)
+          size=$(stat -c %s "$apk")
+          echo "APK: $(( size / 1048576 )) MiB"
+          unzip -lv "$apk" | awk 'NR > 3 && $8 ~ /\// { printf "%8.1f MiB  %s\n", $3 / 1048576, $8 }' | sort -rn | head -15
+          budget=$(( 128 * 1048576 ))
+          if [ "$size" -gt "$budget" ]; then
+            echo "::error::The APK is $(( size / 1048576 )) MiB, over its 128 MiB budget."
+            exit 1
+          fi
+
+      - name: Upload the APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: sample-android-apk
+          path: SampleApp.Android/bin/Release/net10.0-android/*-Signed.apk
+          if-no-files-found: error

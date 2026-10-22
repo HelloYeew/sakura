@@ -1,4 +1,4 @@
-name: Publish Sakura.Framework to NuGet
+name: Publish Sakura.Framework and Sakura.Framework.Android to NuGet
 
 on:
   workflow_dispatch:
@@ -46,6 +46,28 @@ jobs:
           dotnet pack Sakura.Framework/Sakura.Framework.csproj \
             --configuration Release \
             -p:Version=${{ steps.version.outputs.version }} \
+            --output ./nupkg
+
+      # Sakura.Framework.Android ships with the framework, at the same version: it depends on that exact one.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install the Android workload
+        run: dotnet workload install android
+
+      - name: Install Android dependencies
+        run: >
+          dotnet build Sakura.Framework.Android/Sakura.Framework.Android.csproj -t:InstallAndroidDependencies
+          -p:AndroidSdkDirectory=$ANDROID_HOME -p:AcceptAndroidSdkLicenses=True
+
+      - name: Pack Sakura.Framework.Android
+        run: |
+          dotnet pack Sakura.Framework.Android/Sakura.Framework.Android.csproj \
+            --configuration Release \
+            -p:Version=${{ steps.version.outputs.version }} \
+            -p:AndroidSdkDirectory=$ANDROID_HOME \
             --output ./nupkg
 
       - name: NuGet login (Trusted Publishing)
