@@ -116,7 +116,8 @@ public partial class CursorContainer : Container, IRemoveFromDrawVisualiser
         if (manager != null)
             lastScreenSpaceMousePosition = manager.CurrentState.MousePosition;
 
-        bool shouldBeVisible = !HideWhenOutsideWindow || window.CursorInWindow;
+        // After a finger there is no cursor to show; it comes back with the mouse.
+        bool shouldBeVisible = (!HideWhenOutsideWindow || window.CursorInWindow) && manager?.CurrentState.LastPointerWasTouch != true;
 
         if (isCursorVisible != shouldBeVisible)
         {

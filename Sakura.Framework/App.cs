@@ -66,9 +66,15 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
 
     protected override Container Content => safeArea;
 
+    /// <summary>
+    /// Stands a gesture's first finger in for the mouse when nothing takes it.
+    /// </summary>
+    private readonly TouchMouseEmulation touchEmulation;
+
     public App()
     {
         AddInternal(safeArea);
+        touchEmulation = new TouchMouseEmulation(this, InputManager, OnMouseMove, OnMouseDown, OnMouseUp);
     }
 
     /// <summary>
@@ -398,7 +404,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
 
     public override bool OnMouseDown(MouseButtonEvent e)
     {
-        InputManager.HandleMouseDown(e.Button, e.ScreenSpaceMousePosition);
+        InputManager.HandleMouseDown(e.Button, e.ScreenSpaceMousePosition, e.MouseState.FromTouch);
         rebuildInputQueues();
 
         debugWindows?.NotifyMouseDown(e.ScreenSpaceMousePosition);
@@ -418,7 +424,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
 
     public override bool OnMouseUp(MouseButtonEvent e)
     {
-        InputManager.HandleMouseUp(e.Button, e.ScreenSpaceMousePosition);
+        InputManager.HandleMouseUp(e.Button, e.ScreenSpaceMousePosition, e.MouseState.FromTouch);
         rebuildInputQueues();
         return InputManager.DispatchMouseUp(e);
     }
@@ -434,9 +440,43 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
             OnKeyUp(new KeyEvent(key, state.Modifiers, false));
     }
 
+    public override bool OnTouchDown(TouchEvent e)
+    {
+        InputManager.HandleTouch(e.Source, e.ScreenSpacePosition, true);
+        InputManager.BuildQueues(this, e.ScreenSpacePosition);
+
+        if (InputManager.DispatchTouchDown(e))
+            return true;
+
+        touchEmulation.TouchDown(e);
+        return false;
+    }
+
+    public override bool OnTouchMove(TouchEvent e)
+    {
+        InputManager.HandleTouch(e.Source, e.ScreenSpacePosition, true);
+
+        if (InputManager.DispatchTouchMove(e))
+            return true;
+
+        touchEmulation.TouchMove(e);
+        return false;
+    }
+
+    public override bool OnTouchUp(TouchEvent e)
+    {
+        InputManager.HandleTouch(e.Source, e.ScreenSpacePosition, false);
+
+        if (InputManager.DispatchTouchUp(e))
+            return true;
+
+        touchEmulation.TouchUp(e);
+        return false;
+    }
+
     public override bool OnMouseMove(MouseEvent e)
     {
-        InputManager.HandleMouseMove(e.MouseState.Position);
+        InputManager.HandleMouseMove(e.MouseState.Position, e.MouseState.FromTouch);
         rebuildInputQueues();
         return InputManager.DispatchMouseMove(e);
     }

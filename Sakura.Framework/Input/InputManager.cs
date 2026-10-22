@@ -456,13 +456,16 @@ public class InputManager : IFocusManager
     {
         int buttonIndex = (int)e.Button;
         var previousHandler = lastMouseDownHandlers[buttonIndex];
-        var singleClick = e.Clicks > 1 ? new MouseButtonEvent(e.MouseState, e.Button, 1, e.Timestamp) : e;
+        var singleClick = e.Clicks > 1 ? new MouseButtonEvent(e.MouseState, e.Button, 1, e.Timestamp, e.Target) : e;
 
         for (int i = 0; i < positionalQueue.Count; i++)
         {
             var drawable = positionalQueue[i];
 
             if (!drawable.IsLoaded || !drawable.IsAlive || drawable.IsHidden || ReferenceEquals(drawable, lastQueueRoot))
+                continue;
+
+            if (e.Target != null && !leadsTo(drawable, e.Target))
                 continue;
 
             if (drawable.OnMouseDown(ReferenceEquals(drawable, previousHandler) ? e : singleClick))
@@ -486,6 +489,17 @@ public class InputManager : IFocusManager
     /// capture is released); otherwise it walks the positional queue front-to-back.
     /// </summary>
     public bool DispatchMouseUp(MouseButtonEvent e)
+    {
+        bool handled = dispatchMouseUp(e);
+
+        // A finger that lifts leaves no pointer over anything.
+        if (e.MouseState.FromTouch)
+            ClearHover();
+
+        return handled;
+    }
+
+    private bool dispatchMouseUp(MouseButtonEvent e)
     {
         if (dragCaptureTarget != null)
         {
@@ -561,7 +575,8 @@ public class InputManager : IFocusManager
     /// </summary>
     public void RefreshHover()
     {
-        if (lastQueueRoot == null)
+        // After a finger there is no pointer to hover with: refreshing would hover whatever slides under where it lifted.
+        if (lastQueueRoot == null || CurrentState.LastPointerWasTouch)
             return;
 
         BuildQueues(lastQueueRoot, CurrentState.MousePosition);
@@ -593,12 +608,153 @@ public class InputManager : IFocusManager
     }
 
     /// <summary>
+    /// Whether a press meant for <paramref name="target"/> goes to <paramref name="drawable"/>: it is the target,
+    /// or an input manager the target is inside, which passes it on.
+    /// </summary>
+    private static bool leadsTo(Drawable drawable, Drawable target)
+    {
+        if (ReferenceEquals(drawable, target))
+            return true;
+
+        if (drawable is not IInputManagerProvider)
+            return false;
+
+        for (var p = target.Parent; p != null; p = p.Parent)
+        {
+            if (ReferenceEquals(p, drawable))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// The drawable that took each finger, indexed by <see cref="TouchSource"/>.
+    /// </summary>
+    private readonly Drawable?[] touchCaptures = new Drawable?[InputState.MAX_TOUCHES];
+
+    /// <summary>
+    /// Offers a finger going down to the positional queue, front to back. The first drawable that takes it
+    /// gets its moves and its lift until it lifts.
+    /// </summary>
+    /// <returns>Whether something took the finger.</returns>
+    public bool DispatchTouchDown(TouchEvent e)
+    {
+        touchCaptures[(int)e.Source] = null;
+
+        for (int i = 0; i < positionalQueue.Count; i++)
+        {
+            var drawable = positionalQueue[i];
+
+            if (!drawable.IsLoaded || !drawable.IsAlive || drawable.IsHidden || ReferenceEquals(drawable, lastQueueRoot))
+                continue;
+
+            if (drawable.OnTouchDown(e))
+            {
+                touchCaptures[(int)e.Source] = drawable;
+                LastPositionalHandler = drawable;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <returns>Whether a drawable has the finger (so it isn't the mouse's).</returns>
+    public bool DispatchTouchMove(TouchEvent e)
+    {
+        var target = touchCaptures[(int)e.Source];
+
+        if (target == null)
+            return false;
+
+        if (target.IsLoaded)
+            target.OnTouchMove(e);
+
+        return true;
+    }
+
+    /// <returns>Whether a drawable had the finger (so it wasn't the mouse's).</returns>
+    public bool DispatchTouchUp(TouchEvent e)
+    {
+        var target = touchCaptures[(int)e.Source];
+
+        if (target == null)
+            return false;
+
+        touchCaptures[(int)e.Source] = null;
+
+        if (target.IsLoaded)
+            target.OnTouchUp(e);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Ends hover on everything, as when a finger lifts: there is no pointer left over anything.
+    /// </summary>
+    public void ClearHover()
+    {
+        if (hoveredDrawables.Count == 0)
+            return;
+
+        // Taken out before anyone hears: losing hover can clear hover again (a nested input manager clears its own),
+        // and that has to find nothing left here.
+        var lost = hoverLostScratch;
+        lost.AddRange(hoveredDrawables);
+        hoveredDrawables.Clear();
+        hoverBlockers.Clear();
+
+        var e = new MouseEvent(new MouseState { Position = CurrentState.MousePosition });
+        UpdatingHover = true;
+
+        try
+        {
+            for (int i = lost.Count - 1; i >= 0; i--)
+            {
+                var drawable = lost[i];
+                drawable.IsHovered = false;
+
+                if (drawable.IsLoaded)
+                    drawable.OnHoverLost(e);
+            }
+        }
+        finally
+        {
+            UpdatingHover = false;
+            lost.Clear();
+        }
+    }
+
+    private readonly List<Drawable> hoverLostScratch = new List<Drawable>();
+
+    /// <summary>
     /// Reconciles hover state against the current positional queue: drawables that are in the queue
     /// (i.e. under the cursor and opted in) but were not hovered get <see cref="Drawable.IsHovered"/>
     /// set and <c>OnHover</c>; drawables that were hovered but are no longer in the queue get
     /// <c>OnHoverLost</c>. Mirrors the per-drawable hover toggling the recursive path performed.
     /// </summary>
+    /// <summary>
+    /// Whether this manager is in the middle of changing what's hovered, so a drawable hearing about it can tell this
+    /// manager's hover changes from another's (a nested input manager clearing its own hover only for its parent).
+    /// </summary>
+    internal bool UpdatingHover { get; private set; }
+
     private void updateHover(MouseEvent e)
+    {
+        UpdatingHover = true;
+
+        try
+        {
+            reconcileHover(e);
+        }
+        finally
+        {
+            UpdatingHover = false;
+        }
+    }
+
+    private void reconcileHover(MouseEvent e)
     {
         // Walk the positional queue front-to-back, marking entries as hovered until one "blocks" by
         // returning true from OnHover (e.g. a visible OverlayContainer). Everything in front of and
@@ -661,6 +817,7 @@ public class InputManager : IFocusManager
     {
         CurrentState.Clear();
         dragCaptureTarget = null;
+        Array.Clear(touchCaptures);
         Array.Clear(lastMouseDownHandlers);
         keyDownHandlers.Clear();
 
@@ -685,18 +842,36 @@ public class InputManager : IFocusManager
 
     #region Raw event observation (state-only; does not dispatch)
 
-    public void HandleMouseMove(Vector2 position) => CurrentState.SetMousePosition(position);
+    /// <param name="position">Where the mouse is.</param>
+    /// <param name="fromTouch">Whether a finger stands in for it (<see cref="MouseState.FromTouch"/>).</param>
+    public void HandleMouseMove(Vector2 position, bool fromTouch = false)
+    {
+        CurrentState.SetMousePosition(position);
+        CurrentState.LastPointerWasTouch = fromTouch;
+    }
 
-    public void HandleMouseDown(MouseButton button, Vector2 position)
+    public void HandleMouseDown(MouseButton button, Vector2 position, bool fromTouch = false)
     {
         CurrentState.SetMousePosition(position);
         CurrentState.SetMouseButton(button, true);
+        CurrentState.LastPointerWasTouch = fromTouch;
     }
 
-    public void HandleMouseUp(MouseButton button, Vector2 position)
+    /// <summary>
+    /// A finger went down, moved or lifted: state only, like the mouse handlers.
+    /// </summary>
+    public void HandleTouch(TouchSource source, Vector2 position, bool active)
+    {
+        CurrentState.SetTouch(source, position, active);
+        CurrentState.LastPointerWasTouch = true;
+    }
+
+
+    public void HandleMouseUp(MouseButton button, Vector2 position, bool fromTouch = false)
     {
         CurrentState.SetMousePosition(position);
         CurrentState.SetMouseButton(button, false);
+        CurrentState.LastPointerWasTouch = fromTouch;
     }
 
     public void HandleScroll(Vector2 position) => CurrentState.SetMousePosition(position);

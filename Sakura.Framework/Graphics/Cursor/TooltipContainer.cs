@@ -102,7 +102,8 @@ public partial class TooltipContainer : Container, IRemoveFromDrawVisualiser
             stableSince = now;
         }
 
-        var candidate = findTooltipTarget();
+        // A finger leaves no pointer resting anywhere, so nothing dwells long enough to want a tooltip.
+        var candidate = manager?.CurrentState.LastPointerWasTouch == true ? null : findTooltipTarget();
 
         if (candidate != lastCandidate)
         {

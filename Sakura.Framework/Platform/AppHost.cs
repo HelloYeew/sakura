@@ -102,6 +102,9 @@ public abstract class AppHost : IDisposable
         MouseDown,
         MouseUp,
         MouseMove,
+        TouchDown,
+        TouchMove,
+        TouchUp,
         Scroll,
         DragDropFile,
         DragDropText,
@@ -128,6 +131,7 @@ public abstract class AppHost : IDisposable
         public KeyEvent Key;
         public MouseButtonEvent MouseButton;
         public MouseEvent Mouse;
+        public TouchEvent Touch;
         public ScrollEvent Scroll;
         public TextInputEvent TextInput;
         public TextEditingEvent TextEditing;
@@ -175,6 +179,21 @@ public abstract class AppHost : IDisposable
             case PendingInputType.Scroll:
                 if (!isFileDialogOpen)
                     OnScroll(input.Scroll);
+                break;
+
+            case PendingInputType.TouchDown:
+                if (!isFileDialogOpen)
+                    app?.OnTouchDown(input.Touch);
+                break;
+
+            case PendingInputType.TouchMove:
+                if (!isFileDialogOpen)
+                    app?.OnTouchMove(input.Touch);
+                break;
+
+            // Delivered even with a dialog open, so a finger that went down before it can't stay down for good.
+            case PendingInputType.TouchUp:
+                app?.OnTouchUp(input.Touch);
                 break;
 
             case PendingInputType.DragDropFile:
@@ -539,6 +558,9 @@ public abstract class AppHost : IDisposable
 
             Window.OnKeyDown += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.KeyDown, Key = e });
             Window.OnKeyUp += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.KeyUp, Key = e });
+            Window.OnTouchDown += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.TouchDown, Touch = e });
+            Window.OnTouchMove += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.TouchMove, Touch = e });
+            Window.OnTouchUp += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.TouchUp, Touch = e });
             Window.OnMouseDown += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.MouseDown, MouseButton = e });
             Window.OnMouseUp += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.MouseUp, MouseButton = e });
             Window.OnMouseMove += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.MouseMove, Mouse = e });

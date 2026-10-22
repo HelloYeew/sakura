@@ -1793,6 +1793,23 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
 
     public virtual bool OnScroll(ScrollEvent e) => false;
 
+    /// <summary>
+    /// A finger went down on this drawable. Return true to take it: its moves and its lift then come to this
+    /// drawable alone, wherever the finger goes, and it doesn't act as the mouse. A gesture's first finger that
+    /// nothing takes stands in for the mouse, for UI that only handles the mouse.
+    /// </summary>
+    public virtual bool OnTouchDown(TouchEvent e) => false;
+
+    /// <summary>
+    /// A finger this drawable took in <see cref="OnTouchDown"/> moved.
+    /// </summary>
+    public virtual bool OnTouchMove(TouchEvent e) => false;
+
+    /// <summary>
+    /// A finger this drawable took in <see cref="OnTouchDown"/> lifted, or the system took it away.
+    /// </summary>
+    public virtual bool OnTouchUp(TouchEvent e) => false;
+
     public virtual bool OnKeyDown(KeyEvent e) => false;
     public virtual bool OnKeyUp(KeyEvent e) => false;
 

@@ -43,6 +43,32 @@ public class InputState
     /// </summary>
     public KeyModifiers Modifiers { get; private set; }
 
+    /// <summary>
+    /// How many <see cref="TouchSource"/>s there are.
+    /// </summary>
+    public const int MAX_TOUCHES = (int)TouchSource.Touch10 + 1;
+
+    private readonly Vector2[] touchPositions = new Vector2[MAX_TOUCHES];
+    private int activeTouches;
+
+    /// <summary>
+    /// How many fingers are down.
+    /// </summary>
+    public int ActiveTouchCount => System.Numerics.BitOperations.PopCount((uint)activeTouches);
+
+    public bool IsTouchActive(TouchSource source) => (activeTouches & (1 << (int)source)) != 0;
+
+    /// <summary>
+    /// Where <paramref name="source"/> is, or was when it last lifted, in screen space.
+    /// </summary>
+    public Vector2 GetTouchPosition(TouchSource source) => touchPositions[(int)source];
+
+    /// <summary>
+    /// Whether the last pointer to act was a finger rather than a mouse. While it was, there is no cursor to
+    /// show or to hover with.
+    /// </summary>
+    public bool LastPointerWasTouch { get; internal set; }
+
     public bool IsPressed(MouseButton button) => pressedMouseButtons.Contains(button);
 
     public bool IsPressed(Key key) => pressedKeys.Contains(key);
@@ -87,6 +113,16 @@ public class InputState
 
     internal void SetMousePosition(Vector2 position) => MousePosition = position;
 
+    internal void SetTouch(TouchSource source, Vector2 position, bool active)
+    {
+        touchPositions[(int)source] = position;
+
+        if (active)
+            activeTouches |= 1 << (int)source;
+        else
+            activeTouches &= ~(1 << (int)source);
+    }
+
     internal void SetMouseButton(MouseButton button, bool pressed)
     {
         if (pressed)
@@ -116,7 +152,7 @@ public class InputState
     internal void RemoveGamepad(int deviceId) => gamepads.Remove(deviceId);
 
     /// <summary>
-    /// Clears all pressed keys, mouse buttons, gamepads and modifiers (mouse position is preserved).
+    /// Clears all pressed keys, mouse buttons, gamepads, touches and modifiers (mouse position is preserved).
     /// Used to reset state between tests so input does not leak across them.
     /// </summary>
     internal void Clear()
@@ -124,6 +160,8 @@ public class InputState
         pressedKeys.Clear();
         pressedMouseButtons.Clear();
         gamepads.Clear();
+        activeTouches = 0;
+        LastPointerWasTouch = false;
         recomputeModifiers();
     }
 

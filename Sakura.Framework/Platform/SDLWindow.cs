@@ -407,6 +407,9 @@ public class SDLWindow : IWindow
     public event Action<int> DisplayChanged = delegate { };
     public event Action<int, int> Resized = delegate { };
 
+    public event Action<TouchEvent> OnTouchDown = delegate { };
+    public event Action<TouchEvent> OnTouchMove = delegate { };
+    public event Action<TouchEvent> OnTouchUp = delegate { };
     public event Action<SakuraMouseButtonEvent> OnMouseDown = delegate { };
     public event Action<SakuraMouseButtonEvent> OnMouseUp = delegate { };
     public event Action<MouseEvent> OnMouseMove = delegate { };
@@ -451,6 +454,11 @@ public class SDLWindow : IWindow
     public unsafe void Initialize()
     {
         setApplicationName(applicationName);
+
+        // SDL would make the first finger a mouse that presses on touch-down; the framework turns fingers into
+        // mouse input itself, the way touchscreens behave (TouchMouseEmulation).
+        SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
+
         ConfigureHints();
 
         // Note: SDL3 is always per-monitor DPI aware; the SDL2-era Windows DPI hints are gone.
@@ -1059,6 +1067,22 @@ public class SDLWindow : IWindow
                     handleMouseWheelEvent(sdlEvent.wheel);
                     break;
 
+                case SDL_EventType.SDL_EVENT_FINGER_DOWN:
+                    handleFingerDown(sdlEvent.tfinger);
+                    break;
+
+                case SDL_EventType.SDL_EVENT_FINGER_MOTION:
+                    handleFingerMotion(sdlEvent.tfinger);
+                    break;
+
+                case SDL_EventType.SDL_EVENT_FINGER_UP:
+                    handleFingerUp(sdlEvent.tfinger, false);
+                    break;
+
+                case SDL_EventType.SDL_EVENT_FINGER_CANCELED:
+                    handleFingerUp(sdlEvent.tfinger, true);
+                    break;
+
                 case SDL_EventType.SDL_EVENT_DROP_FILE:
                     handleDropFileEvent(sdlEvent.drop);
                     break;
@@ -1301,6 +1325,68 @@ public class SDLWindow : IWindow
 
         OnMouseMove.Invoke(new MouseEvent(mouseState.Clone(), delta, convertEventTimestamp(motionEvent.timestamp)));
     }
+
+    /// <summary>
+    /// The SDL finger each <see cref="TouchSource"/> is, for the sources in <see cref="touchesDown"/>.
+    /// </summary>
+    private readonly ulong[] touchFingers = new ulong[InputState.MAX_TOUCHES];
+
+    /// <summary>
+    /// The <see cref="TouchSource"/>s with a finger down, as bits.
+    /// </summary>
+    private int touchesDown;
+
+    private void handleFingerDown(SDL_TouchFingerEvent finger)
+    {
+        // Only touchscreens. A trackpad's fingers (macOS) are positions on the pad, not the window, and the pad
+        // already moves the mouse.
+        if (SDL_GetTouchDeviceType(finger.touchID) != SDL_TouchDeviceType.SDL_TOUCH_DEVICE_DIRECT)
+            return;
+
+        // A finger beyond the last source is ignored until one lifts.
+        for (int i = 0; i < touchFingers.Length; i++)
+        {
+            if ((touchesDown & (1 << i)) != 0)
+                continue;
+
+            touchesDown |= 1 << i;
+            touchFingers[i] = (ulong)finger.fingerID;
+
+            OnTouchDown.Invoke(new TouchEvent((TouchSource)i, fingerPosition(finger), timestamp: convertEventTimestamp(finger.timestamp)));
+            return;
+        }
+    }
+
+    private void handleFingerMotion(SDL_TouchFingerEvent finger)
+    {
+        if (findTouch(finger) is TouchSource source)
+            OnTouchMove.Invoke(new TouchEvent(source, fingerPosition(finger), new Vector2(finger.dx * logicalWidth, finger.dy * logicalHeight), convertEventTimestamp(finger.timestamp)));
+    }
+
+    private void handleFingerUp(SDL_TouchFingerEvent finger, bool cancelled)
+    {
+        if (findTouch(finger) is not TouchSource source)
+            return;
+
+        touchesDown &= ~(1 << (int)source);
+        OnTouchUp.Invoke(new TouchEvent(source, fingerPosition(finger), timestamp: convertEventTimestamp(finger.timestamp), cancelled: cancelled));
+    }
+
+    private TouchSource? findTouch(SDL_TouchFingerEvent finger)
+    {
+        ulong id = (ulong)finger.fingerID;
+
+        for (int i = 0; i < touchFingers.Length; i++)
+        {
+            if ((touchesDown & (1 << i)) != 0 && touchFingers[i] == id)
+                return (TouchSource)i;
+        }
+
+        return null;
+    }
+
+    // SDL gives a finger's position as a fraction of the window.
+    private Vector2 fingerPosition(SDL_TouchFingerEvent finger) => new Vector2(finger.x * logicalWidth, finger.y * logicalHeight);
 
     private void handleMouseWheelEvent(SDL_MouseWheelEvent wheelEvent)
     {

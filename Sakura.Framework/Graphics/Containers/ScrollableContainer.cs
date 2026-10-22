@@ -92,6 +92,20 @@ public partial class ScrollableContainer : Container
 
     public Vector2 ScrollableExtent => getMaxScroll();
 
+    /// <summary>
+    /// Whether a drag in <paramref name="direction"/> (screen space) would scroll this container: its main axis
+    /// is one it scrolls along, and it has content past the edge on that axis.
+    /// </summary>
+    internal bool ScrollsAlong(Vector2 direction)
+    {
+        bool horizontal = MathF.Abs(direction.X) > MathF.Abs(direction.Y);
+        var extent = ScrollableExtent;
+
+        return horizontal
+            ? Direction != ScrollDirection.Vertical && extent.X > 0
+            : Direction != ScrollDirection.Horizontal && extent.Y > 0;
+    }
+
     public ScrollableContainer()
     {
         Masking = true;

@@ -10,6 +10,12 @@ public class MouseState
 {
     public Vector2 Position { get; set; }
 
+    /// <summary>
+    /// Whether a finger is standing in for the mouse (<see cref="TouchMouseEmulation"/>). There is no real pointer
+    /// then: once the finger lifts nothing stays hovered, and no cursor shows.
+    /// </summary>
+    public bool FromTouch { get; set; }
+
     private readonly HashSet<MouseButton> pressedButtons = new HashSet<MouseButton>();
 
     public bool IsPressed(MouseButton button) => pressedButtons.Contains(button);
@@ -18,7 +24,8 @@ public class MouseState
     {
         var clone = new MouseState
         {
-            Position = Position
+            Position = Position,
+            FromTouch = FromTouch
         };
 
         foreach (var button in pressedButtons)

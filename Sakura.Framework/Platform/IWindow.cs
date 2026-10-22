@@ -217,6 +217,21 @@ public interface IWindow : IDisposable
     event Action<int> DisplayChanged;
     event Action<int, int> Resized;
 
+    /// <summary>
+    /// Invoked when a finger goes down on a touchscreen.
+    /// </summary>
+    event Action<TouchEvent> OnTouchDown;
+
+    /// <summary>
+    /// Invoked when a finger that is down moves.
+    /// </summary>
+    event Action<TouchEvent> OnTouchMove;
+
+    /// <summary>
+    /// Invoked when a finger lifts, or the system takes it (<see cref="TouchEvent.Cancelled"/>).
+    /// </summary>
+    event Action<TouchEvent> OnTouchUp;
+
     event Action<MouseButtonEvent> OnMouseDown;
     event Action<MouseButtonEvent> OnMouseUp;
     event Action<MouseEvent> OnMouseMove;

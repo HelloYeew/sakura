@@ -154,6 +154,9 @@ public class HeadlessWindow : IWindow
     public event Action<KeyEvent>? OnKeyUp;
     public event Action<int>? DisplayChanged;
     public event Action<int, int>? Resized;
+    public event Action<TouchEvent>? OnTouchDown;
+    public event Action<TouchEvent>? OnTouchMove;
+    public event Action<TouchEvent>? OnTouchUp;
     public event Action<MouseButtonEvent>? OnMouseDown;
     public event Action<MouseButtonEvent>? OnMouseUp;
     public event Action<MouseEvent>? OnMouseMove;
