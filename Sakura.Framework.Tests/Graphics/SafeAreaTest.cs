@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using NUnit.Framework;
 using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
@@ -148,6 +149,54 @@ public class SafeAreaTest
 
         assertRect(bar.DrawRectangle, 60, 530, 740, 50, "The bar itself stays in the safe area.");
         assertRect(barBackground.DrawRectangle, 0, 530, 800, 70, "Its background reaches the left and bottom edges; the top is inside the safe area.");
+    }
+
+    /// <summary>
+    /// A tab slanted by a shear, hung past the safe area's left edge as it would be past the screen's: it grows
+    /// left until its slanted edge's inner end reaches the screen edge, whichever way it leans, and its right
+    /// edge stays.
+    /// </summary>
+    [TestCase(0.5f)]
+    [TestCase(-0.5f)]
+    public void TestShearedTabBleedsPastItsSlant(float shear)
+    {
+        // Left at 60 - 50 = 10; the slant runs 0.5 * 60 = 30 across, so its inner end is at 40, in the safe area's margin.
+        var tab = new Box { Position = new Vector2(-50, 200), Size = new Vector2(200, 60), Shear = new Vector2(shear, 0), Bleed = Edges.All };
+        screen.Add(tab);
+        settle();
+
+        float topLeft = tab.ToScreenSpace(Vector2.Zero).X;
+        float bottomLeft = tab.ToScreenSpace(new Vector2(0, tab.DrawHeight)).X;
+        float topRight = tab.ToScreenSpace(new Vector2(tab.DrawWidth, 0)).X;
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(Math.Max(topLeft, bottomLeft), Is.EqualTo(0).Within(0.01f), "The slant's inner end is at the screen edge.");
+            Assert.That(topRight, Is.EqualTo(210).Within(0.01f), "The right edge stays.");
+            Assert.That(tab.DrawHeight, Is.EqualTo(60).Within(0.01f), "Sheared along X, it keeps its height.");
+        }
+    }
+
+    [Test]
+    public void TestShearedTabInsideTheSafeAreaStays()
+    {
+        // Its slant's outer end lies on the boundary, but its inner end is inside: not past it, so nothing grows.
+        var tab = new Box { Position = new Vector2(0, 200), Size = new Vector2(200, 60), Shear = new Vector2(0.5f, 0), Bleed = Edges.All };
+        screen.Add(tab);
+        settle();
+
+        Assert.That(tab.DrawWidth, Is.EqualTo(200).Within(0.01f));
+    }
+
+    [Test]
+    public void TestShearedTabKeepsTheEdgesItSlantsAcross()
+    {
+        // Half out of the safe area at the top: grown upwards, its slant would change, so it isn't.
+        var tab = new Box { Position = new Vector2(300, -30), Size = new Vector2(100, 50), Shear = new Vector2(0.5f, 0), Bleed = Edges.All };
+        screen.Add(tab);
+        settle();
+
+        Assert.That(tab.DrawHeight, Is.EqualTo(50).Within(0.01f));
     }
 
     [TestCase(Anchor.TopLeft)]

@@ -488,9 +488,11 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
     /// <remarks>
     /// Meant for decoration, such as a background or the color of a bar. The children of a container
     /// that bleeds are laid out in the bigger rectangle, so UI inside one needs a
-    /// <see cref="SafeAreaContainer"/>. Bleeding needs this drawable and its ancestors to be
-    /// unrotated and unsheared, and it can't escape a masking ancestor. Input reaches the extension only
-    /// where the parent covers it too.
+    /// <see cref="SafeAreaContainer"/>. Bleeding needs this drawable to be unrotated and its ancestors
+    /// unrotated and unsheared, and it can't escape a masking ancestor. This drawable may be sheared
+    /// along one axis, as a slanted tab is: then only the slanted edges bleed (left and right for a
+    /// <see cref="Shear"/> along X), each counting from its inner end, so the whole slant goes past the
+    /// screen's edge. Input reaches the extension only where the parent covers it too.
     /// </remarks>
     public Edges Bleed
     {
@@ -698,8 +700,12 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
 
         Matrix3x2 parentMatrix = Parent!.ModelMatrix;
 
-        // Edges map straight to screen edges only when nothing on the way is rotated, sheared or mirrored.
-        if (Rotation != 0 || Shear != Vector2.Zero || Scale.X <= 0 || Scale.Y <= 0
+        bool shearedX = Shear.X != 0;
+        bool shearedY = Shear.Y != 0;
+
+        // Edges map straight to screen edges only when nothing on the way is rotated, sheared or mirrored. This
+        // drawable may itself be sheared along one axis, which slants two of its edges without turning them.
+        if (Rotation != 0 || (shearedX && shearedY) || Scale.X <= 0 || Scale.Y <= 0
             || parentMatrix.M11 <= 0 || parentMatrix.M22 <= 0
             || Math.Abs(parentMatrix.M12) > parentMatrix.M11 * 1e-5f || Math.Abs(parentMatrix.M21) > parentMatrix.M22 * 1e-5f)
             return Vector2.Zero;
@@ -717,26 +723,39 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
         float screenRight = screenLeft + scaledSize.X * toScreenX;
         float screenBottom = screenTop + scaledSize.Y * toScreenY;
 
+        // A slanted edge's inner end: how far in it lies from where the edge would be unsheared, in screen pixels.
+        // Sheared along X (x' = x + Shear.X * y, about the origin), the left and right edges slant across the
+        // height; along Y, the top and bottom across the width. Widening one sheared along X (or heightening one
+        // sheared along Y) leaves its slant as it is, so the inner end moves with the edge.
+        float slantX = Shear.X * scaledSize.Y * toScreenX;
+        float slantY = Shear.Y * scaledSize.X * toScreenY;
+        float innerLeft = Math.Max(-slantX * originVector.Y, slantX * (1 - originVector.Y));
+        float innerRight = Math.Min(-slantX * originVector.Y, slantX * (1 - originVector.Y));
+        float innerTop = Math.Max(-slantY * originVector.X, slantY * (1 - originVector.X));
+        float innerBottom = Math.Min(-slantY * originVector.X, slantY * (1 - originVector.X));
+
         RectangleF screen = definition.ScreenSpaceBounds;
         RectangleF safe = definition.ScreenSpaceSafeArea;
 
         float extendLeft = 0, extendTop = 0, extendRight = 0, extendBottom = 0;
 
-        if ((bleed & Edges.Left) != 0 && safe.X > screen.X && screenLeft <= safe.X + bleed_tolerance)
-            extendLeft = Math.Max(0, screenLeft - screen.X);
+        // An edge bleeds once all of it lies on or beyond the safe area's boundary, and goes until all of it is
+        // past the screen's edge. Growing across a slant would change it, so a sheared drawable keeps those edges.
+        if ((bleed & Edges.Left) != 0 && !shearedY && safe.X > screen.X && screenLeft + innerLeft <= safe.X + bleed_tolerance)
+            extendLeft = Math.Max(0, screenLeft + innerLeft - screen.X);
 
-        if ((bleed & Edges.Top) != 0 && safe.Y > screen.Y && screenTop <= safe.Y + bleed_tolerance)
-            extendTop = Math.Max(0, screenTop - screen.Y);
+        if ((bleed & Edges.Top) != 0 && !shearedX && safe.Y > screen.Y && screenTop + innerTop <= safe.Y + bleed_tolerance)
+            extendTop = Math.Max(0, screenTop + innerTop - screen.Y);
 
         float safeRight = safe.X + safe.Width;
         float screenEdgeRight = screen.X + screen.Width;
-        if ((bleed & Edges.Right) != 0 && safeRight < screenEdgeRight && screenRight >= safeRight - bleed_tolerance)
-            extendRight = Math.Max(0, screenEdgeRight - screenRight);
+        if ((bleed & Edges.Right) != 0 && !shearedY && safeRight < screenEdgeRight && screenRight + innerRight >= safeRight - bleed_tolerance)
+            extendRight = Math.Max(0, screenEdgeRight - (screenRight + innerRight));
 
         float safeBottom = safe.Y + safe.Height;
         float screenEdgeBottom = screen.Y + screen.Height;
-        if ((bleed & Edges.Bottom) != 0 && safeBottom < screenEdgeBottom && screenBottom >= safeBottom - bleed_tolerance)
-            extendBottom = Math.Max(0, screenEdgeBottom - screenBottom);
+        if ((bleed & Edges.Bottom) != 0 && !shearedX && safeBottom < screenEdgeBottom && screenBottom + innerBottom >= safeBottom - bleed_tolerance)
+            extendBottom = Math.Max(0, screenEdgeBottom - (screenBottom + innerBottom));
 
         if (extendLeft == 0 && extendTop == 0 && extendRight == 0 && extendBottom == 0)
             return Vector2.Zero;
