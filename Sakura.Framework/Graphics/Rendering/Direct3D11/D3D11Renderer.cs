@@ -303,6 +303,12 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         enableMultithreadProtection();
         gpuTimer = new D3D11GpuTimer(device, context);
 
+        // Before the first texture, which reads it to decide whether to have a mip chain.
+        D3D11Texture.MipGenerationSupported = (device.CheckFormatSupport(D3D11Texture.TEXTURE_FORMAT) & FormatSupport.MipAutogen) != 0;
+
+        if (!D3D11Texture.MipGenerationSupported)
+            Logger.Verbose($"Direct3D11: {D3D11Texture.TEXTURE_FORMAT} can't generate mipmaps on this device; textures keep a single level.");
+
         logDeviceInfo();
         createSwapChain();
 
