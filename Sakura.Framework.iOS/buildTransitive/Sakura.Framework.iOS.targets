@@ -9,6 +9,20 @@
   </ItemGroup>
 
   <!--
+    .NET 11 RC 2's iOS build doesn't count the app's Info.plist among the inputs of the manifest it bundles, so once an
+    app is built, an edit to its Info.plist never reaches it: new document types, orientations or keys simply aren't
+    there. Counting it makes the manifest build again. Remove once a workload counts it itself.
+  -->
+  <Target Name="RebuildManifestWhenInfoPlistChanges"
+          Condition=" '$(TargetPlatformIdentifier)' == 'ios' And '$(AppBundleManifest)' != '' "
+          AfterTargets="_CompileAppManifestInputs"
+          BeforeTargets="_CompileAppManifest">
+    <ItemGroup>
+      <_CompileAppManifestInputFile Include="$(AppBundleManifest)" />
+    </ItemGroup>
+  </Target>
+
+  <!--
     .NET 11 RC 2's iOS Debug build ReadyToRun-compiles the assemblies it takes for packages, which includes any that come
     in through another project (the framework itself, for an app built against its source), and bundles the copies that
     compile writes. It notices when one of them changes, but the compile doesn't count them as its inputs and is skipped,
