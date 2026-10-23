@@ -104,7 +104,8 @@ public class VulkanWindowSmokeTest
 
         protected override IEnumerable<RendererType> GetPreferredRenderers() => [RendererType.Vulkan];
 
-        protected override IRenderer? CreateRendererForType(RendererType type) => type == RendererType.Vulkan ? base.CreateRendererForType(type) : null;
+        protected override IRenderer? CreateRendererForType(RendererType type, bool allowSoftware)
+            => type == RendererType.Vulkan ? base.CreateRendererForType(type, allowSoftware) : null;
     }
 
     private unsafe partial class ScriptedApp : App

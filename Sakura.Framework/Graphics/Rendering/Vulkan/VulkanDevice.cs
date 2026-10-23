@@ -117,8 +117,8 @@ internal sealed unsafe class VulkanDevice : IDisposable
         return vkInitialize(string.IsNullOrEmpty(library) ? null : library) == VkResult.Success;
     });
 
-    private static readonly Lazy<bool> is_supported = new Lazy<bool>(() => probe(true));
-    private static readonly Lazy<bool> is_supported_offscreen = new Lazy<bool>(() => probe(false));
+    private static readonly Lazy<DeviceSupport> window_support = new Lazy<DeviceSupport>(() => probe(true));
+    private static readonly Lazy<DeviceSupport> offscreen_support = new Lazy<DeviceSupport>(() => probe(false));
 
     public VkInstance Instance { get; }
     public VkInstanceApi InstanceApi { get; }
@@ -244,13 +244,19 @@ internal sealed unsafe class VulkanDevice : IDisposable
     /// instance and creates no window, so a missing or broken driver is ruled out before a window is
     /// made for it. The answer is computed once per process.
     /// </summary>
-    public static bool IsSupported() => is_supported.Value;
+    public static bool IsSupported() => window_support.Value != DeviceSupport.None;
+
+    /// <summary>
+    /// Whether a GPU is what makes <see cref="IsSupported"/> true, rather than only a software device such as
+    /// Mesa's lavapipe, which draws on the CPU.
+    /// </summary>
+    public static bool HasHardwareDevice() => window_support.Value == DeviceSupport.Hardware;
 
     /// <summary>
     /// Whether this machine can render offscreen through Vulkan, with no window: a usable loader and a
     /// device with a graphics queue. Computed once per process.
     /// </summary>
-    public static bool IsSupportedOffscreen() => is_supported_offscreen.Value;
+    public static bool IsSupportedOffscreen() => offscreen_support.Value != DeviceSupport.None;
 
     /// <summary>
     /// Creates the instance and device for <paramref name="windowSurface"/>, which is also where the
@@ -260,7 +266,9 @@ internal sealed unsafe class VulkanDevice : IDisposable
     /// surface, swapchain or presentation.</param>
     /// <param name="surface">The surface created to choose the device (null without a window). The caller
     /// owns it from here.</param>
-    public VulkanDevice(IVulkanGraphicsSurface? windowSurface, out VkSurfaceKHR surface)
+    /// <param name="allowSoftware">Whether a software device (<see cref="VkPhysicalDeviceType.Cpu"/>) may be
+    /// chosen.</param>
+    public VulkanDevice(IVulkanGraphicsSurface? windowSurface, out VkSurfaceKHR surface, bool allowSoftware = true)
     {
         if (!loader_available.Value)
             throw new InvalidOperationException("The Vulkan loader could not be loaded.");
@@ -340,7 +348,7 @@ internal sealed unsafe class VulkanDevice : IDisposable
             if (windowSurface != null)
                 surface = windowSurface.CreateSurface(Instance.Handle);
 
-            var candidate = choosePhysicalDevice(InstanceApi, surface, windowSurface != null, apiVersion);
+            var candidate = choosePhysicalDevice(InstanceApi, surface, windowSurface != null, apiVersion, allowSoftware);
 
             PhysicalDevice = candidate.Device;
             Properties = candidate.Properties;
@@ -621,7 +629,7 @@ internal sealed unsafe class VulkanDevice : IDisposable
         public ulong DeviceLocalMemory;
     }
 
-    private static Candidate choosePhysicalDevice(VkInstanceApi api, VkSurfaceKHR surface, bool presents, VkVersion instanceApiVersion)
+    private static Candidate choosePhysicalDevice(VkInstanceApi api, VkSurfaceKHR surface, bool presents, VkVersion instanceApiVersion, bool allowSoftware)
     {
         var candidates = new List<Candidate>();
         var rejections = new List<string>();
@@ -633,6 +641,12 @@ internal sealed unsafe class VulkanDevice : IDisposable
             if (!isUsable(api, candidate, surface, presents, out string? reason))
             {
                 rejections.Add($"{candidate.Name}: {reason}");
+                continue;
+            }
+
+            if (!allowSoftware && isSoftware(candidate))
+            {
+                rejections.Add($"{candidate.Name}: a software device, not chosen while another renderer is left");
                 continue;
             }
 
@@ -1132,17 +1146,18 @@ internal sealed unsafe class VulkanDevice : IDisposable
     /// Answers <see cref="IsSupported"/> and <see cref="IsSupportedOffscreen"/>: a usable loader and at
     /// least one device with a graphics queue, plus, for a window, a window-system surface extension and
     /// swapchain support. Presentation to the real window can't be checked without one, so that is left
-    /// to device creation.
+    /// to device creation. A GPU answers <see cref="DeviceSupport.Hardware"/> even where a software device
+    /// comes first in the list.
     /// </summary>
     /// <param name="window">Whether rendering to a window has to work too: a window-system surface
     /// extension and swapchain support.</param>
-    private static bool probe(bool window)
+    private static DeviceSupport probe(bool window)
     {
         // SDL3-CS binds VkSurfaceKHR as a pointer, but it is a 64-bit handle everywhere.
         if (!Environment.Is64BitProcess)
         {
             Logger.Verbose("Vulkan: unavailable in a 32-bit process.");
-            return false;
+            return DeviceSupport.None;
         }
 
         try
@@ -1150,7 +1165,7 @@ internal sealed unsafe class VulkanDevice : IDisposable
             if (!loader_available.Value)
             {
                 Logger.Verbose("Vulkan: no Vulkan loader found.");
-                return false;
+                return DeviceSupport.None;
             }
 
             var instanceExtensions = enumerateInstanceExtensions(null);
@@ -1158,7 +1173,7 @@ internal sealed unsafe class VulkanDevice : IDisposable
             if (window && (!instanceExtensions.Contains(surface_extension) || !platform_surface_extensions.Any(instanceExtensions.Contains)))
             {
                 Logger.Verbose("Vulkan: the loader offers no window-system surface extension (no driver installed?).");
-                return false;
+                return DeviceSupport.None;
             }
 
             var extensions = new List<string>();
@@ -1180,18 +1195,32 @@ internal sealed unsafe class VulkanDevice : IDisposable
 
             try
             {
+                string? software = null;
+
                 foreach (var device in enumeratePhysicalDevices(api))
                 {
                     var candidate = describe(api, device, apiVersion);
 
-                    if (isUsable(api, candidate, VkSurfaceKHR.Null, window, out string? reason))
-                        return true;
+                    if (!isUsable(api, candidate, VkSurfaceKHR.Null, window, out string? reason))
+                    {
+                        Logger.Verbose($"Vulkan: {candidate.Name} can't be used ({reason}).");
+                        continue;
+                    }
 
-                    Logger.Verbose($"Vulkan: {candidate.Name} can't be used ({reason}).");
+                    if (!isSoftware(candidate))
+                        return DeviceSupport.Hardware;
+
+                    software ??= candidate.Name;
+                }
+
+                if (software != null)
+                {
+                    Logger.Verbose($"Vulkan: only a software device can be used ({software}).");
+                    return DeviceSupport.Software;
                 }
 
                 Logger.Verbose("Vulkan: no usable physical device.");
-                return false;
+                return DeviceSupport.None;
             }
             finally
             {
@@ -1201,8 +1230,22 @@ internal sealed unsafe class VulkanDevice : IDisposable
         catch (Exception e)
         {
             Logger.Verbose($"Vulkan: support check failed ({e.Message}).");
-            return false;
+            return DeviceSupport.None;
         }
+    }
+
+    private static bool isSoftware(Candidate candidate) => candidate.Properties.deviceType == VkPhysicalDeviceType.Cpu;
+
+    private enum DeviceSupport
+    {
+        None,
+
+        /// <summary>
+        /// Only a device that draws on the CPU, such as Mesa's lavapipe.
+        /// </summary>
+        Software,
+
+        Hardware,
     }
 
     private static string format(VkVersion version) => $"{version.Major}.{version.Minor}.{version.Patch}";

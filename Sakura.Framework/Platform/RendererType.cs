@@ -28,9 +28,8 @@ public static class RendererTypes
     /// <see cref="RendererType.OpenGL"/> is the last resort everywhere but Android, which is Vulkan only.
     /// </summary>
     /// <remarks>
-    /// Direct3D 11 stays first on Windows, with Vulkan after it. On Linux Vulkan isn't chosen automatically
-    /// until it has passed on real hardware under both X11 and Wayland; until then it is offered for
-    /// selection only (<see cref="GetSuitableRenderers"/>). On macOS it isn't offered at all: Metal is the
+    /// Direct3D 11 stays first on Windows, with Vulkan after it. Linux puts Vulkan first, as the only
+    /// renderer there that decodes video in hardware. On macOS Vulkan isn't offered at all: Metal is the
     /// backend there, and Vulkan through KosmicKrisp is for developing the Vulkan renderer, reached only by
     /// naming it in <c>framework.ini</c>.
     /// </remarks>
@@ -45,23 +44,19 @@ public static class RendererTypes
         if (RuntimeInfo.IsWindows)
             return [RendererType.Direct3D11, RendererType.Vulkan, RendererType.OpenGL];
 
-        return [RendererType.OpenGL];
+        return [RendererType.Vulkan, RendererType.OpenGL];
     }
 
     /// <summary>
     /// The renderer types a user can select on the current platform, in display order:
-    /// <see cref="RendererType.Automatic"/> first, then each one <see cref="GetPlatformRenderers"/> tries,
-    /// then any offered without being tried automatically. For a settings dropdown: on macOS this is
-    /// <c>[Automatic, Metal, OpenGL]</c>, on Linux <c>[Automatic, OpenGL, Vulkan]</c>.
+    /// <see cref="RendererType.Automatic"/> first, then each one <see cref="GetPlatformRenderers"/> tries.
+    /// For a settings dropdown: on macOS this is <c>[Automatic, Metal, OpenGL]</c>, on Linux
+    /// <c>[Automatic, Vulkan, OpenGL]</c>.
     /// </summary>
     public static IReadOnlyList<RendererType> GetSuitableRenderers()
     {
         var result = new List<RendererType> { RendererType.Automatic };
         result.AddRange(GetPlatformRenderers());
-
-        if (RuntimeInfo.OS == RuntimeInfo.Platform.Linux)
-            result.Add(RendererType.Vulkan);
-
         return result;
     }
 }

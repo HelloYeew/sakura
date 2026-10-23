@@ -380,8 +380,18 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
     public DiskCache ShaderCache { get; set; } = null!;
 
+    /// <summary>
+    /// Whether the device may be a software one, such as Mesa's lavapipe, which draws on the CPU. A host
+    /// leaves it false while another renderer is left to try, since OpenGL on the same machine may well have
+    /// the GPU.
+    /// </summary>
+    public bool AllowSoftwareDevice { get; init; } = true;
+
     /// <inheritdoc cref="VulkanDevice.IsSupported"/>
     public static bool IsSupported() => VulkanDevice.IsSupported();
+
+    /// <inheritdoc cref="VulkanDevice.HasHardwareDevice"/>
+    public static bool HasHardwareDevice() => VulkanDevice.HasHardwareDevice();
 
     /// <inheritdoc cref="VulkanDevice.IsSupportedOffscreen"/>
     internal static bool IsSupportedOffscreen() => VulkanDevice.IsSupportedOffscreen();
@@ -416,7 +426,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
     private void createDevice(IVulkanGraphicsSurface? vulkanSurface)
     {
-        device = new VulkanDevice(vulkanSurface, out var surface);
+        device = new VulkanDevice(vulkanSurface, out var surface, AllowSoftwareDevice);
         memory = new VulkanMemory(device);
         renderPasses = new VulkanRenderPasses(device);
         descriptors = new VulkanDescriptors(device);
