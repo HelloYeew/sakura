@@ -25,7 +25,8 @@ public static class RendererTypes
     /// <summary>
     /// The renderer types <see cref="RendererType.Automatic"/> tries on the current platform, most preferred
     /// first, and so the order the host falls back through when one fails to start.
-    /// <see cref="RendererType.OpenGL"/> is the last resort everywhere but Android, which is Vulkan only.
+    /// <see cref="RendererType.OpenGL"/> is the last resort on desktops. Android is Vulkan only and iOS Metal only:
+    /// neither has the desktop OpenGL the GL renderer needs.
     /// </summary>
     /// <remarks>
     /// Direct3D 11 stays first on Windows, with Vulkan after it. Linux puts Vulkan first, as the only
@@ -38,7 +39,10 @@ public static class RendererTypes
         if (RuntimeInfo.OS == RuntimeInfo.Platform.Android)
             return [RendererType.Vulkan];
 
-        if (RuntimeInfo.IsApple)
+        if (RuntimeInfo.OS == RuntimeInfo.Platform.iOS)
+            return [RendererType.Metal];
+
+        if (RuntimeInfo.IsMacOS)
             return [RendererType.Metal, RendererType.OpenGL];
 
         if (RuntimeInfo.IsWindows)

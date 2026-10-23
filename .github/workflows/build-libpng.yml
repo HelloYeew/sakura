@@ -1,0 +1,67 @@
+name: Build libpng
+
+# FreeTypeSharp's iOS FreeType is a static archive built with PNG support (colour emoji are PNG glyphs) but without
+# libpng itself, so an app linking it fails on the undefined png_* symbols. This builds libpng as a static xcframework
+# for Sakura.Framework.NativeLibraries/runtimes/ios/native, linked into the app next to FreeType's archive.
+#
+# The libpng version in the build script is the one that FreeType was built against. When FreeTypeSharp is bumped,
+# check the version string in its iOS libfreetype.a (strings libfreetype.a | grep '^1\.6\.') and change the script to
+# match. Once a FreeTypeSharp release ships libpng for iOS itself, delete this workflow and the xcframework, then
+# release Sakura.Framework.NativeLibraries.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-ios:
+    name: Build iOS
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build
+        run: bash Sakura.Framework.NativeLibraries/script/libpng/build-iOS.sh iOS-libpng
+
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: iOS-libpng
+          path: iOS-libpng
+
+  deploy-pr:
+    name: Distribute and Push
+    runs-on: ubuntu-latest
+    needs: [build-ios]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Distribute Binaries
+        run: |
+          rm -rf Sakura.Framework.NativeLibraries/runtimes/ios/native/libpng16.xcframework
+          mkdir -p Sakura.Framework.NativeLibraries/runtimes/ios/native
+          cp -R artifacts/iOS-libpng/libpng16.xcframework Sakura.Framework.NativeLibraries/runtimes/ios/native/
+
+      - name: Commit and Push to Repository
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout -b update-libpng-binaries
+
+          git add Sakura.Framework.NativeLibraries/runtimes/
+
+          if git diff --staged --quiet; then
+            echo "No changes in native libraries detected. Skipping push."
+          else
+            git commit -m "Update Native libpng Binaries" -m "Co-authored-by: HelloYeew <68165621+HelloYeew@users.noreply.github.com>"
+            git push --force origin update-libpng-binaries
+          fi

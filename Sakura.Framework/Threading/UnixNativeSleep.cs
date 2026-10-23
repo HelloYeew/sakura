@@ -3,6 +3,7 @@
 
 using System;
 using System.Runtime.InteropServices;
+using Sakura.Framework.Platform;
 
 namespace Sakura.Framework.Threading;
 
@@ -32,6 +33,8 @@ internal class UnixNativeSleep : INativeSleep
     /// <returns>True if nanosleep is available; false if it throws (e.g. due to missing libc).</returns>
     private static bool probe()
     {
+        NativeLibraryResolver.Install();
+
         try
         {
             var t = new TimeSpec

@@ -40,10 +40,19 @@ internal static class FFmpegLibrary
             {
                 // The APK's native libraries live in a folder the dynamic linker already searches by
                 // bare name, so there is no directory to point at, and nothing to check for in one.
+                // They're unversioned there (libavcodec.so).
                 ffmpeg.RootPath = string.Empty;
-                DynamicallyLoadedBindings.FunctionResolver = new AndroidFunctionResolver();
+                DynamicallyLoadedBindings.FunctionResolver = new RuntimeLoaderFunctionResolver(name => $"lib{name}.so");
 
                 Logger.Verbose("Initialized FFmpeg from the application's native library folder");
+            }
+            else if (OperatingSystem.IsIOS())
+            {
+                // Each library is embedded as a framework under @rpath, which nothing searches by name.
+                ffmpeg.RootPath = string.Empty;
+                DynamicallyLoadedBindings.FunctionResolver = new RuntimeLoaderFunctionResolver(name => $"@rpath/lib{name}.framework/lib{name}");
+
+                Logger.Verbose("Initialized FFmpeg from the application's frameworks");
             }
             else
             {
@@ -92,18 +101,25 @@ internal static class FFmpegLibrary
     };
 
     /// <summary>
-    /// Resolves FFmpeg on Android, where the libraries are unversioned (<c>libavcodec.so</c>) and sit in
-    /// the APK's native library folder rather than under a runtime-specific directory.
+    /// Resolves FFmpeg through the runtime's own loader, on the mobile platforms where the libraries aren't under a
+    /// runtime-specific directory: each library's name (<c>avcodec</c>) is turned into what that loader finds.
     /// </summary>
     /// <remarks>
-    /// FFmpeg.AutoGen's own Unix resolver cannot be used there. It appends the major version
+    /// FFmpeg.AutoGen's own Unix resolver cannot be used on Android. It appends the major version
     /// (<c>libavcodec.so.62</c>), and it calls <c>dlopen</c> through <c>libdl.so.2</c>, a soname Android
     /// does not have, so it fails before it ever looks for FFmpeg. <see cref="NativeLibrary"/> goes
     /// through the runtime's own loader instead, which already knows where the APK's libraries are.
     /// </remarks>
-    private sealed class AndroidFunctionResolver : FunctionResolverBase
+    private sealed class RuntimeLoaderFunctionResolver : FunctionResolverBase
     {
-        protected override string GetNativeLibraryName(string libraryName, int version) => $"lib{libraryName}.so";
+        private readonly Func<string, string> nativeName;
+
+        public RuntimeLoaderFunctionResolver(Func<string, string> nativeName)
+        {
+            this.nativeName = nativeName;
+        }
+
+        protected override string GetNativeLibraryName(string libraryName, int version) => nativeName(libraryName);
 
         protected override IntPtr LoadNativeLibrary(string libraryName) =>
             NativeLibrary.TryLoad(libraryName, out IntPtr handle) ? handle : IntPtr.Zero;

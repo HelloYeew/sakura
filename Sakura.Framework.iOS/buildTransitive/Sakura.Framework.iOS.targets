@@ -1,0 +1,10 @@
+<Project>
+  <!--
+    FreeType is linked into the app's executable on iOS (FreeTypeSharp's iOS build is a static archive), and the framework
+    calls four of its functions FreeTypeSharp doesn't bind, looking them up in the executable at runtime. Nothing in the
+    link refers to them, so they'd be stripped away.
+  -->
+  <ItemGroup Condition=" '$(TargetPlatformIdentifier)' == 'ios' ">
+    <ReferenceNativeSymbol Include="FT_Get_MM_Var;FT_Set_Var_Design_Coordinates;FT_Done_MM_Var;FT_Set_Named_Instance" SymbolType="Function" />
+  </ItemGroup>
+</Project>

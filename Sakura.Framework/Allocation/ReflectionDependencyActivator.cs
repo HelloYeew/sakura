@@ -96,6 +96,14 @@ internal static class ReflectionDependencyActivator
     }
 
     /// <summary>
+    /// Whether a <see cref="NullabilityInfoContext"/> can be made. An app can turn it off so the nullability attributes
+    /// can be trimmed away (.NET for iOS does by default), and then making one throws: there a parameter that may go
+    /// unresolved has to carry <see cref="CanBeNullAttribute"/>.
+    /// </summary>
+    private static readonly bool nullability_info_supported =
+        !AppContext.TryGetSwitch("System.Reflection.NullabilityInfoContext.IsSupported", out bool supported) || supported;
+
+    /// <summary>
     /// Determines whether a loader parameter should be resolved optionally either it carries
     /// <see cref="CanBeNullAttribute"/> or it is declared as a nullable reference type.
     /// </summary>
@@ -103,6 +111,9 @@ internal static class ReflectionDependencyActivator
     {
         if (parameter.GetCustomAttribute<CanBeNullAttribute>() != null)
             return true;
+
+        if (!nullability_info_supported)
+            return false;
 
         // Nullable reference type annotation, e.g. `Foo?`.
         var nullabilityInfo = new NullabilityInfoContext().Create(parameter);
