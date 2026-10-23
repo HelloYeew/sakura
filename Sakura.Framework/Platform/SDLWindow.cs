@@ -338,7 +338,7 @@ public class SDLWindow : IWindow
 
         var e = new SDL_Event();
         e.display.type = SDL_EventType.SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED;
-        SDL_PushEvent(&e);
+        pushEvent(&e);
     }
 
     /// <summary>
@@ -353,7 +353,7 @@ public class SDLWindow : IWindow
         var e = new SDL_Event();
         e.window.type = SDL_EventType.SDL_EVENT_WINDOW_SAFE_AREA_CHANGED;
         e.window.windowID = SDL_GetWindowID(window);
-        SDL_PushEvent(&e);
+        pushEvent(&e);
     }
 
     /// <summary>
@@ -1726,7 +1726,16 @@ public class SDLWindow : IWindow
     {
         var e = new SDL_Event();
         e.type = (uint)SDL_EventType.SDL_EVENT_USER;
-        SDL_PushEvent(&e);
+        pushEvent(&e);
+    }
+
+    // SDL_PushEvent ends SDL's own wait for events, but not the run loop's that the event thread waits in on iOS.
+    private static unsafe void pushEvent(SDL_Event* e)
+    {
+        SDL_PushEvent(e);
+
+        if (OperatingSystem.IsIOS())
+            MainRunLoop.WakeUp();
     }
 
     private sealed class ClipboardRead
@@ -1812,6 +1821,16 @@ public class SDLWindow : IWindow
     /// </summary>
     public unsafe void WaitForEvents(double timeoutMilliseconds)
     {
+        if (OperatingSystem.IsIOS())
+        {
+            // SDL would poll here a thousand times a second. What another thread queued doesn't wake the run loop
+            // unless it went through pushEvent, so it's looked for first.
+            if (!SDL_HasEvents((uint)SDL_EventType.SDL_EVENT_FIRST, (uint)SDL_EventType.SDL_EVENT_LAST))
+                MainRunLoop.Wait(Math.Max(0, timeoutMilliseconds) / 1000);
+
+            return;
+        }
+
         // Rounded up, as SDL waits whole milliseconds: rounded down, a wait of under one would return at once.
         int timeout = (int)Math.Ceiling(Math.Max(0, timeoutMilliseconds));
         SDL_WaitEventTimeout(null, timeout);
