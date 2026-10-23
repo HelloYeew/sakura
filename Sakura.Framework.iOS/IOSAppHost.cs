@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 using Foundation;
+using Sakura.Framework.Audio;
 using Sakura.Framework.Extensions;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
@@ -58,6 +59,8 @@ public class IOSAppHost : SDLAppHost
     public override Storage GetStorage(string path) => new NativeStorage(path, this);
 
     protected override IWindow CreateWindow() => new IOSWindow(Options.AppType, Options.TakesAudioFocus);
+
+    public override ISystemAudioRoute SystemAudioRoute { get; } = new IOSAudioRoute();
 
     [DllImport("/usr/lib/libSystem.dylib")]
     private static extern nuint os_proc_available_memory();

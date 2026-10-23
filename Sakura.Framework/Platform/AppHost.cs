@@ -303,6 +303,12 @@ public abstract class AppHost : IDisposable
     public virtual NativeAudioOutput? NativeAudioOutput => null;
 
     /// <summary>
+    /// The route the platform's own audio takes the sound along after the app's device buffer, where the platform
+    /// says: the SDL audio backend adds its delay to the sound's and names the output by it. Null elsewhere.
+    /// </summary>
+    public virtual ISystemAudioRoute? SystemAudioRoute => null;
+
+    /// <summary>
     /// The platform's performance services: the frame threads report their work through it, and an app can read how
     /// hot the device is running.
     /// </summary>

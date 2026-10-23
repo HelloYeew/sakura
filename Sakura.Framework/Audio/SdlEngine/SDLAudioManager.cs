@@ -366,10 +366,18 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     /// The device to play on, by name, or empty for the system's default: the starting <see cref="OutputDevice"/>, so
     /// the device the player picked is the first one opened rather than the second.
     /// </param>
+    /// <param name="systemRoute">
+    /// Where the platform's own audio takes the sound after the device buffer (<see cref="AppHost.SystemAudioRoute"/>),
+    /// whose delay <see cref="OutputLatencyMs"/> counts too and whose name <see cref="PlayingDevice"/> takes. Null where
+    /// the platform doesn't say.
+    /// </param>
     /// <exception cref="InvalidOperationException">SDL audio could not be started.</exception>
     public SDLAudioManager(bool useNativeMixEngine = true, int requestedDeviceBufferFrames = DEFAULT_DEVICE_BUFFER_FRAMES,
-                           Action<int>? persistDeviceBufferFrames = null, NativeAudioOutput? nativeOutput = null, string outputDevice = "")
+                           Action<int>? persistDeviceBufferFrames = null, NativeAudioOutput? nativeOutput = null, string outputDevice = "",
+                           ISystemAudioRoute? systemRoute = null)
     {
+        this.systemRoute = systemRoute;
+
         // AAudio's own buffer is in whole bursts already, so 0 leaves it as AAudio opens it.
         int aaudioBufferFrames = requestedDeviceBufferFrames;
 
@@ -501,6 +509,10 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             mixThread.Start();
         }
 
+        // The device is open, so the system's route is the one it plays on.
+        if (systemRoute != null)
+            systemRouteLatencyMs = systemRoute.LatencyMilliseconds;
+
         logInitialisationDetails(requestedDeviceBufferFrames, nativeOutput);
         refreshPlayingDevice();
     }
@@ -605,7 +617,12 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     /// remainder is a fixed offset that belongs in a user-facing calibration rather than in the clock.
     /// </para>
     /// </remarks>
-    public double OutputLatencyMs => outputLatencyFrames / (double)SampleRate * 1000.0 + deviceBufferMicroseconds / 1000.0;
+    public double OutputLatencyMs => outputLatencyFrames / (double)SampleRate * 1000.0 + deviceBufferMicroseconds / 1000.0 + systemRouteLatencyMs;
+
+    private readonly ISystemAudioRoute? systemRoute;
+
+    // The system route's delay as last read, by the device check, as a route change moves it.
+    private double systemRouteLatencyMs;
 
     // The native engine's channels call into it directly, from whichever thread plays them. The managed mixer's
     // queue their changes for the audio thread.
@@ -779,6 +796,9 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
         // SDL moves a stream on the default to the system's new default by itself, saying nothing.
         refreshPlayingDevice();
+
+        if (systemRoute != null)
+            systemRouteLatencyMs = systemRoute.LatencyMilliseconds;
 
         var device = SDL_GetAudioStreamDevice(deviceStream);
 
@@ -1020,6 +1040,11 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             playingAAudioDeviceId = id;
             name = id > 0 ? describeAAudioDevice?.Invoke(id) ?? string.Empty : string.Empty;
         }
+        else if (systemRoute?.Name is { Length: > 0 } routeName)
+        {
+            // The system's own route says more than SDL, which only has a stand-in name for the output there.
+            name = routeName;
+        }
         else
         {
             // The logical device names the physical one it's on now, which for the default is whichever that is.
@@ -1141,6 +1166,9 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             logAAudioDetails(aaudioOutput);
         else
             logDeviceDetails(localRequestedDeviceBufferFrames);
+
+        if (systemRoute != null)
+            Logger.Verbose($"System route: {systemRoute.Name}, {systemRouteLatencyMs:F1} ms after the device buffer");
 
         Logger.Verbose($"Mix format: {SampleRate} Hz, {output_channels} ch, {formatName(SDLAudioConverter.SAMPLE_FORMAT)}");
 
