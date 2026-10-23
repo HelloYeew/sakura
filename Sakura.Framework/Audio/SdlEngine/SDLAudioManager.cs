@@ -60,6 +60,12 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     internal const int DEFAULT_DEVICE_BUFFER_FRAMES = 128;
 
     /// <summary>
+    /// The device buffer on iOS, which has no output burst to ask for. Core Audio keeps at least 30 ms queued in buffers
+    /// this size (six of them), where SDL's own 1024 frames meant three, about 70 ms.
+    /// </summary>
+    internal const int IOS_DEVICE_BUFFER_FRAMES = 256;
+
+    /// <summary>
     /// Bounds on <c>FrameworkSetting.AudioDeviceBufferFrames</c>. Below the lower bound no
     /// driver will honor the request anyway; above the upper one the setting has stopped being a
     /// latency control.
@@ -270,6 +276,15 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     /// </remarks>
     private volatile int deviceBufferMicroseconds;
 
+    /// <summary>
+    /// How long the sound waits in the device's buffers on its way out, for <see cref="OutputLatencyMs"/>: one buffer
+    /// period (<see cref="deviceBufferMicroseconds"/>), except where the output keeps several queued.
+    /// </summary>
+    private volatile int deviceQueueMicroseconds;
+
+    // Whether SDL plays through Core Audio (macOS and iOS), whose output keeps several buffers queued.
+    private bool coreAudio;
+
     private double sinceDeviceCheckMs;
 
     private double sinceLatencySampleMs = double.MaxValue;
@@ -396,6 +411,7 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             throw new InvalidOperationException($"Failed to initialise SDL audio: {SDL_GetError()}");
 
         ownsAudioSubsystem = true;
+        coreAudio = SDL_GetCurrentAudioDriver() == "coreaudio";
 
         preferredDevice = outputDevice;
         OutputDevice.Value = outputDevice;
@@ -617,7 +633,7 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     /// remainder is a fixed offset that belongs in a user-facing calibration rather than in the clock.
     /// </para>
     /// </remarks>
-    public double OutputLatencyMs => outputLatencyFrames / (double)SampleRate * 1000.0 + deviceBufferMicroseconds / 1000.0 + systemRouteLatencyMs;
+    public double OutputLatencyMs => outputLatencyFrames / (double)SampleRate * 1000.0 + deviceQueueMicroseconds / 1000.0 + systemRouteLatencyMs;
 
     private readonly ISystemAudioRoute? systemRoute;
 
@@ -650,8 +666,29 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     /// <summary>
     /// Recomputes the device half of <see cref="OutputLatencyMs"/> after the device format is read.
     /// </summary>
-    private void updateDeviceBufferDuration(int frames, int rate) =>
+    private void updateDeviceBufferDuration(int frames, int rate)
+    {
         deviceBufferMicroseconds = rate > 0 ? (int)Math.Round(frames / (double)rate * 1_000_000.0) : 0;
+        deviceQueueMicroseconds = deviceBufferMicroseconds * queuedDeviceBuffers(frames, rate);
+    }
+
+    // What SDL's Core Audio output keeps queued at the least, in milliseconds (MINIMUM_AUDIO_BUFFER_TIME_MS).
+    private const double core_audio_minimum_queue_ms = 15;
+
+    /// <summary>
+    /// How many device buffers the sound waits behind. One, except on Core Audio: SDL keeps several Audio Queue
+    /// buffers in flight there, three, or twice as many as make 15 ms when a buffer is shorter than that
+    /// (<c>SDL_coreaudio.m</c>). Counting one undercounted the delay by tens of milliseconds: about 30 at the desktop's
+    /// 128 frames, and 46 at iOS's old 1024.
+    /// </summary>
+    private int queuedDeviceBuffers(int frames, int rate)
+    {
+        if (!coreAudio || frames <= 0 || rate <= 0)
+            return 1;
+
+        double bufferMs = frames * 1000.0 / rate;
+        return bufferMs < core_audio_minimum_queue_ms ? (int)Math.Ceiling(core_audio_minimum_queue_ms / bufferMs) * 2 : 3;
+    }
 
     /// <summary>
     /// This frame's answer, on the native engine, to whether the device is being served in time.
@@ -911,6 +948,7 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         // What's buffered is all that's known until AAudio's timestamps say how long the rest of the way takes.
         double latencyMs = aaudioLatency.Milliseconds ?? deviceBufferFrames / (double)output.SampleRate * 1000.0;
         deviceBufferMicroseconds = (int)Math.Round(latencyMs * 1000.0);
+        deviceQueueMicroseconds = deviceBufferMicroseconds;
     }
 
     /// <summary>
@@ -1218,6 +1256,9 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
                 : $", asked for {localRequestedDeviceBufferFrames}";
 
             Logger.Verbose($"Device buffer: {deviceFrames} frames ({deviceBufferMs:F1} ms{granted})");
+
+            if (queuedDeviceBuffers(deviceFrames, deviceSpec.freq) is var queued and > 1)
+                Logger.Verbose($"Device queue: {queued} buffers ({deviceQueueMicroseconds / 1000.0:F1} ms), as Core Audio keeps them");
         }
         else
         {
