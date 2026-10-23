@@ -1675,7 +1675,16 @@ public class SDLWindow : IWindow
         // while the field keeps its focus, so a tap on the field calls this again to bring it back.
         SDL_StartTextInputWithProperties(window, props);
         SDL_DestroyProperties(props);
+
+        OnTextInputStarted(type);
     }
+
+    /// <summary>
+    /// Called on the event thread once text input has started for a field, with its virtual keyboard up where there is
+    /// one, for a platform to finish what SDL leaves out of the keyboard.
+    /// </summary>
+    /// <param name="type">The field's input type.</param>
+    protected virtual void OnTextInputStarted(TextInputType type) { }
 
     private static bool sameArea(SDL_Rect a, SDL_Rect b) => a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
 

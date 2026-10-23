@@ -5,8 +5,10 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using CoreAnimation;
 using Foundation;
+using Sakura.Framework.Input;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Platform.Dialogs;
@@ -49,10 +51,10 @@ internal class IOSWindow : SDLWindow
         // SDL would defer every edge for any borderless window, which on iOS is every window.
         SDL_SetHint(SDL_HINT_IOS_HIDE_HOME_INDICATOR, appType == AppType.Game ? "2" : "0");
 
-        // The audio session's category, which SDL sets as it opens the device. Playback has the output to itself: other
+        // The audio session's category, which SDL sets as it opens a device. Playback has the output to itself: other
         // apps' music stops, and the silent switch doesn't mute it, which is how a game's sound is heard. Ambient plays
         // along with whatever else is playing and goes quiet with the switch. Unset, SDL would play over other apps'
-        // music and ignore the switch.
+        // music and ignore the switch. The host sets the same itself, for the RemoteIO output, which starts without SDL.
         SDL_SetHint(SDL_HINT_AUDIO_CATEGORY, takesAudioFocus ? "playback" : "ambient");
     }
 
@@ -111,6 +113,65 @@ internal class IOSWindow : SDLWindow
 
     protected override float? GetPlatformRefreshRate() => refreshRate > 0 ? refreshRate : null;
 
+    // A phone's number pads have no Return key (an iPad's do), so a field taking a number couldn't be finished from the
+    // keyboard. A bar above the pad gives it one, Done, which reaches SDL as its own Return key would.
+    protected override void OnTextInputStarted(TextInputType type)
+    {
+        if (UIDevice.CurrentDevice.UserInterfaceIdiom != UIUserInterfaceIdiom.Phone || findTextField(KeyWindowController()?.View) is not UITextField field)
+            return;
+
+        bool numberPad = type is TextInputType.Number or TextInputType.NumberPassword;
+
+        if (numberPad == (field.InputAccessoryView != null))
+            return;
+
+        field.InputAccessoryView = numberPad ? createDoneBar(field) : null;
+        field.ReloadInputViews();
+    }
+
+    // SDL's own text field, hidden in its view, which takes what's typed and keeps the keyboard up.
+    private static UITextField? findTextField(UIView? view)
+    {
+        if (view == null)
+            return null;
+
+        if (view is UITextField field)
+            return field;
+
+        foreach (var subview in view.Subviews)
+        {
+            if (findTextField(subview) is UITextField found)
+                return found;
+        }
+
+        return null;
+    }
+
+    private static UIToolbar createDoneBar(UITextField field)
+    {
+        var bar = new UIToolbar();
+
+        // SDL's view controller is the field's delegate, and Return comes through it. Sent directly: the method answers a
+        // BOOL, which the bindings' PerformSelector would take for an object, and the app would end on it.
+        var done = new UIBarButtonItem(UIBarButtonSystemItem.Done, (_, _) =>
+        {
+            if (field.WeakDelegate is NSObject handler)
+                sendReturningBool(handler.Handle, ObjCRuntime.Selector.GetHandle("textFieldShouldReturn:"), field.Handle);
+        });
+
+        bar.Items = [new UIBarButtonItem(UIBarButtonSystemItem.FlexibleSpace), done];
+        bar.SizeToFit();
+        return bar;
+    }
+
+    [DllImport("/usr/lib/libobjc.dylib", EntryPoint = "objc_msgSend")]
+    private static extern byte sendReturningBool(IntPtr receiver, IntPtr selector, IntPtr argument);
+
+    internal static UIViewController? KeyWindowController() =>
+        UIApplication.SharedApplication.ConnectedScenes.OfType<UIWindowScene>()
+                     .SelectMany(scene => scene.Windows)
+                     .FirstOrDefault(window => window.IsKeyWindow)?.RootViewController;
+
     // SDL has no file dialog on iOS: the system's document picker instead. It hands over the files where they are (in
     // Files, iCloud Drive, another app's folder), readable only while the app holds their security scope, so each is
     // copied into the app's own storage before the picker's callback returns, and the copy is what the app gets: a path
@@ -118,9 +179,7 @@ internal class IOSWindow : SDLWindow
     // callback, and an app reads its picks later, off the main thread.
     public override void ShowOpenFileDialog(FileDialogOptions options, Action<FileDialogResult> callback)
     {
-        var presenter = UIApplication.SharedApplication.ConnectedScenes.OfType<UIWindowScene>()
-                                     .SelectMany(scene => scene.Windows)
-                                     .FirstOrDefault(window => window.IsKeyWindow)?.RootViewController;
+        var presenter = KeyWindowController();
 
         if (presenter == null)
         {
