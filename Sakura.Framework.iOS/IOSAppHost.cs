@@ -5,11 +5,13 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
+using AVFoundation;
 using Foundation;
 using Sakura.Framework.Audio;
 using Sakura.Framework.Extensions;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
+using UIKit;
 using static SDL.SDL3;
 
 namespace Sakura.Framework.iOS;
@@ -23,7 +25,31 @@ public class IOSAppHost : SDLAppHost
         : base(appName, options)
     {
         Logger.ConsoleOutput = IOSLog.For(appName);
+
+        // A call, an alarm or Siri takes the audio output for a while. SDL stops its output meanwhile; the app hears of it
+        // as OutputInterrupted, as it does from Android's audio focus, to pause what's playing. The end isn't always
+        // sent, so coming back to the front ends it too, as SDL does.
+        interruptionObserver = AVAudioSession.Notifications.ObserveInterruption((_, e) => setInterrupted(e.InterruptionType == AVAudioSessionInterruptionType.Began));
+        activeObserver = UIApplication.Notifications.ObserveDidBecomeActive((_, _) => setInterrupted(false));
     }
+
+    // Kept for as long as the host, which is the app's life.
+    private readonly NSObject interruptionObserver;
+    private readonly NSObject activeObserver;
+
+    // Only touched on the main thread, where the notifications come.
+    private bool audioInterrupted;
+
+    private void setInterrupted(bool interrupted)
+    {
+        if (interrupted == audioInterrupted)
+            return;
+
+        audioInterrupted = interrupted;
+        SetAudioInterrupted(interrupted);
+    }
+
+    public override IPlatformPerformance Performance { get; } = new IOSPerformance();
 
     /// <summary>
     /// <c>Library/Application Support</c>, where the app keeps its data. Each app has a container of its own, so nothing
