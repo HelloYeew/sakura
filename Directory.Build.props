@@ -16,4 +16,11 @@
       <Link>sakura.licenseheader</Link>
     </None>
   </ItemGroup>
+  <!-- What an iOS app gets with Sakura.Framework.iOS from NuGet, for the apps in this repository. -->
+  <Import Project="$(MSBuildThisFileDirectory)Sakura.Framework.iOS/buildTransitive/Sakura.Framework.iOS.props" />
+  <PropertyGroup Label="iOS">
+    <!-- .NET 11 RC 2's iOS workload is made for Xcode 27.0 and refuses any other, but builds and runs with 27.1. Remove
+         once a workload made for the installed Xcode is out. -->
+    <ValidateXcodeVersion>false</ValidateXcodeVersion>
+  </PropertyGroup>
 </Project>
