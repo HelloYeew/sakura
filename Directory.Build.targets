@@ -4,10 +4,4 @@
 
   <!-- What an iOS app gets with Sakura.Framework.iOS from NuGet, for the apps in this repository. -->
   <Import Project="$(MSBuildThisFileDirectory)Sakura.Framework.iOS/buildTransitive/Sakura.Framework.iOS.targets" />
-
-  <!-- libpng, which FreeTypeSharp's iOS FreeType needs and doesn't ship, from this repository's native libraries until a
-       Sakura.Framework.NativeLibraries release carries it. -->
-  <ItemGroup Condition=" '$(TargetPlatformIdentifier)' == 'ios' And '$(OutputType)' == 'Exe' ">
-    <NativeReference Include="$(MSBuildThisFileDirectory)Sakura.Framework.NativeLibraries/runtimes/ios/native/libpng16.xcframework" Kind="Static" />
-  </ItemGroup>
 </Project>
