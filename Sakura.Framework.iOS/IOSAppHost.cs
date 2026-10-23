@@ -137,10 +137,41 @@ public class IOSAppHost : SDLAppHost
     // 0 where the system keeps no limit for the process, as on the simulator.
     public override long? AvailableMemory => os_proc_available_memory() is var available and > 0 ? (long)available : null;
 
-    // Another app opens one of this app's files through a share sheet, which isn't set up yet.
-    public override bool OpenFileExternally(string filename) => false;
+    // iOS has no default app to open a file with, nor a file browser to show it in: the app's data isn't in Files. The
+    // share sheet is what there is, where another app opens the file or Files keeps a copy of it. A folder can't go
+    // through it, so asking for one does nothing.
+    public override bool OpenFileExternally(string filename) => share(filename);
 
-    public override bool PresentFileExternally(string filename) => false;
+    public override bool PresentFileExternally(string filename) => share(filename);
+
+    private static bool share(string filename)
+    {
+        if (!File.Exists(filename))
+            return false;
+
+        NSRunLoop.Main.BeginInvokeOnMainThread(() =>
+        {
+            if (IOSWindow.KeyWindowController() is not UIViewController presenter || presenter.View is not UIView view)
+            {
+                Logger.Error($"There's no window to show the share sheet for {filename} over.");
+                return;
+            }
+
+            var sheet = new UIActivityViewController([NSUrl.FromFilename(filename)], null);
+
+            // A popover on an iPad, which needs somewhere to come from: the middle of the window, with no arrow.
+            if (sheet.PopoverPresentationController is UIPopoverPresentationController popover)
+            {
+                popover.SourceView = view;
+                popover.SourceRect = new CoreGraphics.CGRect(view.Bounds.Width / 2, view.Bounds.Height / 2, 0, 0);
+                popover.PermittedArrowDirections = 0;
+            }
+
+            presenter.PresentViewController(sheet, true, null);
+        });
+
+        return true;
+    }
 
     // iOS ends an app without asking: from the app switcher, or when it wants the memory back. The app has already been
     // told it was going to the background, which is its chance to save.
