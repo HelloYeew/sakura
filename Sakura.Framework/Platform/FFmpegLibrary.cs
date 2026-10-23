@@ -23,6 +23,14 @@ internal static class FFmpegLibrary
     private static bool initialised;
 
     /// <summary>
+    /// <c>AVERROR(EAGAIN)</c>: the codec wants more input, or has output to take first. Use this rather than
+    /// <see cref="ffmpeg.EAGAIN"/>: EAGAIN is 35 on Apple's systems and 11 elsewhere, and the netstandard build that
+    /// FFmpeg.AutoGen's package ships only counts macOS as Apple's, so on iOS its value is wrong and every "try again"
+    /// reads as a failure.
+    /// </summary>
+    public static readonly int ErrorAgain = -(OperatingSystem.IsMacOS() || OperatingSystem.IsIOS() || OperatingSystem.IsTvOS() ? 35 : 11);
+
+    /// <summary>
     /// Points <see cref="ffmpeg.RootPath"/> at the runtime-specific native directory and initializes
     /// the bindings, once per process.
     /// </summary>

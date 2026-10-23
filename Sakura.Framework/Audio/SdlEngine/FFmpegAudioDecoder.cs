@@ -280,7 +280,7 @@ internal sealed unsafe class FFmpegAudioDecoder : IDisposable
                 return false;
             }
 
-            if (receiveResult != ffmpeg.AVERROR(ffmpeg.EAGAIN))
+            if (receiveResult != FFmpegLibrary.ErrorAgain)
             {
                 Logger.Error($"[FFmpegAudioDecoder] avcodec_receive_frame failed: {errorString(receiveResult)}");
                 EndOfStream = true;
@@ -326,7 +326,7 @@ internal sealed unsafe class FFmpegAudioDecoder : IDisposable
             int sendResult = ffmpeg.avcodec_send_packet(codecContext, packet);
             ffmpeg.av_packet_unref(packet);
 
-            if (sendResult < 0 && sendResult != ffmpeg.AVERROR(ffmpeg.EAGAIN))
+            if (sendResult < 0 && sendResult != FFmpegLibrary.ErrorAgain)
             {
                 Logger.Error($"[FFmpegAudioDecoder] avcodec_send_packet failed: {errorString(sendResult)}");
                 EndOfStream = true;

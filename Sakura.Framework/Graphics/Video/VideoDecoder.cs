@@ -1024,7 +1024,7 @@ public unsafe class VideoDecoder : IDisposable
             if (packet->stream_index == videoStreamIndex)
             {
                 int sendResult = sendPacket(receiveFrame, packet);
-                if (sendResult == -ffmpeg.EAGAIN) unref = false;
+                if (sendResult == FFmpegLibrary.ErrorAgain) unref = false;
             }
 
             if (unref) ffmpeg.av_packet_unref(packet);
@@ -1035,7 +1035,7 @@ public unsafe class VideoDecoder : IDisposable
             if (Looping) Seek(0);
             else State = DecoderState.EndOfStream;
         }
-        else if (readResult == -ffmpeg.EAGAIN)
+        else if (readResult == FFmpegLibrary.ErrorAgain)
         {
             State = DecoderState.Ready;
             Thread.Sleep(1);
@@ -1053,7 +1053,7 @@ public unsafe class VideoDecoder : IDisposable
         int result = ffmpeg.avcodec_send_packet(codecContext, packet);
         pendingSendTicks += Stopwatch.GetTimestamp() - sendStart;
 
-        if (result == 0 || result == -ffmpeg.EAGAIN)
+        if (result == 0 || result == FFmpegLibrary.ErrorAgain)
             readDecodedFrames(receiveFrame);
         else if (result != ffmpeg.AVERROR_EOF)
             noteCodecFailure(result, "avcodec_send_packet");
@@ -1109,7 +1109,7 @@ public unsafe class VideoDecoder : IDisposable
 
             if (result < 0)
             {
-                if (result != -ffmpeg.EAGAIN && result != ffmpeg.AVERROR_EOF)
+                if (result != FFmpegLibrary.ErrorAgain && result != ffmpeg.AVERROR_EOF)
                 {
                     noteCodecFailure(result, "avcodec_receive_frame");
                     break;
