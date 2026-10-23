@@ -810,6 +810,11 @@ public class GLRenderer : IGLRenderer, IDisposable
     /// Wires <c>glDebugMessageCallback</c> (KHR_debug / GL 4.3+) so driver errors surface in the log
     /// instead of failing silently. Skipped when the driver doesn't expose the extension.
     /// </summary>
+    /// <remarks>
+    /// Notifications are turned off at the driver. They report nothing wrong, and NVIDIA's describes where a
+    /// buffer lives on every upload: thousands a second, each a string built and logged, filling the log by
+    /// a hundred megabytes a minute.
+    /// </remarks>
     private unsafe void tryEnableDebugOutput(string extensions)
     {
         if (!extensions.Contains("GL_KHR_debug"))
@@ -820,6 +825,7 @@ public class GLRenderer : IGLRenderer, IDisposable
             debugMessageCallback = onDebugMessage;
             gl.Enable(EnableCap.DebugOutput);
             gl.DebugMessageCallback(debugMessageCallback, null);
+            gl.DebugMessageControl(DebugSource.DontCare, DebugType.DontCare, DebugSeverity.DebugSeverityNotification, 0, (uint*)null, false);
             Logger.Verbose("GL debug output enabled (KHR_debug).");
         }
         catch (Exception ex)
