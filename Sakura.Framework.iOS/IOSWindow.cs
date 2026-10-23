@@ -1,19 +1,33 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
+using CoreAnimation;
+using Foundation;
+using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
+using SDL;
+using UIKit;
 using static SDL.SDL3;
 
 namespace Sakura.Framework.iOS;
 
 /// <summary>
 /// The window an app draws to on iOS: SDL's, with the system's edge swipes and the app's audio session set for the kind
-/// of app.
+/// of app, and its refresh rate measured from the display as the system runs it.
 /// </summary>
 internal class IOSWindow : SDLWindow
 {
     private readonly AppType appType;
     private readonly bool takesAudioFocus;
+
+    // How many frames in a row a new rate has to hold before the window takes it, so a single odd frame doesn't move it.
+    private const int frames_to_settle = 8;
+
+    private CADisplayLink? displayLink;
+    private float refreshRate;
+    private float newRate;
+    private int newRateFrames;
 
     public IOSWindow(AppType appType, bool takesAudioFocus)
     {
@@ -35,4 +49,59 @@ internal class IOSWindow : SDLWindow
         // music and ignore the switch.
         SDL_SetHint(SDL_HINT_AUDIO_CATEGORY, takesAudioFocus ? "playback" : "ambient");
     }
+
+    protected override unsafe void OnCreated(SDL_Window* sdlWindow)
+    {
+        // The screen reports the highest rate it can run at, 120 on ProMotion, even while the system holds it lower: in
+        // Low Power Mode, when the phone is hot, or when nothing asks for more. A display link is told the rate of each
+        // frame as the system runs it, so the window's rate comes from one instead.
+        //
+        // SDL keeps a display link of its own on a screen faster than 60, asking it for the highest rate whatever the
+        // app. It goes, and this one asks for what the kind of app needs: a game for every frame the screen can show, an
+        // application for what the system thinks right, which drops while nothing moves.
+        SDL_SetiOSAnimationCallback(sdlWindow, 1, null, IntPtr.Zero);
+
+        displayLink = CADisplayLink.Create(onFrame);
+
+        if (appType == AppType.Game)
+        {
+            float highest = UIScreen.MainScreen.MaximumFramesPerSecond;
+            displayLink.PreferredFrameRateRange = CAFrameRateRange.Create(highest * 2 / 3, highest, highest);
+        }
+
+        displayLink.AddToRunLoop(NSRunLoop.Main, NSRunLoopMode.Default);
+    }
+
+    // On the main thread, which is the event thread here, once a frame.
+    private void onFrame()
+    {
+        double frameSeconds = displayLink!.TargetTimestamp - displayLink.Timestamp;
+
+        if (frameSeconds <= 0)
+            return;
+
+        float rate = MathF.Round((float)(1 / frameSeconds));
+
+        if (rate == refreshRate)
+        {
+            newRateFrames = 0;
+            return;
+        }
+
+        if (rate != newRate)
+        {
+            newRate = rate;
+            newRateFrames = 0;
+        }
+
+        if (++newRateFrames < frames_to_settle)
+            return;
+
+        refreshRate = rate;
+        newRateFrames = 0;
+        Logger.Debug($"The system runs the display at {rate} Hz");
+        InvalidateRefreshRate();
+    }
+
+    protected override float? GetPlatformRefreshRate() => refreshRate > 0 ? refreshRate : null;
 }

@@ -305,6 +305,14 @@ public class SDLWindow : IWindow
     }
 
     /// <summary>
+    /// Called once SDL's window exists, on the event thread, before the display's refresh rate is first read.
+    /// </summary>
+    /// <param name="sdlWindow">SDL's window.</param>
+    protected virtual unsafe void OnCreated(SDL_Window* sdlWindow)
+    {
+    }
+
+    /// <summary>
     /// The safe-area insets in SDL window coordinates when the platform knows them better than SDL does, or
     /// null to use SDL's. Called on the event thread whenever the safe area may have changed.
     /// </summary>
@@ -672,6 +680,8 @@ public class SDLWindow : IWindow
         // thread, where no frame may run, and the polled resize events are enough there.
         if (RuntimeInfo.OS != RuntimeInfo.Platform.Android)
             SDL_AddEventWatch(&resizeEventWatch, IntPtr.Zero);
+
+        OnCreated(window);
 
         DisplayHz = getDisplayRefreshRate();
         Logger.Verbose($"Display refresh rate: {DisplayHz} Hz");
