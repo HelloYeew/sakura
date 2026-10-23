@@ -1657,16 +1657,26 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         (statOutputLatency ??= GlobalStatistics.Get<double>("Audio", "SDL Output Latency", StatisticKind.Gauge, StatisticUnit.Milliseconds)).Value = Math.Round(OutputLatencyMs, 2);
     }
 
-    // SDL pauses its own streams for the background on Android, but not this one.
-    void IStopsInBackground.EnterBackground() => aaudioOutput?.Pause();
+    // SDL pauses its own streams for the background on Android, but not this one. On iOS it pauses nothing: Core Audio
+    // would play on with every frame stopped, as soon as the app stops being the active one (Control Center pulled
+    // down, a call coming in), and long after the game has.
+    void IStopsInBackground.EnterBackground()
+    {
+        if (aaudioOutput != null)
+            aaudioOutput.Pause();
+        else if (OperatingSystem.IsIOS() && !SDL_PauseAudioStreamDevice(deviceStream))
+            Logger.Error($"Failed to stop the SDL audio device for the background: {SDL_GetError()}");
+    }
 
     void IStopsInBackground.EnterForeground()
     {
-        if (aaudioOutput == null)
-            return;
-
-        aaudioSettlingMs = aaudio_settle_ms;
-        aaudioOutput.Start();
+        if (aaudioOutput != null)
+        {
+            aaudioSettlingMs = aaudio_settle_ms;
+            aaudioOutput.Start();
+        }
+        else if (OperatingSystem.IsIOS() && !SDL_ResumeAudioStreamDevice(deviceStream))
+            Logger.Error($"Failed to start the SDL audio device again: {SDL_GetError()}");
     }
 
     public void StopAll()
