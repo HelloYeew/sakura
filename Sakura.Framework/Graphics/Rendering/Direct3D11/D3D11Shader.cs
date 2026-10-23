@@ -3,7 +3,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using Sakura.Framework.Graphics.Colors;
+using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using SharpGen.Runtime;
 using Vortice.D3DCompiler;
@@ -40,8 +42,9 @@ public sealed class D3D11Shader : IShader
 
     public nint Handle => vertexShader?.NativePointer ?? nint.Zero;
 
+    // The paths name the GLSL sources each HLSL string was cross-compiled from, for compiler messages.
     public D3D11Shader(ID3D11Device device, ID3D11DeviceContext context,
-        string vertexHlsl, string fragmentHlsl, InputElementDescription[] inputElements,
+        string vertexPath, string vertexHlsl, string fragmentPath, string fragmentHlsl, InputElementDescription[] inputElements,
         IReadOnlyDictionary<string, UniformBinding> uniformBlockBindings = null)
     {
         this.device = device;
@@ -50,18 +53,22 @@ public sealed class D3D11Shader : IShader
             ? new Dictionary<string, UniformBinding>(uniformBlockBindings)
             : new Dictionary<string, UniformBinding>();
 
-        byte[] vsBytecode = compile(vertexHlsl, "vs_5_0");
-        byte[] psBytecode = compile(fragmentHlsl, "ps_5_0");
+        byte[] vsBytecode = compile(vertexHlsl, $"{vertexPath}.hlsl", "vs_5_0");
+        byte[] psBytecode = compile(fragmentHlsl, $"{fragmentPath}.hlsl", "ps_5_0");
 
         vertexShader = device.CreateVertexShader(vsBytecode);
         pixelShader = device.CreatePixelShader(psBytecode);
         inputLayout = device.CreateInputLayout(inputElements, vsBytecode);
     }
 
-    private static byte[] compile(string hlsl, string profile)
+    private static byte[] compile(string hlsl, string sourceName, string profile)
     {
+        long compileStart = Stopwatch.GetTimestamp();
+
         // SPIRV-Cross emits an HLSL entry point named "main" (unlike MSL's "main0").
-        Result result = Compiler.Compile(hlsl, "main", "sakura", profile, out Blob code, out Blob error);
+        Result result = Compiler.Compile(hlsl, null, null, "main", sourceName, profile, ShaderFlags.OptimizationLevel3, out Blob code, out Blob error);
+
+        double compileMilliseconds = Stopwatch.GetElapsedTime(compileStart).TotalMilliseconds;
 
         if (result.Failure || code == null)
         {
@@ -70,10 +77,111 @@ public sealed class D3D11Shader : IShader
             throw new InvalidOperationException($"Failed to compile HLSL ({profile}): {message}");
         }
 
+        // A successful compile can still carry warnings, and some of them are about performance: X4121
+        // means a texture sample inside a branch had to be moved out of it.
+        if (error != null)
+            Logger.Verbose($"FXC warnings for {sourceName} ({profile}):\n{error.AsString().TrimEnd()}");
+
         byte[] bytes = code.AsBytes();
         code.Dispose();
         error?.Dispose();
+
+        // Compiles run on the draw thread, once per shader instance, so the time is a hitch in that frame.
+        string summary = $"Direct3D11 shader {sourceName} ({profile}) compiled in {compileMilliseconds:N1} ms";
+
+        if (profile.StartsWith("ps", StringComparison.Ordinal))
+            summary += describeSampling(bytes);
+
+        Logger.Verbose(summary);
         return bytes;
+    }
+
+    /// <summary>
+    /// Counts the texture samples in a compiled pixel shader, and how many of them stayed inside a
+    /// branch. Where each pixel picks its texture by branching, as the main shader does, a sample still
+    /// inside its branch only runs for the pixels that take it; one the compiler moved out runs for
+    /// every pixel.
+    /// </summary>
+    private static unsafe string describeSampling(byte[] bytecode)
+    {
+        string disassembly;
+
+        try
+        {
+            fixed (byte* data = bytecode)
+            {
+                using Blob blob = Compiler.Disassemble((nint)data, (nuint)bytecode.Length, DisasmFlags.None, null);
+                disassembly = blob.AsString();
+            }
+        }
+        catch (Exception e)
+        {
+            return $"; disassembly unavailable ({e.Message})";
+        }
+
+        int samples = 0;
+        int samplesInBranch = 0;
+        int samplesInLoop = 0;
+        int branchDepth = 0;
+        int loopDepth = 0;
+        string? instructionSlots = null;
+
+        foreach (string rawLine in disassembly.Split('\n'))
+        {
+            string line = rawLine.Trim();
+
+            if (line.StartsWith("//", StringComparison.Ordinal))
+            {
+                // "// Approximately 120 instruction slots used"
+                if (line.Contains("instruction slots used", StringComparison.Ordinal))
+                    instructionSlots = line.TrimStart('/', ' ');
+
+                continue;
+            }
+
+            int end = line.IndexOfAny([' ', '(']);
+            string opcode = end < 0 ? line : line[..end];
+
+            switch (opcode)
+            {
+                case "if_z":
+                case "if_nz":
+                case "switch":
+                    branchDepth++;
+                    break;
+
+                case "endif":
+                case "endswitch":
+                    branchDepth--;
+                    break;
+
+                case "loop":
+                    loopDepth++;
+                    break;
+
+                case "endloop":
+                    loopDepth--;
+                    break;
+
+                default:
+                    // sample, sample_l, sample_d, sample_indexable, ...
+                    if (opcode.StartsWith("sample", StringComparison.Ordinal))
+                    {
+                        samples++;
+
+                        if (branchDepth > 0)
+                            samplesInBranch++;
+
+                        if (loopDepth > 0)
+                            samplesInLoop++;
+                    }
+
+                    break;
+            }
+        }
+
+        return $"; {samples} texture samples, {samplesInBranch} inside a branch, {samplesInLoop} inside a loop"
+               + (instructionSlots != null ? $"; {instructionSlots}" : string.Empty);
     }
 
     /// <summary>

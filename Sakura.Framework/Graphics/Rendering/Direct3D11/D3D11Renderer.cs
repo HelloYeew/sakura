@@ -16,6 +16,7 @@ using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Statistic;
 using Sakura.Framework.Timing;
+using SharpGen.Runtime;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
@@ -35,6 +36,23 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     private static readonly GlobalStatistic<int> stat_vertices_drawn = GlobalStatistics.Get<int>("Renderer", "Vertices Drawn", StatisticKind.PerFrame);
     private static readonly GlobalStatistic<int> stat_slot_exhaustion_flushes = GlobalStatistics.Get<int>("Renderer", "Slot Exhaustion Flushes", StatisticKind.PerFrame);
     private static readonly GlobalStatistic<int> stat_state_change_flushes = GlobalStatistics.Get<int>("Renderer", "State Change Flushes", StatisticKind.PerFrame);
+
+    // Counted by VertexBatch; completed here, at this renderer's frame boundary.
+    private static readonly GlobalStatistic<int> stat_buffer_full_flushes = GlobalStatistics.Get<int>("Renderer", "Buffer Full Flushes", StatisticKind.PerFrame);
+
+    /// <summary>
+    /// The GPU's time on a frame, from its first command to its last, read back once the frame has
+    /// finished (see <see cref="D3D11GpuTimer"/>).
+    /// </summary>
+    private static readonly GlobalStatistic<double> stat_gpu_time = GlobalStatistics.Get<double>("Renderer", "GPU Time", StatisticKind.PerFrame, StatisticUnit.Milliseconds);
+
+    /// <summary>
+    /// Time the draw thread spent before a frame could start, waiting on the swapchain's frame-latency
+    /// object.
+    /// </summary>
+    private static readonly GlobalStatistic<double> stat_latency_wait = GlobalStatistics.Get<double>("Renderer", "Latency Wait", StatisticKind.PerFrame, StatisticUnit.Milliseconds);
+
+    private static readonly GlobalStatistic<double> stat_present = GlobalStatistics.Get<double>("Renderer", "Present", StatisticKind.PerFrame, StatisticUnit.Milliseconds);
 
     /// <summary>
     /// The live renderer instance, for static notifications (texture deletion). Effectively a
@@ -99,7 +117,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     private static readonly Color4 clear_color = new Color4(0f, 0f, 0f, 1f);
 
     // Register mapping from the sakura-spirv HLSL cross-compile (resources ordered by (set,binding),
-    // per-kind counters): ProjectionBlock -> VS b0, MaskBlock -> PS b1, u_Textures[16] -> PS t0..t15 / s0.
+    // per-kind counters): ProjectionBlock -> VS b0, MaskBlock -> PS b1, u_Textures[16] -> PS t0..t15 / s0..s15.
     private const int projection_cb_slot = 0;
     private const int mask_cb_slot = 1;
 
@@ -138,6 +156,12 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     private ID3D11RasterizerState rasterizerState;
     private ID3D11SamplerState linearClampSampler;
     private ID3D11DepthStencilState depthStencilOff;
+
+    // SPIRV-Cross gives every element of u_Textures[] a sampler register of its own, so the one sampler
+    // is bound to all of them in one call.
+    private ID3D11SamplerState[] linearClampSamplers;
+
+    private D3D11GpuTimer gpuTimer;
 
     // Dynamic vertex buffer (grown on demand), mapped WRITE_DISCARD per draw.
     private ID3D11Buffer vertexBuffer;
@@ -218,18 +242,17 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         flags |= DeviceCreationFlags.Debug;
 #endif
 
-        FeatureLevel[] featureLevels = { FeatureLevel.Level_11_1, FeatureLevel.Level_11_0 };
-
-        if (!tryCreateDevice(flags, featureLevels))
+        if (!tryCreateDevice(flags))
         {
 #if DEBUG
             Logger.Verbose("D3D11 device creation with the debug layer failed; retrying without it.");
-            if (!tryCreateDevice(flags & ~DeviceCreationFlags.Debug, featureLevels))
+            if (!tryCreateDevice(flags & ~DeviceCreationFlags.Debug))
 #endif
                 throw new InvalidOperationException("Failed to create the Direct3D 11 device.");
         }
 
         enableMultithreadProtection();
+        gpuTimer = new D3D11GpuTimer(device, context);
 
         logDeviceInfo();
         createSwapChain();
@@ -258,9 +281,9 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         multithread.SetMultithreadProtected(true);
     }
 
-    private bool tryCreateDevice(DeviceCreationFlags flags, FeatureLevel[] featureLevels)
+    private bool tryCreateDevice(DeviceCreationFlags flags)
     {
-        var result = D3D11CreateDevice(null, DriverType.Hardware, flags, featureLevels, out device, out context);
+        var result = createDevice(flags, out device, out context);
         return result.Success && device != null;
     }
 
@@ -268,9 +291,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     {
         try
         {
-            FeatureLevel[] featureLevels = { FeatureLevel.Level_11_1, FeatureLevel.Level_11_0 };
-            var result = D3D11CreateDevice(null, DriverType.Hardware, DeviceCreationFlags.BgraSupport,
-                featureLevels, out ID3D11Device probeDevice, out ID3D11DeviceContext probeContext);
+            var result = createDevice(DeviceCreationFlags.BgraSupport, out ID3D11Device probeDevice, out ID3D11DeviceContext probeContext);
 
             probeContext?.Dispose();
             probeDevice?.Dispose();
@@ -279,6 +300,50 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         catch
         {
             return false;
+        }
+    }
+
+    private static readonly FeatureLevel[] feature_levels = { FeatureLevel.Level_11_1, FeatureLevel.Level_11_0 };
+
+    /// <summary>
+    /// Creates the device on the adapter Windows ranks first for performance, so a laptop with both an
+    /// integrated and a discrete GPU draws on the discrete one. Falls back to the default adapter where
+    /// that ranking doesn't exist (before Windows 10 1803) or the device can't be created on it.
+    /// </summary>
+    private static Result createDevice(DeviceCreationFlags flags, out ID3D11Device device, out ID3D11DeviceContext context)
+    {
+        using (IDXGIAdapter1? adapter = highPerformanceAdapter())
+        {
+            if (adapter != null)
+            {
+                // An explicit adapter has to come with DriverType.Unknown; Hardware is rejected.
+                var result = D3D11CreateDevice(adapter, DriverType.Unknown, flags, feature_levels, out device, out context);
+
+                if (result.Success && device != null)
+                    return result;
+
+                Logger.Verbose($"Direct3D11 device creation on the high-performance adapter failed (0x{result.Code:X8}); using the default adapter.");
+            }
+        }
+
+        return D3D11CreateDevice(null, DriverType.Hardware, flags, feature_levels, out device, out context);
+    }
+
+    private static IDXGIAdapter1? highPerformanceAdapter()
+    {
+        try
+        {
+            using var factory = DXGI.CreateDXGIFactory1<IDXGIFactory1>();
+            using var factory6 = factory.QueryInterfaceOrNull<IDXGIFactory6>();
+
+            if (factory6 == null)
+                return null;
+
+            return factory6.EnumAdapterByGpuPreference(0, GpuPreference.HighPerformance, out IDXGIAdapter1? adapter).Success ? adapter : null;
+        }
+        catch
+        {
+            return null;
         }
     }
 
@@ -384,11 +449,10 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
     private void createStateObjects()
     {
-        // Note: D3D forbids the *_Color blend factors on the alpha channel, so Multiply's DestColor
-        // and Screen's InverseSourceColor can't be replicated on alpha, those keep a valid
-        // approximation (only affects direct rendering, where the backbuffer alpha is unused).
-        blendStates[(int)BlendingMode.Alpha] = createBlend(Blend.SourceAlpha, Blend.InverseSourceAlpha, Blend.SourceAlpha, Blend.InverseSourceAlpha);
-        blendStates[(int)BlendingMode.Additive] = createBlend(Blend.SourceAlpha, Blend.One, Blend.SourceAlpha, Blend.One);
+        // The same factors as GLRenderer, alpha channel included: inside a framebuffer the accumulated
+        // alpha is what BufferedContainer's premultiplied composite reads back, so it has to match.
+        blendStates[(int)BlendingMode.Alpha] = createBlend(Blend.SourceAlpha, Blend.InverseSourceAlpha, Blend.One, Blend.InverseSourceAlpha);
+        blendStates[(int)BlendingMode.Additive] = createBlend(Blend.SourceAlpha, Blend.One, Blend.One, Blend.One);
         blendStates[(int)BlendingMode.Opaque] = createBlend(Blend.One, Blend.Zero, Blend.One, Blend.Zero);
         blendStates[(int)BlendingMode.Multiply] = createBlend(Blend.DestinationColor, Blend.InverseSourceAlpha, Blend.One, Blend.InverseSourceAlpha);
         blendStates[(int)BlendingMode.Screen] = createBlend(Blend.One, Blend.InverseSourceColor, Blend.One, Blend.InverseSourceAlpha);
@@ -406,6 +470,9 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
             MinLOD = 0,
             MaxLOD = float.MaxValue,
         });
+
+        linearClampSamplers = new ID3D11SamplerState[texture_slot_count];
+        Array.Fill(linearClampSamplers, linearClampSampler);
 
         depthStencilOff = device.CreateDepthStencilState(new DepthStencilDescription
         {
@@ -447,7 +514,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         var (vertHlsl, fragHlsl) = ShaderCompiler.GetOrCompile(
             ShaderStorage, "shader.vert", "shader.frag", SPIRV.CrossCompileTarget.HLSL, ShaderCache);
 
-        mainShader = new D3D11Shader(device, context, vertHlsl, fragHlsl, buildInputElements());
+        mainShader = new D3D11Shader(device, context, "shader.vert", vertHlsl, "shader.frag", fragHlsl, buildInputElements());
         currentShader = mainShader;
     }
 
@@ -522,9 +589,10 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     }
 
     /// <inheritdoc/>
-    public double LastBlockedMilliseconds => blockedMilliseconds;
+    public double LastBlockedMilliseconds => latencyWaitMilliseconds + presentMilliseconds;
 
-    private double blockedMilliseconds;
+    private double latencyWaitMilliseconds;
+    private double presentMilliseconds;
 
     // When the update the frame being drawn shows was made, and for the latest presents, by the count DXGI gives
     // each, which update they showed: for the frame statistics to measure from once DXGI reports them shown.
@@ -566,7 +634,8 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
     public void StartFrame()
     {
-        blockedMilliseconds = 0;
+        latencyWaitMilliseconds = 0;
+        presentMilliseconds = 0;
 
         if (device == null || swapChain == null)
             return;
@@ -583,10 +652,16 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         {
             long blockStart = Stopwatch.GetTimestamp();
             uint waitResult = WaitForSingleObjectEx(frameLatencyWaitableObject, frame_latency_timeout_ms, true);
-            blockedMilliseconds += Stopwatch.GetElapsedTime(blockStart).TotalMilliseconds;
+            latencyWaitMilliseconds += Stopwatch.GetElapsedTime(blockStart).TotalMilliseconds;
 
             reportFrameLatencyWait(waitResult);
         }
+
+        // After the wait, so the GPU time doesn't count the GPU being held back by the display, and
+        // before the uploads below, which are this frame's GPU work too.
+        double gpuMilliseconds = gpuTimer.BeginFrame();
+        if (!double.IsNaN(gpuMilliseconds))
+            stat_gpu_time.Value = gpuMilliseconds;
 
         // Release native resources orphaned by the GC (a missed Dispose) before anything else this
         // frame. D3D11's own resources are COM objects that SharpGen already finalizes, so in practice
@@ -626,7 +701,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
     /// <summary>
     /// Reestablishes all pipeline state for the current render target: shader, input layout,
-    /// topology, constant buffers, sampler, textures, blend / rasterizer / depth-stencil state.
+    /// topology, constant buffers, samplers, textures, blend / rasterizer / depth-stencil state.
     /// </summary>
     private void rebindFrameState()
     {
@@ -635,7 +710,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
         context.VSSetConstantBuffer(projection_cb_slot, projectionCb);
         context.PSSetConstantBuffer(mask_cb_slot, maskCb);
-        context.PSSetSampler(0, linearClampSampler);
+        context.PSSetSamplers(0, linearClampSamplers);
 
         // Every declared slot gets a valid view; the batch overwrites the ones it assigns.
         context.PSSetShaderResources(0, whiteSrvs);
@@ -699,6 +774,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         stat_vertices_drawn.CompleteFrame();
         stat_slot_exhaustion_flushes.CompleteFrame();
         stat_state_change_flushes.CompleteFrame();
+        stat_buffer_full_flushes.CompleteFrame();
 
         rootNode?.Draw(this);
 
@@ -707,6 +783,8 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
         // After the final flush, so the batch's binds land in this frame's count.
         TextureBindTracker.EndFrame();
+
+        gpuTimer.EndFrame();
 
         // VSync -> sync interval 1, no flags. Uncapped -> interval 0, tear (if the output supports it)
         // rather than stall on a flip-model swapchain. AllowTearing is illegal with interval > 0.
@@ -717,7 +795,10 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         else
             swapChain.Present(1, PresentFlags.None);
 
-        blockedMilliseconds += Stopwatch.GetElapsedTime(blockStart).TotalMilliseconds;
+        presentMilliseconds += Stopwatch.GetElapsedTime(blockStart).TotalMilliseconds;
+
+        stat_latency_wait.Value = latencyWaitMilliseconds;
+        stat_present.Value = presentMilliseconds;
 
         // Which update the present just made showed, by the count DXGI will report it shown under.
         if (frameContentTicks != 0)
@@ -1054,7 +1135,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     {
         var (vert, frag) = ShaderCompiler.GetOrCompile(
             storage, vertexPath, fragmentPath, SPIRV.CrossCompileTarget.HLSL, ShaderCache);
-        return new D3D11Shader(device, context, vert, frag, buildInputElements(), customShaderUniformBindings());
+        return new D3D11Shader(device, context, vertexPath, vert, fragmentPath, frag, buildInputElements(), customShaderUniformBindings());
     }
 
     /// <summary>
@@ -1164,6 +1245,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
     public void Dispose()
     {
+        gpuTimer?.Dispose();
         mainShader?.Dispose();
         (WhitePixel?.BackendTexture as D3D11Texture)?.Dispose();
 
