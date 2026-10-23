@@ -5,6 +5,7 @@ using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using FreeTypeSharp;
+using Sakura.Framework.Platform;
 
 namespace Sakura.Framework.Graphics.Text;
 
@@ -32,6 +33,11 @@ internal static class FreeTypeVariations
     /// FreeType face flag indicating a variable ("Multiple Masters") font.
     /// </summary>
     internal const long FT_FACE_FLAG_MULTIPLE_MASTERS = 1 << 8;
+
+    static FreeTypeVariations()
+    {
+        NativeLibraryResolver.Install();
+    }
 
     /// <summary>
     /// Retrieves the variation axis and named-instance descriptors for a variable font. The returned

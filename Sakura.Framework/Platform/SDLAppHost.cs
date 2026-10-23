@@ -56,7 +56,7 @@ public abstract class SDLAppHost : AppHost
                 return new GLRenderer();
 
             case RendererType.Metal:
-                return RuntimeInfo.IsMacOS ? new MetalRenderer() : null;
+                return RuntimeInfo.IsApple ? new MetalRenderer() : null;
 
             case RendererType.Direct3D11:
                 return RuntimeInfo.IsWindows && D3D11Renderer.IsSupported() ? new D3D11Renderer() : null;

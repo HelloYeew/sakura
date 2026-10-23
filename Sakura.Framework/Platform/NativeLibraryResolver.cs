@@ -24,7 +24,16 @@ internal static class NativeLibraryResolver
         ["sakura-audio"] = "@rpath/sakura-audio.framework/sakura-audio",
         ["sakura-image"] = "@rpath/sakura-image.framework/sakura-image",
         ["libsakura-metal"] = "@rpath/sakura-metal.framework/sakura-metal",
+
+        // The C library is part of libSystem, which iOS has no "libc" alias for.
+        ["libc"] = "/usr/lib/libSystem.dylib",
     };
+
+    /// <summary>
+    /// Linked into the app's executable on iOS rather than shipped as a library of its own: FreeTypeSharp's iOS build is
+    /// a static archive.
+    /// </summary>
+    private const string ios_static_freetype = "freetype";
 
     private static int installed;
 
@@ -42,6 +51,9 @@ internal static class NativeLibraryResolver
 
     private static IntPtr resolve(string name, Assembly assembly, DllImportSearchPath? searchPath)
     {
+        if (name == ios_static_freetype)
+            return NativeLibrary.GetMainProgramHandle();
+
         if (ios_frameworks.TryGetValue(name, out string? framework) && NativeLibrary.TryLoad(framework, assembly, searchPath, out IntPtr handle))
             return handle;
 
