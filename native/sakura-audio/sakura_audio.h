@@ -156,6 +156,20 @@ typedef struct SakuraAudioStats
 
 int sakura_audio_engine_get_stats(SakuraAudioEngine *engine, SakuraAudioStats *stats);
 
+// The device's own clock, where its callback gives one: the audio unit callback (iOS's RemoteIO) does.
+typedef struct SakuraAudioDeviceTime
+{
+    int64_t framesMixed;     // frames the engine had mixed when the device's latest callback began
+    uint64_t hostTime;       // the host time that callback's first frame goes out at, in the platform's host clock
+                             // (mach_absolute_time's ticks on Apple's): before the route after it, such as Bluetooth
+    int64_t discontinuities; // callbacks whose sample time didn't carry on from the one before, each a cycle the
+                             // output missed, or a stop and start
+} SakuraAudioDeviceTime;
+
+// SAKURA_AUDIO_OK with `time` filled once a callback has given a host time, SAKURA_AUDIO_ERROR before (discontinuities
+// is filled either way), SAKURA_AUDIO_TIMEOUT where a callback was mid-write on every try. From any thread.
+int sakura_audio_engine_get_device_time(SakuraAudioEngine *engine, SakuraAudioDeviceTime *time);
+
 // Mixes `frames` output frames into `destination` (interleaved, config.channels wide), in mix blocks,
 // exactly as the device callback would, and returns the frames written. For tests, for offline
 // rendering, and for parity checks against the managed mixer -- not for use while a device is

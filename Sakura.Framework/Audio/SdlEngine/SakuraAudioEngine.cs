@@ -421,6 +421,32 @@ internal sealed class SakuraAudioEngine : IDisposable
         return stats;
     }
 
+    // Cleared where the library predates the device's clock, so it's asked once.
+    private bool deviceTimeAvailable = true;
+
+    /// <summary>
+    /// The device's own clock, where its callback gives one (the audio unit callback does), or false: before the first
+    /// such callback, and where the library predates it.
+    /// </summary>
+    public unsafe bool TryGetDeviceTime(out SakuraAudioDeviceTime time)
+    {
+        time = default;
+
+        if (isDisposed || !deviceTimeAvailable)
+            return false;
+
+        try
+        {
+            fixed (SakuraAudioDeviceTime* pointer = &time)
+                return SakuraAudioNative.sakura_audio_engine_get_device_time(handle, pointer) == SakuraAudioNative.OK;
+        }
+        catch (EntryPointNotFoundException)
+        {
+            deviceTimeAvailable = false;
+            return false;
+        }
+    }
+
     #endregion
 
     /// <summary>

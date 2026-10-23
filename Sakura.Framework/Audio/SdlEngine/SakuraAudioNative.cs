@@ -41,6 +41,29 @@ internal struct SakuraAudioStats
 }
 
 /// <summary>
+/// The device's own clock, filled by <see cref="SakuraAudioNative.sakura_audio_engine_get_device_time"/>. Layout must match
+/// the native <c>SakuraAudioDeviceTime</c>.
+/// </summary>
+[StructLayout(LayoutKind.Sequential)]
+internal struct SakuraAudioDeviceTime
+{
+    /// <summary>
+    /// Frames the engine had mixed when the device's latest callback began.
+    /// </summary>
+    public long FramesMixed;
+
+    /// <summary>
+    /// When that callback's first frame goes out, in the platform's host clock (mach_absolute_time's ticks on Apple's).
+    /// </summary>
+    public ulong HostTime;
+
+    /// <summary>
+    /// Callbacks whose sample time didn't carry on from the one before: each a cycle the output missed, or a stop and start.
+    /// </summary>
+    public long Discontinuities;
+}
+
+/// <summary>
 /// One node's published state, filled by <see cref="SakuraAudioNative.sakura_audio_node_get_state"/>.
 /// Layout must match the native <c>SakuraAudioNodeState</c>.
 /// </summary>
@@ -222,6 +245,14 @@ internal static class SakuraAudioNative
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     [SuppressGCTransition]
     public static extern unsafe int sakura_audio_engine_get_stats(nint engine, SakuraAudioStats* stats);
+
+    /// <summary>
+    /// The device's own clock, where its callback gives one (the audio unit callback does). <see cref="OK"/> once one
+    /// has, <see cref="ERROR"/> before. A library from before the RemoteIO output's timing doesn't have it, which throws
+    /// <see cref="EntryPointNotFoundException"/>.
+    /// </summary>
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern unsafe int sakura_audio_engine_get_device_time(nint engine, SakuraAudioDeviceTime* time);
 
     /// <summary>
     /// Mixes one block exactly as the device callback would, for tests and offline rendering. Racing

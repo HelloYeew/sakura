@@ -20,4 +20,10 @@ public interface ISystemAudioRoute
     /// How long the sound takes from leaving the app's device buffer to being heard, in milliseconds.
     /// </summary>
     double LatencyMilliseconds { get; }
+
+    /// <summary>
+    /// The part of <see cref="LatencyMilliseconds"/> spent in the system's own buffer, in milliseconds, which an output
+    /// filling that buffer itself measures along with its own. 0 where the platform doesn't say.
+    /// </summary>
+    double BufferMilliseconds => 0;
 }

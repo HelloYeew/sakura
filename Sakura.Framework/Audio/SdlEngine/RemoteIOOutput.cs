@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Runtime.InteropServices;
 using Sakura.Framework.Logging;
 using static Sakura.Framework.Audio.SdlEngine.AudioToolboxNative;
 
@@ -15,8 +16,9 @@ namespace Sakura.Framework.Audio.SdlEngine;
 /// <para>
 /// Through SDL, the mix went into an Audio Queue that SDL keeps six buffers deep at a phone's buffer size (more than
 /// 30 ms) ahead of the system's I/O buffer. Here the I/O buffer is all there is, a few milliseconds at the audio session's
-/// preferred duration, which the host sets. The session's own figures (<see cref="ISystemAudioRoute"/>) count it, and
-/// the route after it.
+/// preferred duration, which the host sets. The unit's timestamps say when each render goes out
+/// (<see cref="TrySampleLatency"/>) and when one was missed (<see cref="Discontinuities"/>), and the session's figures
+/// (<see cref="ISystemAudioRoute"/>) the route after it.
 /// </para>
 /// <para>
 /// The unit plays on whatever the route is, converting to its rate and channels itself, so unlike AAudio's stream it
@@ -46,9 +48,53 @@ internal sealed unsafe class RemoteIOOutput : IDisposable
     /// </summary>
     public int SampleRate => engine.SampleRate;
 
+    /// <summary>
+    /// Render cycles whose timing didn't carry on from the one before, as the engine counts them from the unit's
+    /// timestamps: each a cycle the output missed, or the unit stopping and starting again.
+    /// </summary>
+    public long Discontinuities => engine.TryGetDeviceTime(out var time) ? time.Discontinuities : 0;
+
     private RemoteIOOutput(SakuraAudioEngine engine)
     {
         this.engine = engine;
+    }
+
+    [DllImport("/usr/lib/libSystem.dylib")]
+    private static extern ulong mach_absolute_time();
+
+    [DllImport("/usr/lib/libSystem.dylib")]
+    private static extern int mach_timebase_info(out MachTimebaseInfo info);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MachTimebaseInfo
+    {
+        public uint Numer;
+        public uint Denom;
+    }
+
+    // Host ticks to nanoseconds: 125/3 on Apple's own chips (24 MHz ticks), 1 on Intel Macs.
+    private static readonly double nanoseconds_per_tick = mach_timebase_info(out var info) == 0 && info.Denom != 0 ? (double)info.Numer / info.Denom : 1;
+
+    /// <summary>
+    /// How long the frames mixed last take to go out of the device, from when the unit said its latest render goes out:
+    /// the I/O buffer's share of the delay, measured. The route after the device (<see cref="ISystemAudioRoute"/>, less its
+    /// buffer) comes on top. Unavailable until the unit has rendered, and where the library predates its timing.
+    /// </summary>
+    public bool TrySampleLatency(out double milliseconds)
+    {
+        milliseconds = 0;
+
+        // The frames mixed are read first: a render landing before the timestamp is then counted in neither.
+        long framesMixed = engine.GetStats().FramesMixed;
+
+        if (!engine.TryGetDeviceTime(out var time))
+            return false;
+
+        long now = (long)(mach_absolute_time() * nanoseconds_per_tick);
+        long goesOut = (long)(time.HostTime * nanoseconds_per_tick);
+
+        milliseconds = AAudioOutput.LatencyMilliseconds(time.FramesMixed, goesOut, framesMixed, now, SampleRate);
+        return true;
     }
 
     /// <summary>

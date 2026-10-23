@@ -50,4 +50,6 @@ internal sealed class IOSAudioRoute : ISystemAudioRoute
             return (session.IOBufferDuration + session.OutputLatency) * 1000;
         }
     }
+
+    public double BufferMilliseconds => AVAudioSession.SharedInstance().IOBufferDuration * 1000;
 }

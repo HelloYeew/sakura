@@ -233,6 +233,20 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     private long remoteIOCallbacks;
     private long remoteIOFramesMixed;
 
+    // The route after the device as last read, once a second, and the system's buffer within it, which the measured
+    // latency covers itself.
+    private double remoteIORouteMs;
+    private double remoteIORouteBufferMs;
+
+    private readonly MeasuredLatency remoteIOLatency = new MeasuredLatency();
+    private int remoteIOLatencyReadings;
+
+    // Starting (and starting again) shows in the unit's timestamps as a jump, which isn't a missed cycle: the jumps
+    // counted while settling are left out of the xruns.
+    private double remoteIOSettlingMs = aaudio_settle_ms;
+    private long remoteIODiscontinuitiesWhileSettling;
+    private long remoteIOXruns;
+
     /// <summary>
     /// The push-model mix thread, or null when the native engine owns the device callback.
     /// </summary>
@@ -554,7 +568,15 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
         // The device is open, so the system's route is the one it plays on.
         if (systemRoute != null)
+        {
             systemRouteLatencyMs = systemRoute.LatencyMilliseconds;
+
+            if (remoteIOOutput != null)
+            {
+                remoteIORouteMs = systemRouteLatencyMs;
+                remoteIORouteBufferMs = systemRoute.BufferMilliseconds;
+            }
+        }
 
         logInitialisationDetails(requestedDeviceBufferFrames, nativeOutput);
         refreshPlayingDevice();
@@ -585,8 +607,8 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
         // iOS stopped the unit for the interruption, and leaves starting it again to the app. On the audio thread, which
         // controls it.
-        if (!interrupted && remoteIOOutput != null)
-            EnqueueAction(remoteIOOutput.Restart);
+        if (!interrupted && remoteIOOutput is RemoteIOOutput output)
+            EnqueueAction(() => restartRemoteIO(output, onlyIfPlaying: true));
 
         Logger.Verbose(interrupted
             ? "The system has the audio output for something else: tracks wait and samples are silent until it's back."
@@ -1004,11 +1026,20 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     }
 
     /// <summary>
-    /// Keeps the RemoteIO output's figures current, once a second: the I/O buffer, as the engine's callbacks show it,
-    /// and the system's route. The unit follows a route change by itself, so there's nothing to reopen.
+    /// Keeps the RemoteIO output's figures current: how late its renders go out and the cycles it missed, from the unit's
+    /// timestamps, and once a second the I/O buffer (as the engine's callbacks show it) and the system's route. The unit
+    /// follows a route change by itself, so there's nothing to reopen.
     /// </summary>
-    private void pollRemoteIO(double frameTime)
+    private void pollRemoteIO(RemoteIOOutput output, double frameTime)
     {
+        sinceLatencySampleMs += frameTime;
+
+        if (sinceLatencySampleMs >= native_latency_sample_interval_ms)
+        {
+            sinceLatencySampleMs = 0;
+            sampleRemoteIO(output);
+        }
+
         sinceDeviceCheckMs += frameTime;
 
         if (sinceDeviceCheckMs < device_check_interval_ms)
@@ -1019,7 +1050,11 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         refreshPlayingDevice();
 
         if (systemRoute != null)
-            systemRouteLatencyMs = systemRoute.LatencyMilliseconds;
+        {
+            remoteIORouteMs = systemRoute.LatencyMilliseconds;
+            remoteIORouteBufferMs = systemRoute.BufferMilliseconds;
+            updateRemoteIOBufferDuration();
+        }
 
         var stats = nativeEngine!.GetStats();
         long callbacks = stats.Callbacks - remoteIOCallbacks;
@@ -1046,14 +1081,72 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     }
 
     /// <summary>
+    /// Reads the unit's timestamps: one more reading of how late the renders go out, and the cycles missed since it
+    /// started, leaving out the jumps its starting makes.
+    /// </summary>
+    private void sampleRemoteIO(RemoteIOOutput output)
+    {
+        long discontinuities = output.Discontinuities;
+
+        if (remoteIOSettlingMs > 0)
+        {
+            remoteIOSettlingMs -= native_latency_sample_interval_ms;
+            remoteIODiscontinuitiesWhileSettling = discontinuities - remoteIOXruns;
+        }
+        else if (discontinuities - remoteIODiscontinuitiesWhileSettling > remoteIOXruns)
+        {
+            remoteIOXruns = discontinuities - remoteIODiscontinuitiesWhileSettling;
+            Logger.Verbose($"The audio output missed a cycle ({remoteIOXruns} times so far), with a {deviceBufferFrames}-frame I/O buffer.");
+        }
+
+        if (!output.TrySampleLatency(out double latency))
+            return;
+
+        remoteIOLatency.Add(latency);
+
+        if (++remoteIOLatencyReadings == aaudio_latency_readings_to_log && remoteIOLatency.Milliseconds is double settled)
+        {
+            Logger.Verbose($"Output latency, measured: {settled:F1} ms from the mix to the device's output, "
+                           + $"{remoteIORouteMs - remoteIORouteBufferMs:F1} ms more on the route after it.");
+        }
+
+        updateRemoteIOBufferDuration();
+    }
+
+    /// <summary>
     /// The device half of <see cref="OutputLatencyMs"/> for RemoteIO, where the device buffer is the system's I/O buffer.
-    /// The system's route counts that buffer already, and nothing waits in front of it, so only without a route is it
-    /// counted here.
+    /// Once the unit's timestamps have measured how late the renders go out, that's it, and the route counts only what
+    /// comes after its buffer. Until then, the system's route counts that buffer already and nothing waits in front of it,
+    /// so only without a route is it counted here.
     /// </summary>
     private void updateRemoteIOBufferDuration()
     {
         deviceBufferMicroseconds = (int)Math.Round(deviceBufferFrames / (double)SampleRate * 1_000_000.0);
-        deviceQueueMicroseconds = systemRoute == null ? deviceBufferMicroseconds : 0;
+
+        if (remoteIOLatency.Milliseconds is double measured)
+        {
+            deviceQueueMicroseconds = (int)Math.Round(measured * 1000.0);
+            systemRouteLatencyMs = remoteIORouteMs - remoteIORouteBufferMs;
+        }
+        else
+        {
+            deviceQueueMicroseconds = systemRoute == null ? deviceBufferMicroseconds : 0;
+            systemRouteLatencyMs = remoteIORouteMs;
+        }
+    }
+
+    /// <summary>
+    /// Starts the RemoteIO unit again, after an interruption stopped it or for the foreground, giving its timestamps time
+    /// to settle.
+    /// </summary>
+    private void restartRemoteIO(RemoteIOOutput output, bool onlyIfPlaying)
+    {
+        remoteIOSettlingMs = aaudio_settle_ms;
+
+        if (onlyIfPlaying)
+            output.Restart();
+        else
+            output.Start();
     }
 
     /// <summary>
@@ -1820,7 +1913,7 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         }
         else if (remoteIOOutput != null)
         {
-            pollRemoteIO(frameTime);
+            pollRemoteIO(remoteIOOutput, frameTime);
         }
         else
         {
@@ -1853,11 +1946,19 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
             Interlocked.Exchange(ref lastPublishedUnderruns, stats.Starvations);
 
-            // AAudio counts the output running dry itself, and its buffer grows on that instead.
+            // AAudio counts the output running dry itself, and its buffer grows on that instead. RemoteIO's timestamps
+            // count the cycles it missed, but its buffer is the session's, which only the next launch asks for again.
             if (aaudioOutput != null)
+            {
                 (statXruns ??= GlobalStatistics.Get<long>("Audio", "SDL Output Xruns")).Value = aaudioXruns;
+            }
             else
+            {
+                if (remoteIOOutput != null)
+                    (statXruns ??= GlobalStatistics.Get<long>("Audio", "SDL Output Xruns")).Value = remoteIOXruns;
+
                 handleSustainedUnderruns(observeNativeCallback(stats), frameTime);
+            }
 
             (statPutFailures ??= GlobalStatistics.Get<long>("Audio", "SDL Put Failures")).Value = stats.PutFailures;
             (statActiveVoices ??= GlobalStatistics.Get<int>("Audio", "SDL Active Voices")).Value = stats.ActiveVoices;
@@ -1906,7 +2007,7 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             aaudioOutput.Start();
         }
         else if (remoteIOOutput != null)
-            remoteIOOutput.Start();
+            restartRemoteIO(remoteIOOutput, onlyIfPlaying: false);
         else if (OperatingSystem.IsIOS() && !SDL_ResumeAudioStreamDevice(deviceStream))
             Logger.Error($"Failed to start the SDL audio device again: {SDL_GetError()}");
     }

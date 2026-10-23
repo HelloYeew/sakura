@@ -58,6 +58,12 @@ thread; a buffer too small for that is zeroed and flagged as silence rather than
 `AudioBufferList` are declared in the C with Apple's layout, so there's still no Apple header and nothing
 new linked.
 
+The unit's timestamps are read as they arrive. Each callback publishes the host time its first frame goes out
+at against the frames mixed before it, a pair under a sequence number that
+`sakura_audio_engine_get_device_time` reads, so the managed side can measure how late what it mixes is heard,
+as it does from AAudio's timestamps. A sample time that doesn't carry on from the last callback counts as a
+discontinuity: a cycle the output missed, or a stop and start. `AudioTimeStamp` is declared the same way.
+
 ## Real-time discipline
 
 Non-negotiable for anything reachable from the audio callback. Every one of these is a latency or
