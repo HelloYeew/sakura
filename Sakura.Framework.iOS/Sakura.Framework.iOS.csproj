@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- .NET 11, where iOS runs on CoreCLR: .NET 10 has only Mono for iOS. The framework itself stays on net10.0. -->
+    <TargetFramework>net11.0-ios</TargetFramework>
+    <SupportedOSPlatformVersion>15.0</SupportedOSPlatformVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <PropertyGroup Label="Nuget">
+    <Title>Sakura Framework for iOS</Title>
+    <PackageId>Sakura.Framework.iOS</PackageId>
+    <Description>Runs a Sakura Framework app on iOS: the entry point, window, storage and lifecycle.</Description>
+    <Authors>HelloYeew</Authors>
+    <Copyright>Copyright (c) 2026 HelloYeew</Copyright>
+    <PackageReleaseNotes>Automated build</PackageReleaseNotes>
+    <PackageTags>sakura framework ui game ios metal sdl</PackageTags>
+    <RepositoryUrl>https://github.com/HelloYeew/sakura</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/HelloYeew/sakura</PackageProjectUrl>
+    <PackageIcon>icon.png</PackageIcon>
+  </PropertyGroup>
+  <ItemGroup Label="Resources">
+    <EmbeddedResource Remove="Resources\**" />
+  </ItemGroup>
+  <ItemGroup Label="Project References">
+    <!-- Everything of the framework's reaches an app through this package too, its source generator included. -->
+    <ProjectReference Include="..\Sakura.Framework\Sakura.Framework.csproj" PrivateAssets="none" />
+  </ItemGroup>
+  <ItemGroup Label="Package">
+    <None Include="..\icon.png" Pack="true" PackagePath="/" Visible="false" />
+    <None Include="buildTransitive\Sakura.Framework.iOS.props" Pack="true" PackagePath="buildTransitive/" />
+    <None Include="buildTransitive\Sakura.Framework.iOS.targets" Pack="true" PackagePath="buildTransitive/" />
+  </ItemGroup>
+</Project>

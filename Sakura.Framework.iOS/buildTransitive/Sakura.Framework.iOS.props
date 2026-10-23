@@ -1,0 +1,10 @@
+<Project>
+  <!--
+    .NET for iOS turns NullabilityInfoContext off so the nullability attributes can be trimmed away. The framework's
+    reflection fallback for dependency injection reads them to tell an optional loader parameter (`Foo?`) from a required
+    one, as it does everywhere else. Set before the SDK's default, which only applies when this is unset.
+  -->
+  <PropertyGroup>
+    <NullabilityInfoContextSupport Condition=" '$(NullabilityInfoContextSupport)' == '' ">true</NullabilityInfoContextSupport>
+  </PropertyGroup>
+</Project>
