@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net11.0-ios</TargetFramework>
+    <SupportedOSPlatformVersion>15.0</SupportedOSPlatformVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <ApplicationId>dev.helloyeew.sakura.tests</ApplicationId>
+    <ApplicationTitle>Sakura Tests</ApplicationTitle>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <!-- The visual tests come from the desktop test runner, an executable; only its assembly is wanted here. -->
+    <ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
+  </PropertyGroup>
+  <ItemGroup Label="Resources">
+    <!-- Resources/ is where iOS keeps the bundle's own resources, so it isn't embedded the way it is elsewhere. -->
+    <EmbeddedResource Remove="Resources\**" />
+  </ItemGroup>
+  <ItemGroup Label="Project References">
+    <ProjectReference Include="..\Sakura.Framework.Tests\Sakura.Framework.Tests.csproj" />
+    <ProjectReference Include="..\Sakura.Framework.iOS\Sakura.Framework.iOS.csproj" />
+  </ItemGroup>
+</Project>
