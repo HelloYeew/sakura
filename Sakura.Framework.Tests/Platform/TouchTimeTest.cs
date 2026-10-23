@@ -44,7 +44,30 @@ public class TouchTimeTest
     }
 
     [Test]
-    public void ATouchTakesTheTimeItHappened()
+    public void ATouchTakesTheTimeItHappened() => assertATouchTakesTheTimeItHappened();
+
+    /// <summary>
+    /// A host that's never disposed leaves its watch registered, and SDL runs every registration on each event. However
+    /// many there are, a touch moves back by its delay once.
+    /// </summary>
+    [Test]
+    public void ATouchIsRetimedOnceHoweverOftenTheWatchIsAdded()
+    {
+        SDLWindow.AddTouchTimeWatch();
+        SDLWindow.AddTouchTimeWatch();
+
+        try
+        {
+            assertATouchTakesTheTimeItHappened();
+        }
+        finally
+        {
+            SDLWindow.RemoveTouchTimeWatch();
+            SDLWindow.RemoveTouchTimeWatch();
+        }
+    }
+
+    private static void assertATouchTakesTheTimeItHappened()
     {
         ulong before = SDL_GetTicksNS();
         Retimer.Set(Stopwatch.GetTimestamp() - (long)(delay_ms / 1000 * Stopwatch.Frequency));
