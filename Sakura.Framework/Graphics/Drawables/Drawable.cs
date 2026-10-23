@@ -604,6 +604,23 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
     public RectangleF DrawRectangle { get; protected set; }
 
     /// <summary>
+    /// A drawable's four corners through <see cref="ModelMatrix"/>, the same points
+    /// <see cref="ToScreenSpace"/> gives for the corners of <see cref="AppliedDrawSize"/>. A rotated or sheared drawable
+    /// gives its true outline here, where <see cref="DrawRectangle"/> is the axis-aligned box around what's drawn.
+    /// </summary>
+    /// <remarks>
+    /// The box laid out, bleed included, whatever is drawn in it: a texture in <see cref="TextureFillMode.Fit"/> draws
+    /// a smaller letterboxed image, and a <see cref="SpriteText"/> its glyphs. Worked out when read, from the last
+    /// <see cref="UpdateTransforms"/>, so like <see cref="DrawRectangle"/> it's out of date for a drawable that has
+    /// stopped updating, such as a hidden one.
+    /// </remarks>
+    public Quad ScreenSpaceDrawQuad => new Quad(
+        Vector2.Transform(Vector2.Zero, ModelMatrix),
+        Vector2.Transform(new Vector2(1, 0), ModelMatrix),
+        Vector2.Transform(Vector2.One, ModelMatrix),
+        Vector2.Transform(new Vector2(0, 1), ModelMatrix));
+
+    /// <summary>
     /// This drawable's size in its own pixels as it is now: <see cref="Size"/>, with any relative axes
     /// resolved against the parent's current <see cref="Container.ChildSize"/> (less margins). It's worked
     /// out when read, so it's right straight after a change (new text in a <see cref="SpriteText"/>, a new
