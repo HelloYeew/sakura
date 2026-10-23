@@ -203,8 +203,9 @@ internal sealed class IOSHaptics : IPlatformHaptics
         if (error != null)
             return null;
 
-        // The engine hands the player over autoreleased, and a .NET thread's own pool only drains when the thread ends:
-        // without a pool of its own here, every player made on the update thread would live on, holding its channel.
+        // The engine hands the player over autoreleased. The framework's threads drain a pool every frame, but a tap can
+        // come from any thread, and a .NET thread's own pool drains only when the thread ends: without a pool here, the
+        // player would live on, holding its channel.
         using (new NSAutoreleasePool())
         {
             return engine!.CreatePlayer(pattern, out error);

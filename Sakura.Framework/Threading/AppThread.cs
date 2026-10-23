@@ -192,7 +192,10 @@ public class AppThread
         long startTicks = Stopwatch.GetTimestamp();
         double pauseBefore = GC.GetTotalPauseDuration().TotalMilliseconds;
 
+        // Drained inside the timing: freeing what the frame left is the frame's work too.
+        IntPtr pool = AutoreleasePool.Push();
         FrameAction.Invoke();
+        AutoreleasePool.Pop(pool);
 
         long endTicks = Stopwatch.GetTimestamp();
 
