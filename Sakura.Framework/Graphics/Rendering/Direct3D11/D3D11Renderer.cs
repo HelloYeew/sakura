@@ -88,10 +88,29 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     private int backBufferWidth;
     private int backBufferHeight;
 
-    // The swapchain is created waitable with a max frame latency of 1,
-    // the draw thread waits on this handle at the top of each frame so CPU work aligns with the
-    // display and input-to-photon latency stays low.
+    // The swapchain is created waitable, and the draw thread waits on this handle at the top of each
+    // frame, so the CPU never gets further ahead of the display than the maximum frame latency allows.
     private nint frameLatencyWaitableObject;
+
+    /// <summary>
+    /// How many presents may be queued ahead of the display under VSync. One, so input reaches the
+    /// screen as soon as the display allows.
+    /// </summary>
+    private const uint vsync_frame_latency = 1;
+
+    /// <summary>
+    /// How many presents may be queued ahead of the display when uncapped. Two, so the CPU records the
+    /// next frame while the GPU is still drawing this one, rather than the two taking turns, which
+    /// would make every frame cost the CPU's time plus the GPU's. Costs about one frame of latency.
+    /// </summary>
+    private const uint uncapped_frame_latency = 2;
+
+    /// <summary>
+    /// One more than the deepest frame latency, so a queued frame never waits for a buffer to come
+    /// back from the display. The same count in every mode, so switching modes never resizes the
+    /// swapchain; under VSync the spare buffer costs memory, not latency.
+    /// </summary>
+    private const uint swap_chain_buffer_count = uncapped_frame_latency + 1;
 
     // Whether the output supports tearing (required for uncapped/no-VSync present via AllowTearing).
     private bool allowTearing;
@@ -99,9 +118,14 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     // The flags the swapchain was created with, must be reused on ResizeBuffers.
     private SwapChainFlags swapChainFlags = SwapChainFlags.FrameLatencyWaitableObject;
 
-    // Present sync interval: 1 = VSync (default, safe), 0 = uncapped. Driven by the framework frame
-    // limiter through SetVSync. See Draw for the interval/flag mapping.
+    // Present sync interval: 1 = VSync (default, safe), 0 = uncapped. Set by applyVSync. See Draw for
+    // the interval/flag mapping.
     private int presentSyncInterval = 1;
+
+    // Requested by the frame limiter from its own thread through SetVSync; applied by StartFrame on the
+    // draw thread, the only one that may touch the swapchain.
+    private volatile bool vsyncRequested = true;
+    private bool vsyncApplied = true;
 
     private nint windowHandle;
 
@@ -390,7 +414,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
             Stereo = false,
             SampleDescription = new SampleDescription(1, 0),
             BufferUsage = Usage.RenderTargetOutput,
-            BufferCount = 2,
+            BufferCount = swap_chain_buffer_count,
             Scaling = Scaling.None,
             SwapEffect = SwapEffect.FlipDiscard,
             AlphaMode = AlphaMode.Ignore,
@@ -400,11 +424,11 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         swapChain = factory.CreateSwapChainForHwnd(device, windowHandle, desc);
         factory.MakeWindowAssociation(windowHandle, WindowAssociationFlags.IgnoreAltEnter);
 
-        // Retrieve the waitable object and cap queued frames to 1 (the low-latency path).
+        // Retrieve the waitable object and cap the queued frames for the mode the frame limiter last asked for.
         waitableSwapChain = swapChain.QueryInterfaceOrNull<IDXGISwapChain2>();
         if (waitableSwapChain != null)
         {
-            waitableSwapChain.MaximumFrameLatency = 1;
+            waitableSwapChain.MaximumFrameLatency = vsyncApplied ? vsync_frame_latency : uncapped_frame_latency;
             frameLatencyWaitableObject = waitableSwapChain.FrameLatencyWaitableObject;
         }
 
@@ -641,10 +665,12 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
             return;
 
         measureShown();
+        applyVSync();
 
-        // Low-latency pacing: block until the swapchain is ready for a new frame (max latency 1), so
-        // the CPU doesn't run ahead of the display. Timeout-guarded so a lost/uninitialised handle can
-        // never hang the draw thread. Initial state is signalled, so the first wait returns at once.
+        // Pacing: block until the swapchain is ready for a new frame (see vsync_frame_latency and
+        // uncapped_frame_latency), so the CPU doesn't run ahead of the display. Timeout-guarded so a
+        // lost/uninitialised handle can never hang the draw thread. Initial state is signalled, so the
+        // first wait returns at once.
         //
         // Timed as a device wait: this is the display refusing another frame yet, which is not work
         // the frame can be optimised out of.
@@ -809,14 +835,33 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     }
 
     /// <summary>
-    /// Sets the present sync interval from the framework frame limiter: <c>VSync</c> presents at the
-    /// display rate (interval 1); every other mode presents uncapped (interval 0) and is paced by the
-    /// draw clock, tearing if the output allows it. On a flip-model swapchain, mixing a non-VSync
-    /// limiter with a VSync-locked present alternates buffers and visibly flashes — this mapping is
-    /// what keeps the two in step. <c>SDLWindow.SetVSync</c> is a no-op for D3D11, so this is the single
-    /// source of truth for the present interval.
+    /// Records the frame limiter's mode, which the next <see cref="StartFrame"/> applies:
+    /// <c>VSync</c> presents at the display rate (interval 1); every other mode presents uncapped
+    /// (interval 0) and is paced by the draw clock, tearing if the output allows it. On a flip-model
+    /// swapchain, mixing a non-VSync limiter with a VSync-locked present alternates buffers and visibly
+    /// flashes — this mapping is what keeps the two in step. <c>SDLWindow.SetVSync</c> is a no-op for
+    /// D3D11, so this is the single source of truth for the present interval.
     /// </summary>
-    public void SetVSync(bool enabled) => presentSyncInterval = enabled ? 1 : 0;
+    public void SetVSync(bool enabled) => vsyncRequested = enabled;
+
+    /// <summary>
+    /// Switches the present interval and the maximum frame latency together, to the mode
+    /// <see cref="SetVSync"/> last asked for. Before the frame-latency wait, so the wait already uses
+    /// the new limit.
+    /// </summary>
+    private void applyVSync()
+    {
+        bool vsync = vsyncRequested;
+
+        if (vsync == vsyncApplied)
+            return;
+
+        vsyncApplied = vsync;
+        presentSyncInterval = vsync ? 1 : 0;
+
+        if (waitableSwapChain != null)
+            waitableSwapChain.MaximumFrameLatency = vsync ? vsync_frame_latency : uncapped_frame_latency;
+    }
 
     #region Draw path
 
