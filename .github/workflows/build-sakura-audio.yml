@@ -151,11 +151,11 @@ jobs:
             fi
           done
 
-          # 12.0 is what the CMakeLists asks for; anything higher means the SDK's default won.
+          # 15.0 is what the CMakeLists asks for; anything higher means the SDK's default won.
           minos=$(vtool -show-build "$DEVICE_BINARY" | awk '/minos/ { print $2 }' | head -1)
           echo "device minos $minos"
-          if [ -z "$minos" ] || [ "$(printf '%s\n12.0\n' "$minos" | sort -V | head -1)" != "$minos" ]; then
-            echo "::error::The device slice requires iOS ${minos:-unknown}, which is newer than the 12.0 ceiling."
+          if [ -z "$minos" ] || [ "$(printf '%s\n15.0\n' "$minos" | sort -V | head -1)" != "$minos" ]; then
+            echo "::error::The device slice requires iOS ${minos:-unknown}, which is newer than the 15.0 ceiling."
             exit 1
           fi
 

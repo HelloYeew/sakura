@@ -27,7 +27,8 @@ if(APPLE)
 
     if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
         if(IOS)
-            set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum iOS deployment version" FORCE)
+            # .NET's iOS workload goes back to 15.0 and no further, and Xcode 27 refuses anything older.
+            set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0" CACHE STRING "Minimum iOS deployment version" FORCE)
         else()
             set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Minimum macOS deployment version" FORCE)
         endif()
