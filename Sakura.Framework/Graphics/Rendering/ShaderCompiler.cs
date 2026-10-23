@@ -28,6 +28,19 @@ public static partial class ShaderCompiler
 
     private static readonly Regex include_pattern = includePatternRegex();
 
+    [GeneratedRegex(@"^[ \t]*#[ \t]*version\b.*$", RegexOptions.Multiline)]
+    private static partial Regex versionPatternRegex();
+
+    private static readonly Regex version_pattern = versionPatternRegex();
+
+    /// <summary>
+    /// Defined in every fragment shader cross-compiled to HLSL. Direct3D's shader compiler moves a texture
+    /// sample that takes its derivatives implicitly out of any branch that can differ between
+    /// neighbouring pixels, so a shader that picks its texture per pixel samples every candidate.
+    /// Shaders that sample that way pass explicit derivatives instead when this is defined.
+    /// </summary>
+    private const string explicit_gradients_define = "SAKURA_EXPLICIT_GRADIENTS";
+
     /// <summary>
     /// Reads a vertex + fragment shader pair from <paramref name="sourceStorage"/> (resolving
     /// <c>#include</c> directives), cross-compiles them to <paramref name="target"/>, and returns
@@ -64,6 +77,10 @@ public static partial class ShaderCompiler
         DiskCache cache = null,
         string name = null)
     {
+        // Before the key, which then tells the HLSL variant apart from the other targets' on its own.
+        if (target == CrossCompileTarget.HLSL)
+            fragmentSource = defineAfterVersion(fragmentSource, explicit_gradients_define);
+
         string key = $"{DiskCache.HashString(vertexSource)}" +
                      $"#{DiskCache.HashString(fragmentSource)}" +
                      $"#{(int)target}#{cache_version}";
@@ -177,6 +194,21 @@ public static partial class ShaderCompiler
         }
 
         return pair;
+    }
+
+    /// <summary>
+    /// Adds <c>#define <paramref name="name"/></c> on the line after the <c>#version</c> directive, the
+    /// earliest point GLSL allows. Source without a <c>#version</c> line is returned unchanged.
+    /// </summary>
+    private static string defineAfterVersion(string source, string name)
+    {
+        Match version = version_pattern.Match(source);
+
+        if (!version.Success)
+            return source;
+
+        int end = version.Index + version.Length;
+        return $"{source[..end]}\n#define {name}{source[end..]}";
     }
 
     private static byte[] packSpirv(SpirvShaderPair pair)

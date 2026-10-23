@@ -4,7 +4,9 @@
 using System;
 using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
 using NUnit.Framework;
+using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.SPIRV;
 
 namespace Sakura.Framework.Tests.SPIRV;
@@ -93,6 +95,36 @@ public class SpirvCompilationTest
 
         Console.WriteLine($"main shader → HLSL: vert={result.VertexShader.Length}b, frag={result.FragmentShader.Length}b");
         Console.WriteLine(result.VertexShader[..Math.Min(500, result.VertexShader.Length)]);
+    }
+
+    [Test]
+    public void FrameworkMainShader_HLSL_SamplesWithExplicitGradients()
+    {
+        if (shaderVert == null)
+            Assert.Ignore("Framework shader files not found — skipping.");
+
+        var (_, frag) = ShaderCompiler.GetOrCompileSource(shaderVert, shaderFrag!, CrossCompileTarget.HLSL);
+
+        // FXC moves an implicit-derivative Sample out of a branch that can vary per pixel, so every
+        // pixel would sample all 16 textures. Each slot has to be a SampleGrad in a branch FXC may not
+        // flatten.
+        Assert.That(frag, Does.Not.Contain(".Sample("));
+        Assert.That(Regex.Matches(frag, @"\.SampleGrad\(").Count, Is.EqualTo(16));
+        Assert.That(Regex.Matches(frag, @"\[branch\]").Count, Is.EqualTo(16));
+    }
+
+    [Test]
+    public void FrameworkMainShader_ExplicitGradients_AreHlslOnly()
+    {
+        if (shaderVert == null)
+            Assert.Ignore("Framework shader files not found — skipping.");
+
+        var (_, glsl) = ShaderCompiler.GetOrCompileSource(shaderVert, shaderFrag!, CrossCompileTarget.GLSL);
+        var (_, msl) = ShaderCompiler.GetOrCompileSource(shaderVert, shaderFrag!, CrossCompileTarget.MSL);
+
+        Assert.That(glsl, Does.Not.Contain("textureGrad"));
+        Assert.That(glsl, Does.Not.Contain("GL_EXT_control_flow_attributes"));
+        Assert.That(msl, Does.Not.Contain("gradient2d"));
     }
 
     [Test]

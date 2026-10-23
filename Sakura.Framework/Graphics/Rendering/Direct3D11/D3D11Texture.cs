@@ -27,6 +27,15 @@ public sealed class D3D11Texture : INativeTexture
     /// </summary>
     private readonly NativeMemoryLease memoryLease;
 
+    /// <summary>
+    /// Whether this texture has a mip chain, and whether level 0 changed since the chain was last
+    /// built from it. Built on the next <see cref="Bind"/>, as GLTexture does, so a texture updated
+    /// several times before it's drawn (a glyph atlas page) is only reduced once.
+    /// </summary>
+    private readonly bool mipmapped;
+
+    private bool mipsDirty;
+
     public nint Handle => srv?.NativePointer ?? nint.Zero;
     public int Width { get; }
     public int Height { get; }
@@ -43,6 +52,14 @@ public sealed class D3D11Texture : INativeTexture
     /// </summary>
     public static D3D11Texture WhitePixel { get; internal set; }
 
+    /// <summary>
+    /// Whether the device can build mip chains for the texture format, set once by
+    /// <see cref="D3D11Renderer"/> at startup. Without it textures keep a single level.
+    /// </summary>
+    internal static bool MipGenerationSupported { get; set; }
+
+    internal const Format TEXTURE_FORMAT = Format.R8G8B8A8_UNorm_SRgb;
+
     public D3D11Texture(ID3D11Device device, ID3D11DeviceContext context, int width, int height)
     {
         this.device = device;
@@ -50,23 +67,31 @@ public sealed class D3D11Texture : INativeTexture
         Width = Math.Max(1, width);
         Height = Math.Max(1, height);
 
+        // Mipmapped, as GL and Metal textures are, so a texture drawn smaller than its size samples the
+        // level nearest its size on screen instead of skipping texels and shimmering. A 1×1 texture
+        // has only the one level. Building the chain on the GPU needs the texture to be renderable.
+        mipmapped = MipGenerationSupported && (Width > 1 || Height > 1);
+
         var desc = new Texture2DDescription
         {
             Width = (uint)Width,
             Height = (uint)Height,
-            MipLevels = 1,
+            // 0 is the full chain, down to 1×1.
+            MipLevels = mipmapped ? 0u : 1u,
             ArraySize = 1,
-            Format = Format.R8G8B8A8_UNorm_SRgb,
+            Format = TEXTURE_FORMAT,
             SampleDescription = new SampleDescription(1, 0),
             Usage = ResourceUsage.Default,
-            BindFlags = BindFlags.ShaderResource,
+            BindFlags = mipmapped ? BindFlags.ShaderResource | BindFlags.RenderTarget : BindFlags.ShaderResource,
             CPUAccessFlags = CpuAccessFlags.None,
-            MiscFlags = ResourceOptionFlags.None,
+            MiscFlags = mipmapped ? ResourceOptionFlags.GenerateMips : ResourceOptionFlags.None,
         };
 
         texture = device.CreateTexture2D(desc);
         srv = device.CreateShaderResourceView(texture);
 
+        // Level 0 only, like GLTexture and MetalTexture, so the backends report the same figure. The
+        // chain adds about a third on top.
         memoryLease = NativeTextureMemory.Lease(NativeMemoryCategory.Textures, Width, Height);
     }
 
@@ -118,6 +143,7 @@ public sealed class D3D11Texture : INativeTexture
             context.UpdateSubresource(texture, 0, (Box?)null, (nint)ptr, (uint)(Width * 4), 0);
         }
 
+        mipsDirty = mipmapped;
         Available = true;
     }
 
@@ -134,6 +160,7 @@ public sealed class D3D11Texture : INativeTexture
             context.UpdateSubresource(texture, 0, (Box?)box, (nint)ptr, (uint)(width * 4), 0);
         }
 
+        mipsDirty = mipmapped;
         Available = true;
     }
 
@@ -154,6 +181,13 @@ public sealed class D3D11Texture : INativeTexture
 
         if (view == null)
             return;
+
+        // Ahead of the draws that sample it in the same command stream, so they see the new chain.
+        if (bound.mipsDirty)
+        {
+            context.GenerateMips(view);
+            bound.mipsDirty = false;
+        }
 
         bound.Binds.Record();
         context.PSSetShaderResource((uint)slot, view);

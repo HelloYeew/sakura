@@ -963,6 +963,12 @@ public class SDLWindow : IWindow
     /// Moves the touch events SDL is queueing onto the time from <see cref="SetTouchTime"/>. Runs as SDL queues each
     /// one, on the thread queueing it, with the event SDL is about to queue, so the change is what the app later reads.
     /// </summary>
+    /// <remarks>
+    /// The time is worked out on SDL's clock from scratch rather than taken off SDL's stamp, so running this more than
+    /// once on an event changes nothing after the first. SDL runs every registration of a watch, and one that's never
+    /// removed stays registered for the life of the process. It also leaves out however long SDL took between
+    /// stamping the event and running this.
+    /// </remarks>
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
     private static unsafe SDLBool touchTimeEventWatch(IntPtr userdata, SDL_Event* e)
     {
@@ -977,13 +983,20 @@ public class SDLWindow : IWindow
             case SDL_EventType.SDL_EVENT_FINGER_MOTION:
             case SDL_EventType.SDL_EVENT_FINGER_UP:
             case SDL_EventType.SDL_EVENT_FINGER_CANCELED:
-                // SDL stamped it just now, so how long ago the touch happened comes off that stamp.
-                long delay = (long)Stopwatch.GetElapsedTime(happened).TotalNanoseconds;
+                // How long ago the touch happened, back from SDL's clock read alongside it.
+                ulong now = SDL_GetTicksNS();
+                long ago = (long)Stopwatch.GetElapsedTime(happened).TotalNanoseconds;
 
-                if (delay > 0 && delay < max_touch_delay_ns && (ulong)delay < e->tfinger.timestamp)
+                if (ago <= 0 || ago >= max_touch_delay_ns || (ulong)ago >= now)
+                    break;
+
+                ulong touched = now - (ulong)ago;
+
+                // Only ever earlier: a touch can't have reached SDL before it happened.
+                if (touched < e->tfinger.timestamp)
                 {
-                    e->tfinger.timestamp -= (ulong)delay;
-                    stat_touch_delay.Value = delay / 1_000_000.0;
+                    stat_touch_delay.Value = (e->tfinger.timestamp - touched) / 1_000_000.0;
+                    e->tfinger.timestamp = touched;
                 }
 
                 break;

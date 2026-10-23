@@ -44,6 +44,14 @@ public sealed class D3D11VideoTexture : INativeVideoTexture
     private ID3D11SamplerState clampSampler;
     private ID3D11SamplerState repeatSampler;
 
+    // What BindPlanes binds, one entry per plane, built once rather than every frame.
+    private readonly ID3D11ShaderResourceView[] planeViews;
+    private readonly ID3D11SamplerState[] clampSamplers;
+    private readonly ID3D11SamplerState[] repeatSamplers;
+
+    private readonly int chromaWidth;
+    private readonly int chromaHeight;
+
     public int Width { get; }
     public int Height { get; }
 
@@ -80,8 +88,8 @@ public sealed class D3D11VideoTexture : INativeVideoTexture
         Layout = layout;
 
         // Chroma is half-resolution (rounded up) in both layouts, matching the other backends.
-        int chromaWidth = (width + 1) / 2;
-        int chromaHeight = (height + 1) / 2;
+        chromaWidth = (width + 1) / 2;
+        chromaHeight = (height + 1) / 2;
 
         yTexture = createPlane(width, height, Format.R8_UNorm);
         ySrv = device.CreateShaderResourceView(yTexture);
@@ -103,6 +111,12 @@ public sealed class D3D11VideoTexture : INativeVideoTexture
         clampSampler = createSampler(TextureAddressMode.Clamp);
         repeatSampler = createSampler(TextureAddressMode.Wrap);
 
+        planeViews = layout == VideoPlaneLayout.Nv12 ? [ySrv, uSrv] : [ySrv, uSrv, vSrv];
+        clampSamplers = new ID3D11SamplerState[planeViews.Length];
+        repeatSamplers = new ID3D11SamplerState[planeViews.Length];
+        Array.Fill(clampSamplers, clampSampler);
+        Array.Fill(repeatSamplers, repeatSampler);
+
         memoryLease = NativeMemoryTracker.Add(NativeMemoryCategory.Video, NativeTextureMemory.BytesForVideoPlanes(width, height));
     }
 
@@ -115,9 +129,12 @@ public sealed class D3D11VideoTexture : INativeVideoTexture
             ArraySize = 1,
             Format = format,
             SampleDescription = new SampleDescription(1, 0),
-            Usage = ResourceUsage.Default,
+            // Rewritten whole every frame from the CPU, which is what a dynamic texture is for: a discard
+            // map hands over fresh memory to write straight into, where UpdateSubresource would copy
+            // the frame into a staging area first and then again into the texture.
+            Usage = ResourceUsage.Dynamic,
             BindFlags = BindFlags.ShaderResource,
-            CPUAccessFlags = CpuAccessFlags.None,
+            CPUAccessFlags = CpuAccessFlags.Write,
             MiscFlags = ResourceOptionFlags.None,
         });
 
@@ -142,50 +159,48 @@ public sealed class D3D11VideoTexture : INativeVideoTexture
     {
         Binds.Record();
 
-        var sampler = tiling ? repeatSampler : clampSampler;
-
-        if (Layout == VideoPlaneLayout.Nv12)
-        {
-            context.PSSetShaderResources(0, new[] { ySrv, uSrv });
-            context.PSSetSamplers(0, new[] { sampler, sampler });
-        }
-        else
-        {
-            context.PSSetShaderResources(0, new[] { ySrv, uSrv, vSrv });
-            context.PSSetSamplers(0, new[] { sampler, sampler, sampler });
-        }
+        context.PSSetShaderResources(0, planeViews);
+        context.PSSetSamplers(0, tiling ? repeatSamplers : clampSamplers);
     }
 
     /// <summary>
-    /// Uploads a decoded frame into the planes. Each plane's FFmpeg linesize (which may exceed the
-    /// plane width due to row padding) is passed as the source row pitch, so
-    /// <c>UpdateSubresource</c> skips the padding. Must be called on the draw thread.
+    /// Uploads a decoded frame into the planes. Must be called on the draw thread.
     /// </summary>
     public unsafe void Upload(AVFrame* frame)
     {
-        int width = frame->width;
-        int height = frame->height;
-        int chromaWidth = (width + 1) / 2;
-        int chromaHeight = (height + 1) / 2;
+        int frameChromaWidth = (frame->width + 1) / 2;
+        int frameChromaHeight = (frame->height + 1) / 2;
 
-        uploadPlane(yTexture, frame->data[0], frame->linesize[0], width, height);
-        uploadPlane(uTexture, frame->data[1], frame->linesize[1], chromaWidth, chromaHeight);
+        // NV12's chroma plane holds Cb and Cr side by side, two bytes per pixel.
+        int chromaBytesPerPixel = Layout == VideoPlaneLayout.Nv12 ? 2 : 1;
+
+        uploadPlane(yTexture, frame->data[0], frame->linesize[0], Math.Min(frame->width, Width), Math.Min(frame->height, Height), 1);
+        uploadPlane(uTexture, frame->data[1], frame->linesize[1], Math.Min(frameChromaWidth, chromaWidth), Math.Min(frameChromaHeight, chromaHeight), chromaBytesPerPixel);
 
         if (Layout == VideoPlaneLayout.Yuv420P)
-            uploadPlane(vTexture, frame->data[2], frame->linesize[2], chromaWidth, chromaHeight);
+            uploadPlane(vTexture, frame->data[2], frame->linesize[2], Math.Min(frameChromaWidth, chromaWidth), Math.Min(frameChromaHeight, chromaHeight), 1);
 
         MarkAvailable();
     }
 
-    private unsafe void uploadPlane(ID3D11Texture2D texture, byte* data, int linesize, int width, int height)
+    /// <summary>
+    /// Copies one plane in row by row: FFmpeg's rows are <paramref name="linesize"/> bytes apart, and
+    /// the mapped texture's are its row pitch apart, and either can carry padding past the pixels.
+    /// </summary>
+    private unsafe void uploadPlane(ID3D11Texture2D texture, byte* data, int linesize, int width, int height, int bytesPerPixel)
     {
         if (data == null || width <= 0 || height <= 0)
             return;
 
-        // The source row pitch is the FFmpeg linesize, already in bytes for both R8 and R8G8 planes;
-        // UpdateSubresource reads one row's worth per row and advances `linesize` bytes, so any
-        // trailing row padding is skipped.
-        context.UpdateSubresource(texture, 0, null, (nint)data, (uint)linesize, 0);
+        MappedSubresource mapped = context.Map(texture, 0, MapMode.WriteDiscard, Vortice.Direct3D11.MapFlags.None);
+
+        byte* destination = (byte*)mapped.DataPointer;
+        long rowBytes = (long)width * bytesPerPixel;
+
+        for (int row = 0; row < height; row++)
+            Buffer.MemoryCopy(data + (long)row * linesize, destination + (long)row * mapped.RowPitch, mapped.RowPitch, rowBytes);
+
+        context.Unmap(texture, 0);
     }
 
     public void MarkAvailable() => Volatile.Write(ref available, true);

@@ -16,6 +16,7 @@ using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Statistic;
 using Sakura.Framework.Timing;
+using SharpGen.Runtime;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
@@ -35,6 +36,26 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     private static readonly GlobalStatistic<int> stat_vertices_drawn = GlobalStatistics.Get<int>("Renderer", "Vertices Drawn", StatisticKind.PerFrame);
     private static readonly GlobalStatistic<int> stat_slot_exhaustion_flushes = GlobalStatistics.Get<int>("Renderer", "Slot Exhaustion Flushes", StatisticKind.PerFrame);
     private static readonly GlobalStatistic<int> stat_state_change_flushes = GlobalStatistics.Get<int>("Renderer", "State Change Flushes", StatisticKind.PerFrame);
+
+    // Counted by VertexBatch; completed here, at this renderer's frame boundary.
+    private static readonly GlobalStatistic<int> stat_buffer_full_flushes = GlobalStatistics.Get<int>("Renderer", "Buffer Full Flushes", StatisticKind.PerFrame);
+
+    // Counted by D3D11RingBuffer; completed here, at this renderer's frame boundary.
+    private static readonly GlobalStatistic<int> stat_buffer_discards = GlobalStatistics.Get<int>("Direct3D11", "Buffer Discards", StatisticKind.PerFrame);
+
+    /// <summary>
+    /// The GPU's time on a frame, from its first command to its last, read back once the frame has
+    /// finished (see <see cref="D3D11GpuTimer"/>).
+    /// </summary>
+    private static readonly GlobalStatistic<double> stat_gpu_time = GlobalStatistics.Get<double>("Renderer", "GPU Time", StatisticKind.PerFrame, StatisticUnit.Milliseconds);
+
+    /// <summary>
+    /// Time the draw thread spent before a frame could start, waiting on the swapchain's frame-latency
+    /// object.
+    /// </summary>
+    private static readonly GlobalStatistic<double> stat_latency_wait = GlobalStatistics.Get<double>("Renderer", "Latency Wait", StatisticKind.PerFrame, StatisticUnit.Milliseconds);
+
+    private static readonly GlobalStatistic<double> stat_present = GlobalStatistics.Get<double>("Renderer", "Present", StatisticKind.PerFrame, StatisticUnit.Milliseconds);
 
     /// <summary>
     /// The live renderer instance, for static notifications (texture deletion). Effectively a
@@ -70,10 +91,29 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     private int backBufferWidth;
     private int backBufferHeight;
 
-    // The swapchain is created waitable with a max frame latency of 1,
-    // the draw thread waits on this handle at the top of each frame so CPU work aligns with the
-    // display and input-to-photon latency stays low.
+    // The swapchain is created waitable, and the draw thread waits on this handle at the top of each
+    // frame, so the CPU never gets further ahead of the display than the maximum frame latency allows.
     private nint frameLatencyWaitableObject;
+
+    /// <summary>
+    /// How many presents may be queued ahead of the display under VSync. One, so input reaches the
+    /// screen as soon as the display allows.
+    /// </summary>
+    private const uint vsync_frame_latency = 1;
+
+    /// <summary>
+    /// How many presents may be queued ahead of the display when uncapped. Two, so the CPU records the
+    /// next frame while the GPU is still drawing this one, rather than the two taking turns, which
+    /// would make every frame cost the CPU's time plus the GPU's. Costs about one frame of latency.
+    /// </summary>
+    private const uint uncapped_frame_latency = 2;
+
+    /// <summary>
+    /// One more than the deepest frame latency, so a queued frame never waits for a buffer to come
+    /// back from the display. The same count in every mode, so switching modes never resizes the
+    /// swapchain; under VSync the spare buffer costs memory, not latency.
+    /// </summary>
+    private const uint swap_chain_buffer_count = uncapped_frame_latency + 1;
 
     // Whether the output supports tearing (required for uncapped/no-VSync present via AllowTearing).
     private bool allowTearing;
@@ -81,9 +121,14 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     // The flags the swapchain was created with, must be reused on ResizeBuffers.
     private SwapChainFlags swapChainFlags = SwapChainFlags.FrameLatencyWaitableObject;
 
-    // Present sync interval: 1 = VSync (default, safe), 0 = uncapped. Driven by the framework frame
-    // limiter through SetVSync. See Draw for the interval/flag mapping.
+    // Present sync interval: 1 = VSync (default, safe), 0 = uncapped. Set by applyVSync. See Draw for
+    // the interval/flag mapping.
     private int presentSyncInterval = 1;
+
+    // Requested by the frame limiter from its own thread through SetVSync; applied by StartFrame on the
+    // draw thread, the only one that may touch the swapchain.
+    private volatile bool vsyncRequested = true;
+    private bool vsyncApplied = true;
 
     private nint windowHandle;
 
@@ -99,7 +144,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     private static readonly Color4 clear_color = new Color4(0f, 0f, 0f, 1f);
 
     // Register mapping from the sakura-spirv HLSL cross-compile (resources ordered by (set,binding),
-    // per-kind counters): ProjectionBlock -> VS b0, MaskBlock -> PS b1, u_Textures[16] -> PS t0..t15 / s0.
+    // per-kind counters): ProjectionBlock -> VS b0, MaskBlock -> PS b1, u_Textures[16] -> PS t0..t15 / s0..s15.
     private const int projection_cb_slot = 0;
     private const int mask_cb_slot = 1;
 
@@ -113,6 +158,12 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     /// (indexed, 4 vertices each) before a capacity flush.
     /// </summary>
     private const int max_batch_vertices = 1000 * 12;
+
+    /// <summary>
+    /// How many full batches the rings may grow to hold (about 18 MB of vertices). A frame drawing more
+    /// than that still works, it just discards the ring more than once.
+    /// </summary>
+    private const int max_ring_batches = 16;
 
     /// <summary>
     /// CPU mirror of the pixel stage's shader-resource slots, dense from 0. The pixel-stage bindings
@@ -132,16 +183,35 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     private BlendingMode currentBlendMode = BlendingMode.Alpha;
 
     private ID3D11Buffer projectionCb;
+
+    /// <summary>
+    /// The mask block for a border or edge-effect draw, filled for that one draw.
+    /// </summary>
     private ID3D11Buffer maskCb;
+
+    /// <summary>
+    /// The mask block bound for every other draw: all zeros, which turns both the border and the
+    /// edge-effect path off, and those flags are all the main shader reads from it otherwise. Binding
+    /// it back after a border costs nothing, where refilling the dynamic block would cost a map.
+    /// </summary>
+    private ID3D11Buffer neutralMaskCb;
 
     private readonly ID3D11BlendState[] blendStates = new ID3D11BlendState[6];
     private ID3D11RasterizerState rasterizerState;
     private ID3D11SamplerState linearClampSampler;
     private ID3D11DepthStencilState depthStencilOff;
 
-    // Dynamic vertex buffer (grown on demand), mapped WRITE_DISCARD per draw.
-    private ID3D11Buffer vertexBuffer;
-    private int vertexBufferCapacity;
+    // SPIRV-Cross gives every element of u_Textures[] a sampler register of its own, so the one sampler
+    // is bound to all of them in one call.
+    private ID3D11SamplerState[] linearClampSamplers;
+
+    private D3D11GpuTimer gpuTimer;
+
+    /// <summary>
+    /// Every draw's vertices, batched or raw, appended one after another (see
+    /// <see cref="D3D11RingBuffer{T}"/>). A draw finds its own through its base vertex.
+    /// </summary>
+    private D3D11RingBuffer<SakuraVertex> vertexRing;
 
     /// <summary>
     /// Immutable index buffer holding the quad pattern (0,1,2, 2,3,0 per quad) for the whole batch
@@ -151,10 +221,15 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     private ID3D11Buffer quadIndexBuffer;
 
     /// <summary>
-    /// Dynamic index buffer for a batch that contains a triangle list (see
-    /// <see cref="VertexBatch.HasNonQuad"/>), whose indices don't follow the static quad pattern.
+    /// Indices for a batch that contains a triangle list (see <see cref="VertexBatch.HasNonQuad"/>),
+    /// whose indices don't follow the static quad pattern. Appended like <see cref="vertexRing"/>.
     /// </summary>
-    private ID3D11Buffer dynamicIndexBuffer;
+    private D3D11RingBuffer<uint> indexRing;
+
+    // What the input assembler has bound, so a draw only rebinds when that changes. Null means unknown,
+    // which forces the next draw to bind.
+    private ID3D11Buffer boundVertexBuffer;
+    private ID3D11Buffer boundIndexBuffer;
 
     // White-pixel SRVs bound to all texture_slot_count slots in one call, so the shader's u_Textures[]
     // array is fully bound whatever the batch ends up assigning. Note this padding is not counted by
@@ -164,8 +239,6 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
     // Clip state injected into every vertex, PushMask/PopMask maintain the stack.
     private readonly ClipStack clips = new ClipStack();
-
-    private MaskBlock maskState;
 
     // Currently-bound render target + viewport, so BindFrameBuffer can save/restore across nesting.
     private ID3D11RenderTargetView currentRtv;
@@ -214,22 +287,34 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         // rather than only when video is in use, because the decoder is created long after this and a
         // device without it would simply fall back to a slower path with no explanation.
         var flags = DeviceCreationFlags.BgraSupport | DeviceCreationFlags.VideoSupport;
-#if DEBUG
-        flags |= DeviceCreationFlags.Debug;
-#endif
 
-        FeatureLevel[] featureLevels = { FeatureLevel.Level_11_1, FeatureLevel.Level_11_0 };
+        bool debugLayer = Environment.GetEnvironmentVariable(debug_layer_variable) == "1";
+        if (debugLayer)
+            flags |= DeviceCreationFlags.Debug;
 
-        if (!tryCreateDevice(flags, featureLevels))
+        bool created = tryCreateDevice(flags);
+
+        if (!created && debugLayer)
         {
-#if DEBUG
-            Logger.Verbose("D3D11 device creation with the debug layer failed; retrying without it.");
-            if (!tryCreateDevice(flags & ~DeviceCreationFlags.Debug, featureLevels))
-#endif
-                throw new InvalidOperationException("Failed to create the Direct3D 11 device.");
+            Logger.Warning($"Direct3D11 device creation with the debug layer failed; retrying without it. The layer needs the Windows \"Graphics Tools\" optional feature.");
+            created = tryCreateDevice(flags & ~DeviceCreationFlags.Debug);
+        }
+        else if (debugLayer)
+        {
+            Logger.Verbose($"Direct3D11 debug layer on ({debug_layer_variable}=1).");
         }
 
+        if (!created)
+            throw new InvalidOperationException("Failed to create the Direct3D 11 device.");
+
         enableMultithreadProtection();
+        gpuTimer = new D3D11GpuTimer(device, context);
+
+        // Before the first texture, which reads it to decide whether to have a mip chain.
+        D3D11Texture.MipGenerationSupported = (device.CheckFormatSupport(D3D11Texture.TEXTURE_FORMAT) & FormatSupport.MipAutogen) != 0;
+
+        if (!D3D11Texture.MipGenerationSupported)
+            Logger.Verbose($"Direct3D11: {D3D11Texture.TEXTURE_FORMAT} can't generate mipmaps on this device; textures keep a single level.");
 
         logDeviceInfo();
         createSwapChain();
@@ -258,9 +343,9 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         multithread.SetMultithreadProtected(true);
     }
 
-    private bool tryCreateDevice(DeviceCreationFlags flags, FeatureLevel[] featureLevels)
+    private bool tryCreateDevice(DeviceCreationFlags flags)
     {
-        var result = D3D11CreateDevice(null, DriverType.Hardware, flags, featureLevels, out device, out context);
+        var result = createDevice(flags, out device, out context);
         return result.Success && device != null;
     }
 
@@ -268,9 +353,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     {
         try
         {
-            FeatureLevel[] featureLevels = { FeatureLevel.Level_11_1, FeatureLevel.Level_11_0 };
-            var result = D3D11CreateDevice(null, DriverType.Hardware, DeviceCreationFlags.BgraSupport,
-                featureLevels, out ID3D11Device probeDevice, out ID3D11DeviceContext probeContext);
+            var result = createDevice(DeviceCreationFlags.BgraSupport, out ID3D11Device probeDevice, out ID3D11DeviceContext probeContext);
 
             probeContext?.Dispose();
             probeDevice?.Dispose();
@@ -279,6 +362,56 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         catch
         {
             return false;
+        }
+    }
+
+    private static readonly FeatureLevel[] feature_levels = { FeatureLevel.Level_11_1, FeatureLevel.Level_11_0 };
+
+    /// <summary>
+    /// <c>1</c> turns the D3D11 debug layer on, in any build. Off otherwise: it validates every call,
+    /// which slows the renderer down far past what a Debug build measures for everything else.
+    /// </summary>
+    private const string debug_layer_variable = "SAKURA_D3D11_DEBUG";
+
+    /// <summary>
+    /// Creates the device on the adapter Windows ranks first for performance, so a laptop with both an
+    /// integrated and a discrete GPU draws on the discrete one. Falls back to the default adapter where
+    /// that ranking doesn't exist (before Windows 10 1803) or the device can't be created on it.
+    /// </summary>
+    private static Result createDevice(DeviceCreationFlags flags, out ID3D11Device device, out ID3D11DeviceContext context)
+    {
+        using (IDXGIAdapter1? adapter = highPerformanceAdapter())
+        {
+            if (adapter != null)
+            {
+                // An explicit adapter has to come with DriverType.Unknown; Hardware is rejected.
+                var result = D3D11CreateDevice(adapter, DriverType.Unknown, flags, feature_levels, out device, out context);
+
+                if (result.Success && device != null)
+                    return result;
+
+                Logger.Verbose($"Direct3D11 device creation on the high-performance adapter failed (0x{result.Code:X8}); using the default adapter.");
+            }
+        }
+
+        return D3D11CreateDevice(null, DriverType.Hardware, flags, feature_levels, out device, out context);
+    }
+
+    private static IDXGIAdapter1? highPerformanceAdapter()
+    {
+        try
+        {
+            using var factory = DXGI.CreateDXGIFactory1<IDXGIFactory1>();
+            using var factory6 = factory.QueryInterfaceOrNull<IDXGIFactory6>();
+
+            if (factory6 == null)
+                return null;
+
+            return factory6.EnumAdapterByGpuPreference(0, GpuPreference.HighPerformance, out IDXGIAdapter1? adapter).Success ? adapter : null;
+        }
+        catch
+        {
+            return null;
         }
     }
 
@@ -325,7 +458,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
             Stereo = false,
             SampleDescription = new SampleDescription(1, 0),
             BufferUsage = Usage.RenderTargetOutput,
-            BufferCount = 2,
+            BufferCount = swap_chain_buffer_count,
             Scaling = Scaling.None,
             SwapEffect = SwapEffect.FlipDiscard,
             AlphaMode = AlphaMode.Ignore,
@@ -335,11 +468,11 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         swapChain = factory.CreateSwapChainForHwnd(device, windowHandle, desc);
         factory.MakeWindowAssociation(windowHandle, WindowAssociationFlags.IgnoreAltEnter);
 
-        // Retrieve the waitable object and cap queued frames to 1 (the low-latency path).
+        // Retrieve the waitable object and cap the queued frames for the mode the frame limiter last asked for.
         waitableSwapChain = swapChain.QueryInterfaceOrNull<IDXGISwapChain2>();
         if (waitableSwapChain != null)
         {
-            waitableSwapChain.MaximumFrameLatency = 1;
+            waitableSwapChain.MaximumFrameLatency = vsyncApplied ? vsync_frame_latency : uncapped_frame_latency;
             frameLatencyWaitableObject = waitableSwapChain.FrameLatencyWaitableObject;
         }
 
@@ -384,11 +517,10 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
     private void createStateObjects()
     {
-        // Note: D3D forbids the *_Color blend factors on the alpha channel, so Multiply's DestColor
-        // and Screen's InverseSourceColor can't be replicated on alpha, those keep a valid
-        // approximation (only affects direct rendering, where the backbuffer alpha is unused).
-        blendStates[(int)BlendingMode.Alpha] = createBlend(Blend.SourceAlpha, Blend.InverseSourceAlpha, Blend.SourceAlpha, Blend.InverseSourceAlpha);
-        blendStates[(int)BlendingMode.Additive] = createBlend(Blend.SourceAlpha, Blend.One, Blend.SourceAlpha, Blend.One);
+        // The same factors as GLRenderer, alpha channel included: inside a framebuffer the accumulated
+        // alpha is what BufferedContainer's premultiplied composite reads back, so it has to match.
+        blendStates[(int)BlendingMode.Alpha] = createBlend(Blend.SourceAlpha, Blend.InverseSourceAlpha, Blend.One, Blend.InverseSourceAlpha);
+        blendStates[(int)BlendingMode.Additive] = createBlend(Blend.SourceAlpha, Blend.One, Blend.One, Blend.One);
         blendStates[(int)BlendingMode.Opaque] = createBlend(Blend.One, Blend.Zero, Blend.One, Blend.Zero);
         blendStates[(int)BlendingMode.Multiply] = createBlend(Blend.DestinationColor, Blend.InverseSourceAlpha, Blend.One, Blend.InverseSourceAlpha);
         blendStates[(int)BlendingMode.Screen] = createBlend(Blend.One, Blend.InverseSourceColor, Blend.One, Blend.InverseSourceAlpha);
@@ -406,6 +538,9 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
             MinLOD = 0,
             MaxLOD = float.MaxValue,
         });
+
+        linearClampSamplers = new ID3D11SamplerState[texture_slot_count];
+        Array.Fill(linearClampSamplers, linearClampSampler);
 
         depthStencilOff = device.CreateDepthStencilState(new DepthStencilDescription
         {
@@ -440,6 +575,9 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
         maskCb = device.CreateBuffer(new BufferDescription(
             (uint)Marshal.SizeOf<MaskBlock>(), BindFlags.ConstantBuffer, ResourceUsage.Dynamic, CpuAccessFlags.Write));
+
+        neutralMaskCb = device.CreateBuffer(new MaskBlock[1], new BufferDescription(
+            (uint)Marshal.SizeOf<MaskBlock>(), BindFlags.ConstantBuffer, ResourceUsage.Immutable));
     }
 
     private void createMainShader()
@@ -447,7 +585,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         var (vertHlsl, fragHlsl) = ShaderCompiler.GetOrCompile(
             ShaderStorage, "shader.vert", "shader.frag", SPIRV.CrossCompileTarget.HLSL, ShaderCache);
 
-        mainShader = new D3D11Shader(device, context, vertHlsl, fragHlsl, buildInputElements());
+        mainShader = new D3D11Shader(device, context, "shader.vert", vertHlsl, "shader.frag", fragHlsl, buildInputElements(), cache: ShaderCache);
         currentShader = mainShader;
     }
 
@@ -484,15 +622,15 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
             whiteSrvs[i] = white.ShaderResourceView;
     }
 
-    private unsafe void createBatch()
+    private void createBatch()
     {
         batch = new VertexBatch(max_batch_vertices, FlushBatch);
 
-        // Sized to the batch's capacity so a flush never has to reallocate.
-        ensureVertexCapacity(max_batch_vertices);
-
-        dynamicIndexBuffer = device.CreateBuffer(new BufferDescription(
-            (uint)(batch.MaxIndices * sizeof(uint)), BindFlags.IndexBuffer, ResourceUsage.Dynamic, CpuAccessFlags.Write));
+        // Two full batches to start with; a frame that needs more grows the rings from then on.
+        vertexRing = new D3D11RingBuffer<SakuraVertex>(device, context, BindFlags.VertexBuffer,
+            max_batch_vertices * 2, max_batch_vertices * max_ring_batches, "vertex");
+        indexRing = new D3D11RingBuffer<uint>(device, context, BindFlags.IndexBuffer,
+            batch.MaxIndices * 2, batch.MaxIndices * max_ring_batches, "index");
 
         // The static quad pattern, filled once. Immutable: the contents are the same every frame, so an
         // all-quad batch (the overwhelming majority) uploads vertices only.
@@ -522,9 +660,10 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     }
 
     /// <inheritdoc/>
-    public double LastBlockedMilliseconds => blockedMilliseconds;
+    public double LastBlockedMilliseconds => latencyWaitMilliseconds + presentMilliseconds;
 
-    private double blockedMilliseconds;
+    private double latencyWaitMilliseconds;
+    private double presentMilliseconds;
 
     // When the update the frame being drawn shows was made, and for the latest presents, by the count DXGI gives
     // each, which update they showed: for the frame statistics to measure from once DXGI reports them shown.
@@ -566,16 +705,19 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
     public void StartFrame()
     {
-        blockedMilliseconds = 0;
+        latencyWaitMilliseconds = 0;
+        presentMilliseconds = 0;
 
         if (device == null || swapChain == null)
             return;
 
         measureShown();
+        applyVSync();
 
-        // Low-latency pacing: block until the swapchain is ready for a new frame (max latency 1), so
-        // the CPU doesn't run ahead of the display. Timeout-guarded so a lost/uninitialised handle can
-        // never hang the draw thread. Initial state is signalled, so the first wait returns at once.
+        // Pacing: block until the swapchain is ready for a new frame (see vsync_frame_latency and
+        // uncapped_frame_latency), so the CPU doesn't run ahead of the display. Timeout-guarded so a
+        // lost/uninitialised handle can never hang the draw thread. Initial state is signalled, so the
+        // first wait returns at once.
         //
         // Timed as a device wait: this is the display refusing another frame yet, which is not work
         // the frame can be optimised out of.
@@ -583,10 +725,16 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         {
             long blockStart = Stopwatch.GetTimestamp();
             uint waitResult = WaitForSingleObjectEx(frameLatencyWaitableObject, frame_latency_timeout_ms, true);
-            blockedMilliseconds += Stopwatch.GetElapsedTime(blockStart).TotalMilliseconds;
+            latencyWaitMilliseconds += Stopwatch.GetElapsedTime(blockStart).TotalMilliseconds;
 
             reportFrameLatencyWait(waitResult);
         }
+
+        // After the wait, so the GPU time doesn't count the GPU being held back by the display, and
+        // before the uploads below, which are this frame's GPU work too.
+        double gpuMilliseconds = gpuTimer.BeginFrame();
+        if (!double.IsNaN(gpuMilliseconds))
+            stat_gpu_time.Value = gpuMilliseconds;
 
         // Release native resources orphaned by the GC (a missed Dispose) before anything else this
         // frame. D3D11's own resources are COM objects that SharpGen already finalizes, so in practice
@@ -606,7 +754,6 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         currentShader = mainShader;
         currentBlendMode = BlendingMode.Alpha;
         clips.Reset();
-        maskState = default;
 
         rebindFrameState();
     }
@@ -626,7 +773,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
     /// <summary>
     /// Reestablishes all pipeline state for the current render target: shader, input layout,
-    /// topology, constant buffers, sampler, textures, blend / rasterizer / depth-stencil state.
+    /// topology, constant buffers, samplers, textures, blend / rasterizer / depth-stencil state.
     /// </summary>
     private void rebindFrameState()
     {
@@ -634,8 +781,11 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         currentShader.Use();
 
         context.VSSetConstantBuffer(projection_cb_slot, projectionCb);
-        context.PSSetConstantBuffer(mask_cb_slot, maskCb);
-        context.PSSetSampler(0, linearClampSampler);
+        context.PSSetConstantBuffer(mask_cb_slot, neutralMaskCb);
+        context.PSSetSamplers(0, linearClampSamplers);
+
+        boundVertexBuffer = null;
+        boundIndexBuffer = null;
 
         // Every declared slot gets a valid view; the batch overwrites the ones it assigns.
         context.PSSetShaderResources(0, whiteSrvs);
@@ -646,7 +796,6 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         context.OMSetBlendState(blendStates[(int)currentBlendMode]);
 
         uploadProjection();
-        uploadMaskState();
     }
 
     private void uploadProjection()
@@ -654,8 +803,6 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         var block = new ProjectionBlock { Projection = projectionMatrix };
         updateConstantBuffer(projectionCb, block);
     }
-
-    private void uploadMaskState() => updateConstantBuffer(maskCb, maskState);
 
     private unsafe void updateConstantBuffer<T>(ID3D11Buffer buffer, in T data) where T : unmanaged
     {
@@ -699,14 +846,22 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         stat_vertices_drawn.CompleteFrame();
         stat_slot_exhaustion_flushes.CompleteFrame();
         stat_state_change_flushes.CompleteFrame();
+        stat_buffer_full_flushes.CompleteFrame();
+        stat_buffer_discards.CompleteFrame();
 
         rootNode?.Draw(this);
 
         // Anything still pending belongs to this frame — issue it before the present.
         FlushBatch();
 
+        // A ring that grows here is bound again by the next draw.
+        vertexRing.EndFrame();
+        indexRing.EndFrame();
+
         // After the final flush, so the batch's binds land in this frame's count.
         TextureBindTracker.EndFrame();
+
+        gpuTimer.EndFrame();
 
         // VSync -> sync interval 1, no flags. Uncapped -> interval 0, tear (if the output supports it)
         // rather than stall on a flip-model swapchain. AllowTearing is illegal with interval > 0.
@@ -717,7 +872,10 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         else
             swapChain.Present(1, PresentFlags.None);
 
-        blockedMilliseconds += Stopwatch.GetElapsedTime(blockStart).TotalMilliseconds;
+        presentMilliseconds += Stopwatch.GetElapsedTime(blockStart).TotalMilliseconds;
+
+        stat_latency_wait.Value = latencyWaitMilliseconds;
+        stat_present.Value = presentMilliseconds;
 
         // Which update the present just made showed, by the count DXGI will report it shown under.
         if (frameContentTicks != 0)
@@ -728,14 +886,33 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     }
 
     /// <summary>
-    /// Sets the present sync interval from the framework frame limiter: <c>VSync</c> presents at the
-    /// display rate (interval 1); every other mode presents uncapped (interval 0) and is paced by the
-    /// draw clock, tearing if the output allows it. On a flip-model swapchain, mixing a non-VSync
-    /// limiter with a VSync-locked present alternates buffers and visibly flashes — this mapping is
-    /// what keeps the two in step. <c>SDLWindow.SetVSync</c> is a no-op for D3D11, so this is the single
-    /// source of truth for the present interval.
+    /// Records the frame limiter's mode, which the next <see cref="StartFrame"/> applies:
+    /// <c>VSync</c> presents at the display rate (interval 1); every other mode presents uncapped
+    /// (interval 0) and is paced by the draw clock, tearing if the output allows it. On a flip-model
+    /// swapchain, mixing a non-VSync limiter with a VSync-locked present alternates buffers and visibly
+    /// flashes — this mapping is what keeps the two in step. <c>SDLWindow.SetVSync</c> is a no-op for
+    /// D3D11, so this is the single source of truth for the present interval.
     /// </summary>
-    public void SetVSync(bool enabled) => presentSyncInterval = enabled ? 1 : 0;
+    public void SetVSync(bool enabled) => vsyncRequested = enabled;
+
+    /// <summary>
+    /// Switches the present interval and the maximum frame latency together, to the mode
+    /// <see cref="SetVSync"/> last asked for. Before the frame-latency wait, so the wait already uses
+    /// the new limit.
+    /// </summary>
+    private void applyVSync()
+    {
+        bool vsync = vsyncRequested;
+
+        if (vsync == vsyncApplied)
+            return;
+
+        vsyncApplied = vsync;
+        presentSyncInterval = vsync ? 1 : 0;
+
+        if (waitableSwapChain != null)
+            waitableSwapChain.MaximumFrameLatency = vsync ? vsync_frame_latency : uncapped_frame_latency;
+    }
 
     #region Draw path
 
@@ -846,37 +1023,31 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     /// change the recorded geometry depends on (blend state, render target, mask constant buffer,
     /// shader) must call this first, or geometry recorded under one state is drawn under another.
     /// </summary>
-    public unsafe void FlushBatch()
+    public void FlushBatch()
     {
         if (device == null || batch == null || batch.IsEmpty)
             return;
 
-        int stride = SakuraVertex.Size;
         int vertexCount = batch.VertexCount;
         int indexCount = batch.IndexCount;
 
-        MappedSubresource mappedVertices = context.Map(vertexBuffer, 0, MapMode.WriteDiscard, Vortice.Direct3D11.MapFlags.None);
-        fixed (SakuraVertex* src = batch.Vertices)
-            Buffer.MemoryCopy(src, (void*)mappedVertices.DataPointer, (long)vertexBufferCapacity * stride, (long)vertexCount * stride);
-        context.Unmap(vertexBuffer, 0);
+        // The batch's indices count from its own first vertex, so the base vertex is all it takes to
+        // point them at where the ring put the vertices.
+        int baseVertex = vertexRing.Write(batch.Vertices);
+        bindVertexBuffer();
 
         if (batch.HasNonQuad)
         {
-            MappedSubresource mappedIndices = context.Map(dynamicIndexBuffer, 0, MapMode.WriteDiscard, Vortice.Direct3D11.MapFlags.None);
-            fixed (uint* src = batch.Indices)
-                Buffer.MemoryCopy(src, (void*)mappedIndices.DataPointer, (long)batch.MaxIndices * sizeof(uint), (long)indexCount * sizeof(uint));
-            context.Unmap(dynamicIndexBuffer, 0);
-
-            context.IASetIndexBuffer(dynamicIndexBuffer, Format.R32_UInt, 0);
+            int startIndex = indexRing.Write(batch.Indices);
+            bindIndexBuffer(indexRing.NativeBuffer);
+            context.DrawIndexed((uint)indexCount, (uint)startIndex, baseVertex);
         }
         else
         {
             // The static quad buffer already holds the exact pattern for indices [0, indexCount).
-            context.IASetIndexBuffer(quadIndexBuffer, Format.R32_UInt, 0);
+            bindIndexBuffer(quadIndexBuffer);
+            context.DrawIndexed((uint)indexCount, 0, baseVertex);
         }
-
-        context.IASetVertexBuffer(0, vertexBuffer, (uint)stride, 0);
-        context.DrawIndexed((uint)indexCount, 0, 0);
 
         stat_draw_calls.Accumulator++;
         stat_vertices_drawn.Accumulator += vertexCount;
@@ -884,21 +1055,34 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         batch.Reset();
     }
 
-    private unsafe void uploadAndDraw(ReadOnlySpan<SakuraVertex> vertices)
+    private void uploadAndDraw(ReadOnlySpan<SakuraVertex> vertices)
     {
-        int stride = SakuraVertex.Size;
-        ensureVertexCapacity(vertices.Length);
+        int firstVertex = vertexRing.Write(vertices);
+        bindVertexBuffer();
 
-        MappedSubresource mapped = context.Map(vertexBuffer, 0, MapMode.WriteDiscard, Vortice.Direct3D11.MapFlags.None);
-        fixed (SakuraVertex* src = vertices)
-            Buffer.MemoryCopy(src, (void*)mapped.DataPointer, (long)vertexBufferCapacity * stride, (long)vertices.Length * stride);
-        context.Unmap(vertexBuffer, 0);
-
-        context.IASetVertexBuffer(0, vertexBuffer, (uint)stride, 0);
-        context.Draw((uint)vertices.Length, 0);
+        context.Draw((uint)vertices.Length, (uint)firstVertex);
 
         stat_draw_calls.Accumulator++;
         stat_vertices_drawn.Accumulator += vertices.Length;
+    }
+
+    // After the ring's write, which may have replaced its buffer.
+    private void bindVertexBuffer()
+    {
+        if (boundVertexBuffer == vertexRing.NativeBuffer)
+            return;
+
+        boundVertexBuffer = vertexRing.NativeBuffer;
+        context.IASetVertexBuffer(0, boundVertexBuffer, (uint)SakuraVertex.Size, 0);
+    }
+
+    private void bindIndexBuffer(ID3D11Buffer buffer)
+    {
+        if (boundIndexBuffer == buffer)
+            return;
+
+        boundIndexBuffer = buffer;
+        context.IASetIndexBuffer(buffer, Format.R32_UInt, 0);
     }
 
     /// <summary>
@@ -927,17 +1111,6 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         boundTextureCount = 1;
     }
 
-    private void ensureVertexCapacity(int vertexCount)
-    {
-        if (vertexBuffer != null && vertexBufferCapacity >= vertexCount)
-            return;
-
-        vertexBuffer?.Dispose();
-        vertexBufferCapacity = Math.Max(vertexCount, Math.Max(256, vertexBufferCapacity * 2));
-        vertexBuffer = device.CreateBuffer(new BufferDescription(
-            (uint)(vertexBufferCapacity * SakuraVertex.Size), BindFlags.VertexBuffer, ResourceUsage.Dynamic, CpuAccessFlags.Write));
-    }
-
     public void SetBlendMode(BlendingMode blendingMode)
     {
         if (blendingMode == currentBlendMode)
@@ -956,8 +1129,6 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         // A custom shader's SetUniformBlock rebinds its own CBs to VS b0 / PS b1, so restore the full
         // main-shader frame state (shader, CBs, sampler, textures) not just the projection content.
         currentShader = mainShader;
-        maskState.IsBorder = 0;
-        maskState.IsEdgeEffect = 0;
         rebindFrameState();
     }
 
@@ -984,24 +1155,20 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         if (borderThickness <= 0 || vertices.Length < 4)
             return;
 
-        // The MaskBlock upload below applies at draw time, so pending geometry has to be drawn under
-        // the previous mask state first.
+        // The mask block binds below apply at draw time, so pending geometry has to be drawn under the
+        // neutral block first.
         FlushBatch();
 
-        maskState.IsBorder = 1;
-        maskState.MaskCenter = new Vector2(maskCenter.X, maskCenter.Y);
-        maskState.MaskHalfSize = new Vector2(maskHalfSize.X, maskHalfSize.Y);
-        maskState.ShearX = shearX;
-        maskState.CornerRadius = cornerRadius;
-        maskState.BorderThickness = borderThickness;
-        maskState.BorderColor = new Vector4(borderColor.R / 255f, borderColor.G / 255f, borderColor.B / 255f, borderColor.A / 255f);
-        uploadMaskState();
-
-        DrawQuads(vertices[..4], WhitePixel);
-        FlushBatch();
-
-        maskState.IsBorder = 0;
-        uploadMaskState();
+        drawMasked(new MaskBlock
+        {
+            IsBorder = 1,
+            MaskCenter = new Vector2(maskCenter.X, maskCenter.Y),
+            MaskHalfSize = new Vector2(maskHalfSize.X, maskHalfSize.Y),
+            ShearX = shearX,
+            CornerRadius = cornerRadius,
+            BorderThickness = borderThickness,
+            BorderColor = new Vector4(borderColor.R / 255f, borderColor.G / 255f, borderColor.B / 255f, borderColor.A / 255f),
+        }, vertices[..4]);
     }
 
     /// <summary>
@@ -1020,26 +1187,37 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         if (glow)
             SetBlendMode(BlendingMode.Additive);
 
-        maskState.IsEdgeEffect = 1;
-        maskState.MaskCenter = new Vector2(maskCenter.X, maskCenter.Y);
-        maskState.MaskHalfSize = new Vector2(maskHalfSize.X, maskHalfSize.Y);
-        maskState.ShearX = shearX;
-        maskState.CornerRadius = cornerRadius;
-        maskState.EdgeRadius = edgeRadius;
-        maskState.EdgeOffset = new Vector2(offset.X, offset.Y);
-        maskState.EdgeHollow = hollow ? 1 : 0;
-        maskState.EdgeGlow = glow ? 1 : 0;
-        maskState.BorderColor = new Vector4(color.R / 255f, color.G / 255f, color.B / 255f, color.A / 255f);
-        uploadMaskState();
-
-        DrawQuads(quadVertices[..4], WhitePixel);
-        FlushBatch();
-
-        maskState.IsEdgeEffect = 0;
-        uploadMaskState();
+        drawMasked(new MaskBlock
+        {
+            IsEdgeEffect = 1,
+            MaskCenter = new Vector2(maskCenter.X, maskCenter.Y),
+            MaskHalfSize = new Vector2(maskHalfSize.X, maskHalfSize.Y),
+            ShearX = shearX,
+            CornerRadius = cornerRadius,
+            EdgeRadius = edgeRadius,
+            EdgeOffset = new Vector2(offset.X, offset.Y),
+            EdgeHollow = hollow ? 1 : 0,
+            EdgeGlow = glow ? 1 : 0,
+            BorderColor = new Vector4(color.R / 255f, color.G / 255f, color.B / 255f, color.A / 255f),
+        }, quadVertices[..4]);
 
         if (glow)
             SetBlendMode(previousBlend);
+    }
+
+    /// <summary>
+    /// Draws one quad with <paramref name="block"/> bound as the mask block, then binds the neutral
+    /// block back. The batch must be empty on entry, so nothing else is drawn under the block.
+    /// </summary>
+    private void drawMasked(in MaskBlock block, ReadOnlySpan<SakuraVertex> quad)
+    {
+        updateConstantBuffer(maskCb, block);
+        context.PSSetConstantBuffer(mask_cb_slot, maskCb);
+
+        DrawQuads(quad, WhitePixel);
+        FlushBatch();
+
+        context.PSSetConstantBuffer(mask_cb_slot, neutralMaskCb);
     }
 
     #endregion
@@ -1054,7 +1232,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     {
         var (vert, frag) = ShaderCompiler.GetOrCompile(
             storage, vertexPath, fragmentPath, SPIRV.CrossCompileTarget.HLSL, ShaderCache);
-        return new D3D11Shader(device, context, vert, frag, buildInputElements(), customShaderUniformBindings());
+        return new D3D11Shader(device, context, vertexPath, vert, fragmentPath, frag, buildInputElements(), customShaderUniformBindings(), ShaderCache);
     }
 
     /// <summary>
@@ -1164,6 +1342,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
     public void Dispose()
     {
+        gpuTimer?.Dispose();
         mainShader?.Dispose();
         (WhitePixel?.BackendTexture as D3D11Texture)?.Dispose();
 
@@ -1175,9 +1354,10 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         depthStencilOff?.Dispose();
         projectionCb?.Dispose();
         maskCb?.Dispose();
-        vertexBuffer?.Dispose();
+        neutralMaskCb?.Dispose();
+        vertexRing?.Dispose();
         quadIndexBuffer?.Dispose();
-        dynamicIndexBuffer?.Dispose();
+        indexRing?.Dispose();
 
         if (instance == this)
             instance = null;
