@@ -4,7 +4,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using Android.Content;
+using Android.Media;
 using Sakura.Framework.Audio;
 using Sakura.Framework.Extensions;
 using Sakura.Framework.Logging;
@@ -90,8 +92,33 @@ public class AndroidAppHost : SDLAppHost
             if (!int.TryParse(audio.GetProperty(AndroidAudioManager.PropertyOutputFramesPerBuffer), out int framesPerBurst))
                 framesPerBurst = 0;
 
-            return new NativeAudioOutput(sampleRate, Math.Max(framesPerBurst, 0));
+            return new NativeAudioOutput(sampleRate, Math.Max(framesPerBurst, 0), describeAudioDevice);
         }
+    }
+
+    // An output as the player knows it: what's built in or in the headphone socket by its kind, and what's connected
+    // to the phone by its own name, with how it's connected.
+    private string describeAudioDevice(int id)
+    {
+        var audio = activity.GetSystemService(Context.AudioService) as AndroidAudioManager;
+        var device = audio?.GetDevices(GetDevicesTargets.Outputs)?.FirstOrDefault(d => d.Id == id);
+
+        if (device == null)
+            return string.Empty;
+
+        string product = device.ProductName ?? string.Empty;
+
+        return device.Type switch
+        {
+            AudioDeviceType.BuiltinSpeaker or AudioDeviceType.BuiltinSpeakerSafe => "Speaker",
+            AudioDeviceType.BuiltinEarpiece => "Earpiece",
+            AudioDeviceType.WiredHeadphones or AudioDeviceType.WiredHeadset => "Wired headphones",
+            AudioDeviceType.BluetoothA2dp or AudioDeviceType.BluetoothSco or AudioDeviceType.BleHeadset or AudioDeviceType.BleSpeaker
+                or AudioDeviceType.HearingAid => $"Bluetooth: {product}",
+            AudioDeviceType.UsbHeadset or AudioDeviceType.UsbDevice or AudioDeviceType.UsbAccessory => $"USB: {product}",
+            AudioDeviceType.Hdmi or AudioDeviceType.HdmiArc or AudioDeviceType.HdmiEarc => $"HDMI: {product}",
+            _ => product
+        };
     }
 
     // Another app can only open one of ours through a content URI handed out by a FileProvider, which isn't set up yet.

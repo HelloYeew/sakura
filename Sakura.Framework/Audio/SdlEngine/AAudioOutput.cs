@@ -68,6 +68,12 @@ internal sealed class AAudioOutput : IDisposable
     public bool Disconnected => stream == 0 || AAudioStream_getState(stream) == STREAM_STATE_DISCONNECTED;
 
     /// <summary>
+    /// The ID of the device the stream plays on, as Android's AudioDeviceInfo has it, or 0 where there's no stream or
+    /// AAudio doesn't say.
+    /// </summary>
+    public int DeviceId => stream == 0 ? 0 : AAudioStream_getDeviceId(stream);
+
+    /// <summary>
     /// Frames the stream holds ahead of the output, which is the part of the latency the app decides.
     /// </summary>
     public int BufferFrames => stream == 0 ? 0 : AAudioStream_getBufferSizeInFrames(stream);
