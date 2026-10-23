@@ -94,6 +94,8 @@ public class IOSAppHost : SDLAppHost
 
     public override IPlatformPerformance Performance { get; } = new IOSPerformance();
 
+    public override IPlatformHaptics Haptics { get; } = new IOSHaptics();
+
     /// <summary>
     /// <c>Library/Application Support</c>, where the app keeps its data. Each app has a container of its own, so nothing
     /// needs a folder of its own in it. It's backed up, and kept out of the Files app, unlike <c>Documents</c>, which is

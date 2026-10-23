@@ -315,6 +315,12 @@ public abstract class AppHost : IDisposable
     public virtual IPlatformPerformance Performance { get; } = new NoPlatformPerformance();
 
     /// <summary>
+    /// The device's vibration motor, for feedback the player feels. Does nothing where there's none: check
+    /// <see cref="IPlatformHaptics.IsSupported"/> before offering a setting for it.
+    /// </summary>
+    public virtual IPlatformHaptics Haptics { get; } = new NoPlatformHaptics();
+
+    /// <summary>
     /// How many more bytes the app may use before the system ends it, or null where the platform doesn't say. A budget
     /// for how much to load ahead or cache, read when deciding rather than kept, since it moves with what else runs.
     /// </summary>
