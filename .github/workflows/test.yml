@@ -136,3 +136,48 @@ jobs:
           name: sample-android-apk
           path: SampleApp.Android/bin/Release/net10.0-android/*-Signed.apk
           if-no-files-found: error
+
+  # Builds Sakura.Framework.iOS and the sample app for an iPhone, unsigned: the release build a phone would get, trimmed
+  # and stripped, which nothing here can run. What only iOS exercises is checked on a simulator or a phone by hand.
+  ios:
+    name: iOS (build)
+    runs-on: macos-latest
+    timeout-minutes: 40
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+      DOTNET_NOLOGO: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      # The newest Xcode the runner has. A preview workload asks for one exact Xcode; Directory.Build.props turns that
+      # check off.
+      - name: Select Xcode
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE"
+
+      - name: Install the iOS workload
+        run: dotnet workload install ios
+
+      - name: Build
+        run: dotnet build SampleApp.iOS/SampleApp.iOS.csproj --configuration Release -r ios-arm64 -p:EnableCodeSigning=false
+
+      # What the app carries, by part, and a budget it has to stay within: most of it is the bundled fonts in
+      # Sakura.Framework.dll and the precompiled code, so a jump means something new was bundled.
+      - name: App size
+        run: |
+          set -euo pipefail
+          app=$(ls -d SampleApp.iOS/bin/Release/net11.0-ios/ios-arm64/*.app)
+          size=$(du -sk "$app" | cut -f1)
+          echo "App: $(( size / 1024 )) MiB"
+          du -sk "$app"/* "$app"/Frameworks/* | sort -rn | head -15 | awk '{ printf "%8.1f MiB  %s\n", $1 / 1024, $2 }'
+          budget=$(( 256 * 1024 ))
+          if [ "$size" -gt "$budget" ]; then
+            echo "::error::The app is $(( size / 1024 )) MiB, over its 256 MiB budget."
+            exit 1
+          fi

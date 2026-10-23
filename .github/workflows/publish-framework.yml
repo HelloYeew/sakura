@@ -1,4 +1,4 @@
-name: Publish Sakura.Framework and Sakura.Framework.Android to NuGet
+name: Publish Sakura.Framework, Sakura.Framework.Android and Sakura.Framework.iOS to NuGet
 
 on:
   workflow_dispatch:
@@ -13,18 +13,14 @@ permissions:
   id-token: write
 
 jobs:
-  publish:
-    name: Pack and Publish
+  version:
+    name: Compute the version
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
 
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v5
-        with:
-          global-json-file: global.json
-
+      # Once, for every package: they depend on each other at exactly this version.
       - name: Compute CalVer version
         id: version
         run: |
@@ -36,6 +32,19 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Version: $VERSION"
 
+  pack:
+    name: Pack Sakura.Framework and Sakura.Framework.Android
+    needs: version
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
       - name: Build SourceGenerators and CodeFixes
         run: |
           dotnet build Sakura.Framework.SourceGenerators/Sakura.Framework.SourceGenerators.csproj --configuration Release
@@ -45,7 +54,7 @@ jobs:
         run: |
           dotnet pack Sakura.Framework/Sakura.Framework.csproj \
             --configuration Release \
-            -p:Version=${{ steps.version.outputs.version }} \
+            -p:Version=${{ needs.version.outputs.version }} \
             --output ./nupkg
 
       # Sakura.Framework.Android ships with the framework, at the same version: it depends on that exact one.
@@ -66,9 +75,75 @@ jobs:
         run: |
           dotnet pack Sakura.Framework.Android/Sakura.Framework.Android.csproj \
             --configuration Release \
-            -p:Version=${{ steps.version.outputs.version }} \
+            -p:Version=${{ needs.version.outputs.version }} \
             -p:AndroidSdkDirectory=$ANDROID_HOME \
             --output ./nupkg
+
+      - name: Upload the packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: nupkg-framework
+          path: ./nupkg/*.nupkg
+
+  # Sakura.Framework.iOS ships with the framework too. iOS builds need a Mac, and the iOS workload of the .NET 11 SDK
+  # global.json pins: iOS has CoreCLR from 11 on, so it alone targets net11.0-ios.
+  pack-ios:
+    name: Pack Sakura.Framework.iOS
+    needs: version
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      # The newest Xcode the runner has. A preview workload asks for one exact Xcode; Directory.Build.props turns that
+      # check off, and a library builds with any recent one.
+      - name: Select Xcode
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE"
+
+      - name: Install the iOS workload
+        run: dotnet workload install ios
+
+      - name: Build SourceGenerators and CodeFixes
+        run: |
+          dotnet build Sakura.Framework.SourceGenerators/Sakura.Framework.SourceGenerators.csproj --configuration Release
+          dotnet build Sakura.Framework.CodeFixes/Sakura.Framework.CodeFixes.csproj --configuration Release
+
+      - name: Pack Sakura.Framework.iOS
+        run: |
+          dotnet pack Sakura.Framework.iOS/Sakura.Framework.iOS.csproj \
+            --configuration Release \
+            -p:Version=${{ needs.version.outputs.version }} \
+            --output ./nupkg
+
+      - name: Upload the package
+        uses: actions/upload-artifact@v7
+        with:
+          name: nupkg-ios
+          # The framework this pack built on the way is the Linux job's to publish.
+          path: ./nupkg/Sakura.Framework.iOS.*.nupkg
+
+  publish:
+    name: Publish
+    needs: [version, pack, pack-ios]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download the packages
+        uses: actions/download-artifact@v7
+        with:
+          pattern: nupkg-*
+          merge-multiple: true
+          path: ./nupkg
 
       - name: NuGet login (Trusted Publishing)
         uses: NuGet/login@v1
@@ -87,16 +162,16 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag ${{ steps.version.outputs.version }}
-          git push origin ${{ steps.version.outputs.version }}
+          git tag ${{ needs.version.outputs.version }}
+          git push origin ${{ needs.version.outputs.version }}
 
       - name: Create GitHub Release (draft)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create ${{ steps.version.outputs.version }} \
+          gh release create ${{ needs.version.outputs.version }} \
             ./nupkg/*.nupkg \
-            --title "${{ steps.version.outputs.version }}" \
+            --title "${{ needs.version.outputs.version }}" \
             --draft \
             --generate-notes
 
