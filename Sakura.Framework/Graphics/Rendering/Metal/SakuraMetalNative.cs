@@ -82,6 +82,21 @@ internal static class SakuraMetalNative
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern void sakura_metal_set_min_present_interval(nint device, double seconds);
 
+    // Statistics, memory and pixel snapping (SakuraMetal.h). As new: a library from before them throws
+    // EntryPointNotFoundException.
+
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int sakura_metal_take_gpu_time(nint device, out double milliseconds);
+
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern ulong sakura_metal_allocated_bytes(nint device);
+
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void sakura_metal_trim(nint device);
+
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void sakura_metal_set_texture_nearest(nint texture, int nearest);
+
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern void sakura_metal_resize(nint device, int width, int height, float contentsScale);
 

@@ -71,6 +71,16 @@ void sakura_metal_set_frame_latency(SakuraMetalDevice* device, int framesInFligh
 // or iOS 10.3 on a device, and is ignored earlier and in the iOS simulator.
 void sakura_metal_set_min_present_interval(SakuraMetalDevice* device, double seconds);
 
+// Statistics. take_gpu_time hands back the GPU's time on the last frame that finished, in milliseconds (the sum of its
+// command buffers' GPU spans), once for each frame: 1 when there's one to take, else 0. allocated_bytes is the
+// device's own count of the memory its resources hold.
+int sakura_metal_take_gpu_time(SakuraMetalDevice* device, double* milliseconds);
+uint64_t sakura_metal_allocated_bytes(SakuraMetalDevice* device);
+
+// Memory. Asks the next frames to let go of what can be made again, for an app short of memory: the CoreVideo cache's
+// unused IOSurface mappings, and each vertex ring slot's buffer beyond what the last frame needed. From any thread.
+void sakura_metal_trim(SakuraMetalDevice* device);
+
 // Frame timing, for how long frames take to reach the screen. The host tags each frame before end_frame (any
 // nonzero value; 0 asks for none); take_presented hands back the tag of the last frame known to have reached the
 // screen and when it did, in host time (seconds, CACurrentMediaTime's clock), once for each such frame: 1 when
@@ -145,7 +155,7 @@ void sakura_metal_end_offscreen(SakuraMetalDevice* device);
 
 // Texture
 
-// creates an RGBA8 (BGRA8Unorm_sRGB) texture of the given size. returns NULL on failure.
+// creates an RGBA8 (RGBA8Unorm_sRGB) texture of the given size, mipmapped unless 1x1. returns NULL on failure.
 SakuraMetalTexture* sakura_metal_create_texture(SakuraMetalDevice* device, int width, int height);
 
 // uploads `width*height*4` bytes of RGBA8 pixel data (whole texture).
@@ -195,6 +205,10 @@ SakuraMetalTexture* sakura_metal_create_plane_texture_from_pixel_buffer(SakuraMe
 // for subsequent draws this frame. the main shader's u_Textures[] is at [[texture(0)]]/[[sampler(0)]].
 // the sampler is chosen automatically (clamp for render targets/video planes, repeat otherwise).
 void sakura_metal_set_fragment_texture(SakuraMetalDevice* device, SakuraMetalTexture* texture, int slot);
+
+// makes a render target sample nearest rather than linear (nearest != 0), for a pixel-snapped buffer. the sampler is
+// picked by set_fragment_texture; other textures ignore it.
+void sakura_metal_set_texture_nearest(SakuraMetalTexture* texture, int nearest);
 
 // like set_fragment_texture, but forces the wrap mode: repeat != 0 -> repeating sampler, else clamp.
 // Used by video planes whose wrap depends on the sprite's fill mode (Tile -> repeat) rather than on a

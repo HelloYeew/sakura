@@ -74,6 +74,12 @@ public interface IRenderer
     /// </summary>
     void ResumeGpuWork() { }
 
+    /// <summary>
+    /// Lets go of what the renderer can make again, for an app the system says is short of memory. From any thread;
+    /// a backend may do it with its next frames. Backends with nothing to give back leave this a no-op.
+    /// </summary>
+    void Trim() { }
+
     void DrawVertices(ReadOnlySpan<Vertex.Vertex> vertices, Texture textureGl);
 
     /// <summary>

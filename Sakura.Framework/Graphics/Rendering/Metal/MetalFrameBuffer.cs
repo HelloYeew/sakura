@@ -25,9 +25,16 @@ public sealed class MetalFrameBuffer : IFrameBuffer
     /// </summary>
     internal nint TextureHandle => colorTexture.Handle;
 
-    public MetalFrameBuffer(nint device, int width, int height)
+    // Sampled nearest rather than linear, so a pixel-snapped buffer shows its texels as they are.
+    private readonly bool pixelSnapping;
+
+    // Cleared where the library predates nearest sampling, so it's only asked for once.
+    private static bool nearestAvailable = true;
+
+    public MetalFrameBuffer(nint device, int width, int height, bool pixelSnapping = false)
     {
         this.device = device;
+        this.pixelSnapping = pixelSnapping;
         createAttachment(width, height);
     }
 
@@ -40,6 +47,18 @@ public sealed class MetalFrameBuffer : IFrameBuffer
 
         colorTexture = MetalTexture.CreateRenderTarget(device, Width, Height);
         Texture = new Texture(colorTexture);
+
+        if (pixelSnapping && nearestAvailable)
+        {
+            try
+            {
+                SakuraMetalNative.sakura_metal_set_texture_nearest(colorTexture.Handle, 1);
+            }
+            catch (EntryPointNotFoundException)
+            {
+                nearestAvailable = false;
+            }
+        }
     }
 
     /// <summary>

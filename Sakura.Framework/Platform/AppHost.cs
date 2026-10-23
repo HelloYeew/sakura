@@ -513,6 +513,9 @@ public abstract class AppHost : IDisposable
         // Before the collection, so it frees them.
         ImageRawData.TrimPool();
 
+        // The GPU's share too, which the collection wouldn't free.
+        Renderer?.Trim();
+
         if (OperatingSystem.IsIOS())
         {
             // iOS warns in the foreground, every thread running and maybe mid-game, where stopping them all to compact

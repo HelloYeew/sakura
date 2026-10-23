@@ -309,16 +309,55 @@ public sealed class MetalRenderer : IMetalRenderer
 
     public double DisplayLatencyMilliseconds => displayLatency.Milliseconds ?? double.NaN;
 
-    // Cleared where the library predates suspending, so it's only tried once.
-    private bool canSuspend = true;
+    /// <summary>
+    /// 16384 on every GPU Metal runs on here: iOS 15 needs an A9 or later (Apple3 and up) and every Mac family has it.
+    /// Only the A7 and A8 (Apple1/2) stopped at 8192.
+    /// </summary>
+    public int MaxTextureSize => 16384;
 
-    public void SuspendGpuWork() => suspendControl(SakuraMetalNative.sakura_metal_suspend);
+    private static readonly GlobalStatistic<double> stat_gpu_time = GlobalStatistics.Get<double>("Renderer", "GPU Time", StatisticKind.PerFrame, StatisticUnit.Milliseconds);
+    private static readonly GlobalStatistic<long> stat_gpu_memory = GlobalStatistics.Get<long>("Renderer", "GPU Memory", StatisticKind.Gauge, StatisticUnit.Bytes);
 
-    public void ResumeGpuWork() => suspendControl(SakuraMetalNative.sakura_metal_resume);
+    // Cleared where the library predates its statistics, so they're only asked for once.
+    private bool gpuStatistics = true;
 
-    private void suspendControl(Action<nint> call)
+    /// <summary>
+    /// The GPU's time on the last frame that finished, and the memory the device's resources hold, as Vulkan reports.
+    /// </summary>
+    private void measureGpu()
     {
-        if (device == 0 || !canSuspend)
+        if (!gpuStatistics)
+            return;
+
+        try
+        {
+            if (SakuraMetalNative.sakura_metal_take_gpu_time(device, out double milliseconds) != 0)
+                stat_gpu_time.Value = milliseconds;
+
+            stat_gpu_memory.Value = (long)SakuraMetalNative.sakura_metal_allocated_bytes(device);
+        }
+        catch (EntryPointNotFoundException)
+        {
+            gpuStatistics = false;
+        }
+    }
+
+    /// <summary>
+    /// Lets the next frames drop what can be made again: the CoreVideo cache's unused mappings, and vertex buffer room
+    /// beyond what the last frame needed.
+    /// </summary>
+    public void Trim() => lifecycleControl(SakuraMetalNative.sakura_metal_trim);
+
+    // Cleared where the library predates suspending and trimming, so they're only tried once.
+    private bool lifecycleControls = true;
+
+    public void SuspendGpuWork() => lifecycleControl(SakuraMetalNative.sakura_metal_suspend);
+
+    public void ResumeGpuWork() => lifecycleControl(SakuraMetalNative.sakura_metal_resume);
+
+    private void lifecycleControl(Action<nint> call)
+    {
+        if (device == 0 || !lifecycleControls)
             return;
 
         try
@@ -327,8 +366,8 @@ public sealed class MetalRenderer : IMetalRenderer
         }
         catch (EntryPointNotFoundException)
         {
-            canSuspend = false;
-            Logger.Verbose("This libsakura-metal predates suspending, so a frame may still reach the GPU as the app leaves the screen.");
+            lifecycleControls = false;
+            Logger.Verbose("This libsakura-metal predates suspending and trimming: a frame may still reach the GPU as the app leaves the screen.");
         }
     }
 
@@ -377,6 +416,7 @@ public sealed class MetalRenderer : IMetalRenderer
         textureUploadQueue.Process();
 
         measurePresented();
+        measureGpu();
 
         // Timed because this acquires the layer's next drawable, and the layer hands one back only
         // when the display has released it, so a frame waiting here is waiting on the display, not
@@ -734,7 +774,7 @@ public sealed class MetalRenderer : IMetalRenderer
     #region Framebuffers (offscreen render targets)
 
     public IFrameBuffer CreateFrameBuffer(int width, int height, bool pixelSnapping = false)
-        => new MetalFrameBuffer(device, width, height);
+        => new MetalFrameBuffer(device, width, height, pixelSnapping);
 
     /// <summary>
     /// Begins rendering into <paramref name="frameBuffer"/>. Saves the current projection + clip,
