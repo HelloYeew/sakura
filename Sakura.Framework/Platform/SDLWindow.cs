@@ -1760,7 +1760,7 @@ public class SDLWindow : IWindow
         public string Text = string.Empty;
     }
 
-    public unsafe void ShowOpenFileDialog(FileDialogOptions options, Action<FileDialogResult> callback)
+    public virtual unsafe void ShowOpenFileDialog(FileDialogOptions options, Action<FileDialogResult> callback)
         => SDLFileDialog.ShowOpenFile(window, options, callback);
 
     public unsafe void ShowSaveFileDialog(FileDialogOptions options, Action<FileDialogResult> callback)

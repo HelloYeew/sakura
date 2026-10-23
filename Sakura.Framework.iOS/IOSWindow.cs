@@ -2,19 +2,24 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using CoreAnimation;
 using Foundation;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
+using Sakura.Framework.Platform.Dialogs;
 using SDL;
 using UIKit;
+using UniformTypeIdentifiers;
 using static SDL.SDL3;
 
 namespace Sakura.Framework.iOS;
 
 /// <summary>
 /// The window an app draws to on iOS: SDL's, with the system's edge swipes and the app's audio session set for the kind
-/// of app, and its refresh rate measured from the display as the system runs it.
+/// of app, its refresh rate measured from the display as the system runs it, and the system's document picker for
+/// opening files.
 /// </summary>
 internal class IOSWindow : SDLWindow
 {
@@ -104,4 +109,44 @@ internal class IOSWindow : SDLWindow
     }
 
     protected override float? GetPlatformRefreshRate() => refreshRate > 0 ? refreshRate : null;
+
+    // SDL has no file dialog on iOS. The system's document picker hands over copies in the app's own storage, which can
+    // be read by path like any other file, with nothing to ask permission for.
+    public override void ShowOpenFileDialog(FileDialogOptions options, Action<FileDialogResult> callback)
+    {
+        var presenter = UIApplication.SharedApplication.ConnectedScenes.OfType<UIWindowScene>()
+                                     .SelectMany(scene => scene.Windows)
+                                     .FirstOrDefault(window => window.IsKeyWindow)?.RootViewController;
+
+        if (presenter == null)
+        {
+            callback(FileDialogResult.Failed("There's no window to show the document picker over."));
+            return;
+        }
+
+        var picker = new UIDocumentPickerViewController(contentTypesFor(options.Filters), true)
+        {
+            AllowsMultipleSelection = options.AllowMultiple
+        };
+
+        picker.DidPickDocumentAtUrls += (_, e) => callback(FileDialogResult.FromPaths(e.Urls.Select(url => url.Path!).ToArray()));
+        picker.WasCancelled += (_, _) => callback(FileDialogResult.Cancelled);
+
+        presenter.PresentViewController(picker, true, null);
+    }
+
+    /// <summary>
+    /// The types the picker offers for <paramref name="filters"/>' extensions: the type an app declares for one where
+    /// there is one (yuuki's .osz), and one made from the extension otherwise. Anything at all when there's no filter or
+    /// a filter takes every file.
+    /// </summary>
+    private static UTType[] contentTypesFor(IReadOnlyCollection<FileDialogFilter> filters)
+    {
+        var extensions = filters.SelectMany(filter => filter.ToPattern().Split(';', StringSplitOptions.RemoveEmptyEntries)).Distinct().ToArray();
+
+        if (extensions.Length == 0 || extensions.Contains("*"))
+            return [UTTypes.Item];
+
+        return extensions.Select(extension => UTType.CreateFromExtension(extension)).OfType<UTType>().ToArray();
+    }
 }
