@@ -59,7 +59,8 @@ public partial class ScrollableContainer : Container
     public float ScrollbarFadeDuration { get; set; } = 250f;
 
     /// <summary>
-    /// Distance to scroll per mouse wheel tick.
+    /// Distance to scroll per mouse wheel tick, in this container's units. A trackpad that says how far its fingers
+    /// moved (<see cref="ScrollEvent.AbsoluteDelta"/>) scrolls that far instead.
     /// </summary>
     public float ScrollDistance { get; set; } = 100f;
 
@@ -131,7 +132,7 @@ public partial class ScrollableContainer : Container
             Margin = new MarginPadding() { Right = 2 },
             Alpha = 0
         };
-        verticalScrollbar.OnDragged = delta => handleScrollbarDrag(delta.Y, true);
+        verticalScrollbar.OnDragged = e => handleScrollbarDrag(toLocalDelta(e.ScreenSpaceMousePosition, e.Delta).Y, true);
 
         horizontalScrollbar = new ScrollbarContainer()
         {
@@ -142,7 +143,7 @@ public partial class ScrollableContainer : Container
             Margin = new MarginPadding() { Bottom = 2 },
             Alpha = 0
         };
-        horizontalScrollbar.OnDragged = delta => handleScrollbarDrag(delta.X, false);
+        horizontalScrollbar.OnDragged = e => handleScrollbarDrag(toLocalDelta(e.ScreenSpaceMousePosition, e.Delta).X, false);
 
         AddInternal(ScrollContent);
         AddInternal(verticalScrollbar);
@@ -502,14 +503,20 @@ public partial class ScrollableContainer : Container
         notifyActivity();
         Vector2 delta = Vector2.Zero;
 
+        // A trackpad that says how far its fingers moved moves the content as far, on screen, as a drag would; a wheel
+        // moves it a set distance a notch.
+        Vector2 amount = e.AbsoluteDelta is Vector2 absolute
+            ? toLocalDelta(e.ScreenSpaceMousePosition, absolute)
+            : e.ScrollDelta * ScrollDistance;
+
         if (Direction == ScrollDirection.Vertical)
-            delta.Y -= e.ScrollDelta.Y * ScrollDistance;
+            delta.Y -= amount.Y;
         else if (Direction == ScrollDirection.Horizontal)
-            delta.X -= e.ScrollDelta.X * ScrollDistance;
+            delta.X -= amount.X;
         else
         {
-            delta.Y -= e.ScrollDelta.Y * ScrollDistance;
-            delta.X -= e.ScrollDelta.X * ScrollDistance;
+            delta.Y -= amount.Y;
+            delta.X -= amount.X;
         }
 
         // If the user scrolls in the opposite direction of the momentum, brake immediately
@@ -520,6 +527,10 @@ public partial class ScrollableContainer : Container
             targetScroll.X = currentScroll.X;
 
         targetScroll += delta;
+
+        // Under the fingers at once, rather than gliding there as from a wheel's notch.
+        if (e.AbsoluteDelta != null)
+            currentScroll += delta;
 
         // Prevent infinite tension when aggressively scrolling against a wall
         Vector2 maxScroll = getMaxScroll();
@@ -576,20 +587,29 @@ public partial class ScrollableContainer : Container
     {
         notifyActivity();
 
-        trackDrag(e.Timestamp, e.Delta);
+        Vector2 drag = toLocalDelta(e.ScreenSpaceMousePosition, e.Delta);
+        trackDrag(e.Timestamp, drag);
 
         Vector2 clamped = getClampedScroll(targetScroll);
         float resistanceX = (targetScroll.X < 0 || targetScroll.X > clamped.X) ? 0.3f : 1f;
         float resistanceY = (targetScroll.Y < 0 || targetScroll.Y > clamped.Y) ? 0.3f : 1f;
 
         if (Direction == ScrollDirection.Vertical || Direction == ScrollDirection.Both)
-            targetScroll.Y -= e.Delta.Y * resistanceY;
+            targetScroll.Y -= drag.Y * resistanceY;
 
         if (Direction == ScrollDirection.Horizontal || Direction == ScrollDirection.Both)
-            targetScroll.X -= e.Delta.X * resistanceX;
+            targetScroll.X -= drag.X * resistanceX;
 
         return true;
     }
+
+    /// <summary>
+    /// <paramref name="screenDelta"/>, a movement on screen ending at <paramref name="screenPosition"/>, in this
+    /// container's own units: how far the content moves to stay under the finger, however big the container is drawn.
+    /// Taken straight, a phone's scaled-down layout would move the content a third of the finger's distance.
+    /// </summary>
+    private Vector2 toLocalDelta(Vector2 screenPosition, Vector2 screenDelta) =>
+        ToLocalSpace(screenPosition) - ToLocalSpace(screenPosition - screenDelta);
 
     /// <summary>
     /// Folds a drag event into the running average a fling is thrown with: how far it moved, and how long since the last
@@ -613,7 +633,7 @@ public partial class ScrollableContainer : Container
 
     private partial class ScrollbarContainer : Container
     {
-        public Action<Vector2>? OnDragged;
+        public Action<MouseEvent>? OnDragged;
 
         public override bool OnClick(MouseButtonEvent e) => true;
 
@@ -621,7 +641,7 @@ public partial class ScrollableContainer : Container
 
         public override bool OnDrag(MouseEvent e)
         {
-            OnDragged?.Invoke(e.Delta);
+            OnDragged?.Invoke(e);
             return true;
         }
     }

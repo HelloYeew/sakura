@@ -1602,7 +1602,35 @@ public class SDLWindow : IWindow
         // SDL3 wheel events carry the mouse position directly (meaningless in relative mode).
         if (!relativeMouseMode)
             mouseState.Position = new Vector2(wheelEvent.mouse_x / contentScale, wheelEvent.mouse_y / contentScale);
-        OnScroll.Invoke(new ScrollEvent(mouseState, new Vector2(wheelEvent.x, wheelEvent.y)));
+
+        var delta = new Vector2(wheelEvent.x, wheelEvent.y);
+        OnScroll.Invoke(new ScrollEvent(mouseState, delta, absoluteScrollDelta(delta, convertEventTimestamp(wheelEvent.timestamp))));
+    }
+
+    // SDL gives a trackpad's scroll on macOS as a tenth of the distance in points, and a wheel's as whole notches.
+    private const float macos_points_per_trackpad_scroll = 10;
+
+    // How long after a trackpad's last fractional scroll a whole one still counts as the trackpad's: a gesture can land
+    // on a round number now and then.
+    private const double trackpad_scroll_hold_ms = 150;
+
+    private double lastTrackpadScrollTime = double.NegativeInfinity;
+
+    /// <summary>
+    /// How far a trackpad's fingers moved, in screen space, where SDL lets it be worked out; null for a wheel.
+    /// </summary>
+    private Vector2? absoluteScrollDelta(Vector2 delta, double time)
+    {
+        if (!RuntimeInfo.IsMacOS)
+            return null;
+
+        if (delta.X % 1 != 0 || delta.Y % 1 != 0 || time - lastTrackpadScrollTime <= trackpad_scroll_hold_ms)
+        {
+            lastTrackpadScrollTime = time;
+            return delta * macos_points_per_trackpad_scroll / contentScale;
+        }
+
+        return null;
     }
 
     private unsafe void handleDropFileEvent(SDL_DropEvent dropEvent)
