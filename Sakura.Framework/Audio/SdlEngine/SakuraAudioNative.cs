@@ -188,6 +188,14 @@ internal static class SakuraAudioNative
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern nint sakura_audio_get_aaudio_callback();
 
+    /// <summary>
+    /// The <c>AURenderCallback</c>-compatible function pointer to set as an output audio unit's render callback, with
+    /// the engine pointer as its refCon. A library from before the RemoteIO output doesn't have it, which throws
+    /// <see cref="EntryPointNotFoundException"/>.
+    /// </summary>
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern nint sakura_audio_get_audio_unit_callback();
+
     #endregion
 
     #region Engine

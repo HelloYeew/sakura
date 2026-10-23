@@ -8,6 +8,7 @@ using System.Runtime.InteropServices;
 using AVFoundation;
 using Foundation;
 using Sakura.Framework.Audio;
+using Sakura.Framework.Configurations;
 using Sakura.Framework.Extensions;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
@@ -26,9 +27,20 @@ public class IOSAppHost : SDLAppHost
     {
         Logger.ConsoleOutput = IOSLog.For(appName);
 
-        // A call, an alarm or Siri takes the audio output for a while. SDL stops its output meanwhile; the app hears of it
-        // as OutputInterrupted, as it does from Android's audio focus, to pause what's playing. The end isn't always
-        // sent, so coming back to the front ends it too, as SDL does.
+        // A game's sound stops other apps' music and plays with the silent switch on (Playback); anything else mixes in
+        // with what's playing and keeps to the switch (Ambient). Set here, as the native engine's RemoteIO output starts
+        // without SDL, which would set it as its own device opened. SDL's hint (IOSWindow) asks for the same, options
+        // included, so SDL leaves the session be where it plays instead: it starts the session over on any difference.
+        var error = Options.TakesAudioFocus
+            ? AVAudioSession.SharedInstance().SetCategory(AVAudioSessionCategory.Playback, 0)
+            : AVAudioSession.SharedInstance().SetCategory(AVAudioSessionCategory.Ambient, AVAudioSessionCategoryOptions.MixWithOthers);
+
+        if (error != null)
+            Logger.Error($"Could not set the audio session's category: {error.LocalizedDescription}");
+
+        // A call, an alarm or Siri takes the audio output for a while, stopping it meanwhile; the app hears of it as
+        // OutputInterrupted, as it does from Android's audio focus, to pause what's playing. The end isn't always sent,
+        // so coming back to the front ends it too, as SDL does.
         interruptionObserver = AVAudioSession.Notifications.ObserveInterruption((_, e) => setInterrupted(e.InterruptionType == AVAudioSessionInterruptionType.Began));
         activeObserver = UIApplication.Notifications.ObserveDidBecomeActive((_, _) => setInterrupted(false));
     }
@@ -46,7 +58,38 @@ public class IOSAppHost : SDLAppHost
             return;
 
         audioInterrupted = interrupted;
+
+        // The interruption made the session inactive, and the output can't start again until it's active.
+        if (!interrupted && !AVAudioSession.SharedInstance().SetActive(true, out NSError? error))
+            Logger.Error($"Could not make the audio session active again: {error?.LocalizedDescription}");
+
         SetAudioInterrupted(interrupted);
+    }
+
+    /// <summary>
+    /// The audio session's rate and I/O buffer, read with the session made active, as only then are they the
+    /// hardware's. The device buffer setting is the I/O buffer asked for here: the native engine fills the system's own
+    /// buffer, and only a preference, as the hardware takes the nearest size it can do.
+    /// </summary>
+    public override NativeAudioOutput? NativeAudioOutput
+    {
+        get
+        {
+            var session = AVAudioSession.SharedInstance();
+
+            if (!session.SetActive(true, out NSError? error))
+            {
+                Logger.Error($"Could not make the audio session active: {error?.LocalizedDescription}");
+                return null;
+            }
+
+            int frames = FrameworkConfigManager.Get<int>(FrameworkSetting.AudioDeviceBufferFrames).Value;
+
+            if (frames > 0 && session.SampleRate > 0 && !session.SetPreferredIOBufferDuration(frames / session.SampleRate, out error))
+                Logger.Error($"Could not ask for a {frames}-frame audio buffer: {error?.LocalizedDescription}");
+
+            return new NativeAudioOutput((int)session.SampleRate, (int)Math.Round(session.IOBufferDuration * session.SampleRate));
+        }
     }
 
     public override IPlatformPerformance Performance { get; } = new IOSPerformance();

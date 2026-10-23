@@ -34,7 +34,7 @@ extern "C" {
 //     decode thread, and it is the only producer for that voice's ring.
 //   * the *audio* thread is SDL's, and only ever enters through the callback returned by
 //     sakura_audio_get_stream_callback -- or on Android, AAudio's, through the one returned by
-//     sakura_audio_get_aaudio_callback.
+//     sakura_audio_get_aaudio_callback, and on iOS, RemoteIO's, through sakura_audio_get_audio_unit_callback.
 //   * reads of published state -- sakura_audio_node_get_state, sakura_audio_node_read_spectrum,
 //     sakura_audio_engine_get_stats -- are safe from any thread and never block the audio thread.
 //     The FFT behind read_spectrum runs on the calling thread by design; it must never be moved
@@ -102,6 +102,15 @@ void *sakura_audio_get_stream_callback(void);
 // plays this way, straight into AAudio's buffer, with nothing of SDL's in between. The managed side opens,
 // starts and closes the stream; this library still calls no platform API, and no AAudio type appears here.
 void *sakura_audio_get_aaudio_callback(void);
+
+// --- Audio units ---------------------------------------------------------------------------------
+
+// The AURenderCallback-compatible entry point to set as an output audio unit's render callback
+// (kAudioUnitProperty_SetRenderCallback), with an engine pointer as its inputProcRefCon, for a unit taking interleaved
+// float32 config.channels wide. On iOS the engine plays this way, straight into RemoteIO's buffer, with nothing of SDL's
+// in between. The managed side makes, starts and disposes of the unit; this library still calls no platform API, and no
+// Core Audio type appears here.
+void *sakura_audio_get_audio_unit_callback(void);
 
 // --- Engine --------------------------------------------------------------------------------------
 

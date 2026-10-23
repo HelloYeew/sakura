@@ -127,6 +127,33 @@ internal sealed class SakuraAudioEngine : IDisposable
         }
     }
 
+    private static nint? audioUnitCallback;
+
+    /// <summary>
+    /// The <c>AURenderCallback</c>-compatible function pointer to set as an output audio unit's render callback, passing
+    /// <see cref="Handle"/> as its refCon, or zero where the library predates it.
+    /// </summary>
+    public static nint AudioUnitCallback
+    {
+        get
+        {
+            if (audioUnitCallback.HasValue)
+                return audioUnitCallback.Value;
+
+            try
+            {
+                audioUnitCallback = IsAvailable ? SakuraAudioNative.sakura_audio_get_audio_unit_callback() : 0;
+            }
+            catch (EntryPointNotFoundException)
+            {
+                Logger.Verbose("This libsakura-audio predates its RemoteIO output, so it plays through SDL.");
+                audioUnitCallback = 0;
+            }
+
+            return audioUnitCallback.Value;
+        }
+    }
+
     /// <summary>
     /// Hands the library the address of <c>SDL_PutAudioStreamData</c>, the only thing it needs from
     /// SDL, and the one call it makes from inside the device callback.

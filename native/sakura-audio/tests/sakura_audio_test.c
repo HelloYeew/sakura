@@ -14,6 +14,7 @@
 #include "../sakura_audio.h"
 
 #include <math.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1012,6 +1013,93 @@ static void test_aaudio_callback(void)
     sakura_audio_engine_destroy(engine);
 }
 
+// Core Audio's AudioBuffer and AudioBufferList, as an output audio unit hands them over.
+typedef struct
+{
+    uint32_t channels;
+    uint32_t byteSize;
+    void *data;
+} test_buffer;
+
+typedef struct
+{
+    uint32_t count;
+    test_buffer buffers[1];
+} test_buffer_list;
+
+// The audio unit (RemoteIO) callback path: as AAudio's, the mix lands in the buffer handed over, and the callback is
+// counted and timed. A buffer too small for what the engine mixes is silenced and marked so, never overrun.
+static void test_audio_unit_callback(void)
+{
+    SakuraAudioEngine *engine = make_engine(128);
+    SakuraAudioEngine *reference = make_engine(128);
+
+    const int frames = 1024;
+    static float pcm[1024 * CHANNELS];
+
+    for (int i = 0; i < frames * CHANNELS; i++)
+        pcm[i] = (float)sin(i * 0.01) * 0.5f;
+
+    attach_static_voice(engine, pcm, frames, NULL);
+    attach_static_voice(reference, pcm, frames, NULL);
+
+    typedef int32_t (*render_fn)(void *, uint32_t *, const void *, uint32_t, uint32_t, void *);
+    render_fn callback = (render_fn)sakura_audio_get_audio_unit_callback();
+    CHECK(callback != NULL);
+
+    // Apple's offsets on its 64-bit platforms (the buffer 8 into the list, its data 8 into the buffer), which the
+    // library's own declaration has to match.
+    if (sizeof(void *) == 8)
+    {
+        CHECK(offsetof(test_buffer_list, buffers) == 8);
+        CHECK(offsetof(test_buffer, data) == 8);
+        CHECK(sizeof(test_buffer_list) == 24);
+    }
+
+    // RemoteIO's slice at 48 kHz with a 5 ms buffer, not a whole number of mix blocks.
+    static float out[240 * CHANNELS];
+    static float expected[240 * CHANNELS];
+    test_buffer_list list = { 1, { { CHANNELS, sizeof(out), out } } };
+    uint32_t flags = 0;
+
+    CHECK(callback(engine, &flags, NULL, 0, 240, &list) == 0);
+    sakura_audio_engine_mix(reference, expected, 240);
+
+    CHECK(memcmp(out, expected, sizeof(out)) == 0);
+    CHECK(flags == 0);
+
+    SakuraAudioStats stats;
+    sakura_audio_engine_get_stats(engine, &stats);
+    CHECK(stats.callbacks == 1);
+    CHECK(stats.framesMixed == 240);
+    CHECK(stats.activeVoices == 1);
+
+    // A buffer of half what's asked for: zeroed, said to be silence, and nothing mixed.
+    for (int i = 0; i < 240 * CHANNELS; i++)
+        out[i] = 1.0f;
+
+    test_buffer_list small = { 1, { { CHANNELS, sizeof(out) / 2, out } } };
+    CHECK(callback(engine, &flags, NULL, 0, 240, &small) == 0);
+    CHECK(flags == (1u << 4));
+    CHECK(out[0] == 0.0f && out[240 * CHANNELS / 2 - 1] == 0.0f);
+    CHECK(out[240 * CHANNELS / 2] == 1.0f);
+
+    // Nothing asked for, no buffers, nowhere to write or no engine: carry on without touching anything.
+    test_buffer_list empty = { 0, { { CHANNELS, sizeof(out), out } } };
+    test_buffer_list nowhere = { 1, { { CHANNELS, sizeof(out), NULL } } };
+    CHECK(callback(engine, NULL, NULL, 0, 0, &list) == 0);
+    CHECK(callback(engine, NULL, NULL, 0, 240, &empty) == 0);
+    CHECK(callback(engine, NULL, NULL, 0, 240, &nowhere) == 0);
+    CHECK(callback(engine, NULL, NULL, 0, 240, NULL) == 0);
+    CHECK(callback(NULL, NULL, NULL, 0, 240, &list) == 0);
+    sakura_audio_engine_get_stats(engine, &stats);
+    CHECK(stats.callbacks == 1);
+    CHECK(stats.framesMixed == 240);
+
+    sakura_audio_engine_destroy(reference);
+    sakura_audio_engine_destroy(engine);
+}
+
 // The unity path copies whole runs instead of interpolating each frame. It has to be a copy of exactly
 // the right frames, across block boundaries, and it has to leave the interpolation window where the
 // per-frame path would have, so that a rate change mid-stream carries straight on.
@@ -1582,6 +1670,7 @@ int main(void)
     RUN(test_invalid_arguments);
     RUN(test_device_callback);
     RUN(test_aaudio_callback);
+    RUN(test_audio_unit_callback);
     RUN(test_unity_runs_and_rate_handover);
     RUN(test_resampler_paths_match_the_per_frame_algorithm);
     RUN(test_stream_runs_across_the_wrap);

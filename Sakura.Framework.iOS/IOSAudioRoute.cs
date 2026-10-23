@@ -7,9 +7,10 @@ using Sakura.Framework.Audio;
 namespace Sakura.Framework.iOS;
 
 /// <summary>
-/// The audio session's current route. SDL's iOS output is one stand-in device whatever the sound plays through, and its
-/// delay ends at SDL's own buffer: after that comes the system's I/O buffer and the route itself, a few milliseconds
-/// through the speaker and a hundred or more over Bluetooth.
+/// The audio session's current route: the system's I/O buffer and the route itself, a few milliseconds through the
+/// speaker and a hundred or more over Bluetooth. Through SDL these come after SDL's own buffers, and its output is one
+/// stand-in device whatever the sound plays through. Through RemoteIO the engine fills the I/O buffer itself, so this
+/// is all of the way.
 /// </summary>
 internal sealed class IOSAudioRoute : ISystemAudioRoute
 {

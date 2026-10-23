@@ -48,6 +48,16 @@ the buffer AAudio gives it, on AAudio's own high-priority thread. Everything els
 pausing and closing the stream, its underrun count, its timestamps) is AAudio called from managed code, so
 this library still needs no AAudio header and links nothing new.
 
+## The audio unit boundary
+
+On iOS it plays the same way through RemoteIO. `sakura_audio_get_audio_unit_callback` returns a function
+with Core Audio's `AURenderCallback` signature, which the managed side sets as the output unit's render
+callback with the engine as its refCon, after setting the unit to take interleaved float32 at the engine's
+rate and width. The callback mixes straight into the one buffer the unit hands over, on the system's I/O
+thread; a buffer too small for that is zeroed and flagged as silence rather than overrun. `AudioBuffer` and
+`AudioBufferList` are declared in the C with Apple's layout, so there's still no Apple header and nothing
+new linked.
+
 ## Real-time discipline
 
 Non-negotiable for anything reachable from the audio callback. Every one of these is a latency or
@@ -83,7 +93,7 @@ gets `callbackMicroseconds` reading zero and nothing else changes.
 |---|---|---|
 | control | create/destroy, parameters, transport | non-blocking; graph and transport changes post a command |
 | writer | `sakura_audio_stream_*` | one per voice, wait-free against the audio thread |
-| audio | the callback from `sakura_audio_get_stream_callback`, or on Android `sakura_audio_get_aaudio_callback` | SDL's or AAudio's, and never anything else |
+| audio | the callback from `sakura_audio_get_stream_callback`, or on Android `sakura_audio_get_aaudio_callback`, or on iOS `sakura_audio_get_audio_unit_callback` | SDL's, AAudio's or RemoteIO's, and never anything else |
 | readers | `..._get_state`, `..._read_spectrum`, `..._get_stats` | any thread, never blocks the audio thread |
 
 The seek path is the only part that needs the three of them to cooperate. A discard cannot be done by

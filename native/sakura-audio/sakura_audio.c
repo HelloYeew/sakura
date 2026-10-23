@@ -1680,6 +1680,69 @@ static int32_t aaudio_callback(void *stream, void *userdata, void *audioData, in
 
 void *sakura_audio_get_aaudio_callback(void) { return (void *)aaudio_callback; }
 
+// Core Audio's AudioBuffer and AudioBufferList, laid out as CoreAudioBaseTypes.h has them, so no Apple header is needed.
+typedef struct
+{
+    uint32_t channels;
+    uint32_t byteSize;
+    void *data;
+} core_audio_buffer;
+
+typedef struct
+{
+    uint32_t count;
+    core_audio_buffer buffers[1];
+} core_audio_buffer_list;
+
+// kAudioUnitRenderAction_OutputIsSilence: tells the output a buffer is all zeros.
+#define AUDIO_UNIT_OUTPUT_IS_SILENCE (1u << 4)
+
+// An audio unit's render callback (AURenderCallback), for iOS's RemoteIO output, where the engine plays without SDL in
+// between: the mix goes straight into the buffer the output hands over. The managed side sets the unit to take
+// interleaved floats, engine->config.channels wide, which is one buffer. Same discipline as stream_callback. The
+// result is an OSStatus, and 0 is noErr: stopping is the managed side's to do, through the unit.
+static int32_t audio_unit_callback(void *refCon, uint32_t *actionFlags, const void *timeStamp, uint32_t bus,
+                                   uint32_t numFrames, core_audio_buffer_list *ioData)
+{
+    (void)timeStamp;
+    (void)bus;
+
+    SakuraAudioEngine *engine = (SakuraAudioEngine *)refCon;
+
+    if (engine == NULL || ioData == NULL || ioData->count == 0 || numFrames == 0 || numFrames > INT32_MAX)
+        return 0;
+
+    core_audio_buffer *buffer = &ioData->buffers[0];
+
+    if (buffer->data == NULL)
+        return 0;
+
+    // A buffer that can't hold what the engine mixes is a format the managed side didn't set. It goes out silent
+    // rather than written past its end.
+    if ((uint64_t)buffer->byteSize < (uint64_t)numFrames * (uint64_t)engine->config.channels * sizeof(float))
+    {
+        memset(buffer->data, 0, buffer->byteSize);
+
+        if (actionFlags != NULL)
+            *actionFlags |= AUDIO_UNIT_OUTPUT_IS_SILENCE;
+
+        return 0;
+    }
+
+    int64_t started = now_microseconds();
+
+    process_commands(engine);
+    sync_streams(engine);
+
+    mix_frames(engine, (float *)buffer->data, (int)numFrames);
+
+    sakura_atomic_add_i64(&engine->statCallbacks, 1);
+    sakura_atomic_store_i64(&engine->statCallbackMicroseconds, now_microseconds() - started);
+    return 0;
+}
+
+void *sakura_audio_get_audio_unit_callback(void) { return (void *)audio_unit_callback; }
+
 int sakura_audio_engine_mix(SakuraAudioEngine *engine, float *destination, int frames)
 {
     if (engine == NULL || destination == NULL || frames <= 0)
