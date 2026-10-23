@@ -913,6 +913,9 @@ public class SDLWindow : IWindow
         {
             switch ((SDL_EventType)e->type)
             {
+                // The system's last word before it ends an app that's still running. It has normally said the app was
+                // going to the background first, which stopped everything and saved; if it hasn't, this does both.
+                case SDL_EventType.SDL_EVENT_TERMINATING:
                 case SDL_EventType.SDL_EVENT_WILL_ENTER_BACKGROUND:
                     instance?.EnteringBackground.Invoke();
                     break;

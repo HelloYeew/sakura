@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 using Foundation;
 using Sakura.Framework.Extensions;
 using Sakura.Framework.Logging;
@@ -57,6 +58,12 @@ public class IOSAppHost : SDLAppHost
 
     protected override IWindow CreateWindow() => new SDLWindow();
 
+    [DllImport("/usr/lib/libSystem.dylib")]
+    private static extern nuint os_proc_available_memory();
+
+    // 0 where the system keeps no limit for the process, as on the simulator.
+    public override long? AvailableMemory => os_proc_available_memory() is var available and > 0 ? (long)available : null;
+
     // Another app opens one of this app's files through a share sheet, which isn't set up yet.
     public override bool OpenFileExternally(string filename) => false;
 
@@ -65,6 +72,9 @@ public class IOSAppHost : SDLAppHost
     // iOS ends an app without asking: from the app switcher, or when it wants the memory back. The app has already been
     // told it was going to the background, which is its chance to save.
     protected override bool CanBlockExit => false;
+
+    // Nor does an app end itself. SDL wouldn't let it go either: once the app is done, the screen just stops.
+    public override bool CanExit => false;
 
     public override void OpenUrlExternally(string url)
     {

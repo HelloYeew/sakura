@@ -308,6 +308,12 @@ public abstract class AppHost : IDisposable
     /// </summary>
     public virtual IPlatformPerformance Performance { get; } = new NoPlatformPerformance();
 
+    /// <summary>
+    /// How many more bytes the app may use before the system ends it, or null where the platform doesn't say. A budget
+    /// for how much to load ahead or cache, read when deciding rather than kept, since it moves with what else runs.
+    /// </summary>
+    public virtual long? AvailableMemory => null;
+
     [NotNull]
     public HostOptions Options { get; private set; }
 
@@ -481,7 +487,8 @@ public abstract class AppHost : IDisposable
     /// Raised on the update thread once the system has said it's short of memory: drop whatever can be made again, such
     /// as loaded-ahead content and caches of things not on screen. Android says so as an app goes to the background
     /// too, and the update thread is stopped there, so this comes once the app is back. By then the framework has
-    /// compacted the managed heap and handed what was free back to the system.
+    /// compacted the managed heap and handed what was free back to the system. iOS says so while the app runs, and
+    /// collects what the handlers let go of once they've run.
     /// </summary>
     public event Action LowMemory;
 
@@ -496,6 +503,23 @@ public abstract class AppHost : IDisposable
 
         // Before the collection, so it frees them.
         ImageRawData.TrimPool();
+
+        if (OperatingSystem.IsIOS())
+        {
+            // iOS warns in the foreground, every thread running and maybe mid-game, where stopping them all to compact
+            // the heap is a hitch the player sees. So the app drops what it can first, and a background collection
+            // then frees it without stopping anything for long.
+            updateScheduler.Add(() =>
+            {
+                LowMemory?.Invoke();
+                GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: false);
+
+                Logger.Verbose($"Short of memory: the managed heap held {before / 1048576.0:0.#} MB; the app has dropped what it could, and a "
+                               + "background collection is freeing it.");
+            });
+
+            return;
+        }
 
         // Aggressive gives back the memory the collection frees rather than keeping it for the next allocations.
         GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
@@ -1040,6 +1064,12 @@ public abstract class AppHost : IDisposable
     protected virtual void OnUnhandledSystemBack()
     {
     }
+
+    /// <summary>
+    /// Whether the app may end itself with <see cref="Exit"/>. False where only the user ends an app, as on iOS, whose
+    /// guidelines rule out a Quit button: an app hides its own there.
+    /// </summary>
+    public virtual bool CanExit => true;
 
     /// <summary>
     /// Requests the host to exit gracefully.
