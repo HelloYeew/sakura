@@ -508,6 +508,14 @@ public abstract class AppHost : IDisposable
     public event Action LowMemory;
 
     /// <summary>
+    /// Raised on the update thread when the app is back on the screen after the system took it away: an iOS or Android
+    /// app that went to the background. Never on desktop, where an app doesn't leave. The update thread is stopped while
+    /// the app is away, so polling for a change of <see cref="IWindow.IsActive"/> wouldn't see one: this is what to watch
+    /// to look again at what may have changed meanwhile, such as files the user put in the app's storage.
+    /// </summary>
+    public event Action ReturnedToForeground;
+
+    /// <summary>
     /// Compacts the managed heap where the system said it's short of memory: on Android its UI thread, usually with
     /// the app in the background, which is when a big process is the first to be ended. A full collection stops every
     /// managed thread, but in the background they're stopped anyway.
@@ -579,6 +587,7 @@ public abstract class AppHost : IDisposable
 
             Renderer?.ResumeGpuWork();
             threadRunner.Resume();
+            updateScheduler.Add(() => ReturnedToForeground?.Invoke());
 
             Logger.Verbose("Back in the foreground: frames resumed.");
         }
