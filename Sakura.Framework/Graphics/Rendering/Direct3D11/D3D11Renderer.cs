@@ -287,18 +287,25 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         // rather than only when video is in use, because the decoder is created long after this and a
         // device without it would simply fall back to a slower path with no explanation.
         var flags = DeviceCreationFlags.BgraSupport | DeviceCreationFlags.VideoSupport;
-#if DEBUG
-        flags |= DeviceCreationFlags.Debug;
-#endif
 
-        if (!tryCreateDevice(flags))
+        bool debugLayer = Environment.GetEnvironmentVariable(debug_layer_variable) == "1";
+        if (debugLayer)
+            flags |= DeviceCreationFlags.Debug;
+
+        bool created = tryCreateDevice(flags);
+
+        if (!created && debugLayer)
         {
-#if DEBUG
-            Logger.Verbose("D3D11 device creation with the debug layer failed; retrying without it.");
-            if (!tryCreateDevice(flags & ~DeviceCreationFlags.Debug))
-#endif
-                throw new InvalidOperationException("Failed to create the Direct3D 11 device.");
+            Logger.Warning($"Direct3D11 device creation with the debug layer failed; retrying without it. The layer needs the Windows \"Graphics Tools\" optional feature.");
+            created = tryCreateDevice(flags & ~DeviceCreationFlags.Debug);
         }
+        else if (debugLayer)
+        {
+            Logger.Verbose($"Direct3D11 debug layer on ({debug_layer_variable}=1).");
+        }
+
+        if (!created)
+            throw new InvalidOperationException("Failed to create the Direct3D 11 device.");
 
         enableMultithreadProtection();
         gpuTimer = new D3D11GpuTimer(device, context);
@@ -359,6 +366,12 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     }
 
     private static readonly FeatureLevel[] feature_levels = { FeatureLevel.Level_11_1, FeatureLevel.Level_11_0 };
+
+    /// <summary>
+    /// <c>1</c> turns the D3D11 debug layer on, in any build. Off otherwise: it validates every call,
+    /// which slows the renderer down far past what a Debug build measures for everything else.
+    /// </summary>
+    private const string debug_layer_variable = "SAKURA_D3D11_DEBUG";
 
     /// <summary>
     /// Creates the device on the adapter Windows ranks first for performance, so a laptop with both an
