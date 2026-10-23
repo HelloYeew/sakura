@@ -8,6 +8,8 @@
 #import <CoreVideo/CoreVideo.h>
 #import <TargetConditionals.h>
 #include <string.h> // strlcpy
+#include <stdatomic.h>
+#include <unistd.h> // usleep
 #include <os/lock.h>
 #if TARGET_OS_IPHONE
 #import <UIKit/UIKit.h>
@@ -172,6 +174,22 @@ struct SakuraMetalDevice
     int64_t frameTag;
     __unsafe_unretained SakuraMetalPresentTimes* presentTimes;
     uint64_t presentationsTaken;
+
+    // Set by sakura_metal_suspend, from any thread, while nothing may reach the GPU. And the frames committed and not
+    // yet finished, which suspend waits out: counted up on the draw thread and down in the frame's completion handler.
+    _Atomic int suspended;
+    _Atomic int framesInFlightOnGpu;
+
+    // Latency as last asked for (set_frame_latency, from any thread; 0 for the default), and as the draw thread has
+    // applied it: the semaphore slots it holds back so fewer frames than the ring has are in flight, and the layer's
+    // drawable count.
+    _Atomic int requestedFramesInFlight;
+    _Atomic int requestedDrawableCount;
+    int heldSlots;
+    int appliedDrawableCount;
+
+    // How long each frame stays on screen at the least, in seconds (set_min_present_interval; 0 for none).
+    _Atomic double minPresentInterval;
 };
 
 // Hands a CoreVideo object to the device's deferred-release list: it is released when the GPU has
@@ -311,6 +329,9 @@ SakuraMetalDevice* sakura_metal_create(void* caMetalLayer)
     d->presentTimes = times; CFRetain((__bridge CFTypeRef)times);
     d->frameIndex = 0;
 
+    // A CAMetalLayer's own count.
+    d->appliedDrawableCount = 3;
+
     return d;
 }
 
@@ -320,12 +341,16 @@ void sakura_metal_destroy(SakuraMetalDevice* device)
         return;
 
     // If a frame was begun but never ended (the CPU took a semaphore slot that no completion handler
-    // will ever signal), hand that slot back so the drain below can't deadlock.
+    // will ever signal), hand that slot back so the drain below can't deadlock. Likewise the slots held
+    // back to keep fewer frames in flight.
     if (device->semaphoreWaitedThisFrame && device->frameSemaphore != nil)
     {
         dispatch_semaphore_signal(device->frameSemaphore);
         device->semaphoreWaitedThisFrame = NO;
     }
+
+    for (; device->heldSlots > 0 && device->frameSemaphore != nil; device->heldSlots--)
+        dispatch_semaphore_signal(device->frameSemaphore);
 
     // Drain any in-flight frames before tearing down, so no pending GPU completion handler reads a
     // freed ring buffer. Re-acquiring all MAX_FRAMES_IN_FLIGHT slots blocks until every recorded frame
@@ -399,7 +424,11 @@ void sakura_metal_get_info(SakuraMetalDevice* device, SakuraMetalInfo* info, cha
 
     info->maxThreadsPerThreadgroup = (int)mtl.maxThreadsPerThreadgroup.width;
     info->hasUnifiedMemory = mtl.hasUnifiedMemory ? 1 : 0;
-    info->recommendedMaxWorkingSetSize = (unsigned long long)mtl.recommendedMaxWorkingSetSize;
+    // iOS only has it from 16, and calling it on 15 would end the app; 0 there, as the header allows.
+    if (@available(macOS 10.12, iOS 16.0, *))
+        info->recommendedMaxWorkingSetSize = (unsigned long long)mtl.recommendedMaxWorkingSetSize;
+    else
+        info->recommendedMaxWorkingSetSize = 0;
 
     // Highest supported GPU family in each lineage. supportsFamily: is macOS 10.15+ / iOS 13+ (our
     // deployment targets). The newest family enum constants only exist in newer SDKs, so the Apple8/9
@@ -438,19 +467,68 @@ void sakura_metal_get_info(SakuraMetalDevice* device, SakuraMetalInfo* info, cha
     }
 }
 
+// Takes one of the frame semaphore's slots, waiting a tenth of a second at a time, and gives up once the device is
+// suspended: an app leaving the screen loses the GPU, which may then never finish the frame being waited on, and a
+// draw thread waiting forever would hold up the host stopping it.
+static BOOL takeFrameSlot(SakuraMetalDevice* device)
+{
+    while (dispatch_semaphore_wait(device->frameSemaphore, dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC)) != 0)
+    {
+        if (atomic_load(&device->suspended))
+            return NO;
+    }
+
+    return YES;
+}
+
+// Applies the latency last asked for (set_frame_latency): holds back as many semaphore slots as keep the frames in
+// flight to the number asked for, and sets the layer's drawable count. On the draw thread, between frames. NO where it
+// gave up waiting for a slot.
+static BOOL applyFrameLatency(SakuraMetalDevice* device)
+{
+    int frames = atomic_load(&device->requestedFramesInFlight);
+    int held = frames > 0 && frames < SAKURA_METAL_MAX_FRAMES_IN_FLIGHT ? SAKURA_METAL_MAX_FRAMES_IN_FLIGHT - frames : 0;
+
+    for (; device->heldSlots > held; device->heldSlots--)
+        dispatch_semaphore_signal(device->frameSemaphore);
+
+    // Each waits for a frame in flight to finish, so the CPU is no further ahead than asked for once this returns.
+    for (; device->heldSlots < held; device->heldSlots++)
+    {
+        if (!takeFrameSlot(device))
+            return NO;
+    }
+
+    int drawables = atomic_load(&device->requestedDrawableCount) == 2 ? 2 : 3;
+
+    if (drawables != device->appliedDrawableCount)
+    {
+        device->layer.maximumDrawableCount = (NSUInteger)drawables;
+        device->appliedDrawableCount = drawables;
+    }
+
+    return YES;
+}
+
 void sakura_metal_begin_frame(SakuraMetalDevice* device, float r, float g, float b, float a)
 {
     if (device == NULL || device->layer == nil)
         return;
 
-    // Throttle the CPU to at most MAX_FRAMES_IN_FLIGHT frames ahead of the GPU before touching this
-    // frame's ring buffer. The matching signal fires from the frame's final command-buffer completion
-    // handler (end_frame). Taken here so it also covers the no-drawable early-out below (we signal it
+    // Nothing may reach the GPU while suspended, so there's no frame to draw into.
+    if (atomic_load(&device->suspended))
+        return;
+
+    // Throttle the CPU to at most MAX_FRAMES_IN_FLIGHT frames ahead of the GPU (fewer where set_frame_latency asked)
+    // before touching this frame's ring buffer. The matching signal fires from the frame's final command-buffer
+    // completion handler (end_frame). Taken here so it also covers the no-drawable early-out below (we signal it
     // straight back in that case, so the count never leaks).
     device->semaphoreWaitedThisFrame = NO;
     if (device->frameSemaphore != nil)
     {
-        dispatch_semaphore_wait(device->frameSemaphore, DISPATCH_TIME_FOREVER);
+        if (!applyFrameLatency(device) || !takeFrameSlot(device))
+            return;
+
         device->semaphoreWaitedThisFrame = YES;
     }
 
@@ -462,10 +540,11 @@ void sakura_metal_begin_frame(SakuraMetalDevice* device, float r, float g, float
     device->framePool = objc_autoreleasePoolPush();
 
     id<CAMetalDrawable> drawable = [device->layer nextDrawable];
-    if (drawable == nil)
+
+    // No drawable available this frame (e.g. occluded), or the device was suspended while nextDrawable waited (up to
+    // a second); skip. Hand the semaphore slot back since no command buffer will complete to signal it.
+    if (drawable == nil || atomic_load(&device->suspended))
     {
-        // No drawable available this frame (e.g. occluded); skip. Hand the semaphore slot back since no
-        // command buffer will complete to signal it.
         if (device->semaphoreWaitedThisFrame)
         {
             dispatch_semaphore_signal(device->frameSemaphore);
@@ -535,10 +614,76 @@ void sakura_metal_begin_frame(SakuraMetalDevice* device, float r, float g, float
     device->vertexBufferCapacity = device->ringCapacity[slot];
 }
 
+// Ends the open frame without sending any of it to the GPU, for a device suspended while the frame was drawing: every
+// encoder is ended, as Metal requires, and the command buffers, the drawable and the frame's buffers are dropped
+// uncommitted. Zero-copy releases stay pending for the next frame that does reach the GPU.
+static void abandonFrame(SakuraMetalDevice* device)
+{
+    for (int i = device->targetDepth; i >= 0; i--)
+    {
+        SakuraMetalTarget* target = &device->targets[i];
+
+        if (target->encoder)
+        {
+            [target->encoder endEncoding];
+            CFRelease((__bridge CFTypeRef)target->encoder);
+            target->encoder = nil;
+        }
+
+        if (target->commandBuffer)
+        {
+            CFRelease((__bridge CFTypeRef)target->commandBuffer);
+            target->commandBuffer = nil;
+        }
+
+        target->texture = nil;
+    }
+
+    if (device->semaphoreWaitedThisFrame)
+    {
+        dispatch_semaphore_signal(device->frameSemaphore);
+        device->semaphoreWaitedThisFrame = NO;
+    }
+
+    for (int i = 0; i < device->overflowCount; i++)
+    {
+        if (device->overflowBuffers[i])
+        {
+            CFRelease((__bridge CFTypeRef)device->overflowBuffers[i]);
+            device->overflowBuffers[i] = nil;
+        }
+    }
+    device->overflowCount = 0;
+
+    if (device->drawable)
+    {
+        CFRelease((__bridge CFTypeRef)device->drawable);
+        device->drawable = nil;
+    }
+
+    device->encoder = nil;
+    device->commandBuffer = nil;
+    device->targetDepth = -1;
+    device->frameIndex++;
+
+    if (device->framePool != NULL)
+    {
+        objc_autoreleasePoolPop(device->framePool);
+        device->framePool = NULL;
+    }
+}
+
 void sakura_metal_end_frame(SakuraMetalDevice* device)
 {
     if (device == NULL || device->targetDepth < 0)
         return;
+
+    // Suspended while drawing it: none of the frame may reach the GPU.
+    if (atomic_load(&device->suspended))
+    {
+        abandonFrame(device);
+        return;
+    }
 
     // Defensive: if the C# side left offscreen passes open (it shouldn't), close them so we end on the
     // drawable target and don't leak encoders/command buffers.
@@ -580,7 +725,25 @@ void sakura_metal_end_frame(SakuraMetalDevice* device)
         }
 #endif
 
-        [top->commandBuffer presentDrawable:device->drawable];
+        // Paced where asked (set_min_present_interval). The simulator's SDK has no timed presents either.
+        double interval = atomic_load(&device->minPresentInterval);
+        BOOL paced = NO;
+
+#if !TARGET_OS_SIMULATOR
+        if (interval > 0)
+        {
+            if (@available(macOS 10.15.4, iOS 10.3, *))
+            {
+                [top->commandBuffer presentDrawable:device->drawable afterMinimumDuration:interval];
+                paced = YES;
+            }
+        }
+#else
+        (void)interval;
+#endif
+
+        if (!paced)
+            [top->commandBuffer presentDrawable:device->drawable];
     }
 
     // Signal the frame semaphore when this frame's FINAL command buffer (the drawable's) completes on
@@ -588,11 +751,16 @@ void sakura_metal_end_frame(SakuraMetalDevice* device)
     // reuse MAX_FRAMES_IN_FLIGHT frames later. Captured locally (not via the device pointer) so the
     // handler is safe even if the handler runs after teardown begins; the semaphore itself is kept
     // alive by destroy's drain (it waits for all in-flight frames before releasing). Added before
-    // commit, as required.
+    // commit, as required. The count of frames on the GPU, which suspend waits out, comes down first:
+    // the device it lives in is freed only once destroy's drain has seen this signal.
     if (top->commandBuffer && device->semaphoreWaitedThisFrame && device->frameSemaphore != nil)
     {
         dispatch_semaphore_t sem = device->frameSemaphore;
+        _Atomic int* onGpu = &device->framesInFlightOnGpu;
+
+        atomic_fetch_add(onGpu, 1);
         [top->commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> _Nonnull cb) {
+            atomic_fetch_sub(onGpu, 1);
             dispatch_semaphore_signal(sem);
         }];
         device->semaphoreWaitedThisFrame = NO;
@@ -714,7 +882,9 @@ void sakura_metal_begin_offscreen(SakuraMetalDevice* device, SakuraMetalTexture*
         parent->encoder = nil;
     }
     if (parent->commandBuffer) {
-        [parent->commandBuffer commit];
+        // Dropped uncommitted once suspended: end_frame abandons the rest of the frame too.
+        if (!atomic_load(&device->suspended))
+            [parent->commandBuffer commit];
         CFRelease((__bridge CFTypeRef)parent->commandBuffer);
         parent->commandBuffer = nil;
     }
@@ -747,7 +917,9 @@ void sakura_metal_end_offscreen(SakuraMetalDevice* device)
         child->encoder = nil;
     }
     if (child->commandBuffer) {
-        [child->commandBuffer commit];
+        // Dropped uncommitted once suspended: end_frame abandons the rest of the frame too.
+        if (!atomic_load(&device->suspended))
+            [child->commandBuffer commit];
         CFRelease((__bridge CFTypeRef)child->commandBuffer);
         child->commandBuffer = nil;
     }
@@ -1443,4 +1615,38 @@ int sakura_metal_take_presented(SakuraMetalDevice* device, int64_t* tag, double*
 double sakura_metal_host_time(void)
 {
     return CACurrentMediaTime();
+}
+
+void sakura_metal_suspend(SakuraMetalDevice* device)
+{
+    if (device == NULL)
+        return;
+
+    atomic_store(&device->suspended, 1);
+
+    // Frames committed before this finish now, while the app still has the GPU: once it's in the background they'd
+    // fail. Not waited on for long, as the system gives an app leaving the screen only a few seconds for all of it.
+    for (int waited = 0; atomic_load(&device->framesInFlightOnGpu) > 0 && waited < 500; waited++)
+        usleep(1000);
+}
+
+void sakura_metal_resume(SakuraMetalDevice* device)
+{
+    if (device != NULL)
+        atomic_store(&device->suspended, 0);
+}
+
+void sakura_metal_set_frame_latency(SakuraMetalDevice* device, int framesInFlight, int drawableCount)
+{
+    if (device == NULL)
+        return;
+
+    atomic_store(&device->requestedFramesInFlight, framesInFlight);
+    atomic_store(&device->requestedDrawableCount, drawableCount);
+}
+
+void sakura_metal_set_min_present_interval(SakuraMetalDevice* device, double seconds)
+{
+    if (device != NULL)
+        atomic_store(&device->minPresentInterval, seconds > 0 ? seconds : 0);
 }

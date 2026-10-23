@@ -468,6 +468,9 @@ public abstract class AppHost : IDisposable
 
             inBackground = true;
 
+            // First, so a draw thread waiting on the GPU gives up rather than hold up stopping it.
+            Renderer?.SuspendGpuWork();
+
             threadRunner.Pause();
 
             (AudioManager as IStopsInBackground)?.EnterBackground();
@@ -565,6 +568,7 @@ public abstract class AppHost : IDisposable
 
             (AudioManager as IStopsInBackground)?.EnterForeground();
 
+            Renderer?.ResumeGpuWork();
             threadRunner.Resume();
 
             Logger.Verbose("Back in the foreground: frames resumed.");

@@ -53,6 +53,24 @@ void sakura_metal_begin_frame(SakuraMetalDevice* device, float r, float g, float
 // end frame: closes the render encoder, presents the drawable, and commits the command buffer.
 void sakura_metal_end_frame(SakuraMetalDevice* device);
 
+// Background. iOS refuses GPU work from an app in the background, so suspend stops sending any: from any thread, as the
+// app is about to leave the screen, while a frame may still be drawing. A frame begun from then on is skipped, one
+// already open ends without being committed, and a draw thread waiting on the GPU gives up rather than wait on. It then
+// waits, up to half a second, for the frames already committed to finish. resume sends work again.
+void sakura_metal_suspend(SakuraMetalDevice* device);
+void sakura_metal_resume(SakuraMetalDevice* device);
+
+// Latency. framesInFlight is how many frames the CPU may record ahead of the GPU finishing them (1 to 3, 0 for the
+// default 3): fewer reach the screen sooner, more keep the CPU and GPU working at once. drawableCount is how many
+// drawables the layer keeps (2 or 3, 0 to leave the layer's own): 2 holds the CPU back to the display too, at the risk
+// of a stall when a frame runs late. From any thread; taken up by the next begin_frame.
+void sakura_metal_set_frame_latency(SakuraMetalDevice* device, int framesInFlight, int drawableCount);
+
+// Pacing. Shows each frame at least this long, in seconds, rather than whenever it's ready (0 for that), so frames
+// come at an even rate below the display's: 1/60 holds a 120 Hz display to 60. From any thread; needs macOS 10.15.4
+// or iOS 10.3 on a device, and is ignored earlier and in the iOS simulator.
+void sakura_metal_set_min_present_interval(SakuraMetalDevice* device, double seconds);
+
 // Frame timing, for how long frames take to reach the screen. The host tags each frame before end_frame (any
 // nonzero value; 0 asks for none); take_presented hands back the tag of the last frame known to have reached the
 // screen and when it did, in host time (seconds, CACurrentMediaTime's clock), once for each such frame: 1 when

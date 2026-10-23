@@ -67,6 +67,21 @@ internal static class SakuraMetalNative
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern double sakura_metal_host_time();
 
+    // Background, latency and pacing (SakuraMetal.h). Newer again: a library from before them throws
+    // EntryPointNotFoundException.
+
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void sakura_metal_suspend(nint device);
+
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void sakura_metal_resume(nint device);
+
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void sakura_metal_set_frame_latency(nint device, int framesInFlight, int drawableCount);
+
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void sakura_metal_set_min_present_interval(nint device, double seconds);
+
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern void sakura_metal_resize(nint device, int width, int height, float contentsScale);
 

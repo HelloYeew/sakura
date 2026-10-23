@@ -309,6 +309,29 @@ public sealed class MetalRenderer : IMetalRenderer
 
     public double DisplayLatencyMilliseconds => displayLatency.Milliseconds ?? double.NaN;
 
+    // Cleared where the library predates suspending, so it's only tried once.
+    private bool canSuspend = true;
+
+    public void SuspendGpuWork() => suspendControl(SakuraMetalNative.sakura_metal_suspend);
+
+    public void ResumeGpuWork() => suspendControl(SakuraMetalNative.sakura_metal_resume);
+
+    private void suspendControl(Action<nint> call)
+    {
+        if (device == 0 || !canSuspend)
+            return;
+
+        try
+        {
+            call(device);
+        }
+        catch (EntryPointNotFoundException)
+        {
+            canSuspend = false;
+            Logger.Verbose("This libsakura-metal predates suspending, so a frame may still reach the GPU as the app leaves the screen.");
+        }
+    }
+
     /// <summary>
     /// Measures the latest frame Metal has reported on screen, from the update it showed. Metal reports in host time,
     /// lined up with <see cref="Stopwatch"/>'s here by reading both clocks at once.
