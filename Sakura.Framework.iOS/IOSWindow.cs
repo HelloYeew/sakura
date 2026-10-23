@@ -7,15 +7,18 @@ using static SDL.SDL3;
 namespace Sakura.Framework.iOS;
 
 /// <summary>
-/// The window an app draws to on iOS: SDL's, with the system's edge swipes set for the kind of app.
+/// The window an app draws to on iOS: SDL's, with the system's edge swipes and the app's audio session set for the kind
+/// of app.
 /// </summary>
 internal class IOSWindow : SDLWindow
 {
     private readonly AppType appType;
+    private readonly bool takesAudioFocus;
 
-    public IOSWindow(AppType appType)
+    public IOSWindow(AppType appType, bool takesAudioFocus)
     {
         this.appType = appType;
+        this.takesAudioFocus = takesAudioFocus;
     }
 
     protected override void ConfigureHints()
@@ -25,5 +28,11 @@ internal class IOSWindow : SDLWindow
         // home indicator stays, dimmed. An application leaves the edges to the system, as any other app does. Unset,
         // SDL would defer every edge for any borderless window, which on iOS is every window.
         SDL_SetHint(SDL_HINT_IOS_HIDE_HOME_INDICATOR, appType == AppType.Game ? "2" : "0");
+
+        // The audio session's category, which SDL sets as it opens the device. Playback has the output to itself: other
+        // apps' music stops, and the silent switch doesn't mute it, which is how a game's sound is heard. Ambient plays
+        // along with whatever else is playing and goes quiet with the switch. Unset, SDL would play over other apps'
+        // music and ignore the switch.
+        SDL_SetHint(SDL_HINT_AUDIO_CATEGORY, takesAudioFocus ? "playback" : "ambient");
     }
 }

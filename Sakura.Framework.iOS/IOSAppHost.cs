@@ -57,7 +57,7 @@ public class IOSAppHost : SDLAppHost
 
     public override Storage GetStorage(string path) => new NativeStorage(path, this);
 
-    protected override IWindow CreateWindow() => new IOSWindow(Options.AppType);
+    protected override IWindow CreateWindow() => new IOSWindow(Options.AppType, Options.TakesAudioFocus);
 
     [DllImport("/usr/lib/libSystem.dylib")]
     private static extern nuint os_proc_available_memory();
