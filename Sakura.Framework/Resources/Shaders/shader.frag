@@ -1,5 +1,19 @@
 #version 450
 
+// Defined only when cross-compiling for Direct3D. Its compiler can't keep a texture sample that takes
+// its derivatives implicitly inside a branch that can differ between neighbouring pixels, so it moves
+// every sample in the texture chain below out of its branch, and each pixel pays for all 16. With the
+// derivatives passed explicitly, and the branches marked as real ones, each pixel makes the one sample
+// it needs. Every other backend compiles the plain version.
+#ifdef SAKURA_EXPLICIT_GRADIENTS
+#extension GL_EXT_control_flow_attributes : require
+#define BRANCH [[dont_flatten]]
+#define SAMPLE_SLOT(i) textureGrad(u_Textures[i], v_TexCoords, texCoordsDx, texCoordsDy)
+#else
+#define BRANCH
+#define SAMPLE_SLOT(i) texture(u_Textures[i], v_TexCoords)
+#endif
+
 #include "sh_Utils.glsl"
 
 layout(location = 0) in vec4 v_Color;
@@ -47,6 +61,13 @@ layout(set = 0, binding = 1, std140) uniform MaskBlock
 
 void main()
 {
+#ifdef SAKURA_EXPLICIT_GRADIENTS
+    // Taken before any branch or discard, while every pixel of the quad is still running, so they are
+    // defined for all of them.
+    vec2 texCoordsDx = dFdx(v_TexCoords);
+    vec2 texCoordsDy = dFdy(v_TexCoords);
+#endif
+
     if (u_IsEdgeEffect != 0)
     {
         // The edge effect is shaped like the container's rounded parallelogram, optionally offset.
@@ -109,22 +130,22 @@ void main()
     vec4 texColor;
     int index = int(v_TexIndex + 0.5);
 
-    if (index == 0) texColor = texture(u_Textures[0], v_TexCoords);
-    else if (index == 1) texColor = texture(u_Textures[1], v_TexCoords);
-    else if (index == 2) texColor = texture(u_Textures[2], v_TexCoords);
-    else if (index == 3) texColor = texture(u_Textures[3], v_TexCoords);
-    else if (index == 4) texColor = texture(u_Textures[4], v_TexCoords);
-    else if (index == 5) texColor = texture(u_Textures[5], v_TexCoords);
-    else if (index == 6) texColor = texture(u_Textures[6], v_TexCoords);
-    else if (index == 7) texColor = texture(u_Textures[7], v_TexCoords);
-    else if (index == 8) texColor = texture(u_Textures[8], v_TexCoords);
-    else if (index == 9) texColor = texture(u_Textures[9], v_TexCoords);
-    else if (index == 10) texColor = texture(u_Textures[10], v_TexCoords);
-    else if (index == 11) texColor = texture(u_Textures[11], v_TexCoords);
-    else if (index == 12) texColor = texture(u_Textures[12], v_TexCoords);
-    else if (index == 13) texColor = texture(u_Textures[13], v_TexCoords);
-    else if (index == 14) texColor = texture(u_Textures[14], v_TexCoords);
-    else if (index == 15) texColor = texture(u_Textures[15], v_TexCoords);
+    BRANCH if (index == 0) texColor = SAMPLE_SLOT(0);
+    else BRANCH if (index == 1) texColor = SAMPLE_SLOT(1);
+    else BRANCH if (index == 2) texColor = SAMPLE_SLOT(2);
+    else BRANCH if (index == 3) texColor = SAMPLE_SLOT(3);
+    else BRANCH if (index == 4) texColor = SAMPLE_SLOT(4);
+    else BRANCH if (index == 5) texColor = SAMPLE_SLOT(5);
+    else BRANCH if (index == 6) texColor = SAMPLE_SLOT(6);
+    else BRANCH if (index == 7) texColor = SAMPLE_SLOT(7);
+    else BRANCH if (index == 8) texColor = SAMPLE_SLOT(8);
+    else BRANCH if (index == 9) texColor = SAMPLE_SLOT(9);
+    else BRANCH if (index == 10) texColor = SAMPLE_SLOT(10);
+    else BRANCH if (index == 11) texColor = SAMPLE_SLOT(11);
+    else BRANCH if (index == 12) texColor = SAMPLE_SLOT(12);
+    else BRANCH if (index == 13) texColor = SAMPLE_SLOT(13);
+    else BRANCH if (index == 14) texColor = SAMPLE_SLOT(14);
+    else BRANCH if (index == 15) texColor = SAMPLE_SLOT(15);
     else texColor = vec4(1.0);
 
     texColor *= v_Color;
