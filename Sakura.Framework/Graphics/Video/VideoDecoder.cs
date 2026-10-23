@@ -596,7 +596,7 @@ public unsafe class VideoDecoder : IDisposable
     /// software decoder automatically on any failure.
     ///
     /// Hardware device priority:
-    ///   macOS  — VideoToolbox
+    ///   macOS and iOS — VideoToolbox
     ///   Windows — D3D11VA > DXVA2 > CUDA
     ///   Linux   — VAAPI > VDPAU > CUDA
     ///   Either of the last two puts Vulkan first when the renderer is Vulkan and its device has a video
@@ -625,7 +625,10 @@ public unsafe class VideoDecoder : IDisposable
             // Platform-preferred HW device types, tried in order.
             AVHWDeviceType[] candidates;
 
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            // OSPlatform.OSX is macOS alone: iOS would otherwise get the Linux list and decode in software.
+            bool apple = OperatingSystem.IsMacOS() || OperatingSystem.IsIOS();
+
+            if (apple)
                 candidates = new[] { AVHWDeviceType.AV_HWDEVICE_TYPE_VIDEOTOOLBOX };
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                 candidates = new[]
@@ -642,7 +645,7 @@ public unsafe class VideoDecoder : IDisposable
                     AVHWDeviceType.AV_HWDEVICE_TYPE_CUDA,
                 };
 
-            if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX) && renderer is VulkanRenderer { DecodesVideo: true })
+            if (!apple && renderer is VulkanRenderer { DecodesVideo: true })
                 candidates = [AVHWDeviceType.AV_HWDEVICE_TYPE_VULKAN, .. candidates];
 
             foreach (var hwType in candidates)
