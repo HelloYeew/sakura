@@ -479,6 +479,7 @@ public class SDLWindow : IWindow
     public bool IsActive { get; private set; } = true;
     public bool IsExiting { get; private set; }
     public int DisplayHz { get; private set; } = 60;
+    public Reactive<string> DisplayName { get; } = new Reactive<string>(string.Empty);
 
     // TODO: This update action also no longer needed since it's handled in host's main loop
     public event Action Update = delegate { };
@@ -674,6 +675,7 @@ public class SDLWindow : IWindow
 
         DisplayHz = getDisplayRefreshRate();
         Logger.Verbose($"Display refresh rate: {DisplayHz} Hz");
+        updateDisplayName();
 
         int w, h;
         SDL_GetWindowSize(window, &w, &h);
@@ -1347,6 +1349,7 @@ public class SDLWindow : IWindow
 
             case SDL_EventType.SDL_EVENT_WINDOW_DISPLAY_CHANGED:
                 updateDisplayHz();
+                updateDisplayName();
 
                 // When the window moves to a display with a different pixel density (e.g. from
                 // a non-HiDPI external monitor to the HiDPI MacBook screen), SDL may or may not
@@ -1804,6 +1807,17 @@ public class SDLWindow : IWindow
 
         Logger.Debug($"Display refresh rate changed from {oldHz} Hz to {DisplayHz} Hz");
         DisplayChanged.Invoke(DisplayHz);
+    }
+
+    private unsafe void updateDisplayName()
+    {
+        string name = SDL_GetDisplayName(SDL_GetDisplayForWindow(window)) ?? string.Empty;
+
+        if (name == DisplayName.Value)
+            return;
+
+        Logger.Verbose($"On display: {name}");
+        DisplayName.Value = name;
     }
 
     private unsafe int getDisplayRefreshRate()

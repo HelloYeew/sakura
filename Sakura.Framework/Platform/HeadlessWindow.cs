@@ -33,6 +33,7 @@ public class HeadlessWindow : IWindow
     public bool RelativeMouseMode { get; set; }
     public double CursorSensitivity { get; set; } = 1.0;
     public Reactive<MarginPadding> SafeAreaPadding { get; } = new Reactive<MarginPadding>(new MarginPadding());
+    public Reactive<string> DisplayName { get; } = new Reactive<string>(string.Empty);
     public IGraphicsSurface GraphicsSurface { get; } = new HeadlessGraphicsSurface();
     private string headlessClipboard = string.Empty;
     public void Initialize()
