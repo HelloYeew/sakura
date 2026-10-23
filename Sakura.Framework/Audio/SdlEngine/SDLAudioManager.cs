@@ -103,6 +103,10 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
     public Reactive<bool> OutputInterrupted { get; } = new Reactive<bool>(false);
 
+    public string PlayingDevice => playingDevice;
+
+    public event Action? PlayingDeviceChanged;
+
     /// <summary>
     /// The name of the device the stream plays on, or empty when it's the system's default.
     /// </summary>
@@ -121,6 +125,12 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     // update thread, so replaced whole rather than changed.
     private volatile string[] outputDevices = Array.Empty<string>();
     private SDL_AudioDeviceID[] outputDeviceIds = Array.Empty<SDL_AudioDeviceID>();
+
+    // What PlayingDevice says, written on the audio thread. With AAudio, also the device it was worked out for, as
+    // naming one goes through the platform (NativeAudioOutput.DescribeDevice), which does so in Java.
+    private volatile string playingDevice = string.Empty;
+    private int playingAAudioDeviceId = -1;
+    private readonly Func<int, string>? describeAAudioDevice;
 
     private GlobalStatistic<string>? statDevice;
 
@@ -368,6 +378,7 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
         this.requestedDeviceBufferFrames = requestedDeviceBufferFrames;
         this.persistDeviceBufferFrames = persistDeviceBufferFrames;
+        describeAAudioDevice = nativeOutput?.DescribeDevice;
 
         // Decoding runs through FFmpeg, so bring it up here rather than lazily on the first track:
         // a missing or mis-located native library should fail at startup, where it is diagnosable.
@@ -491,6 +502,7 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         }
 
         logInitialisationDetails(requestedDeviceBufferFrames, nativeOutput);
+        refreshPlayingDevice();
     }
 
     private void applyVolumes()
@@ -765,6 +777,9 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             followPreferredDevice();
         }
 
+        // SDL moves a stream on the default to the system's new default by itself, saying nothing.
+        refreshPlayingDevice();
+
         var device = SDL_GetAudioStreamDevice(deviceStream);
 
         if (device == 0)
@@ -837,6 +852,7 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             aaudioLatencyReadings = 0;
             aaudioDescription = output.Describe();
             Logger.Verbose($"The audio output changed, so it plays through a new stream: {aaudioDescription}");
+            refreshPlayingDevice();
         }
 
         sinceLatencySampleMs += frameTime;
@@ -983,6 +999,38 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         Logger.Verbose(string.IsNullOrEmpty(preferredDevice) || boundTarget != SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK
             ? $"Playing on {describeBoundDevice()}"
             : $"Playing on {describeBoundDevice()} until {preferredDevice} is plugged in");
+
+        refreshPlayingDevice();
+    }
+
+    /// <summary>
+    /// Reads which device the sound plays on now for <see cref="PlayingDevice"/>, and says so where it changed.
+    /// </summary>
+    private void refreshPlayingDevice()
+    {
+        string name;
+
+        if (aaudioOutput != null)
+        {
+            int id = aaudioOutput.DeviceId;
+
+            if (id == playingAAudioDeviceId)
+                return;
+
+            playingAAudioDeviceId = id;
+            name = id > 0 ? describeAAudioDevice?.Invoke(id) ?? string.Empty : string.Empty;
+        }
+        else
+        {
+            // The logical device names the physical one it's on now, which for the default is whichever that is.
+            name = logicalDevice != 0 ? deviceName(logicalDevice) : string.Empty;
+        }
+
+        if (name == playingDevice)
+            return;
+
+        playingDevice = name;
+        RaiseEvent(() => PlayingDeviceChanged?.Invoke());
     }
 
     private string describeBoundDevice()

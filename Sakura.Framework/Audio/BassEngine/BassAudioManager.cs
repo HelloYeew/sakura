@@ -43,6 +43,13 @@ internal class BassAudioManager : IAudioManager, IDisposable
 
     public Reactive<bool> OutputInterrupted { get; } = new Reactive<bool>(false);
 
+    public string PlayingDevice => playingDeviceName;
+
+    public event Action PlayingDeviceChanged;
+
+    // What PlayingDevice says, written on the audio thread.
+    private volatile string playingDeviceName = string.Empty;
+
     // How often the device list is read again, for devices plugged in and out.
     private const double device_check_interval_ms = 1000;
 
@@ -190,6 +197,8 @@ internal class BassAudioManager : IAudioManager, IDisposable
                 Logger.Verbose($"Driver: {deviceInfo.Driver}");
             }
 
+            refreshPlayingDevice();
+
             int updatePeriod = Bass.GetConfig(Configuration.UpdatePeriod);
             int deviceBuffer = Bass.GetConfig(Configuration.DeviceBufferLength);
             int playbackBuffer = Bass.GetConfig(Configuration.PlaybackBufferLength);
@@ -331,6 +340,38 @@ internal class BassAudioManager : IAudioManager, IDisposable
         Bass.CurrentDevice = target;
 
         Logger.Verbose($"Playing on {nameOf(target)}");
+        refreshPlayingDevice();
+    }
+
+    /// <summary>
+    /// Reads which device the sound plays on now for <see cref="PlayingDevice"/>, and says so where it changed: on the
+    /// "Default" device, the one the system has as its default.
+    /// </summary>
+    private void refreshPlayingDevice()
+    {
+        string name = string.Empty;
+
+        if (followingDefaultDevice > 0 && playingDevice == followingDefaultDevice)
+        {
+            foreach (int index in outputDeviceIndices)
+            {
+                if (Bass.GetDeviceInfo(index, out var candidate) && candidate.IsDefault)
+                {
+                    name = candidate.Name;
+                    break;
+                }
+            }
+        }
+        else if (playingDevice != Bass.NoSoundDevice && Bass.GetDeviceInfo(playingDevice, out var info))
+        {
+            name = info.Name;
+        }
+
+        if (name == playingDeviceName)
+            return;
+
+        playingDeviceName = name;
+        RaiseEvent(() => PlayingDeviceChanged?.Invoke());
     }
 
     private static string nameOf(int device) => Bass.GetDeviceInfo(device, out var info) ? info.Name : device.ToString();
@@ -467,6 +508,9 @@ internal class BassAudioManager : IAudioManager, IDisposable
                 RaiseEvent(() => OutputDevicesChanged?.Invoke());
                 followPreferredDevice();
             }
+
+            // The "Default" device follows the system's default by itself, saying nothing.
+            refreshPlayingDevice();
         }
 
         GlobalStatistics.Get<double>("Audio", "BASS CPU Usage", StatisticKind.Gauge, StatisticUnit.Percent).Value = Bass.CPUUsage;
