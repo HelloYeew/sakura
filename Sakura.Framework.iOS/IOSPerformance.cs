@@ -8,7 +8,7 @@ namespace Sakura.Framework.iOS;
 
 /// <summary>
 /// What iOS says of the device's heat and battery saving. It has no frame hints or game states to send: the system
-/// puts a game in Game Mode by its category, unasked.
+/// puts a game in Game Mode itself, by its Info.plist (a games category and <c>LSSupportsGameMode</c>), unasked.
 /// </summary>
 internal sealed class IOSPerformance : IPlatformPerformance
 {

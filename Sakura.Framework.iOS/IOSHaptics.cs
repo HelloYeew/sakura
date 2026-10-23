@@ -23,8 +23,18 @@ internal sealed class IOSHaptics : IPlatformHaptics
     private CHHapticEngine? engine;
     private bool running;
 
-    // A player for each kind, made once and started again each time it plays, rather than two new objects every tap.
-    private readonly Dictionary<HapticFeedback, ICHHapticPatternPlayer?> players = new Dictionary<HapticFeedback, ICHHapticPatternPlayer?>();
+    // A tap's strength and sharpness are each kept to a twentieth, so that taps alike share a player.
+    private const int steps = 20;
+
+    // Players are made once for each strength and sharpness and started again each time: each holds one of the engine's
+    // channels for as long as it lives, and the engine has about 250. Past this many, they're all let go and made again
+    // as they're needed.
+    private const int max_players = 32;
+
+    private readonly Dictionary<int, ICHHapticPatternPlayer> players = new Dictionary<int, ICHHapticPatternPlayer>();
+
+    // Logged once until a player can be made again, rather than for every tap refused.
+    private bool playerFailed;
 
     // Made and used on the main thread.
     private UINotificationFeedbackGenerator? notifications;
@@ -57,37 +67,52 @@ internal sealed class IOSHaptics : IPlatformHaptics
                 return;
         }
 
+        (float intensity, float sharpness) = feedback switch
+        {
+            HapticFeedback.Selection => (0.35f, 0.9f),
+            HapticFeedback.Light => (0.45f, 0.6f),
+            HapticFeedback.Medium => (0.7f, 0.5f),
+            _ => (1f, 0.4f)
+        };
+
+        tap(intensity, sharpness);
+    }
+
+    public void PlayTap(float intensity, float sharpness)
+    {
+        if (IsSupported)
+            tap(intensity, sharpness);
+    }
+
+    private void tap(float intensity, float sharpness)
+    {
+        int strengthStep = (int)MathF.Round(Math.Clamp(intensity, 0, 1) * steps);
+        int sharpnessStep = (int)MathF.Round(Math.Clamp(sharpness, 0, 1) * steps);
+        int key = strengthStep * (steps + 1) + sharpnessStep;
+
         lock (engineLock)
         {
             if (!ensureRunning())
                 return;
 
-            if (!players.TryGetValue(feedback, out var player))
-            {
-                (float intensity, float sharpness) = feedback switch
-                {
-                    HapticFeedback.Selection => (0.35f, 0.9f),
-                    HapticFeedback.Light => (0.45f, 0.6f),
-                    HapticFeedback.Medium => (0.7f, 0.5f),
-                    _ => (1f, 0.4f)
-                };
+            // 0 is now (CHHapticTimeImmediate).
+            if (players.TryGetValue(key, out var player) && player.Start(0, out _))
+                return;
 
-                players[feedback] = player = createPlayer(intensity, sharpness);
+            // One that won't start any more is made again.
+            if (player != null)
+            {
+                players.Remove(key);
+                player.Dispose();
             }
 
-            start(player);
-        }
-    }
+            player = makePlayer((float)strengthStep / steps, (float)sharpnessStep / steps);
 
-    public void PlayTap(float intensity, float sharpness)
-    {
-        if (!IsSupported)
-            return;
+            if (player == null)
+                return;
 
-        lock (engineLock)
-        {
-            if (ensureRunning())
-                start(createPlayer(intensity, sharpness));
+            players[key] = player;
+            player.Start(0, out _);
         }
     }
 
@@ -126,7 +151,7 @@ internal sealed class IOSHaptics : IPlatformHaptics
                 lock (engineLock)
                 {
                     running = false;
-                    players.Clear();
+                    releasePlayers();
                 }
             };
         }
@@ -143,32 +168,57 @@ internal sealed class IOSHaptics : IPlatformHaptics
     }
 
     // Under the lock, with the engine running.
-    private ICHHapticPatternPlayer? createPlayer(float intensity, float sharpness)
+    private ICHHapticPatternPlayer? makePlayer(float intensity, float sharpness)
     {
-        var tap = new CHHapticEvent(CHHapticEventType.HapticTransient,
-        [
-            new CHHapticEventParameter(CHHapticEventParameterId.HapticIntensity, Math.Clamp(intensity, 0, 1)),
-            new CHHapticEventParameter(CHHapticEventParameterId.HapticSharpness, Math.Clamp(sharpness, 0, 1))
-        ], 0);
+        if (players.Count >= max_players)
+            releasePlayers();
 
-        var pattern = new CHHapticPattern([tap], Array.Empty<CHHapticDynamicParameter>(), out NSError? error);
+        var player = createPlayer(intensity, sharpness, out NSError? error);
 
-        if (error != null)
+        // The engine's channels may have run out some other way: once more, with every player let go.
+        if (player == null && players.Count > 0)
         {
-            Logger.Error($"Could not make a haptic pattern: {error.LocalizedDescription}");
-            return null;
+            releasePlayers();
+            player = createPlayer(intensity, sharpness, out error);
         }
 
-        var player = engine!.CreatePlayer(pattern, out error);
+        if (player == null && !playerFailed)
+            Logger.Error($"Could not make a haptic player: {error?.LocalizedDescription}");
 
-        if (error != null)
-            Logger.Error($"Could not make a haptic player: {error.LocalizedDescription}");
-
+        playerFailed = player == null;
         return player;
     }
 
-    // 0 is now (CHHapticTimeImmediate).
-    private static void start(ICHHapticPatternPlayer? player) => player?.Start(0, out _);
+    // Under the lock, with the engine running.
+    private ICHHapticPatternPlayer? createPlayer(float intensity, float sharpness, out NSError? error)
+    {
+        var transient = new CHHapticEvent(CHHapticEventType.HapticTransient,
+        [
+            new CHHapticEventParameter(CHHapticEventParameterId.HapticIntensity, intensity),
+            new CHHapticEventParameter(CHHapticEventParameterId.HapticSharpness, sharpness)
+        ], 0);
+
+        var pattern = new CHHapticPattern([transient], Array.Empty<CHHapticDynamicParameter>(), out error);
+
+        if (error != null)
+            return null;
+
+        // The engine hands the player over autoreleased, and a .NET thread's own pool only drains when the thread ends:
+        // without a pool of its own here, every player made on the update thread would live on, holding its channel.
+        using (new NSAutoreleasePool())
+        {
+            return engine!.CreatePlayer(pattern, out error);
+        }
+    }
+
+    // Under the lock. A player let go frees its channel.
+    private void releasePlayers()
+    {
+        foreach (var player in players.Values)
+            player.Dispose();
+
+        players.Clear();
+    }
 
     private void notify(UINotificationFeedbackType type) => NSRunLoop.Main.BeginInvokeOnMainThread(() =>
     {
