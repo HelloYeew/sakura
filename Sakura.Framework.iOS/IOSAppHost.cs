@@ -105,11 +105,13 @@ public class IOSAppHost : SDLAppHost
     /// </summary>
     public string DataDirectory { get; } = dataDirectory();
 
+    private static readonly bool sharesFiles = NSBundle.MainBundle.ObjectForInfoDictionary("UIFileSharingEnabled") is NSNumber { BoolValue: true };
+
     private static string dataDirectory()
     {
         string support = userDirectory(NSSearchPathDirectory.ApplicationSupportDirectory);
 
-        if (NSBundle.MainBundle.ObjectForInfoDictionary("UIFileSharingEnabled") is not NSNumber { BoolValue: true })
+        if (!sharesFiles)
             return support;
 
         string documents = userDirectory(NSSearchPathDirectory.DocumentDirectory);
@@ -158,7 +160,26 @@ public class IOSAppHost : SDLAppHost
     protected override Storage GetDefaultAppStorage() => GetStorage(DataDirectory);
 
     // Logs are this device's, and a cache is made again, so neither goes into the backup.
-    protected override Storage GetLogStorage() => GetStorage(Path.Combine(cachesDirectory, "logs"));
+    protected override Storage GetLogStorage() => GetStorage(logDirectory());
+
+    /// <summary>
+    /// <c>Library/Caches/logs</c>, or for an app that shares its files, <c>logs</c> beside them, where Finder and the Files
+    /// app reach it: a log is the first thing asked for when something goes wrong. Kept out of the backup there too.
+    /// </summary>
+    private string logDirectory()
+    {
+        if (!sharesFiles)
+            return Path.Combine(cachesDirectory, "logs");
+
+        string logs = Path.Combine(DataDirectory, "logs");
+        Directory.CreateDirectory(logs);
+
+        // A folder kept out of the backup keeps out everything in it.
+        if (!NSUrl.FromFilename(logs).SetResource(NSUrl.IsExcludedFromBackupKey, NSNumber.FromBoolean(true), out NSError? error))
+            Logger.Error($"Could not keep the logs out of the backup: {error?.LocalizedDescription}");
+
+        return logs;
+    }
 
     protected override Storage GetCacheStorage() => GetStorage(cachesDirectory);
 
