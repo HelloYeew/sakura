@@ -157,8 +157,9 @@ internal sealed class SakuraAudioEngine : IDisposable
         address = nint.Zero;
 
         // The same set of names the SDL3 bindings themselves are resolved under, in the same order,
-        // so this finds whichever one the platform actually loaded.
-        foreach (string library in new[] { "SDL3", "libSDL3.so.0", "libSDL3.dylib", "SDL3.dll" })
+        // so this finds whichever one the platform actually loaded. The last is where iOS embeds SDL,
+        // which the bindings reach through the app's resolver, and a lookup like this one never asks.
+        foreach (string library in new[] { "SDL3", "libSDL3.so.0", "libSDL3.dylib", "SDL3.dll", "@rpath/SDL3.framework/SDL3" })
         {
             if (!NativeLibrary.TryLoad(library, typeof(SDL.SDL3).Assembly, null, out nint loaded))
                 continue;
