@@ -28,4 +28,17 @@
         Lines="@compressed_assembly_count = dso_local local_unnamed_addr constant i32 0, align 4;@compressed_assembly_descriptors = dso_local local_unnamed_addr global [0 x %25struct.CompressedAssemblyDescriptor] zeroinitializer, align 4;@uncompressed_assemblies_data_size = dso_local local_unnamed_addr constant i32 0, align 4"
         Overwrite="false" />
   </Target>
+
+  <!--
+    The .NET 11 SDK names Android to crossgen2 as "android", which only crossgen2 11 knows. A net10.0-android app is
+    precompiled (ReadyToRun, as a Release build on CoreCLR is) by the .NET 10 crossgen2, which stops at "Target OS 'android'
+    is not supported". The .NET 10 SDK named it "linux" to that same compiler, and so does this.
+  -->
+  <Target Name="SakuraPrecompileAndroidAsLinux"
+          AfterTargets="ResolveReadyToRunCompilers"
+          Condition=" '$(TargetPlatformIdentifier)' == 'android' And $([MSBuild]::VersionLessThan('$(TargetFrameworkVersion)', '11.0')) ">
+    <ItemGroup>
+      <Crossgen2Tool Update="@(Crossgen2Tool)" TargetOS="linux" Condition=" '%(Crossgen2Tool.TargetOS)' == 'android' " />
+    </ItemGroup>
+  </Target>
 </Project>
