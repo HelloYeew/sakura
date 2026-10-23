@@ -5,7 +5,6 @@ using System;
 using System.Collections.Concurrent;
 using Sakura.Framework.Allocation;
 using Sakura.Framework.Configurations;
-using Sakura.Framework.Development;
 using Sakura.Framework.Extensions.DrawableExtensions;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Containers;
@@ -27,10 +26,6 @@ namespace Sakura.Framework.Graphics.Performance;
 /// Shown by <see cref="FrameworkSetting.ShowLogOverlay"/> (Ctrl+Shift+L). It takes no input, so it never gets in the
 /// way.
 /// </summary>
-/// <remarks>
-/// A debug build shows verbose entries and up, as the developer is the one reading. Otherwise it shows warnings and
-/// errors only: the rest is detail meant for the developer, written to the log files.
-/// </remarks>
 public partial class LogOverlay : Container, IRemoveFromDrawVisualiser
 {
     // Few enough to leave the game in view when the log is busy.
@@ -54,7 +49,7 @@ public partial class LogOverlay : Container, IRemoveFromDrawVisualiser
 
     private static readonly Color time_color = Color.FromArgb(140, 160, 185);
 
-    private static readonly LogLevel minimum_level = DebugUtils.IsDebugBuild ? LogLevel.Verbose : LogLevel.Warning;
+    private const LogLevel minimum_level = LogLevel.Verbose;
 
     // Filled on the logger's thread and emptied on the update thread. It keeps the last few while the overlay is
     // hidden, so turning it on shows what led up to that.
