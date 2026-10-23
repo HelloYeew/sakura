@@ -21,6 +21,7 @@ public class IOSAppHost : SDLAppHost
     public IOSAppHost(string appName, HostOptions? options = null)
         : base(appName, options)
     {
+        Logger.ConsoleOutput = IOSLog.For(appName);
     }
 
     /// <summary>
