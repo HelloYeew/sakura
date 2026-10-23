@@ -74,8 +74,10 @@ public class IOSAppHost : SDLAppHost
     // told it was going to the background, which is its chance to save.
     protected override bool CanBlockExit => false;
 
-    // Nor does an app end itself. SDL wouldn't let it go either: once the app is done, the screen just stops.
-    public override bool CanExit => false;
+    // Nor does an app end itself, and SDL wouldn't let it go either: once the app was done, its last frame would stay on
+    // the screen with nothing behind it. An app has no Quit on a phone, so a call here is a mistake to see in the log.
+    public override void Exit() =>
+        Logger.Error("Exit() does nothing on iOS: only the user ends an app there. Leave quitting out of the app on mobile.");
 
     public override void OpenUrlExternally(string url)
     {

@@ -1066,12 +1066,6 @@ public abstract class AppHost : IDisposable
     }
 
     /// <summary>
-    /// Whether the app may end itself with <see cref="Exit"/>. False where only the user ends an app, as on iOS, whose
-    /// guidelines rule out a Quit button: an app hides its own there.
-    /// </summary>
-    public virtual bool CanExit => true;
-
-    /// <summary>
     /// Requests the host to exit gracefully.
     /// </summary>
     public virtual void Exit()
