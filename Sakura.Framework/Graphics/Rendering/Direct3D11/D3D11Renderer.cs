@@ -572,7 +572,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         var (vertHlsl, fragHlsl) = ShaderCompiler.GetOrCompile(
             ShaderStorage, "shader.vert", "shader.frag", SPIRV.CrossCompileTarget.HLSL, ShaderCache);
 
-        mainShader = new D3D11Shader(device, context, "shader.vert", vertHlsl, "shader.frag", fragHlsl, buildInputElements());
+        mainShader = new D3D11Shader(device, context, "shader.vert", vertHlsl, "shader.frag", fragHlsl, buildInputElements(), cache: ShaderCache);
         currentShader = mainShader;
     }
 
@@ -1219,7 +1219,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     {
         var (vert, frag) = ShaderCompiler.GetOrCompile(
             storage, vertexPath, fragmentPath, SPIRV.CrossCompileTarget.HLSL, ShaderCache);
-        return new D3D11Shader(device, context, vertexPath, vert, fragmentPath, frag, buildInputElements(), customShaderUniformBindings());
+        return new D3D11Shader(device, context, vertexPath, vert, fragmentPath, frag, buildInputElements(), customShaderUniformBindings(), ShaderCache);
     }
 
     /// <summary>

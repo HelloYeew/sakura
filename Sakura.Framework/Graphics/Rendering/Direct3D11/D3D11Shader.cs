@@ -2,9 +2,11 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using Sakura.Framework.Graphics.Colors;
+using Sakura.Framework.IO;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using SharpGen.Runtime;
@@ -30,6 +32,20 @@ public sealed class D3D11Shader : IShader
     /// </summary>
     public readonly record struct UniformBinding(Stage Stage, int Slot);
 
+    private const ShaderFlags compile_flags = ShaderFlags.OptimizationLevel3;
+
+    /// <summary>
+    /// Bump when what a bytecode cache entry holds changes, so old entries are never read back.
+    /// </summary>
+    private const int bytecode_cache_version = 1;
+
+    /// <summary>
+    /// Bytecode compiled or loaded in this process, by cache key. Shaders are created per instance
+    /// (every BufferedContainer draw node makes its own blur and grayscale shaders, every video sprite
+    /// its own video shaders), and without this each of them would run FXC on the draw thread.
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, byte[]> compiled_bytecode = new ConcurrentDictionary<string, byte[]>();
+
     private readonly ID3D11Device device;
     private readonly ID3D11DeviceContext context;
 
@@ -43,9 +59,11 @@ public sealed class D3D11Shader : IShader
     public nint Handle => vertexShader?.NativePointer ?? nint.Zero;
 
     // The paths name the GLSL sources each HLSL string was cross-compiled from, for compiler messages.
+    // The cache keeps compiled bytecode across launches; without one, only this process's compiles are
+    // reused.
     public D3D11Shader(ID3D11Device device, ID3D11DeviceContext context,
         string vertexPath, string vertexHlsl, string fragmentPath, string fragmentHlsl, InputElementDescription[] inputElements,
-        IReadOnlyDictionary<string, UniformBinding> uniformBlockBindings = null)
+        IReadOnlyDictionary<string, UniformBinding> uniformBlockBindings = null, DiskCache cache = null)
     {
         this.device = device;
         this.context = context;
@@ -53,12 +71,33 @@ public sealed class D3D11Shader : IShader
             ? new Dictionary<string, UniformBinding>(uniformBlockBindings)
             : new Dictionary<string, UniformBinding>();
 
-        byte[] vsBytecode = compile(vertexHlsl, $"{vertexPath}.hlsl", "vs_5_0");
-        byte[] psBytecode = compile(fragmentHlsl, $"{fragmentPath}.hlsl", "ps_5_0");
+        byte[] vsBytecode = getOrCompile(vertexHlsl, $"{vertexPath}.hlsl", "vs_5_0", cache);
+        byte[] psBytecode = getOrCompile(fragmentHlsl, $"{fragmentPath}.hlsl", "ps_5_0", cache);
 
         vertexShader = device.CreateVertexShader(vsBytecode);
         pixelShader = device.CreatePixelShader(psBytecode);
         inputLayout = device.CreateInputLayout(inputElements, vsBytecode);
+    }
+
+    private static byte[] getOrCompile(string hlsl, string sourceName, string profile, DiskCache cache)
+    {
+        string key = $"fxc#{DiskCache.HashString(hlsl)}#{profile}#{(int)compile_flags}#{bytecode_cache_version}";
+
+        if (compiled_bytecode.TryGetValue(key, out byte[] bytecode))
+            return bytecode;
+
+        if (cache != null && cache.TryRead(key, out bytecode))
+        {
+            Logger.Verbose($"Direct3D11 shader {sourceName} ({profile}) loaded from the shader cache. Clear the cache to see its compile time and sampling again.");
+        }
+        else
+        {
+            bytecode = compile(hlsl, sourceName, profile);
+            cache?.Write(key, bytecode);
+        }
+
+        compiled_bytecode[key] = bytecode;
+        return bytecode;
     }
 
     private static byte[] compile(string hlsl, string sourceName, string profile)
@@ -66,7 +105,7 @@ public sealed class D3D11Shader : IShader
         long compileStart = Stopwatch.GetTimestamp();
 
         // SPIRV-Cross emits an HLSL entry point named "main" (unlike MSL's "main0").
-        Result result = Compiler.Compile(hlsl, null, null, "main", sourceName, profile, ShaderFlags.OptimizationLevel3, out Blob code, out Blob error);
+        Result result = Compiler.Compile(hlsl, null, null, "main", sourceName, profile, compile_flags, out Blob code, out Blob error);
 
         double compileMilliseconds = Stopwatch.GetElapsedTime(compileStart).TotalMilliseconds;
 
@@ -86,7 +125,7 @@ public sealed class D3D11Shader : IShader
         code.Dispose();
         error?.Dispose();
 
-        // Compiles run on the draw thread, once per shader instance, so the time is a hitch in that frame.
+        // Compiles run on the draw thread, so the time is a hitch in that frame.
         string summary = $"Direct3D11 shader {sourceName} ({profile}) compiled in {compileMilliseconds:N1} ms";
 
         if (profile.StartsWith("ps", StringComparison.Ordinal))
