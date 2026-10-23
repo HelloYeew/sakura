@@ -305,6 +305,14 @@ public class SDLWindow : IWindow
     }
 
     /// <summary>
+    /// Called once SDL's window exists, on the event thread, before the display's refresh rate is first read.
+    /// </summary>
+    /// <param name="sdlWindow">SDL's window.</param>
+    protected virtual unsafe void OnCreated(SDL_Window* sdlWindow)
+    {
+    }
+
+    /// <summary>
     /// The safe-area insets in SDL window coordinates when the platform knows them better than SDL does, or
     /// null to use SDL's. Called on the event thread whenever the safe area may have changed.
     /// </summary>
@@ -338,7 +346,7 @@ public class SDLWindow : IWindow
 
         var e = new SDL_Event();
         e.display.type = SDL_EventType.SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED;
-        SDL_PushEvent(&e);
+        pushEvent(&e);
     }
 
     /// <summary>
@@ -353,7 +361,7 @@ public class SDLWindow : IWindow
         var e = new SDL_Event();
         e.window.type = SDL_EventType.SDL_EVENT_WINDOW_SAFE_AREA_CHANGED;
         e.window.windowID = SDL_GetWindowID(window);
-        SDL_PushEvent(&e);
+        pushEvent(&e);
     }
 
     /// <summary>
@@ -479,6 +487,7 @@ public class SDLWindow : IWindow
     public bool IsActive { get; private set; } = true;
     public bool IsExiting { get; private set; }
     public int DisplayHz { get; private set; } = 60;
+    public Reactive<string> DisplayName { get; } = new Reactive<string>(string.Empty);
 
     // TODO: This update action also no longer needed since it's handled in host's main loop
     public event Action Update = delegate { };
@@ -672,8 +681,11 @@ public class SDLWindow : IWindow
         if (RuntimeInfo.OS != RuntimeInfo.Platform.Android)
             SDL_AddEventWatch(&resizeEventWatch, IntPtr.Zero);
 
+        OnCreated(window);
+
         DisplayHz = getDisplayRefreshRate();
         Logger.Verbose($"Display refresh rate: {DisplayHz} Hz");
+        updateDisplayName();
 
         int w, h;
         SDL_GetWindowSize(window, &w, &h);
@@ -913,6 +925,9 @@ public class SDLWindow : IWindow
         {
             switch ((SDL_EventType)e->type)
             {
+                // The system's last word before it ends an app that's still running. It has normally said the app was
+                // going to the background first, which stopped everything and saved; if it hasn't, this does both.
+                case SDL_EventType.SDL_EVENT_TERMINATING:
                 case SDL_EventType.SDL_EVENT_WILL_ENTER_BACKGROUND:
                     instance?.EnteringBackground.Invoke();
                     break;
@@ -1344,6 +1359,7 @@ public class SDLWindow : IWindow
 
             case SDL_EventType.SDL_EVENT_WINDOW_DISPLAY_CHANGED:
                 updateDisplayHz();
+                updateDisplayName();
 
                 // When the window moves to a display with a different pixel density (e.g. from
                 // a non-HiDPI external monitor to the HiDPI MacBook screen), SDL may or may not
@@ -1586,7 +1602,35 @@ public class SDLWindow : IWindow
         // SDL3 wheel events carry the mouse position directly (meaningless in relative mode).
         if (!relativeMouseMode)
             mouseState.Position = new Vector2(wheelEvent.mouse_x / contentScale, wheelEvent.mouse_y / contentScale);
-        OnScroll.Invoke(new ScrollEvent(mouseState, new Vector2(wheelEvent.x, wheelEvent.y)));
+
+        var delta = new Vector2(wheelEvent.x, wheelEvent.y);
+        OnScroll.Invoke(new ScrollEvent(mouseState, delta, absoluteScrollDelta(delta, convertEventTimestamp(wheelEvent.timestamp))));
+    }
+
+    // SDL gives a trackpad's scroll on macOS as a tenth of the distance in points, and a wheel's as whole notches.
+    private const float macos_points_per_trackpad_scroll = 10;
+
+    // How long after a trackpad's last fractional scroll a whole one still counts as the trackpad's: a gesture can land
+    // on a round number now and then.
+    private const double trackpad_scroll_hold_ms = 150;
+
+    private double lastTrackpadScrollTime = double.NegativeInfinity;
+
+    /// <summary>
+    /// How far a trackpad's fingers moved, in screen space, where SDL lets it be worked out; null for a wheel.
+    /// </summary>
+    private Vector2? absoluteScrollDelta(Vector2 delta, double time)
+    {
+        if (!RuntimeInfo.IsMacOS)
+            return null;
+
+        if (delta.X % 1 != 0 || delta.Y % 1 != 0 || time - lastTrackpadScrollTime <= trackpad_scroll_hold_ms)
+        {
+            lastTrackpadScrollTime = time;
+            return delta * macos_points_per_trackpad_scroll / contentScale;
+        }
+
+        return null;
     }
 
     private unsafe void handleDropFileEvent(SDL_DropEvent dropEvent)
@@ -1631,7 +1675,16 @@ public class SDLWindow : IWindow
         // while the field keeps its focus, so a tap on the field calls this again to bring it back.
         SDL_StartTextInputWithProperties(window, props);
         SDL_DestroyProperties(props);
+
+        OnTextInputStarted(type);
     }
+
+    /// <summary>
+    /// Called on the event thread once text input has started for a field, with its virtual keyboard up where there is
+    /// one, for a platform to finish what SDL leaves out of the keyboard.
+    /// </summary>
+    /// <param name="type">The field's input type.</param>
+    protected virtual void OnTextInputStarted(TextInputType type) { }
 
     private static bool sameArea(SDL_Rect a, SDL_Rect b) => a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
 
@@ -1726,7 +1779,16 @@ public class SDLWindow : IWindow
     {
         var e = new SDL_Event();
         e.type = (uint)SDL_EventType.SDL_EVENT_USER;
-        SDL_PushEvent(&e);
+        pushEvent(&e);
+    }
+
+    // SDL_PushEvent ends SDL's own wait for events, but not the run loop's that the event thread waits in on iOS.
+    private static unsafe void pushEvent(SDL_Event* e)
+    {
+        SDL_PushEvent(e);
+
+        if (OperatingSystem.IsIOS())
+            MainRunLoop.WakeUp();
     }
 
     private sealed class ClipboardRead
@@ -1735,7 +1797,7 @@ public class SDLWindow : IWindow
         public string Text = string.Empty;
     }
 
-    public unsafe void ShowOpenFileDialog(FileDialogOptions options, Action<FileDialogResult> callback)
+    public virtual unsafe void ShowOpenFileDialog(FileDialogOptions options, Action<FileDialogResult> callback)
         => SDLFileDialog.ShowOpenFile(window, options, callback);
 
     public unsafe void ShowSaveFileDialog(FileDialogOptions options, Action<FileDialogResult> callback)
@@ -1794,6 +1856,17 @@ public class SDLWindow : IWindow
         DisplayChanged.Invoke(DisplayHz);
     }
 
+    private unsafe void updateDisplayName()
+    {
+        string name = SDL_GetDisplayName(SDL_GetDisplayForWindow(window)) ?? string.Empty;
+
+        if (name == DisplayName.Value)
+            return;
+
+        Logger.Verbose($"On display: {name}");
+        DisplayName.Value = name;
+    }
+
     private unsafe int getDisplayRefreshRate()
     {
         if (GetPlatformRefreshRate() is float platformRate && platformRate > 0)
@@ -1812,6 +1885,16 @@ public class SDLWindow : IWindow
     /// </summary>
     public unsafe void WaitForEvents(double timeoutMilliseconds)
     {
+        if (OperatingSystem.IsIOS())
+        {
+            // SDL would poll here a thousand times a second. What another thread queued doesn't wake the run loop
+            // unless it went through pushEvent, so it's looked for first.
+            if (!SDL_HasEvents((uint)SDL_EventType.SDL_EVENT_FIRST, (uint)SDL_EventType.SDL_EVENT_LAST))
+                MainRunLoop.Wait(Math.Max(0, timeoutMilliseconds) / 1000);
+
+            return;
+        }
+
         // Rounded up, as SDL waits whole milliseconds: rounded down, a wait of under one would return at once.
         int timeout = (int)Math.Ceiling(Math.Max(0, timeoutMilliseconds));
         SDL_WaitEventTimeout(null, timeout);

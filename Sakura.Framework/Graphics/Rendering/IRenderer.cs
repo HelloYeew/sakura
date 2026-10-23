@@ -61,6 +61,25 @@ public interface IRenderer
     /// </summary>
     void ReleaseSurface() { }
 
+    /// <summary>
+    /// Stops sending work to the GPU, for an app about to leave the screen: iOS refuses GPU work from an app in the
+    /// background. Called on the system's thread before the draw thread is stopped, which may be drawing or waiting on
+    /// the GPU meanwhile: it should finish its frame without sending it, and give up waiting, rather than hold up the
+    /// stop. <see cref="ResumeGpuWork"/> undoes it. Backends with nothing to stop leave this a no-op.
+    /// </summary>
+    void SuspendGpuWork() { }
+
+    /// <summary>
+    /// Sends work to the GPU again, as the app comes back to the screen, before the draw thread runs again.
+    /// </summary>
+    void ResumeGpuWork() { }
+
+    /// <summary>
+    /// Lets go of what the renderer can make again, for an app the system says is short of memory. From any thread;
+    /// a backend may do it with its next frames. Backends with nothing to give back leave this a no-op.
+    /// </summary>
+    void Trim() { }
+
     void DrawVertices(ReadOnlySpan<Vertex.Vertex> vertices, Texture textureGl);
 
     /// <summary>

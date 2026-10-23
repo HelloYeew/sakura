@@ -7,4 +7,61 @@
   <ItemGroup Condition=" '$(TargetPlatformIdentifier)' == 'ios' ">
     <ReferenceNativeSymbol Include="FT_Get_MM_Var;FT_Set_Var_Design_Coordinates;FT_Done_MM_Var;FT_Set_Named_Instance" SymbolType="Function" />
   </ItemGroup>
+
+  <!--
+    .NET 11 RC 2's iOS build doesn't count the app's Info.plist among the inputs of the manifest it bundles, so once an
+    app is built, an edit to its Info.plist never reaches it: new document types, orientations or keys simply aren't
+    there. Counting it makes the manifest build again. Remove once a workload counts it itself.
+  -->
+  <Target Name="RebuildManifestWhenInfoPlistChanges"
+          Condition=" '$(TargetPlatformIdentifier)' == 'ios' And '$(AppBundleManifest)' != '' "
+          AfterTargets="_CompileAppManifestInputs"
+          BeforeTargets="_CompileAppManifest">
+    <ItemGroup>
+      <_CompileAppManifestInputFile Include="$(AppBundleManifest)" />
+    </ItemGroup>
+  </Target>
+
+  <!--
+    .NET 11 RC 2's iOS Debug build ReadyToRun-compiles the assemblies it takes for packages, which includes any that come
+    in through another project (the framework itself, for an app built against its source), and bundles the copies that
+    compile writes. It notices when one of them changes, but the compile doesn't count them as its inputs and is skipped,
+    so the app keeps the old copies. Removing the compile's output makes it run. Remove once a workload rebuilds them
+    itself.
+  -->
+  <Target Name="RecompileChangedReadyToRunAssemblies"
+          Condition=" '$(TargetPlatformIdentifier)' == 'ios' And '$(_R2RInputHashChanged)' == 'true' "
+          AfterTargets="_PrepareForReadyToRunCompilation"
+          BeforeTargets="_CreateR2RImages">
+    <Delete Files="@(_ReadyToRunCompileList->'%(OutputR2RImage)')" />
+  </Target>
+
+  <!--
+    The same by date, for what that check leaves out: assemblies of the app's own projects, the framework among them
+    for an app that references its project directly. The compile counts the ones it was asked to compile as inputs, but
+    the workload touches its output first to skip it, so this runs before that.
+  -->
+  <Target Name="RecompileNewerReadyToRunAssemblies"
+          Condition=" '$(TargetPlatformIdentifier)' == 'ios' "
+          AfterTargets="_PrepareForReadyToRunCompilation"
+          BeforeTargets="_TouchR2ROutputs;_CreateR2RImages"
+          Inputs="@(_ReadyToRunCompositeBuildInput);@(_ReadyToRunCompositeUnrootedBuildInput)"
+          Outputs="@(_ReadyToRunCompileList->'%(OutputR2RImage)')">
+    <Delete Files="@(_ReadyToRunCompileList->'%(OutputR2RImage)')" />
+  </Target>
+
+  <!--
+    iOS has no JIT, so in a Debug build whatever the ReadyToRun compile leaves out runs in the interpreter, many times
+    slower. Unless told otherwise it compiles only what CoreLib needs, so the framework would be interpreted too:
+    compiling all of it keeps an app close to Release speed, while the app's own code stays interpreted and debuggable.
+  -->
+  <Target Name="PrecompileFrameworkInDebug"
+          Condition=" '$(TargetPlatformIdentifier)' == 'ios' And '$(FilterReadyToRunAssemblies)' == 'true' "
+          AfterTargets="_SelectR2RAssemblies">
+    <ItemGroup>
+      <!-- Left out with the app's own code when the app references the framework's project directly. -->
+      <PublishReadyToRunExclude Remove="Sakura.Framework.dll" />
+      <PublishReadyToRunCompositeRoots Include="Sakura.Framework.dll" />
+    </ItemGroup>
+  </Target>
 </Project>

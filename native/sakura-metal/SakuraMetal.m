@@ -8,6 +8,8 @@
 #import <CoreVideo/CoreVideo.h>
 #import <TargetConditionals.h>
 #include <string.h> // strlcpy
+#include <stdatomic.h>
+#include <unistd.h> // usleep
 #include <os/lock.h>
 #if TARGET_OS_IPHONE
 #import <UIKit/UIKit.h>
@@ -60,12 +62,15 @@ struct SakuraMetalTexture
     BOOL hasMips;
     BOOL isRenderTarget; // sampled with the clamp sampler (blur needs clamp-to-edge), not repeat
     BOOL isPlane;        // single-channel R8 YUV plane; also sampled clamp-to-edge
+    BOOL nearest;        // render targets only: sampled nearest rather than linear (a pixel-snapped buffer)
 
     // Zero-copy video planes only (NULL on every other texture): the CoreVideo objects that back
-    // `texture`, and the device whose deferred-release list they have to go through when this texture
-    // is destroyed. `texture` here is not ours -- it is a view onto the pixel buffer's IOSurface.
+    // `texture`, which go through the owner's deferred-release list when this texture is destroyed.
+    // `texture` here is not ours -- it is a view onto the pixel buffer's IOSurface.
     CVMetalTextureRef cvTexture;
     CVPixelBufferRef cvPixelBuffer;
+
+    // The device the texture was made on, whose next frame regenerates its mips after an upload.
     SakuraMetalDevice* owner;
 };
 
@@ -94,6 +99,35 @@ __attribute__((visibility("hidden")))
 @end
 
 @implementation SakuraMetalPresentTimes
+@end
+
+// The GPU's time on one frame so far: each command buffer the frame commits adds its own when it completes, on Metal's
+// completion thread.
+__attribute__((visibility("hidden")))
+@interface SakuraMetalFrameGpuTime : NSObject
+{
+@public
+    os_unfair_lock lock;
+    double seconds;
+}
+@end
+
+@implementation SakuraMetalFrameGpuTime
+@end
+
+// The GPU's time on the last frame that finished, published by its final command buffer's completion handler for the
+// host to take, once each.
+__attribute__((visibility("hidden")))
+@interface SakuraMetalGpuTimes : NSObject
+{
+@public
+    os_unfair_lock lock;
+    double lastFrameSeconds;
+    uint64_t sequence;
+}
+@end
+
+@implementation SakuraMetalGpuTimes
 @end
 
 struct SakuraMetalDevice
@@ -172,6 +206,43 @@ struct SakuraMetalDevice
     int64_t frameTag;
     __unsafe_unretained SakuraMetalPresentTimes* presentTimes;
     uint64_t presentationsTaken;
+
+    // Set by sakura_metal_suspend, from any thread, while nothing may reach the GPU. And the frames committed and not
+    // yet finished, which suspend waits out: counted up on the draw thread and down in the frame's completion handler.
+    _Atomic int suspended;
+    _Atomic int framesInFlightOnGpu;
+
+    // Latency as last asked for (set_frame_latency, from any thread; 0 for the default), and as the draw thread has
+    // applied it: the semaphore slots it holds back so fewer frames than the ring has are in flight, and the layer's
+    // drawable count.
+    _Atomic int requestedFramesInFlight;
+    _Atomic int requestedDrawableCount;
+    int heldSlots;
+    int appliedDrawableCount;
+
+    // How long each frame stays on screen at the least, in seconds (set_min_present_interval; 0 for none).
+    _Atomic double minPresentInterval;
+
+    // Compiled shader functions by their MSL source, so a shader's six blend variants compile each stage once.
+    __unsafe_unretained NSMutableDictionary<NSString*, id<MTLFunction>>* functions;
+
+    // Nearest, clamp-to-edge sampling, for a pixel-snapped render target (sakura_metal_set_texture_nearest).
+    __unsafe_unretained id<MTLSamplerState> nearestClampSampler;
+
+    // Textures whose level 0 changed since the last frame began, which it regenerates the mips of, once each, before
+    // anything draws. Retained here; under the lock, as an upload may come from another thread than the frame.
+    os_unfair_lock mipLock;
+    CFMutableSetRef dirtyMips;
+
+    // The GPU's time on the frame being drawn, and on the last one finished (take_gpu_time).
+    __unsafe_unretained SakuraMetalFrameGpuTime* frameGpuTime;
+    __unsafe_unretained SakuraMetalGpuTimes* gpuTimes;
+    uint64_t gpuTimesTaken;
+
+    // Set by sakura_metal_trim, from any thread: the next frame lets go of what it can make again. The ring slots each
+    // shrink to what the last frame needed when their turn comes round.
+    _Atomic int trimRequested;
+    unsigned trimSlots;
 };
 
 // Hands a CoreVideo object to the device's deferred-release list: it is released when the GPU has
@@ -281,6 +352,15 @@ SakuraMetalDevice* sakura_metal_create(void* caMetalLayer)
     csd.tAddressMode = MTLSamplerAddressModeClampToEdge;
     id<MTLSamplerState> clampSampler = [device newSamplerStateWithDescriptor:csd];
 
+    // The same, sampled nearest: a pixel-snapped render target shows its texels as they are, as GL's Nearest does.
+    MTLSamplerDescriptor* nsd = [[MTLSamplerDescriptor alloc] init];
+    nsd.minFilter = MTLSamplerMinMagFilterNearest;
+    nsd.magFilter = MTLSamplerMinMagFilterNearest;
+    nsd.mipFilter = MTLSamplerMipFilterNotMipmapped;
+    nsd.sAddressMode = MTLSamplerAddressModeClampToEdge;
+    nsd.tAddressMode = MTLSamplerAddressModeClampToEdge;
+    id<MTLSamplerState> nearestClampSampler = [device newSamplerStateWithDescriptor:nsd];
+
     SakuraMetalDevice* d = (SakuraMetalDevice*)calloc(1, sizeof(SakuraMetalDevice));
     if (d == NULL)
         return NULL;
@@ -299,7 +379,17 @@ SakuraMetalDevice* sakura_metal_create(void* caMetalLayer)
         d->clampSampler = clampSampler;
         CFRetain((__bridge CFTypeRef)clampSampler);
     }
+    if (nearestClampSampler) {
+        d->nearestClampSampler = nearestClampSampler;
+        CFRetain((__bridge CFTypeRef)nearestClampSampler);
+    }
     d->targetDepth = -1;
+
+    NSMutableDictionary<NSString*, id<MTLFunction>>* functions = [NSMutableDictionary new];
+    d->functions = functions; CFRetain((__bridge CFTypeRef)functions);
+
+    SakuraMetalGpuTimes* gpuTimes = [SakuraMetalGpuTimes new];
+    d->gpuTimes = gpuTimes; CFRetain((__bridge CFTypeRef)gpuTimes);
 
     // Counting semaphore for the vertex-buffer ring: allows up to MAX_FRAMES_IN_FLIGHT frames to be
     // recorded before the CPU must wait for the GPU to finish the oldest one. The field is
@@ -311,6 +401,9 @@ SakuraMetalDevice* sakura_metal_create(void* caMetalLayer)
     d->presentTimes = times; CFRetain((__bridge CFTypeRef)times);
     d->frameIndex = 0;
 
+    // A CAMetalLayer's own count.
+    d->appliedDrawableCount = 3;
+
     return d;
 }
 
@@ -320,12 +413,16 @@ void sakura_metal_destroy(SakuraMetalDevice* device)
         return;
 
     // If a frame was begun but never ended (the CPU took a semaphore slot that no completion handler
-    // will ever signal), hand that slot back so the drain below can't deadlock.
+    // will ever signal), hand that slot back so the drain below can't deadlock. Likewise the slots held
+    // back to keep fewer frames in flight.
     if (device->semaphoreWaitedThisFrame && device->frameSemaphore != nil)
     {
         dispatch_semaphore_signal(device->frameSemaphore);
         device->semaphoreWaitedThisFrame = NO;
     }
+
+    for (; device->heldSlots > 0 && device->frameSemaphore != nil; device->heldSlots--)
+        dispatch_semaphore_signal(device->frameSemaphore);
 
     // Drain any in-flight frames before tearing down, so no pending GPU completion handler reads a
     // freed ring buffer. Re-acquiring all MAX_FRAMES_IN_FLIGHT slots blocks until every recorded frame
@@ -353,6 +450,13 @@ void sakura_metal_destroy(SakuraMetalDevice* device)
     if (device->layer) CFRelease((__bridge CFTypeRef)device->layer);
     if (device->sampler) CFRelease((__bridge CFTypeRef)device->sampler);
     if (device->clampSampler) CFRelease((__bridge CFTypeRef)device->clampSampler);
+    if (device->nearestClampSampler) CFRelease((__bridge CFTypeRef)device->nearestClampSampler);
+    if (device->functions) CFRelease((__bridge CFTypeRef)device->functions);
+    if (device->dirtyMips) CFRelease(device->dirtyMips);
+
+    // Handlers still to run hold their own references to these.
+    if (device->gpuTimes) CFRelease((__bridge CFTypeRef)device->gpuTimes);
+    if (device->frameGpuTime) CFRelease((__bridge CFTypeRef)device->frameGpuTime);
 
     // Release the ring buffers (the +1 each from their last grow in begin_frame). vertexBuffer is just
     // an alias into this array for the active frame — not separately retained — so it's not released.
@@ -399,7 +503,11 @@ void sakura_metal_get_info(SakuraMetalDevice* device, SakuraMetalInfo* info, cha
 
     info->maxThreadsPerThreadgroup = (int)mtl.maxThreadsPerThreadgroup.width;
     info->hasUnifiedMemory = mtl.hasUnifiedMemory ? 1 : 0;
-    info->recommendedMaxWorkingSetSize = (unsigned long long)mtl.recommendedMaxWorkingSetSize;
+    // iOS only has it from 16, and calling it on 15 would end the app; 0 there, as the header allows.
+    if (@available(macOS 10.12, iOS 16.0, *))
+        info->recommendedMaxWorkingSetSize = (unsigned long long)mtl.recommendedMaxWorkingSetSize;
+    else
+        info->recommendedMaxWorkingSetSize = 0;
 
     // Highest supported GPU family in each lineage. supportsFamily: is macOS 10.15+ / iOS 13+ (our
     // deployment targets). The newest family enum constants only exist in newer SDKs, so the Apple8/9
@@ -438,19 +546,162 @@ void sakura_metal_get_info(SakuraMetalDevice* device, SakuraMetalInfo* info, cha
     }
 }
 
+// Takes one of the frame semaphore's slots, waiting a tenth of a second at a time, and gives up once the device is
+// suspended: an app leaving the screen loses the GPU, which may then never finish the frame being waited on, and a
+// draw thread waiting forever would hold up the host stopping it.
+static BOOL takeFrameSlot(SakuraMetalDevice* device)
+{
+    while (dispatch_semaphore_wait(device->frameSemaphore, dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC)) != 0)
+    {
+        if (atomic_load(&device->suspended))
+            return NO;
+    }
+
+    return YES;
+}
+
+// Applies the latency last asked for (set_frame_latency): holds back as many semaphore slots as keep the frames in
+// flight to the number asked for, and sets the layer's drawable count. On the draw thread, between frames. NO where it
+// gave up waiting for a slot.
+static BOOL applyFrameLatency(SakuraMetalDevice* device)
+{
+    int frames = atomic_load(&device->requestedFramesInFlight);
+    int held = frames > 0 && frames < SAKURA_METAL_MAX_FRAMES_IN_FLIGHT ? SAKURA_METAL_MAX_FRAMES_IN_FLIGHT - frames : 0;
+
+    for (; device->heldSlots > held; device->heldSlots--)
+        dispatch_semaphore_signal(device->frameSemaphore);
+
+    // Each waits for a frame in flight to finish, so the CPU is no further ahead than asked for once this returns.
+    for (; device->heldSlots < held; device->heldSlots++)
+    {
+        if (!takeFrameSlot(device))
+            return NO;
+    }
+
+    int drawables = atomic_load(&device->requestedDrawableCount) == 2 ? 2 : 3;
+
+    if (drawables != device->appliedDrawableCount)
+    {
+        device->layer.maximumDrawableCount = (NSUInteger)drawables;
+        device->appliedDrawableCount = drawables;
+    }
+
+    return YES;
+}
+
+// Notes a texture whose level 0 just changed, for the next frame to regenerate its mips. Mips used to be regenerated
+// here, on every upload, waiting for the GPU each time: a stall per glyph while text first appeared. Within a frame
+// (after begin_frame) the frame's own render pass is already open, so they're regenerated at once instead, in a command
+// buffer committed straight away: committed before the frame's, it runs first, without waiting for it.
+static void markMipsDirty(SakuraMetalTexture* texture)
+{
+    SakuraMetalDevice* device = texture->owner;
+
+    if (device != NULL && device->targetDepth < 0)
+    {
+        os_unfair_lock_lock(&device->mipLock);
+
+        if (device->dirtyMips == NULL)
+            device->dirtyMips = CFSetCreateMutable(NULL, 0, &kCFTypeSetCallBacks);
+
+        if (device->dirtyMips != NULL)
+        {
+            CFSetAddValue(device->dirtyMips, (__bridge CFTypeRef)texture->texture);
+            os_unfair_lock_unlock(&device->mipLock);
+            return;
+        }
+
+        os_unfair_lock_unlock(&device->mipLock);
+    }
+
+    if (texture->queue == nil)
+        return;
+
+    @autoreleasepool
+    {
+        id<MTLCommandBuffer> cb = [texture->queue commandBuffer];
+        id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
+        [blit generateMipmapsForTexture:texture->texture];
+        [blit endEncoding];
+        [cb commit];
+    }
+}
+
+static void regenerateDirtyMip(const void* value, void* context)
+{
+    [(__bridge id<MTLBlitCommandEncoder>)context generateMipmapsForTexture:(__bridge id<MTLTexture>)value];
+}
+
+// Regenerates the mips of every texture uploaded to since the last frame began, once each, in `commandBuffer` ahead of
+// anything else in it.
+static void regenerateDirtyMips(SakuraMetalDevice* device, id<MTLCommandBuffer> commandBuffer)
+{
+    os_unfair_lock_lock(&device->mipLock);
+    CFMutableSetRef dirty = device->dirtyMips;
+    device->dirtyMips = NULL;
+    os_unfair_lock_unlock(&device->mipLock);
+
+    if (dirty == NULL)
+        return;
+
+    if (CFSetGetCount(dirty) > 0)
+    {
+        id<MTLBlitCommandEncoder> blit = [commandBuffer blitCommandEncoder];
+        CFSetApplyFunction(dirty, regenerateDirtyMip, (__bridge void*)blit);
+        [blit endEncoding];
+    }
+
+    // The command buffer holds what its encoder used for as long as the GPU needs it.
+    CFRelease(dirty);
+}
+
+// Adds a command buffer's time on the GPU to the frame being drawn once it finishes, and where it's the frame's last,
+// publishes the frame's total for take_gpu_time. Before commit, as completion handlers have to be.
+static void timeOnGpu(SakuraMetalDevice* device, id<MTLCommandBuffer> commandBuffer, BOOL lastOfFrame)
+{
+    SakuraMetalFrameGpuTime* frame = device->frameGpuTime;
+    SakuraMetalGpuTimes* times = device->gpuTimes;
+
+    if (frame == nil || times == nil || commandBuffer == nil)
+        return;
+
+    [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> _Nonnull done) {
+        double spent = done.GPUEndTime - done.GPUStartTime;
+
+        os_unfair_lock_lock(&frame->lock);
+        frame->seconds += spent > 0 ? spent : 0;
+        double total = frame->seconds;
+        os_unfair_lock_unlock(&frame->lock);
+
+        if (!lastOfFrame)
+            return;
+
+        os_unfair_lock_lock(&times->lock);
+        times->lastFrameSeconds = total;
+        times->sequence++;
+        os_unfair_lock_unlock(&times->lock);
+    }];
+}
+
 void sakura_metal_begin_frame(SakuraMetalDevice* device, float r, float g, float b, float a)
 {
     if (device == NULL || device->layer == nil)
         return;
 
-    // Throttle the CPU to at most MAX_FRAMES_IN_FLIGHT frames ahead of the GPU before touching this
-    // frame's ring buffer. The matching signal fires from the frame's final command-buffer completion
-    // handler (end_frame). Taken here so it also covers the no-drawable early-out below (we signal it
+    // Nothing may reach the GPU while suspended, so there's no frame to draw into.
+    if (atomic_load(&device->suspended))
+        return;
+
+    // Throttle the CPU to at most MAX_FRAMES_IN_FLIGHT frames ahead of the GPU (fewer where set_frame_latency asked)
+    // before touching this frame's ring buffer. The matching signal fires from the frame's final command-buffer
+    // completion handler (end_frame). Taken here so it also covers the no-drawable early-out below (we signal it
     // straight back in that case, so the count never leaks).
     device->semaphoreWaitedThisFrame = NO;
     if (device->frameSemaphore != nil)
     {
-        dispatch_semaphore_wait(device->frameSemaphore, DISPATCH_TIME_FOREVER);
+        if (!applyFrameLatency(device) || !takeFrameSlot(device))
+            return;
+
         device->semaphoreWaitedThisFrame = YES;
     }
 
@@ -462,10 +713,11 @@ void sakura_metal_begin_frame(SakuraMetalDevice* device, float r, float g, float
     device->framePool = objc_autoreleasePoolPush();
 
     id<CAMetalDrawable> drawable = [device->layer nextDrawable];
-    if (drawable == nil)
+
+    // No drawable available this frame (e.g. occluded), or the device was suspended while nextDrawable waited (up to
+    // a second); skip. Hand the semaphore slot back since no command buffer will complete to signal it.
+    if (drawable == nil || atomic_load(&device->suspended))
     {
-        // No drawable available this frame (e.g. occluded); skip. Hand the semaphore slot back since no
-        // command buffer will complete to signal it.
         if (device->semaphoreWaitedThisFrame)
         {
             dispatch_semaphore_signal(device->frameSemaphore);
@@ -479,6 +731,16 @@ void sakura_metal_begin_frame(SakuraMetalDevice* device, float r, float g, float
     }
 
     id<MTLCommandBuffer> commandBuffer = [device->queue commandBuffer];
+
+    // Mips regenerated in this frame's own command buffer, ahead of its render pass, so nothing samples them first.
+    regenerateDirtyMips(device, commandBuffer);
+
+    // A frame of its own to add the GPU's time to as its command buffers finish.
+    if (device->frameGpuTime)
+        CFRelease((__bridge CFTypeRef)device->frameGpuTime);
+
+    SakuraMetalFrameGpuTime* frameGpuTime = [SakuraMetalFrameGpuTime new];
+    device->frameGpuTime = frameGpuTime; CFRetain((__bridge CFTypeRef)frameGpuTime);
 
     MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
     pass.colorAttachments[0].texture = drawable.texture;
@@ -516,6 +778,29 @@ void sakura_metal_begin_frame(SakuraMetalDevice* device, float r, float g, float
     // draw recorded this frame sees a reallocation. Headroom (1.5x) absorbs frame-to-frame growth. Each
     // ring slot grows independently (a slot only reallocates when it's the active one and too small).
     NSUInteger needed = device->vertexBytesLastFrame + (device->vertexBytesLastFrame / 2);
+
+    // Asked to trim (short of memory): each slot, as its turn comes, gives up a buffer bigger than that, and the
+    // CoreVideo cache its IOSurface mappings nothing uses. The slot is allocated again below at the size needed.
+    if (atomic_exchange(&device->trimRequested, 0))
+    {
+        device->trimSlots = (1u << SAKURA_METAL_MAX_FRAMES_IN_FLIGHT) - 1;
+
+        if (device->videoTextureCache != NULL)
+            CVMetalTextureCacheFlush(device->videoTextureCache, 0);
+    }
+
+    if ((device->trimSlots & (1u << slot)) != 0)
+    {
+        device->trimSlots &= ~(1u << slot);
+
+        if (device->ringBuffers[slot] && device->ringCapacity[slot] > needed)
+        {
+            CFRelease((__bridge CFTypeRef)device->ringBuffers[slot]);
+            device->ringBuffers[slot] = nil;
+            device->ringCapacity[slot] = 0;
+        }
+    }
+
     if (needed > 0 && device->ringCapacity[slot] < needed)
     {
         id<MTLBuffer> newBuffer = [device->device newBufferWithLength:needed
@@ -535,10 +820,76 @@ void sakura_metal_begin_frame(SakuraMetalDevice* device, float r, float g, float
     device->vertexBufferCapacity = device->ringCapacity[slot];
 }
 
+// Ends the open frame without sending any of it to the GPU, for a device suspended while the frame was drawing: every
+// encoder is ended, as Metal requires, and the command buffers, the drawable and the frame's buffers are dropped
+// uncommitted. Zero-copy releases stay pending for the next frame that does reach the GPU.
+static void abandonFrame(SakuraMetalDevice* device)
+{
+    for (int i = device->targetDepth; i >= 0; i--)
+    {
+        SakuraMetalTarget* target = &device->targets[i];
+
+        if (target->encoder)
+        {
+            [target->encoder endEncoding];
+            CFRelease((__bridge CFTypeRef)target->encoder);
+            target->encoder = nil;
+        }
+
+        if (target->commandBuffer)
+        {
+            CFRelease((__bridge CFTypeRef)target->commandBuffer);
+            target->commandBuffer = nil;
+        }
+
+        target->texture = nil;
+    }
+
+    if (device->semaphoreWaitedThisFrame)
+    {
+        dispatch_semaphore_signal(device->frameSemaphore);
+        device->semaphoreWaitedThisFrame = NO;
+    }
+
+    for (int i = 0; i < device->overflowCount; i++)
+    {
+        if (device->overflowBuffers[i])
+        {
+            CFRelease((__bridge CFTypeRef)device->overflowBuffers[i]);
+            device->overflowBuffers[i] = nil;
+        }
+    }
+    device->overflowCount = 0;
+
+    if (device->drawable)
+    {
+        CFRelease((__bridge CFTypeRef)device->drawable);
+        device->drawable = nil;
+    }
+
+    device->encoder = nil;
+    device->commandBuffer = nil;
+    device->targetDepth = -1;
+    device->frameIndex++;
+
+    if (device->framePool != NULL)
+    {
+        objc_autoreleasePoolPop(device->framePool);
+        device->framePool = NULL;
+    }
+}
+
 void sakura_metal_end_frame(SakuraMetalDevice* device)
 {
     if (device == NULL || device->targetDepth < 0)
         return;
+
+    // Suspended while drawing it: none of the frame may reach the GPU.
+    if (atomic_load(&device->suspended))
+    {
+        abandonFrame(device);
+        return;
+    }
 
     // Defensive: if the C# side left offscreen passes open (it shouldn't), close them so we end on the
     // drawable target and don't leak encoders/command buffers.
@@ -580,7 +931,25 @@ void sakura_metal_end_frame(SakuraMetalDevice* device)
         }
 #endif
 
-        [top->commandBuffer presentDrawable:device->drawable];
+        // Paced where asked (set_min_present_interval). The simulator's SDK has no timed presents either.
+        double interval = atomic_load(&device->minPresentInterval);
+        BOOL paced = NO;
+
+#if !TARGET_OS_SIMULATOR
+        if (interval > 0)
+        {
+            if (@available(macOS 10.15.4, iOS 10.3, *))
+            {
+                [top->commandBuffer presentDrawable:device->drawable afterMinimumDuration:interval];
+                paced = YES;
+            }
+        }
+#else
+        (void)interval;
+#endif
+
+        if (!paced)
+            [top->commandBuffer presentDrawable:device->drawable];
     }
 
     // Signal the frame semaphore when this frame's FINAL command buffer (the drawable's) completes on
@@ -588,11 +957,16 @@ void sakura_metal_end_frame(SakuraMetalDevice* device)
     // reuse MAX_FRAMES_IN_FLIGHT frames later. Captured locally (not via the device pointer) so the
     // handler is safe even if the handler runs after teardown begins; the semaphore itself is kept
     // alive by destroy's drain (it waits for all in-flight frames before releasing). Added before
-    // commit, as required.
+    // commit, as required. The count of frames on the GPU, which suspend waits out, comes down first:
+    // the device it lives in is freed only once destroy's drain has seen this signal.
     if (top->commandBuffer && device->semaphoreWaitedThisFrame && device->frameSemaphore != nil)
     {
         dispatch_semaphore_t sem = device->frameSemaphore;
+        _Atomic int* onGpu = &device->framesInFlightOnGpu;
+
+        atomic_fetch_add(onGpu, 1);
         [top->commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> _Nonnull cb) {
+            atomic_fetch_sub(onGpu, 1);
             dispatch_semaphore_signal(sem);
         }];
         device->semaphoreWaitedThisFrame = NO;
@@ -619,7 +993,10 @@ void sakura_metal_end_frame(SakuraMetalDevice* device)
     }
 
     if (top->commandBuffer)
+    {
+        timeOnGpu(device, top->commandBuffer, YES);
         [top->commandBuffer commit];
+    }
 
     // Let the texture cache drop IOSurface mappings nothing references any more. Apple's guidance is
     // once per frame; it only purges unreferenced entries, so textures held by a live plane or by the
@@ -714,7 +1091,12 @@ void sakura_metal_begin_offscreen(SakuraMetalDevice* device, SakuraMetalTexture*
         parent->encoder = nil;
     }
     if (parent->commandBuffer) {
-        [parent->commandBuffer commit];
+        // Dropped uncommitted once suspended: end_frame abandons the rest of the frame too.
+        if (!atomic_load(&device->suspended))
+        {
+            timeOnGpu(device, parent->commandBuffer, NO);
+            [parent->commandBuffer commit];
+        }
         CFRelease((__bridge CFTypeRef)parent->commandBuffer);
         parent->commandBuffer = nil;
     }
@@ -747,7 +1129,12 @@ void sakura_metal_end_offscreen(SakuraMetalDevice* device)
         child->encoder = nil;
     }
     if (child->commandBuffer) {
-        [child->commandBuffer commit];
+        // Dropped uncommitted once suspended: end_frame abandons the rest of the frame too.
+        if (!atomic_load(&device->suspended))
+        {
+            timeOnGpu(device, child->commandBuffer, NO);
+            [child->commandBuffer commit];
+        }
         CFRelease((__bridge CFTypeRef)child->commandBuffer);
         child->commandBuffer = nil;
     }
@@ -788,16 +1175,27 @@ void sakura_metal_resize(SakuraMetalDevice* device, int width, int height, float
 
 // Pipeline
 
-// Compiles one MSL source string into a library and returns the named function (autoreleased).
-static id<MTLFunction> compileFunction(id<MTLDevice> device, const char* msl, const char* name)
+// Compiles one MSL source string into a library and returns the named function, or the one compiled from the same
+// source before: each of a shader's six blend variants is a pipeline of its own, and compiling both stages for every
+// one of them was six times the work.
+static id<MTLFunction> compileFunction(SakuraMetalDevice* device, const char* msl, const char* name)
 {
     if (msl == NULL)
         return nil;
 
-    NSError* error = nil;
     NSString* source = [NSString stringWithUTF8String:msl];
+    NSString* key = [source stringByAppendingFormat:@"\n// entry %s", name];
 
-    id<MTLLibrary> library = [device newLibraryWithSource:source options:nil error:&error];
+    @synchronized (device->functions)
+    {
+        id<MTLFunction> cached = device->functions[key];
+
+        if (cached != nil)
+            return cached;
+    }
+
+    NSError* error = nil;
+    id<MTLLibrary> library = [device->device newLibraryWithSource:source options:nil error:&error];
     if (library == nil)
     {
         NSLog(@"sakura-metal: MSL compile failed: %@", error);
@@ -806,7 +1204,15 @@ static id<MTLFunction> compileFunction(id<MTLDevice> device, const char* msl, co
 
     id<MTLFunction> fn = [library newFunctionWithName:[NSString stringWithUTF8String:name]];
     if (fn == nil)
+    {
         NSLog(@"sakura-metal: function '%s' not found in compiled library", name);
+        return nil;
+    }
+
+    @synchronized (device->functions)
+    {
+        device->functions[key] = fn;
+    }
 
     return fn;
 }
@@ -820,44 +1226,39 @@ static void configureBlend(MTLRenderPipelineColorAttachmentDescriptor* att, int 
     att.rgbBlendOperation = MTLBlendOperationAdd;
     att.alphaBlendOperation = MTLBlendOperationAdd;
 
+    // Alpha accumulates as GL's BlendFuncSeparate has it (and Vulkan copies): One for the source's, so a framebuffer's
+    // alpha is the coverage BufferedContainer's premultiplied composite expects. On the screen the alpha is unused.
+    att.sourceAlphaBlendFactor = MTLBlendFactorOne;
+    att.destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+
     switch (blendMode)
     {
-        case 1: // Additive: SrcAlpha, One
+        case 1: // Additive: SrcAlpha, One; alpha One, One
             att.sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
-            att.sourceAlphaBlendFactor = MTLBlendFactorSourceAlpha;
             att.destinationRGBBlendFactor = MTLBlendFactorOne;
             att.destinationAlphaBlendFactor = MTLBlendFactorOne;
             break;
-        case 2: // Opaque: One, Zero
+        case 2: // Opaque: One, Zero; alpha One, Zero
             att.sourceRGBBlendFactor = MTLBlendFactorOne;
-            att.sourceAlphaBlendFactor = MTLBlendFactorOne;
             att.destinationRGBBlendFactor = MTLBlendFactorZero;
             att.destinationAlphaBlendFactor = MTLBlendFactorZero;
             break;
         case 3: // Multiply: DstColor, OneMinusSrcAlpha
             att.sourceRGBBlendFactor = MTLBlendFactorDestinationColor;
-            att.sourceAlphaBlendFactor  = MTLBlendFactorDestinationColor;
             att.destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
-            att.destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
             break;
         case 4: // Screen: One, OneMinusSrcColor
             att.sourceRGBBlendFactor = MTLBlendFactorOne;
-            att.sourceAlphaBlendFactor = MTLBlendFactorOne;
             att.destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceColor;
-            att.destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceColor;
             break;
         case 5: // Premultiplied: One, OneMinusSrcAlpha
             att.sourceRGBBlendFactor = MTLBlendFactorOne;
-            att.sourceAlphaBlendFactor = MTLBlendFactorOne;
             att.destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
-            att.destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
             break;
         case 0: // Alpha (default): SrcAlpha, OneMinusSrcAlpha
         default:
             att.sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
-            att.sourceAlphaBlendFactor = MTLBlendFactorSourceAlpha;
             att.destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
-            att.destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
             break;
     }
 }
@@ -875,8 +1276,8 @@ SakuraMetalPipeline* sakura_metal_create_pipeline(
         return NULL;
 
     // SPIRV-Cross names both entry points "main0".
-    id<MTLFunction> vfn = compileFunction(device->device, vertexMsl, "main0");
-    id<MTLFunction> ffn = compileFunction(device->device, fragmentMsl, "main0");
+    id<MTLFunction> vfn = compileFunction(device, vertexMsl, "main0");
+    id<MTLFunction> ffn = compileFunction(device, fragmentMsl, "main0");
     if (vfn == nil || ffn == nil)
         return NULL;
 
@@ -1061,7 +1462,10 @@ SakuraMetalTexture* sakura_metal_create_texture(SakuraMetalDevice* device, int w
         return NULL;
 
     // Mipmapped (matching GL's LinearMipmapLinear) so minified textures — small text in the atlas,
-    // downscaled sprites — don't alias. Mip levels are filled by a blit after each upload.
+    // downscaled sprites — don't alias. Mip levels are filled by a blit once per frame after uploads.
+    //
+    // RGBA, as the framework supplies its pixels: a texture only sampled can be any format, and uploads then copy
+    // straight in. Only what's rendered to has to be the drawable's BGRA.
     // mipmapped:YES only makes sense for textures larger than 1x1; a 1x1 (white pixel) has one level.
     BOOL wantMips = (width > 1 || height > 1);
 
@@ -1073,7 +1477,7 @@ SakuraMetalTexture* sakura_metal_create_texture(SakuraMetalDevice* device, int w
     @autoreleasepool
     {
         MTLTextureDescriptor* td = [MTLTextureDescriptor
-            texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm_sRGB
+            texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm_sRGB
                                          width:(NSUInteger)width
                                         height:(NSUInteger)height
                                      mipmapped:wantMips];
@@ -1094,6 +1498,7 @@ SakuraMetalTexture* sakura_metal_create_texture(SakuraMetalDevice* device, int w
     t->queue = device->queue;
     CFRetain((__bridge CFTypeRef)device->queue);
     t->hasMips = wantMips;
+    t->owner = device;
     return t;
 }
 
@@ -1132,26 +1537,6 @@ SakuraMetalTexture* sakura_metal_create_render_target(SakuraMetalDevice* device,
     return t;
 }
 
-// Allocates a BGRA8 copy of RGBA8 input (R<->B swizzled) so colours match the BGRA texture format.
-// Caller frees. Returns NULL on alloc failure.
-static uint8_t* swizzleRgbaToBgra(const void* data, int count)
-{
-    const uint8_t* src = (const uint8_t*)data;
-    uint8_t* bgra = (uint8_t*)malloc((size_t)count * 4);
-    if (bgra == NULL)
-        return NULL;
-
-    for (int i = 0; i < count; i++)
-    {
-        bgra[i * 4 + 0] = src[i * 4 + 2]; // B <- R
-        bgra[i * 4 + 1] = src[i * 4 + 1]; // G
-        bgra[i * 4 + 2] = src[i * 4 + 0]; // R <- B
-        bgra[i * 4 + 3] = src[i * 4 + 3]; // A
-    }
-
-    return bgra;
-}
-
 void sakura_metal_upload_texture(SakuraMetalTexture* texture, const void* data, int width, int height)
 {
     sakura_metal_upload_texture_region(texture, 0, 0, width, height, data);
@@ -1162,48 +1547,18 @@ void sakura_metal_upload_texture_region(SakuraMetalTexture* texture, int x, int 
     if (texture == NULL || texture->texture == nil || data == NULL || width <= 0 || height <= 0)
         return;
 
-    // Texture is BGRA8 (matches the drawable format); framework supplies RGBA8 — swizzle.
-    uint8_t* bgra = swizzleRgbaToBgra(data, width * height);
-    if (bgra == NULL)
-        return;
-
+    // RGBA8, as the texture is: no copy to swizzle first, which for a large image was a transient copy as big as it.
     MTLRegion region = MTLRegionMake2D((NSUInteger)x, (NSUInteger)y, (NSUInteger)width, (NSUInteger)height);
     [texture->texture replaceRegion:region
                         mipmapLevel:0
-                          withBytes:bgra
+                          withBytes:data
                         bytesPerRow:(NSUInteger)(width * 4)];
 
-    free(bgra);
-
-    // Regenerate the mip chain so minified sampling stays crisp (mirrors GL's per-upload
-    // glGenerateMipmap). Uploads are infrequent after warmup, so a one-shot blit here is fine.
-    //
-    // waitUntilCompleted is required, not optional: GL's glGenerateMipmap is synchronous within
-    // GL's single in-order command stream, so a subsequent draw call on the same thread is
-    // guaranteed to see the finished mips. This blit has no equivalent implicit ordering with the
-    // *next* frame's render pass from the caller's point of view, so without waiting here, a sprite
-    // sampled below 100% scale (Rem's fit-to-window zoom, mip level > 0) can read stale or (for a
-    // brand-new texture) uninitialized mip data for one or more frames after Upload() returns —
-    // visible as a flash on slower GPUs, where the blit takes longer relative to frame time, and
-    // invisible on fast ones (e.g. M3 Max) where it usually finishes before the next sample. Uploads
-    // are already infrequent (see above), so the CPU stall here is cheap and removes the race
-    // entirely instead of relying on timing luck.
-    // Pooled: the command buffer and blit encoder are both autoreleased, and an upload can be drained
-    // outside begin_frame/end_frame, where the frame pool is not open. Left unpooled this path stranded
-    // one command buffer + blit context per upload for the process lifetime (measured: 832 live
-    // AGXG15XFamilyBlitContext). waitUntilCompleted above means nothing here outlives the block.
-    if (texture->hasMips && texture->queue != nil)
-    {
-        @autoreleasepool
-        {
-            id<MTLCommandBuffer> cb = [texture->queue commandBuffer];
-            id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
-            [blit generateMipmapsForTexture:texture->texture];
-            [blit endEncoding];
-            [cb commit];
-            [cb waitUntilCompleted];
-        }
-    }
+    // The mip chain is regenerated before the next draw that could sample it (see markMipsDirty), so minified
+    // sampling (small text, Rem's fit-to-window zoom) never reads stale or uninitialised levels, as GL's synchronous
+    // glGenerateMipmap guarantees there.
+    if (texture->hasMips)
+        markMipsDirty(texture);
 }
 
 void sakura_metal_destroy_texture(SakuraMetalTexture* texture)
@@ -1394,6 +1749,11 @@ void sakura_metal_set_fragment_texture(SakuraMetalDevice* device, SakuraMetalTex
     // repeat+mip sampler (required for FillMode.Tile).
     id<MTLSamplerState> s = ((texture->isRenderTarget || texture->isPlane) && device->clampSampler)
         ? device->clampSampler : device->sampler;
+
+    // A pixel-snapped buffer shows its texels as they are.
+    if (texture->isRenderTarget && texture->nearest && device->nearestClampSampler)
+        s = device->nearestClampSampler;
+
     if (s)
         [device->encoder setFragmentSamplerState:s atIndex:(NSUInteger)slot];
 }
@@ -1443,4 +1803,76 @@ int sakura_metal_take_presented(SakuraMetalDevice* device, int64_t* tag, double*
 double sakura_metal_host_time(void)
 {
     return CACurrentMediaTime();
+}
+
+void sakura_metal_suspend(SakuraMetalDevice* device)
+{
+    if (device == NULL)
+        return;
+
+    atomic_store(&device->suspended, 1);
+
+    // Frames committed before this finish now, while the app still has the GPU: once it's in the background they'd
+    // fail. Not waited on for long, as the system gives an app leaving the screen only a few seconds for all of it.
+    for (int waited = 0; atomic_load(&device->framesInFlightOnGpu) > 0 && waited < 500; waited++)
+        usleep(1000);
+}
+
+void sakura_metal_resume(SakuraMetalDevice* device)
+{
+    if (device != NULL)
+        atomic_store(&device->suspended, 0);
+}
+
+void sakura_metal_set_frame_latency(SakuraMetalDevice* device, int framesInFlight, int drawableCount)
+{
+    if (device == NULL)
+        return;
+
+    atomic_store(&device->requestedFramesInFlight, framesInFlight);
+    atomic_store(&device->requestedDrawableCount, drawableCount);
+}
+
+void sakura_metal_set_min_present_interval(SakuraMetalDevice* device, double seconds)
+{
+    if (device != NULL)
+        atomic_store(&device->minPresentInterval, seconds > 0 ? seconds : 0);
+}
+
+void sakura_metal_set_texture_nearest(SakuraMetalTexture* texture, int nearest)
+{
+    if (texture != NULL)
+        texture->nearest = nearest != 0;
+}
+
+int sakura_metal_take_gpu_time(SakuraMetalDevice* device, double* milliseconds)
+{
+    if (device == NULL || device->gpuTimes == nil || milliseconds == NULL)
+        return 0;
+
+    SakuraMetalGpuTimes* times = device->gpuTimes;
+    int taken = 0;
+
+    os_unfair_lock_lock(&times->lock);
+
+    if (times->sequence != device->gpuTimesTaken)
+    {
+        device->gpuTimesTaken = times->sequence;
+        *milliseconds = times->lastFrameSeconds * 1000.0;
+        taken = 1;
+    }
+
+    os_unfair_lock_unlock(&times->lock);
+    return taken;
+}
+
+uint64_t sakura_metal_allocated_bytes(SakuraMetalDevice* device)
+{
+    return device == NULL || device->device == nil ? 0 : (uint64_t)device->device.currentAllocatedSize;
+}
+
+void sakura_metal_trim(SakuraMetalDevice* device)
+{
+    if (device != NULL)
+        atomic_store(&device->trimRequested, 1);
 }

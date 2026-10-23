@@ -6,6 +6,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Reflection;
 using System.Text;
@@ -471,9 +472,12 @@ public class Logger
 
     private static string getLogLevelPrefix(LogLevel level) => level.ToString().ToLower();
 
-    private static string getFormattedMessage(LogEntry logMessage) => $"{logMessage.Timestamp:yyyy-MM-dd HH:mm:ss} [{getLogLevelPrefix(logMessage.Level)}]: {logMessage.Message}";
+    private static string getFormattedMessage(LogEntry logMessage) => getFormattedMessage(logMessage.Timestamp, logMessage.Level, logMessage.Message);
 
-    private static string getFormattedMessage(DateTime timestamp, LogLevel level, string message) => $"{timestamp:yyyy-MM-dd HH:mm:ss} [{getLogLevelPrefix(level)}]: {message}";
+    // In the invariant culture's Gregorian calendar whatever the device's: a phone set to Thai would otherwise date its
+    // logs 543 years ahead, in the Buddhist calendar.
+    private static string getFormattedMessage(DateTime timestamp, LogLevel level, string message) =>
+        string.Create(CultureInfo.InvariantCulture, $"{timestamp:yyyy-MM-dd HH:mm:ss} [{getLogLevelPrefix(level)}]: {message}");
 }
 
 /// <summary>

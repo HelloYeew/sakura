@@ -14,6 +14,7 @@
 #include "../sakura_audio.h"
 
 #include <math.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1012,6 +1013,176 @@ static void test_aaudio_callback(void)
     sakura_audio_engine_destroy(engine);
 }
 
+// Core Audio's AudioBuffer and AudioBufferList, as an output audio unit hands them over.
+typedef struct
+{
+    uint32_t channels;
+    uint32_t byteSize;
+    void *data;
+} test_buffer;
+
+typedef struct
+{
+    uint32_t count;
+    test_buffer buffers[1];
+} test_buffer_list;
+
+// The audio unit (RemoteIO) callback path: as AAudio's, the mix lands in the buffer handed over, and the callback is
+// counted and timed. A buffer too small for what the engine mixes is silenced and marked so, never overrun.
+static void test_audio_unit_callback(void)
+{
+    SakuraAudioEngine *engine = make_engine(128);
+    SakuraAudioEngine *reference = make_engine(128);
+
+    const int frames = 1024;
+    static float pcm[1024 * CHANNELS];
+
+    for (int i = 0; i < frames * CHANNELS; i++)
+        pcm[i] = (float)sin(i * 0.01) * 0.5f;
+
+    attach_static_voice(engine, pcm, frames, NULL);
+    attach_static_voice(reference, pcm, frames, NULL);
+
+    typedef int32_t (*render_fn)(void *, uint32_t *, const void *, uint32_t, uint32_t, void *);
+    render_fn callback = (render_fn)sakura_audio_get_audio_unit_callback();
+    CHECK(callback != NULL);
+
+    // Apple's offsets on its 64-bit platforms (the buffer 8 into the list, its data 8 into the buffer), which the
+    // library's own declaration has to match.
+    if (sizeof(void *) == 8)
+    {
+        CHECK(offsetof(test_buffer_list, buffers) == 8);
+        CHECK(offsetof(test_buffer, data) == 8);
+        CHECK(sizeof(test_buffer_list) == 24);
+    }
+
+    // RemoteIO's slice at 48 kHz with a 5 ms buffer, not a whole number of mix blocks.
+    static float out[240 * CHANNELS];
+    static float expected[240 * CHANNELS];
+    test_buffer_list list = { 1, { { CHANNELS, sizeof(out), out } } };
+    uint32_t flags = 0;
+
+    CHECK(callback(engine, &flags, NULL, 0, 240, &list) == 0);
+    sakura_audio_engine_mix(reference, expected, 240);
+
+    CHECK(memcmp(out, expected, sizeof(out)) == 0);
+    CHECK(flags == 0);
+
+    SakuraAudioStats stats;
+    sakura_audio_engine_get_stats(engine, &stats);
+    CHECK(stats.callbacks == 1);
+    CHECK(stats.framesMixed == 240);
+    CHECK(stats.activeVoices == 1);
+
+    // A buffer of half what's asked for: zeroed, said to be silence, and nothing mixed.
+    for (int i = 0; i < 240 * CHANNELS; i++)
+        out[i] = 1.0f;
+
+    test_buffer_list small = { 1, { { CHANNELS, sizeof(out) / 2, out } } };
+    CHECK(callback(engine, &flags, NULL, 0, 240, &small) == 0);
+    CHECK(flags == (1u << 4));
+    CHECK(out[0] == 0.0f && out[240 * CHANNELS / 2 - 1] == 0.0f);
+    CHECK(out[240 * CHANNELS / 2] == 1.0f);
+
+    // Nothing asked for, no buffers, nowhere to write or no engine: carry on without touching anything.
+    test_buffer_list empty = { 0, { { CHANNELS, sizeof(out), out } } };
+    test_buffer_list nowhere = { 1, { { CHANNELS, sizeof(out), NULL } } };
+    CHECK(callback(engine, NULL, NULL, 0, 0, &list) == 0);
+    CHECK(callback(engine, NULL, NULL, 0, 240, &empty) == 0);
+    CHECK(callback(engine, NULL, NULL, 0, 240, &nowhere) == 0);
+    CHECK(callback(engine, NULL, NULL, 0, 240, NULL) == 0);
+    CHECK(callback(NULL, NULL, NULL, 0, 240, &list) == 0);
+    sakura_audio_engine_get_stats(engine, &stats);
+    CHECK(stats.callbacks == 1);
+    CHECK(stats.framesMixed == 240);
+
+    sakura_audio_engine_destroy(reference);
+    sakura_audio_engine_destroy(engine);
+}
+
+// Core Audio's AudioTimeStamp, as an output audio unit hands it to its render callback.
+typedef struct
+{
+    double sampleTime;
+    uint64_t hostTime;
+    double rateScalar;
+    uint64_t wordClockTime;
+    uint8_t smpteTime[24];
+    uint32_t flags;
+    uint32_t reserved;
+} test_time_stamp;
+
+// The device's clock from the audio unit callback: each callback publishes when its first frame goes out against the
+// frames mixed before it, and a sample time that doesn't carry on from the last callback counts as a missed cycle.
+static void test_audio_unit_device_time(void)
+{
+    SakuraAudioEngine *engine = make_engine(128);
+
+    typedef int32_t (*render_fn)(void *, uint32_t *, const void *, uint32_t, uint32_t, void *);
+    render_fn callback = (render_fn)sakura_audio_get_audio_unit_callback();
+
+    // Apple's layout: the flags 56 bytes in, 64 bytes in all.
+    CHECK(offsetof(test_time_stamp, flags) == 56);
+    CHECK(sizeof(test_time_stamp) == 64);
+
+    SakuraAudioDeviceTime time;
+
+    // Nothing published before the first callback, though the count is there.
+    CHECK(sakura_audio_engine_get_device_time(engine, &time) == SAKURA_AUDIO_ERROR);
+    CHECK(time.discontinuities == 0);
+    CHECK(sakura_audio_engine_get_device_time(NULL, &time) == SAKURA_AUDIO_INVALID);
+    CHECK(sakura_audio_engine_get_device_time(engine, NULL) == SAKURA_AUDIO_INVALID);
+
+    static float out[240 * CHANNELS];
+    test_buffer_list list = { 1, { { CHANNELS, sizeof(out), out } } };
+    test_time_stamp stamp = { 0 };
+    stamp.flags = 3; // sample time and host time valid
+
+    stamp.sampleTime = 1000;
+    stamp.hostTime = 5000;
+    CHECK(callback(engine, NULL, &stamp, 0, 240, &list) == 0);
+
+    CHECK(sakura_audio_engine_get_device_time(engine, &time) == SAKURA_AUDIO_OK);
+    CHECK(time.framesMixed == 0);
+    CHECK(time.hostTime == 5000);
+    CHECK(time.discontinuities == 0);
+
+    // The next cycle, carrying straight on.
+    stamp.sampleTime = 1240;
+    stamp.hostTime = 6000;
+    callback(engine, NULL, &stamp, 0, 240, &list);
+
+    CHECK(sakura_audio_engine_get_device_time(engine, &time) == SAKURA_AUDIO_OK);
+    CHECK(time.framesMixed == 240);
+    CHECK(time.hostTime == 6000);
+    CHECK(time.discontinuities == 0);
+
+    // A cycle skipped: the sample time is a buffer further on than where the last one ended.
+    stamp.sampleTime = 1720;
+    stamp.hostTime = 8000;
+    callback(engine, NULL, &stamp, 0, 240, &list);
+
+    CHECK(sakura_audio_engine_get_device_time(engine, &time) == SAKURA_AUDIO_OK);
+    CHECK(time.framesMixed == 480);
+    CHECK(time.discontinuities == 1);
+
+    // A timestamp without a host time leaves the last one published; one without a sample time isn't judged.
+    stamp.flags = 1;
+    stamp.sampleTime = 1960;
+    stamp.hostTime = 9000;
+    callback(engine, NULL, &stamp, 0, 240, &list);
+    stamp.flags = 0;
+    stamp.sampleTime = 50000;
+    callback(engine, NULL, &stamp, 0, 240, &list);
+
+    CHECK(sakura_audio_engine_get_device_time(engine, &time) == SAKURA_AUDIO_OK);
+    CHECK(time.hostTime == 8000);
+    CHECK(time.framesMixed == 480);
+    CHECK(time.discontinuities == 1);
+
+    sakura_audio_engine_destroy(engine);
+}
+
 // The unity path copies whole runs instead of interpolating each frame. It has to be a copy of exactly
 // the right frames, across block boundaries, and it has to leave the interpolation window where the
 // per-frame path would have, so that a rate change mid-stream carries straight on.
@@ -1582,6 +1753,8 @@ int main(void)
     RUN(test_invalid_arguments);
     RUN(test_device_callback);
     RUN(test_aaudio_callback);
+    RUN(test_audio_unit_callback);
+    RUN(test_audio_unit_device_time);
     RUN(test_unity_runs_and_rate_handover);
     RUN(test_resampler_paths_match_the_per_frame_algorithm);
     RUN(test_stream_runs_across_the_wrap);

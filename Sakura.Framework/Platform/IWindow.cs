@@ -44,6 +44,13 @@ public interface IWindow : IDisposable
     int DisplayHz { get; }
 
     /// <summary>
+    /// The name of the display the window is on, as the system calls it ("Built-in Retina Display"), or empty where it
+    /// gives none. Two displays of one model can share a name. Changes on the main thread as the window moves to another
+    /// display, so poll it from the update thread rather than subscribe, as with <see cref="SafeAreaPadding"/>.
+    /// </summary>
+    Reactive<string> DisplayName { get; }
+
+    /// <summary>
     /// Current width of the window's drawable area in pixels.
     /// <remarks>
     /// This value got update when the window is resized, to get it in real-time use <see cref="GetDrawableSize"/> method instead,

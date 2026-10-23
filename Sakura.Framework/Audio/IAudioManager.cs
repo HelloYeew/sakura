@@ -50,6 +50,19 @@ public interface IAudioManager
     Reactive<string> OutputDevice { get; }
 
     /// <summary>
+    /// The device the sound plays on now, by name: the one picked in <see cref="OutputDevice"/>, or whichever the
+    /// system's default is while that's followed. Where the system picks the output itself, as Android does, it's what
+    /// the platform says of it ("Bluetooth: Galaxy Buds"). Empty where nothing says, or nothing plays.
+    /// </summary>
+    string PlayingDevice { get; }
+
+    /// <summary>
+    /// Raised through <see cref="EventScheduler"/> when <see cref="PlayingDevice"/> changes: the device picked was
+    /// plugged in or out, or the system's default moved to another device.
+    /// </summary>
+    event Action PlayingDeviceChanged;
+
+    /// <summary>
     /// Whether the system has the output for something else for now, such as a call or an alarm. Until it's given
     /// back, tracks stand still where they are and samples play silently, so the music picks up where it was and
     /// nothing played meanwhile sounds all at once afterwards. An app's host sets it from what the platform says

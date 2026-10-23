@@ -303,10 +303,28 @@ public abstract class AppHost : IDisposable
     public virtual NativeAudioOutput? NativeAudioOutput => null;
 
     /// <summary>
+    /// The route the platform's own audio takes the sound along after the app's device buffer, where the platform
+    /// says: the SDL audio backend adds its delay to the sound's and names the output by it. Null elsewhere.
+    /// </summary>
+    public virtual ISystemAudioRoute? SystemAudioRoute => null;
+
+    /// <summary>
     /// The platform's performance services: the frame threads report their work through it, and an app can read how
     /// hot the device is running.
     /// </summary>
     public virtual IPlatformPerformance Performance { get; } = new NoPlatformPerformance();
+
+    /// <summary>
+    /// The device's vibration motor, for feedback the player feels. Does nothing where there's none: check
+    /// <see cref="IPlatformHaptics.IsSupported"/> before offering a setting for it.
+    /// </summary>
+    public virtual IPlatformHaptics Haptics { get; } = new NoPlatformHaptics();
+
+    /// <summary>
+    /// How many more bytes the app may use before the system ends it, or null where the platform doesn't say. A budget
+    /// for how much to load ahead or cache, read when deciding rather than kept, since it moves with what else runs.
+    /// </summary>
+    public virtual long? AvailableMemory => null;
 
     [NotNull]
     public HostOptions Options { get; private set; }
@@ -456,6 +474,9 @@ public abstract class AppHost : IDisposable
 
             inBackground = true;
 
+            // First, so a draw thread waiting on the GPU gives up rather than hold up stopping it.
+            Renderer?.SuspendGpuWork();
+
             threadRunner.Pause();
 
             (AudioManager as IStopsInBackground)?.EnterBackground();
@@ -481,9 +502,18 @@ public abstract class AppHost : IDisposable
     /// Raised on the update thread once the system has said it's short of memory: drop whatever can be made again, such
     /// as loaded-ahead content and caches of things not on screen. Android says so as an app goes to the background
     /// too, and the update thread is stopped there, so this comes once the app is back. By then the framework has
-    /// compacted the managed heap and handed what was free back to the system.
+    /// compacted the managed heap and handed what was free back to the system. iOS says so while the app runs, and
+    /// collects what the handlers let go of once they've run.
     /// </summary>
     public event Action LowMemory;
+
+    /// <summary>
+    /// Raised on the update thread when the app is back on the screen after the system took it away: an iOS or Android
+    /// app that went to the background. Never on desktop, where an app doesn't leave. The update thread is stopped while
+    /// the app is away, so polling for a change of <see cref="IWindow.IsActive"/> wouldn't see one: this is what to watch
+    /// to look again at what may have changed meanwhile, such as files the user put in the app's storage.
+    /// </summary>
+    public event Action ReturnedToForeground;
 
     /// <summary>
     /// Compacts the managed heap where the system said it's short of memory: on Android its UI thread, usually with
@@ -496,6 +526,26 @@ public abstract class AppHost : IDisposable
 
         // Before the collection, so it frees them.
         ImageRawData.TrimPool();
+
+        // The GPU's share too, which the collection wouldn't free.
+        Renderer?.Trim();
+
+        if (OperatingSystem.IsIOS())
+        {
+            // iOS warns in the foreground, every thread running and maybe mid-game, where stopping them all to compact
+            // the heap is a hitch the player sees. So the app drops what it can first, and a background collection
+            // then frees it without stopping anything for long.
+            updateScheduler.Add(() =>
+            {
+                LowMemory?.Invoke();
+                GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: false);
+
+                Logger.Verbose($"Short of memory: the managed heap held {before / 1048576.0:0.#} MB; the app has dropped what it could, and a "
+                               + "background collection is freeing it.");
+            });
+
+            return;
+        }
 
         // Aggressive gives back the memory the collection frees rather than keeping it for the next allocations.
         GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
@@ -535,7 +585,9 @@ public abstract class AppHost : IDisposable
 
             (AudioManager as IStopsInBackground)?.EnterForeground();
 
+            Renderer?.ResumeGpuWork();
             threadRunner.Resume();
+            updateScheduler.Add(() => ReturnedToForeground?.Invoke());
 
             Logger.Verbose("Back in the foreground: frames resumed.");
         }

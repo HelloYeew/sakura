@@ -127,6 +127,33 @@ internal sealed class SakuraAudioEngine : IDisposable
         }
     }
 
+    private static nint? audioUnitCallback;
+
+    /// <summary>
+    /// The <c>AURenderCallback</c>-compatible function pointer to set as an output audio unit's render callback, passing
+    /// <see cref="Handle"/> as its refCon, or zero where the library predates it.
+    /// </summary>
+    public static nint AudioUnitCallback
+    {
+        get
+        {
+            if (audioUnitCallback.HasValue)
+                return audioUnitCallback.Value;
+
+            try
+            {
+                audioUnitCallback = IsAvailable ? SakuraAudioNative.sakura_audio_get_audio_unit_callback() : 0;
+            }
+            catch (EntryPointNotFoundException)
+            {
+                Logger.Verbose("This libsakura-audio predates its RemoteIO output, so it plays through SDL.");
+                audioUnitCallback = 0;
+            }
+
+            return audioUnitCallback.Value;
+        }
+    }
+
     /// <summary>
     /// Hands the library the address of <c>SDL_PutAudioStreamData</c>, the only thing it needs from
     /// SDL, and the one call it makes from inside the device callback.
@@ -157,8 +184,9 @@ internal sealed class SakuraAudioEngine : IDisposable
         address = nint.Zero;
 
         // The same set of names the SDL3 bindings themselves are resolved under, in the same order,
-        // so this finds whichever one the platform actually loaded.
-        foreach (string library in new[] { "SDL3", "libSDL3.so.0", "libSDL3.dylib", "SDL3.dll" })
+        // so this finds whichever one the platform actually loaded. The last is where iOS embeds SDL,
+        // which the bindings reach through the app's resolver, and a lookup like this one never asks.
+        foreach (string library in new[] { "SDL3", "libSDL3.so.0", "libSDL3.dylib", "SDL3.dll", "@rpath/SDL3.framework/SDL3" })
         {
             if (!NativeLibrary.TryLoad(library, typeof(SDL.SDL3).Assembly, null, out nint loaded))
                 continue;
@@ -391,6 +419,32 @@ internal sealed class SakuraAudioEngine : IDisposable
 
         SakuraAudioNative.sakura_audio_engine_get_stats(handle, &stats);
         return stats;
+    }
+
+    // Cleared where the library predates the device's clock, so it's asked once.
+    private bool deviceTimeAvailable = true;
+
+    /// <summary>
+    /// The device's own clock, where its callback gives one (the audio unit callback does), or false: before the first
+    /// such callback, and where the library predates it.
+    /// </summary>
+    public unsafe bool TryGetDeviceTime(out SakuraAudioDeviceTime time)
+    {
+        time = default;
+
+        if (isDisposed || !deviceTimeAvailable)
+            return false;
+
+        try
+        {
+            fixed (SakuraAudioDeviceTime* pointer = &time)
+                return SakuraAudioNative.sakura_audio_engine_get_device_time(handle, pointer) == SakuraAudioNative.OK;
+        }
+        catch (EntryPointNotFoundException)
+        {
+            deviceTimeAvailable = false;
+            return false;
+        }
     }
 
     #endregion

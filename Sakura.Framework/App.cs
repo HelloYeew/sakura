@@ -311,7 +311,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
 
         return AudioBackends.Create(backend,
             () => new SDLAudioManager(backend != AudioBackend.SDLManaged, deviceBufferFrames.Value,
-                next => deviceBufferFrames.Value = next, Host.NativeAudioOutput, outputDevice),
+                next => deviceBufferFrames.Value = next, Host.NativeAudioOutput, outputDevice, Host.SystemAudioRoute),
             () => new BassAudioManager(outputDevice: outputDevice),
             AudioBackends.BassAvailable);
     }

@@ -393,6 +393,16 @@ struct SakuraAudioEngine
 
     int64_t framesMixed;       // audio-thread-owned copy of statFramesMixed, for the metering check
     int activeVoicesThisBlock; // audio-thread-owned accumulator
+
+    // The device's own clock, from audio unit callbacks: the frames mixed before the latest one, and the host time
+    // its first frame goes out at, published as a pair under a sequence that's odd while they're written. And the
+    // callbacks whose sample time didn't carry on from the one before, each a cycle the output missed.
+    sakura_atomic_u32 deviceTimeSequence;
+    sakura_atomic_u64 deviceTimeFrames;
+    sakura_atomic_u64 deviceTimeHost;
+    sakura_atomic_u64 statDeviceDiscontinuities;
+    double deviceSampleTimeNext; // audio-thread-owned: where the next callback's sample time should start
+    bool deviceSampleTimeKnown;  // audio-thread-owned
 };
 
 static sakura_sdl_put_fn sdl_put = NULL;
@@ -1680,6 +1690,118 @@ static int32_t aaudio_callback(void *stream, void *userdata, void *audioData, in
 
 void *sakura_audio_get_aaudio_callback(void) { return (void *)aaudio_callback; }
 
+// Core Audio's AudioBuffer and AudioBufferList, laid out as CoreAudioBaseTypes.h has them, so no Apple header is needed.
+typedef struct
+{
+    uint32_t channels;
+    uint32_t byteSize;
+    void *data;
+} core_audio_buffer;
+
+typedef struct
+{
+    uint32_t count;
+    core_audio_buffer buffers[1];
+} core_audio_buffer_list;
+
+// Core Audio's AudioTimeStamp, laid out as CoreAudioBaseTypes.h has it (64 bytes; the SMPTE time isn't read).
+typedef struct
+{
+    double sampleTime;
+    uint64_t hostTime;
+    double rateScalar;
+    uint64_t wordClockTime;
+    uint8_t smpteTime[24];
+    uint32_t flags;
+    uint32_t reserved;
+} core_audio_time_stamp;
+
+// kAudioTimeStampSampleTimeValid and kAudioTimeStampHostTimeValid.
+#define AUDIO_TIME_STAMP_SAMPLE_TIME_VALID (1u << 0)
+#define AUDIO_TIME_STAMP_HOST_TIME_VALID (1u << 1)
+
+// kAudioUnitRenderAction_OutputIsSilence: tells the output a buffer is all zeros.
+#define AUDIO_UNIT_OUTPUT_IS_SILENCE (1u << 4)
+
+// Counts a callback whose sample time doesn't start where the last one's ended: the output skipped a cycle (or was
+// stopped and started again).
+static void track_device_sample_time(SakuraAudioEngine *engine, const core_audio_time_stamp *stamp, uint32_t frames)
+{
+    if (stamp == NULL || (stamp->flags & AUDIO_TIME_STAMP_SAMPLE_TIME_VALID) == 0)
+        return;
+
+    // A whole frame out either way is a jump, not rounding.
+    if (engine->deviceSampleTimeKnown && fabs(stamp->sampleTime - engine->deviceSampleTimeNext) >= 1.0)
+        sakura_atomic_add_i64(&engine->statDeviceDiscontinuities, 1);
+
+    engine->deviceSampleTimeNext = stamp->sampleTime + frames;
+    engine->deviceSampleTimeKnown = true;
+}
+
+// Publishes when the callback about to be mixed goes out, against the frames mixed before it, for the managed side to
+// work out how late what it mixes is heard.
+static void publish_device_time(SakuraAudioEngine *engine, const core_audio_time_stamp *stamp)
+{
+    if (stamp == NULL || (stamp->flags & AUDIO_TIME_STAMP_HOST_TIME_VALID) == 0)
+        return;
+
+    uint32_t sequence = sakura_atomic_load_u32(&engine->deviceTimeSequence);
+
+    sakura_atomic_store_u32(&engine->deviceTimeSequence, sequence + 1);
+    sakura_atomic_store_i64(&engine->deviceTimeFrames, engine->framesMixed);
+    sakura_atomic_store_u64(&engine->deviceTimeHost, stamp->hostTime);
+    sakura_atomic_store_u32(&engine->deviceTimeSequence, sequence + 2);
+}
+
+// An audio unit's render callback (AURenderCallback), for iOS's RemoteIO output, where the engine plays without SDL in
+// between: the mix goes straight into the buffer the output hands over. The managed side sets the unit to take
+// interleaved floats, engine->config.channels wide, which is one buffer. Same discipline as stream_callback. The
+// result is an OSStatus, and 0 is noErr: stopping is the managed side's to do, through the unit.
+static int32_t audio_unit_callback(void *refCon, uint32_t *actionFlags, const void *timeStamp, uint32_t bus,
+                                   uint32_t numFrames, core_audio_buffer_list *ioData)
+{
+    (void)bus;
+
+    SakuraAudioEngine *engine = (SakuraAudioEngine *)refCon;
+
+    if (engine == NULL || ioData == NULL || ioData->count == 0 || numFrames == 0 || numFrames > INT32_MAX)
+        return 0;
+
+    core_audio_buffer *buffer = &ioData->buffers[0];
+
+    if (buffer->data == NULL)
+        return 0;
+
+    const core_audio_time_stamp *stamp = (const core_audio_time_stamp *)timeStamp;
+    track_device_sample_time(engine, stamp, numFrames);
+
+    // A buffer that can't hold what the engine mixes is a format the managed side didn't set. It goes out silent
+    // rather than written past its end.
+    if ((uint64_t)buffer->byteSize < (uint64_t)numFrames * (uint64_t)engine->config.channels * sizeof(float))
+    {
+        memset(buffer->data, 0, buffer->byteSize);
+
+        if (actionFlags != NULL)
+            *actionFlags |= AUDIO_UNIT_OUTPUT_IS_SILENCE;
+
+        return 0;
+    }
+
+    int64_t started = now_microseconds();
+
+    process_commands(engine);
+    sync_streams(engine);
+
+    publish_device_time(engine, stamp);
+    mix_frames(engine, (float *)buffer->data, (int)numFrames);
+
+    sakura_atomic_add_i64(&engine->statCallbacks, 1);
+    sakura_atomic_store_i64(&engine->statCallbackMicroseconds, now_microseconds() - started);
+    return 0;
+}
+
+void *sakura_audio_get_audio_unit_callback(void) { return (void *)audio_unit_callback; }
+
 int sakura_audio_engine_mix(SakuraAudioEngine *engine, float *destination, int frames)
 {
     if (engine == NULL || destination == NULL || frames <= 0)
@@ -1832,6 +1954,40 @@ int sakura_audio_engine_get_stats(SakuraAudioEngine *engine, SakuraAudioStats *s
     stats->activeVoices = (int32_t)sakura_atomic_load_u32(&engine->statActiveVoices);
 
     return SAKURA_AUDIO_OK;
+}
+
+int sakura_audio_engine_get_device_time(SakuraAudioEngine *engine, SakuraAudioDeviceTime *time)
+{
+    if (engine == NULL || time == NULL)
+        return SAKURA_AUDIO_INVALID;
+
+    time->discontinuities = sakura_atomic_load_i64(&engine->statDeviceDiscontinuities);
+
+    // A callback writes the pair in a few nanoseconds every few milliseconds, so a read that overlaps one is rare and a
+    // few tries find a quiet moment. Running out of tries means the audio thread was stopped mid-write.
+    for (int attempt = 0; attempt < 16; attempt++)
+    {
+        uint32_t before = sakura_atomic_load_u32(&engine->deviceTimeSequence);
+
+        if (before & 1u)
+            continue;
+
+        int64_t frames = sakura_atomic_load_i64(&engine->deviceTimeFrames);
+        uint64_t host = sakura_atomic_load_u64(&engine->deviceTimeHost);
+
+        if (sakura_atomic_load_u32(&engine->deviceTimeSequence) != before)
+            continue;
+
+        // Nothing published yet.
+        if (before == 0)
+            return SAKURA_AUDIO_ERROR;
+
+        time->framesMixed = frames;
+        time->hostTime = host;
+        return SAKURA_AUDIO_OK;
+    }
+
+    return SAKURA_AUDIO_TIMEOUT;
 }
 
 // ---------------------------------------------------------------------------------------------

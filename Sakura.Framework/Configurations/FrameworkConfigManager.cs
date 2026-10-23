@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using Sakura.Framework.Audio;
 using Sakura.Framework.Audio.SdlEngine;
 using Sakura.Framework.Graphics.Containers;
@@ -36,8 +37,10 @@ public class FrameworkConfigManager : ConfigManager<FrameworkSetting>
         Get(FrameworkSetting.SampleVolume, 1.0);
         Get(FrameworkSetting.AudioBackend, AudioBackend.Automatic);
         // A phone's output takes audio in bursts of its own size (0 asks for that); a buffer that doesn't line up
-        // with them keeps the stream off the low-latency path.
-        Get(FrameworkSetting.AudioDeviceBufferFrames, pacing.Mobile ? 0 : SDLAudioManager.DEFAULT_DEVICE_BUFFER_FRAMES);
+        // with them keeps the stream off the low-latency path. iOS has no burst to ask for.
+        Get(FrameworkSetting.AudioDeviceBufferFrames, OperatingSystem.IsIOS()
+            ? SDLAudioManager.IOS_DEVICE_BUFFER_FRAMES
+            : pacing.Mobile ? 0 : SDLAudioManager.DEFAULT_DEVICE_BUFFER_FRAMES);
         // A game on a phone hides the system bars, so an edge swipe in play only shows them rather than leaving; an
         // application keeps them, like the phone's other apps.
         Get(FrameworkSetting.WindowMode, pacing.Mobile && pacing.AppType == AppType.Game ? WindowMode.Borderless : WindowMode.Windowed);

@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- .NET 11: iOS has CoreCLR, the runtime the framework is tuned for, from 11 on. The app's own project stays on 10. -->
+    <TargetFramework>net11.0-ios</TargetFramework>
+    <SupportedOSPlatformVersion>15.0</SupportedOSPlatformVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <ApplicationId>com.companyname.myapp</ApplicationId>
+    <ApplicationTitle>MyApp</ApplicationTitle>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+  </PropertyGroup>
+  <PropertyGroup Label="Toolchain">
+    <!-- A .NET 11 preview's iOS workload is made for one Xcode and refuses any other, though it builds with the next.
+         Remove once your workload matches your Xcode. -->
+    <ValidateXcodeVersion>false</ValidateXcodeVersion>
+  </PropertyGroup>
+  <ItemGroup Label="Resources">
+    <!-- Resources/ is where iOS keeps the bundle's own resources, so it isn't embedded the way it is elsewhere. -->
+    <EmbeddedResource Remove="Resources\**" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Sakura.Framework.iOS" Version="*-*" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\MyApp\MyApp.csproj" />
+  </ItemGroup>
+</Project>
