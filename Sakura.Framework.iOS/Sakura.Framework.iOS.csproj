@@ -10,7 +10,7 @@
   <PropertyGroup Label="Nuget">
     <Title>Sakura Framework for iOS</Title>
     <PackageId>Sakura.Framework.iOS</PackageId>
-    <Description>Runs a Sakura Framework app on iOS: the entry point, window, storage and lifecycle.</Description>
+    <Description>Runs a Sakura Framework app on iOS</Description>
     <Authors>HelloYeew</Authors>
     <Copyright>Copyright (c) 2026 HelloYeew</Copyright>
     <PackageReleaseNotes>Automated build</PackageReleaseNotes>

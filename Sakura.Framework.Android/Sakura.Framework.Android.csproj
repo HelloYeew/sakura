@@ -8,7 +8,7 @@
   <PropertyGroup Label="Nuget">
     <Title>Sakura Framework for Android</Title>
     <PackageId>Sakura.Framework.Android</PackageId>
-    <Description>Runs a Sakura Framework app on Android: the activity, window, touch, lifecycle and the platform's performance and audio services.</Description>
+    <Description>Runs a Sakura Framework app on Android.</Description>
     <Authors>HelloYeew</Authors>
     <Copyright>Copyright (c) 2026 HelloYeew</Copyright>
     <PackageReleaseNotes>Automated build</PackageReleaseNotes>
