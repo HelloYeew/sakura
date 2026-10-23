@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using CoreAnimation;
 using Foundation;
@@ -110,8 +111,11 @@ internal class IOSWindow : SDLWindow
 
     protected override float? GetPlatformRefreshRate() => refreshRate > 0 ? refreshRate : null;
 
-    // SDL has no file dialog on iOS. The system's document picker hands over copies in the app's own storage, which can
-    // be read by path like any other file, with nothing to ask permission for.
+    // SDL has no file dialog on iOS: the system's document picker instead. It hands over the files where they are (in
+    // Files, iCloud Drive, another app's folder), readable only while the app holds their security scope, so each is
+    // copied into the app's own storage before the picker's callback returns, and the copy is what the app gets: a path
+    // like any other, still there whenever the app reads it. The picker's own copies aren't promised to outlast its
+    // callback, and an app reads its picks later, off the main thread.
     public override void ShowOpenFileDialog(FileDialogOptions options, Action<FileDialogResult> callback)
     {
         var presenter = UIApplication.SharedApplication.ConnectedScenes.OfType<UIWindowScene>()
@@ -124,15 +128,60 @@ internal class IOSWindow : SDLWindow
             return;
         }
 
-        var picker = new UIDocumentPickerViewController(contentTypesFor(options.Filters), true)
+        var picker = new UIDocumentPickerViewController(contentTypesFor(options.Filters), false)
         {
             AllowsMultipleSelection = options.AllowMultiple
         };
 
-        picker.DidPickDocumentAtUrls += (_, e) => callback(FileDialogResult.FromPaths(e.Urls.Select(url => url.Path!).ToArray()));
+        picker.DidPickDocumentAtUrls += (_, e) =>
+        {
+            string[] paths = e.Urls.Select(copyIn).OfType<string>().ToArray();
+            Logger.Verbose($"Document picker: {e.Urls.Length} picked, {paths.Length} copied in");
+
+            callback(paths.Length > 0 || e.Urls.Length == 0 ? FileDialogResult.FromPaths(paths) : FileDialogResult.Failed("The picked files couldn't be read."));
+        };
         picker.WasCancelled += (_, _) => callback(FileDialogResult.Cancelled);
 
         presenter.PresentViewController(picker, true, null);
+    }
+
+    /// <summary>
+    /// Copies a picked file into a folder of its own in the app's temporary storage, keeping its name, and returns where
+    /// to; null if it couldn't be read. The file coordinator downloads a file that's only in iCloud first.
+    /// </summary>
+    private static string? copyIn(NSUrl url)
+    {
+        bool scoped = url.StartAccessingSecurityScopedResource();
+
+        try
+        {
+            string folder = Path.Combine(Path.GetTempPath(), "Picked", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(folder);
+
+            string? copied = null;
+
+            new NSFileCoordinator().CoordinateRead(url, NSFileCoordinatorReadingOptions.WithoutChanges, out NSError? error, readable =>
+            {
+                string destination = Path.Combine(folder, readable.LastPathComponent ?? "picked");
+                File.Copy(readable.Path!, destination);
+                copied = destination;
+            });
+
+            if (error != null)
+                Logger.Error($"Couldn't read {url.LastPathComponent} from the document picker: {error.LocalizedDescription}");
+
+            return copied;
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"Couldn't copy {url.LastPathComponent} from the document picker.", ex);
+            return null;
+        }
+        finally
+        {
+            if (scoped)
+                url.StopAccessingSecurityScopedResource();
+        }
     }
 
     /// <summary>
