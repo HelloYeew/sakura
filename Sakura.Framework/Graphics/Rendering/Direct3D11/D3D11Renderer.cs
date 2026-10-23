@@ -40,6 +40,9 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     // Counted by VertexBatch; completed here, at this renderer's frame boundary.
     private static readonly GlobalStatistic<int> stat_buffer_full_flushes = GlobalStatistics.Get<int>("Renderer", "Buffer Full Flushes", StatisticKind.PerFrame);
 
+    // Counted by D3D11RingBuffer; completed here, at this renderer's frame boundary.
+    private static readonly GlobalStatistic<int> stat_buffer_discards = GlobalStatistics.Get<int>("Direct3D11", "Buffer Discards", StatisticKind.PerFrame);
+
     /// <summary>
     /// The GPU's time on a frame, from its first command to its last, read back once the frame has
     /// finished (see <see cref="D3D11GpuTimer"/>).
@@ -157,6 +160,12 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     private const int max_batch_vertices = 1000 * 12;
 
     /// <summary>
+    /// How many full batches the rings may grow to hold (about 18 MB of vertices). A frame drawing more
+    /// than that still works, it just discards the ring more than once.
+    /// </summary>
+    private const int max_ring_batches = 16;
+
+    /// <summary>
     /// CPU mirror of the pixel stage's shader-resource slots, dense from 0. The pixel-stage bindings
     /// survive a draw and a render-target switch, so this only needs clearing when something binds
     /// behind the renderer's back (the raw custom-shader passes, and <see cref="rebindFrameState"/>).
@@ -174,7 +183,18 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     private BlendingMode currentBlendMode = BlendingMode.Alpha;
 
     private ID3D11Buffer projectionCb;
+
+    /// <summary>
+    /// The mask block for a border or edge-effect draw, filled for that one draw.
+    /// </summary>
     private ID3D11Buffer maskCb;
+
+    /// <summary>
+    /// The mask block bound for every other draw: all zeros, which turns both the border and the
+    /// edge-effect path off, and those flags are all the main shader reads from it otherwise. Binding
+    /// it back after a border costs nothing, where refilling the dynamic block would cost a map.
+    /// </summary>
+    private ID3D11Buffer neutralMaskCb;
 
     private readonly ID3D11BlendState[] blendStates = new ID3D11BlendState[6];
     private ID3D11RasterizerState rasterizerState;
@@ -187,9 +207,11 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
     private D3D11GpuTimer gpuTimer;
 
-    // Dynamic vertex buffer (grown on demand), mapped WRITE_DISCARD per draw.
-    private ID3D11Buffer vertexBuffer;
-    private int vertexBufferCapacity;
+    /// <summary>
+    /// Every draw's vertices, batched or raw, appended one after another (see
+    /// <see cref="D3D11RingBuffer{T}"/>). A draw finds its own through its base vertex.
+    /// </summary>
+    private D3D11RingBuffer<SakuraVertex> vertexRing;
 
     /// <summary>
     /// Immutable index buffer holding the quad pattern (0,1,2, 2,3,0 per quad) for the whole batch
@@ -199,10 +221,15 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     private ID3D11Buffer quadIndexBuffer;
 
     /// <summary>
-    /// Dynamic index buffer for a batch that contains a triangle list (see
-    /// <see cref="VertexBatch.HasNonQuad"/>), whose indices don't follow the static quad pattern.
+    /// Indices for a batch that contains a triangle list (see <see cref="VertexBatch.HasNonQuad"/>),
+    /// whose indices don't follow the static quad pattern. Appended like <see cref="vertexRing"/>.
     /// </summary>
-    private ID3D11Buffer dynamicIndexBuffer;
+    private D3D11RingBuffer<uint> indexRing;
+
+    // What the input assembler has bound, so a draw only rebinds when that changes. Null means unknown,
+    // which forces the next draw to bind.
+    private ID3D11Buffer boundVertexBuffer;
+    private ID3D11Buffer boundIndexBuffer;
 
     // White-pixel SRVs bound to all texture_slot_count slots in one call, so the shader's u_Textures[]
     // array is fully bound whatever the batch ends up assigning. Note this padding is not counted by
@@ -212,8 +239,6 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
     // Clip state injected into every vertex, PushMask/PopMask maintain the stack.
     private readonly ClipStack clips = new ClipStack();
-
-    private MaskBlock maskState;
 
     // Currently-bound render target + viewport, so BindFrameBuffer can save/restore across nesting.
     private ID3D11RenderTargetView currentRtv;
@@ -531,6 +556,9 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
         maskCb = device.CreateBuffer(new BufferDescription(
             (uint)Marshal.SizeOf<MaskBlock>(), BindFlags.ConstantBuffer, ResourceUsage.Dynamic, CpuAccessFlags.Write));
+
+        neutralMaskCb = device.CreateBuffer(new MaskBlock[1], new BufferDescription(
+            (uint)Marshal.SizeOf<MaskBlock>(), BindFlags.ConstantBuffer, ResourceUsage.Immutable));
     }
 
     private void createMainShader()
@@ -575,15 +603,15 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
             whiteSrvs[i] = white.ShaderResourceView;
     }
 
-    private unsafe void createBatch()
+    private void createBatch()
     {
         batch = new VertexBatch(max_batch_vertices, FlushBatch);
 
-        // Sized to the batch's capacity so a flush never has to reallocate.
-        ensureVertexCapacity(max_batch_vertices);
-
-        dynamicIndexBuffer = device.CreateBuffer(new BufferDescription(
-            (uint)(batch.MaxIndices * sizeof(uint)), BindFlags.IndexBuffer, ResourceUsage.Dynamic, CpuAccessFlags.Write));
+        // Two full batches to start with; a frame that needs more grows the rings from then on.
+        vertexRing = new D3D11RingBuffer<SakuraVertex>(device, context, BindFlags.VertexBuffer,
+            max_batch_vertices * 2, max_batch_vertices * max_ring_batches, "vertex");
+        indexRing = new D3D11RingBuffer<uint>(device, context, BindFlags.IndexBuffer,
+            batch.MaxIndices * 2, batch.MaxIndices * max_ring_batches, "index");
 
         // The static quad pattern, filled once. Immutable: the contents are the same every frame, so an
         // all-quad batch (the overwhelming majority) uploads vertices only.
@@ -707,7 +735,6 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         currentShader = mainShader;
         currentBlendMode = BlendingMode.Alpha;
         clips.Reset();
-        maskState = default;
 
         rebindFrameState();
     }
@@ -735,8 +762,11 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         currentShader.Use();
 
         context.VSSetConstantBuffer(projection_cb_slot, projectionCb);
-        context.PSSetConstantBuffer(mask_cb_slot, maskCb);
+        context.PSSetConstantBuffer(mask_cb_slot, neutralMaskCb);
         context.PSSetSamplers(0, linearClampSamplers);
+
+        boundVertexBuffer = null;
+        boundIndexBuffer = null;
 
         // Every declared slot gets a valid view; the batch overwrites the ones it assigns.
         context.PSSetShaderResources(0, whiteSrvs);
@@ -747,7 +777,6 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         context.OMSetBlendState(blendStates[(int)currentBlendMode]);
 
         uploadProjection();
-        uploadMaskState();
     }
 
     private void uploadProjection()
@@ -755,8 +784,6 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         var block = new ProjectionBlock { Projection = projectionMatrix };
         updateConstantBuffer(projectionCb, block);
     }
-
-    private void uploadMaskState() => updateConstantBuffer(maskCb, maskState);
 
     private unsafe void updateConstantBuffer<T>(ID3D11Buffer buffer, in T data) where T : unmanaged
     {
@@ -801,11 +828,16 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         stat_slot_exhaustion_flushes.CompleteFrame();
         stat_state_change_flushes.CompleteFrame();
         stat_buffer_full_flushes.CompleteFrame();
+        stat_buffer_discards.CompleteFrame();
 
         rootNode?.Draw(this);
 
         // Anything still pending belongs to this frame — issue it before the present.
         FlushBatch();
+
+        // A ring that grows here is bound again by the next draw.
+        vertexRing.EndFrame();
+        indexRing.EndFrame();
 
         // After the final flush, so the batch's binds land in this frame's count.
         TextureBindTracker.EndFrame();
@@ -972,37 +1004,31 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     /// change the recorded geometry depends on (blend state, render target, mask constant buffer,
     /// shader) must call this first, or geometry recorded under one state is drawn under another.
     /// </summary>
-    public unsafe void FlushBatch()
+    public void FlushBatch()
     {
         if (device == null || batch == null || batch.IsEmpty)
             return;
 
-        int stride = SakuraVertex.Size;
         int vertexCount = batch.VertexCount;
         int indexCount = batch.IndexCount;
 
-        MappedSubresource mappedVertices = context.Map(vertexBuffer, 0, MapMode.WriteDiscard, Vortice.Direct3D11.MapFlags.None);
-        fixed (SakuraVertex* src = batch.Vertices)
-            Buffer.MemoryCopy(src, (void*)mappedVertices.DataPointer, (long)vertexBufferCapacity * stride, (long)vertexCount * stride);
-        context.Unmap(vertexBuffer, 0);
+        // The batch's indices count from its own first vertex, so the base vertex is all it takes to
+        // point them at where the ring put the vertices.
+        int baseVertex = vertexRing.Write(batch.Vertices);
+        bindVertexBuffer();
 
         if (batch.HasNonQuad)
         {
-            MappedSubresource mappedIndices = context.Map(dynamicIndexBuffer, 0, MapMode.WriteDiscard, Vortice.Direct3D11.MapFlags.None);
-            fixed (uint* src = batch.Indices)
-                Buffer.MemoryCopy(src, (void*)mappedIndices.DataPointer, (long)batch.MaxIndices * sizeof(uint), (long)indexCount * sizeof(uint));
-            context.Unmap(dynamicIndexBuffer, 0);
-
-            context.IASetIndexBuffer(dynamicIndexBuffer, Format.R32_UInt, 0);
+            int startIndex = indexRing.Write(batch.Indices);
+            bindIndexBuffer(indexRing.NativeBuffer);
+            context.DrawIndexed((uint)indexCount, (uint)startIndex, baseVertex);
         }
         else
         {
             // The static quad buffer already holds the exact pattern for indices [0, indexCount).
-            context.IASetIndexBuffer(quadIndexBuffer, Format.R32_UInt, 0);
+            bindIndexBuffer(quadIndexBuffer);
+            context.DrawIndexed((uint)indexCount, 0, baseVertex);
         }
-
-        context.IASetVertexBuffer(0, vertexBuffer, (uint)stride, 0);
-        context.DrawIndexed((uint)indexCount, 0, 0);
 
         stat_draw_calls.Accumulator++;
         stat_vertices_drawn.Accumulator += vertexCount;
@@ -1010,21 +1036,34 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         batch.Reset();
     }
 
-    private unsafe void uploadAndDraw(ReadOnlySpan<SakuraVertex> vertices)
+    private void uploadAndDraw(ReadOnlySpan<SakuraVertex> vertices)
     {
-        int stride = SakuraVertex.Size;
-        ensureVertexCapacity(vertices.Length);
+        int firstVertex = vertexRing.Write(vertices);
+        bindVertexBuffer();
 
-        MappedSubresource mapped = context.Map(vertexBuffer, 0, MapMode.WriteDiscard, Vortice.Direct3D11.MapFlags.None);
-        fixed (SakuraVertex* src = vertices)
-            Buffer.MemoryCopy(src, (void*)mapped.DataPointer, (long)vertexBufferCapacity * stride, (long)vertices.Length * stride);
-        context.Unmap(vertexBuffer, 0);
-
-        context.IASetVertexBuffer(0, vertexBuffer, (uint)stride, 0);
-        context.Draw((uint)vertices.Length, 0);
+        context.Draw((uint)vertices.Length, (uint)firstVertex);
 
         stat_draw_calls.Accumulator++;
         stat_vertices_drawn.Accumulator += vertices.Length;
+    }
+
+    // After the ring's write, which may have replaced its buffer.
+    private void bindVertexBuffer()
+    {
+        if (boundVertexBuffer == vertexRing.NativeBuffer)
+            return;
+
+        boundVertexBuffer = vertexRing.NativeBuffer;
+        context.IASetVertexBuffer(0, boundVertexBuffer, (uint)SakuraVertex.Size, 0);
+    }
+
+    private void bindIndexBuffer(ID3D11Buffer buffer)
+    {
+        if (boundIndexBuffer == buffer)
+            return;
+
+        boundIndexBuffer = buffer;
+        context.IASetIndexBuffer(buffer, Format.R32_UInt, 0);
     }
 
     /// <summary>
@@ -1053,17 +1092,6 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         boundTextureCount = 1;
     }
 
-    private void ensureVertexCapacity(int vertexCount)
-    {
-        if (vertexBuffer != null && vertexBufferCapacity >= vertexCount)
-            return;
-
-        vertexBuffer?.Dispose();
-        vertexBufferCapacity = Math.Max(vertexCount, Math.Max(256, vertexBufferCapacity * 2));
-        vertexBuffer = device.CreateBuffer(new BufferDescription(
-            (uint)(vertexBufferCapacity * SakuraVertex.Size), BindFlags.VertexBuffer, ResourceUsage.Dynamic, CpuAccessFlags.Write));
-    }
-
     public void SetBlendMode(BlendingMode blendingMode)
     {
         if (blendingMode == currentBlendMode)
@@ -1082,8 +1110,6 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         // A custom shader's SetUniformBlock rebinds its own CBs to VS b0 / PS b1, so restore the full
         // main-shader frame state (shader, CBs, sampler, textures) not just the projection content.
         currentShader = mainShader;
-        maskState.IsBorder = 0;
-        maskState.IsEdgeEffect = 0;
         rebindFrameState();
     }
 
@@ -1110,24 +1136,20 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         if (borderThickness <= 0 || vertices.Length < 4)
             return;
 
-        // The MaskBlock upload below applies at draw time, so pending geometry has to be drawn under
-        // the previous mask state first.
+        // The mask block binds below apply at draw time, so pending geometry has to be drawn under the
+        // neutral block first.
         FlushBatch();
 
-        maskState.IsBorder = 1;
-        maskState.MaskCenter = new Vector2(maskCenter.X, maskCenter.Y);
-        maskState.MaskHalfSize = new Vector2(maskHalfSize.X, maskHalfSize.Y);
-        maskState.ShearX = shearX;
-        maskState.CornerRadius = cornerRadius;
-        maskState.BorderThickness = borderThickness;
-        maskState.BorderColor = new Vector4(borderColor.R / 255f, borderColor.G / 255f, borderColor.B / 255f, borderColor.A / 255f);
-        uploadMaskState();
-
-        DrawQuads(vertices[..4], WhitePixel);
-        FlushBatch();
-
-        maskState.IsBorder = 0;
-        uploadMaskState();
+        drawMasked(new MaskBlock
+        {
+            IsBorder = 1,
+            MaskCenter = new Vector2(maskCenter.X, maskCenter.Y),
+            MaskHalfSize = new Vector2(maskHalfSize.X, maskHalfSize.Y),
+            ShearX = shearX,
+            CornerRadius = cornerRadius,
+            BorderThickness = borderThickness,
+            BorderColor = new Vector4(borderColor.R / 255f, borderColor.G / 255f, borderColor.B / 255f, borderColor.A / 255f),
+        }, vertices[..4]);
     }
 
     /// <summary>
@@ -1146,26 +1168,37 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         if (glow)
             SetBlendMode(BlendingMode.Additive);
 
-        maskState.IsEdgeEffect = 1;
-        maskState.MaskCenter = new Vector2(maskCenter.X, maskCenter.Y);
-        maskState.MaskHalfSize = new Vector2(maskHalfSize.X, maskHalfSize.Y);
-        maskState.ShearX = shearX;
-        maskState.CornerRadius = cornerRadius;
-        maskState.EdgeRadius = edgeRadius;
-        maskState.EdgeOffset = new Vector2(offset.X, offset.Y);
-        maskState.EdgeHollow = hollow ? 1 : 0;
-        maskState.EdgeGlow = glow ? 1 : 0;
-        maskState.BorderColor = new Vector4(color.R / 255f, color.G / 255f, color.B / 255f, color.A / 255f);
-        uploadMaskState();
-
-        DrawQuads(quadVertices[..4], WhitePixel);
-        FlushBatch();
-
-        maskState.IsEdgeEffect = 0;
-        uploadMaskState();
+        drawMasked(new MaskBlock
+        {
+            IsEdgeEffect = 1,
+            MaskCenter = new Vector2(maskCenter.X, maskCenter.Y),
+            MaskHalfSize = new Vector2(maskHalfSize.X, maskHalfSize.Y),
+            ShearX = shearX,
+            CornerRadius = cornerRadius,
+            EdgeRadius = edgeRadius,
+            EdgeOffset = new Vector2(offset.X, offset.Y),
+            EdgeHollow = hollow ? 1 : 0,
+            EdgeGlow = glow ? 1 : 0,
+            BorderColor = new Vector4(color.R / 255f, color.G / 255f, color.B / 255f, color.A / 255f),
+        }, quadVertices[..4]);
 
         if (glow)
             SetBlendMode(previousBlend);
+    }
+
+    /// <summary>
+    /// Draws one quad with <paramref name="block"/> bound as the mask block, then binds the neutral
+    /// block back. The batch must be empty on entry, so nothing else is drawn under the block.
+    /// </summary>
+    private void drawMasked(in MaskBlock block, ReadOnlySpan<SakuraVertex> quad)
+    {
+        updateConstantBuffer(maskCb, block);
+        context.PSSetConstantBuffer(mask_cb_slot, maskCb);
+
+        DrawQuads(quad, WhitePixel);
+        FlushBatch();
+
+        context.PSSetConstantBuffer(mask_cb_slot, neutralMaskCb);
     }
 
     #endregion
@@ -1302,9 +1335,10 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         depthStencilOff?.Dispose();
         projectionCb?.Dispose();
         maskCb?.Dispose();
-        vertexBuffer?.Dispose();
+        neutralMaskCb?.Dispose();
+        vertexRing?.Dispose();
         quadIndexBuffer?.Dispose();
-        dynamicIndexBuffer?.Dispose();
+        indexRing?.Dispose();
 
         if (instance == this)
             instance = null;
