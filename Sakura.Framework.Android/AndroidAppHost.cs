@@ -59,17 +59,102 @@ public class AndroidAppHost : SDLAppHost
     }
 
     /// <summary>
-    /// The app's private files directory, which belongs to this app alone, so nothing needs a folder of its own in it.
+    /// Where the app keeps its data: its private files, which belong to this app alone, so nothing needs a folder of its
+    /// own in it. An app that shares its files (<see cref="SakuraActivity.SharesFiles"/>) keeps them in its folder on
+    /// shared storage instead, where a computer reaches them over USB.
     /// </summary>
-    private string filesDirectory => activity.FilesDir!.AbsolutePath;
+    /// <remarks>
+    /// Found when first asked for, which is once the logger runs, so what moving the files over has to say is heard.
+    /// </remarks>
+    public string DataDirectory => dataDirectory ??= findDataDirectory();
 
-    public override IEnumerable<string> UserStoragePaths => [filesDirectory];
+    private string? dataDirectory;
+    private bool sharingFiles;
 
-    protected override Storage GetDefaultAppStorage() => GetStorage(filesDirectory);
+    private string findDataDirectory()
+    {
+        string privateFiles = activity.FilesDir!.AbsolutePath;
+
+        if (!activity.SharesFiles)
+            return privateFiles;
+
+        // Shared storage is built into any phone of recent years, but can be missing (unmounted).
+        var shared = activity.GetExternalFilesDir(null);
+
+        if (shared == null || global::Android.OS.Environment.GetExternalStorageState(shared) != global::Android.OS.Environment.MediaMounted)
+        {
+            Logger.Error("Shared storage isn't available, so the app's files are kept where only it can reach them.");
+            return privateFiles;
+        }
+
+        sharingFiles = true;
+        moveInto(privateFiles, shared.AbsolutePath);
+        return shared.AbsolutePath;
+    }
+
+    // What the app kept before it shared its files moves along, rather than staying where the app no longer looks. The
+    // two are on different file systems, so a folder is copied under a hidden name, renamed once it's whole and only then
+    // removed: one cut off halfway is copied again next launch. Anything of the same name already there wins. Names
+    // starting with a dot are the runtime's own (fast deployment keeps its assemblies in files/.__override__) and stay.
+    private static void moveInto(string from, string to)
+    {
+        foreach (string entry in Directory.EnumerateFileSystemEntries(from))
+        {
+            string name = Path.GetFileName(entry);
+            string target = Path.Combine(to, name);
+
+            if (name.StartsWith('.') || File.Exists(target) || Directory.Exists(target))
+                continue;
+
+            try
+            {
+                if (Directory.Exists(entry))
+                {
+                    string partial = Path.Combine(to, $".{name}.moving");
+
+                    if (Directory.Exists(partial))
+                        Directory.Delete(partial, true);
+
+                    copyDirectory(entry, partial);
+                    Directory.Move(partial, target);
+                    Directory.Delete(entry, true);
+                }
+                else
+                    File.Move(entry, target);
+
+                Logger.Verbose($"Moved {name} to the app's folder on shared storage.");
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                Logger.Error($"Could not move {name} to the app's folder on shared storage; it's tried again next launch.", e);
+            }
+        }
+    }
+
+    private static void copyDirectory(string from, string to)
+    {
+        Directory.CreateDirectory(to);
+
+        foreach (string file in Directory.EnumerateFiles(from))
+            File.Copy(file, Path.Combine(to, Path.GetFileName(file)));
+
+        foreach (string directory in Directory.EnumerateDirectories(from))
+            copyDirectory(directory, Path.Combine(to, Path.GetFileName(directory)));
+    }
+
+    public override IEnumerable<string> UserStoragePaths => [DataDirectory];
+
+    protected override Storage GetDefaultAppStorage() => GetStorage(DataDirectory);
 
     // Out of the app data Android backs up, which has a 25 MB quota and is restored onto a new phone: logs are this
-    // phone's, and a cache is made again. The cache is Android's too, cleared when the phone runs short of space.
-    protected override Storage GetLogStorage() => GetStorage(Path.Combine(activity.NoBackupFilesDir!.AbsolutePath, "logs"));
+    // phone's, and a cache is made again. The cache is Android's too, cleared when the phone runs short of space. An app
+    // that shares its files keeps its logs with them, for the user to reach as on a desktop, and in the backup with them:
+    // shared storage has no folder the backup leaves out.
+    protected override Storage GetLogStorage()
+    {
+        string data = DataDirectory;
+        return GetStorage(sharingFiles ? Path.Combine(data, "logs") : Path.Combine(activity.NoBackupFilesDir!.AbsolutePath, "logs"));
+    }
 
     protected override Storage GetCacheStorage() => GetStorage(activity.CacheDir!.AbsolutePath);
 

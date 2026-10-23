@@ -39,6 +39,14 @@ public abstract class SakuraActivity : SDLActivity
     /// </summary>
     protected virtual HostOptions CreateHostOptions() => new HostOptions();
 
+    /// <summary>
+    /// Whether the app's files are the user's to reach, as on a desktop: kept, logs included, in the app's folder on the
+    /// phone's shared storage (<c>Android/data/&lt;package&gt;/files</c>), which a computer sees over USB, rather than in
+    /// its private files. Either goes with the app when it's uninstalled. Off by default; turned on, what the private files
+    /// hold moves over at the next launch.
+    /// </summary>
+    protected internal virtual bool SharesFiles => false;
+
     protected override string[] GetLibraries() => ["SDL3"];
 
     protected override SDLSurface CreateSDLSurface(Context? context) => new SakuraSurface(this, context!);
