@@ -97,11 +97,46 @@ public class IOSAppHost : SDLAppHost
     public override IPlatformHaptics Haptics { get; } = new IOSHaptics();
 
     /// <summary>
-    /// <c>Library/Application Support</c>, where the app keeps its data. Each app has a container of its own, so nothing
-    /// needs a folder of its own in it. It's backed up, and kept out of the Files app, unlike <c>Documents</c>, which is
-    /// where .NET puts <see cref="Environment.SpecialFolder.LocalApplicationData"/> on iOS.
+    /// Where the app keeps its data: <c>Library/Application Support</c>, which is backed up and out of the user's reach,
+    /// unlike <c>Documents</c>, where .NET puts <see cref="Environment.SpecialFolder.LocalApplicationData"/> on iOS. An app
+    /// whose Info.plist sets <c>UIFileSharingEnabled</c> asks for its files to be seen, in Finder's Files tab for the
+    /// device, which shows <c>Documents</c> alone, so it keeps them there instead. Each app has a container of its own, so
+    /// neither needs a folder of its own in it.
     /// </summary>
-    public string DataDirectory { get; } = userDirectory(NSSearchPathDirectory.ApplicationSupportDirectory);
+    public string DataDirectory { get; } = dataDirectory();
+
+    private static string dataDirectory()
+    {
+        string support = userDirectory(NSSearchPathDirectory.ApplicationSupportDirectory);
+
+        if (NSBundle.MainBundle.ObjectForInfoDictionary("UIFileSharingEnabled") is not NSNumber { BoolValue: true })
+            return support;
+
+        string documents = userDirectory(NSSearchPathDirectory.DocumentDirectory);
+
+        // What the app kept before it shared its files moves along, rather than staying where the app no longer looks.
+        // Anything of the same name already in Documents wins, and a move that fails is tried again next launch.
+        foreach (string entry in Directory.EnumerateFileSystemEntries(support))
+        {
+            string target = Path.Combine(documents, Path.GetFileName(entry));
+
+            if (File.Exists(target) || Directory.Exists(target))
+                continue;
+
+            try
+            {
+                if (Directory.Exists(entry))
+                    Directory.Move(entry, target);
+                else
+                    File.Move(entry, target);
+            }
+            catch (IOException)
+            {
+            }
+        }
+
+        return documents;
+    }
 
     /// <summary>
     /// <c>Library/Caches</c>: left out of backups, and cleared by the system while the app isn't running if the device is

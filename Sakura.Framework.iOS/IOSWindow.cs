@@ -41,7 +41,91 @@ internal class IOSWindow : SDLWindow
     {
         this.appType = appType;
         this.takesAudioFocus = takesAudioFocus;
+
+        copyOpenedFilesIn();
     }
+
+    // SDL's own handleURL: on its scene and app delegates, which a file opened in the app goes through.
+    private static IntPtr sdlSceneHandleUrl;
+    private static IntPtr sdlAppHandleUrl;
+
+    /// <summary>
+    /// A file another app opens in this one arrives as a URL, which SDL hands on as a drop of its path alone. That's
+    /// enough for a copy the system made into the app's own storage, but an app whose files show in the Files app
+    /// (<c>LSSupportsOpeningDocumentsInPlace</c>) gets the original where it is, readable only through the access that
+    /// comes with the URL. So SDL's handleURL: is replaced with one that copies such a file in first, as the document
+    /// picker does, and passes SDL the copy. Once for the process.
+    /// </summary>
+    private static unsafe void copyOpenedFilesIn()
+    {
+        if (sdlSceneHandleUrl != IntPtr.Zero || sdlAppHandleUrl != IntPtr.Zero)
+            return;
+
+        IntPtr selector = ObjCRuntime.Selector.GetHandle("handleURL:");
+        sdlSceneHandleUrl = replaceMethod("SDLUIKitSceneDelegate", selector, (IntPtr)(delegate* unmanaged<IntPtr, IntPtr, IntPtr, void>)&sceneHandleUrl);
+        sdlAppHandleUrl = replaceMethod("SDLUIKitDelegate", selector, (IntPtr)(delegate* unmanaged<IntPtr, IntPtr, IntPtr, void>)&appHandleUrl);
+
+        if (sdlSceneHandleUrl == IntPtr.Zero && sdlAppHandleUrl == IntPtr.Zero)
+            Logger.Warning("SDL's delegates have no handleURL: to take over, so a file opened in place from another app may not be readable.");
+    }
+
+    // The method's old implementation, or zero where the class or the method isn't there.
+    private static IntPtr replaceMethod(string className, IntPtr selector, IntPtr implementation)
+    {
+        IntPtr cls = ObjCRuntime.Class.GetHandle(className);
+
+        if (cls == IntPtr.Zero)
+            return IntPtr.Zero;
+
+        IntPtr method = class_getInstanceMethod(cls, selector);
+        return method == IntPtr.Zero ? IntPtr.Zero : method_setImplementation(method, implementation);
+    }
+
+    [System.Runtime.InteropServices.UnmanagedCallersOnly]
+    private static void sceneHandleUrl(IntPtr self, IntPtr selector, IntPtr url) => handleUrl(sdlSceneHandleUrl, self, selector, url);
+
+    [System.Runtime.InteropServices.UnmanagedCallersOnly]
+    private static void appHandleUrl(IntPtr self, IntPtr selector, IntPtr url) => handleUrl(sdlAppHandleUrl, self, selector, url);
+
+    private static unsafe void handleUrl(IntPtr sdl, IntPtr self, IntPtr selector, IntPtr url)
+    {
+        NSUrl? copy = null;
+
+        try
+        {
+            if (ObjCRuntime.Runtime.GetNSObject<NSUrl>(url) is NSUrl { IsFileUrl: true, Path: string path } opened && !insideContainer(path)
+                && copyIn(opened, "Opened", "the app that opened it") is string copied)
+            {
+                copy = NSUrl.FromFilename(copied);
+            }
+        }
+        catch (Exception e)
+        {
+            // Never into SDL's caller, which is UIKit's: SDL gets the original, as it would have.
+            Logger.Error("Couldn't copy in a file opened in the app.", e);
+        }
+
+        ((delegate* unmanaged<IntPtr, IntPtr, IntPtr, void>)sdl)(self, selector, copy?.Handle ?? url);
+        GC.KeepAlive(copy);
+    }
+
+    // Whether a path is in the app's own container, which it can read without being given access. Paths there come with
+    // or without the /private prefix /var has.
+    private static bool insideContainer(string path)
+    {
+        // Not known, so not copied: SDL gets the file as it would have.
+        if (NSFileManager.HomeDirectory is not string home)
+            return true;
+
+        static string trim(string p) => p.StartsWith("/private/", StringComparison.Ordinal) ? p["/private".Length..] : p;
+        return trim(path).StartsWith(trim(home).TrimEnd('/') + "/", StringComparison.Ordinal);
+    }
+
+    [DllImport("/usr/lib/libobjc.dylib")]
+    private static extern IntPtr class_getInstanceMethod(IntPtr cls, IntPtr selector);
+
+    [DllImport("/usr/lib/libobjc.dylib")]
+    private static extern IntPtr method_setImplementation(IntPtr method, IntPtr implementation);
 
     protected override void ConfigureHints()
     {
@@ -194,7 +278,7 @@ internal class IOSWindow : SDLWindow
 
         picker.DidPickDocumentAtUrls += (_, e) =>
         {
-            string[] paths = e.Urls.Select(copyIn).OfType<string>().ToArray();
+            string[] paths = e.Urls.Select(url => copyIn(url, "Picked", "the document picker")).OfType<string>().ToArray();
             Logger.Verbose($"Document picker: {e.Urls.Length} picked, {paths.Length} copied in");
 
             callback(paths.Length > 0 || e.Urls.Length == 0 ? FileDialogResult.FromPaths(paths) : FileDialogResult.Failed("The picked files couldn't be read."));
@@ -205,35 +289,39 @@ internal class IOSWindow : SDLWindow
     }
 
     /// <summary>
-    /// Copies a picked file into a folder of its own in the app's temporary storage, keeping its name, and returns where
-    /// to; null if it couldn't be read. The file coordinator downloads a file that's only in iCloud first.
+    /// Copies a file the app was handed (picked, or opened in place) into a folder of its own in the app's temporary
+    /// storage, keeping its name, and returns where to; null if it couldn't be read. The file coordinator downloads a file
+    /// that's only in iCloud first.
     /// </summary>
-    private static string? copyIn(NSUrl url)
+    /// <param name="url">The file, with whatever access to it the system gave the app.</param>
+    /// <param name="kind">The folder in temporary storage these go under.</param>
+    /// <param name="from">Where the file came from, for the log.</param>
+    private static string? copyIn(NSUrl url, string kind, string from)
     {
         bool scoped = url.StartAccessingSecurityScopedResource();
 
         try
         {
-            string folder = Path.Combine(Path.GetTempPath(), "Picked", Guid.NewGuid().ToString("N"));
+            string folder = Path.Combine(Path.GetTempPath(), kind, Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(folder);
 
             string? copied = null;
 
             new NSFileCoordinator().CoordinateRead(url, NSFileCoordinatorReadingOptions.WithoutChanges, out NSError? error, readable =>
             {
-                string destination = Path.Combine(folder, readable.LastPathComponent ?? "picked");
+                string destination = Path.Combine(folder, readable.LastPathComponent ?? "file");
                 File.Copy(readable.Path!, destination);
                 copied = destination;
             });
 
             if (error != null)
-                Logger.Error($"Couldn't read {url.LastPathComponent} from the document picker: {error.LocalizedDescription}");
+                Logger.Error($"Couldn't read {url.LastPathComponent} from {from}: {error.LocalizedDescription}");
 
             return copied;
         }
         catch (Exception ex)
         {
-            Logger.Error($"Couldn't copy {url.LastPathComponent} from the document picker.", ex);
+            Logger.Error($"Couldn't copy {url.LastPathComponent} from {from}.", ex);
             return null;
         }
         finally
