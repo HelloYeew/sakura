@@ -41,6 +41,27 @@ public class GameplayClockTest
     }
 
     [Test]
+    public void TestASmallSeekWhilePlayingIsTakenAtOnce()
+    {
+        gameplay.Start();
+        gameplay.ProcessFrame();
+
+        for (int i = 0; i < 10; i++)
+        {
+            source.AdvanceBy(16);
+            reference.CurrentTime += 16;
+            gameplay.ProcessFrame();
+        }
+
+        // A step back shorter than the allowable error, as beat-stepping in an editor makes: a jump, not jitter.
+        double target = gameplay.CurrentTime - 20;
+        gameplay.Seek(target);
+        gameplay.ProcessFrame();
+
+        Assert.That(gameplay.CurrentTime, Is.EqualTo(target).Within(0.001));
+    }
+
+    [Test]
     public void TestSeekForward()
     {
         gameplay.Start();

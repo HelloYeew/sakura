@@ -211,4 +211,131 @@ public class InterpolatingFramedClockTest
     }
 
     #endregion
+
+    #region Drift recovery
+
+    [Test]
+    public void TestClosesAGapWithTheSourceWithoutSnapping()
+    {
+        source.Start();
+        source.AdvanceBy(100);
+        interpolating.ProcessFrame();
+
+        // The source moves ahead by less than the allowable error, then both run in step: the gap is
+        // absorbed rather than carried for good.
+        source.AdvanceBy(8);
+
+        for (int i = 0; i < 60; i++)
+        {
+            source.AdvanceBy(16);
+            reference.CurrentTime += 16;
+            interpolating.ProcessFrame();
+
+            Assert.That(interpolating.IsInterpolating, Is.True, "A gap within the allowable error must not snap");
+        }
+
+        Assert.That(interpolating.CurrentTime, Is.EqualTo(source.CurrentTime).Within(0.5));
+    }
+
+    [Test]
+    public void TestFollowsAnOutputCallingBackEvery20MillisecondsSmoothly()
+    {
+        // The source is an audio position that only moves once a callback, 20 ms of audio at a time (an
+        // output off the fast path, or Bluetooth), read by frames 1/60 s apart.
+        const double frame = 1000.0 / 60;
+        const double callback = 20;
+
+        source.Start();
+        interpolating.ProcessFrame();
+
+        double last = interpolating.CurrentTime;
+        double worstStep = 0;
+        double worstError = 0;
+
+        for (int i = 1; i <= 600; i++)
+        {
+            double now = i * frame;
+            reference.CurrentTime = now;
+            source.AdvanceBy(Math.Floor(now / callback) * callback - source.CurrentTime);
+            interpolating.ProcessFrame();
+
+            Assert.That(interpolating.IsInterpolating, Is.True, $"Snapped at frame {i}: a callback's step is no discontinuity");
+
+            worstStep = Math.Max(worstStep, Math.Abs(interpolating.CurrentTime - last - frame));
+            worstError = Math.Max(worstError, Math.Abs(interpolating.CurrentTime - (now - callback / 2)));
+            last = interpolating.CurrentTime;
+        }
+
+        // Frame to frame, the time moves within a few milliseconds of real time, and it stays around the middle of
+        // each callback's step, where the audio actually is on average.
+        Assert.That(worstStep, Is.LessThan(5));
+        Assert.That(worstError, Is.LessThan(callback / 2 + 1));
+    }
+
+    [Test]
+    public void TestWaitsForASourceThatWasStartedToMove()
+    {
+        source.Start();
+        source.AdvanceBy(1000);
+        interpolating.ProcessFrame();
+
+        source.Stop();
+        reference.CurrentTime += 16;
+        interpolating.ProcessFrame();
+
+        // Started again, the source holds where it was for a few frames, as a track does until the audio of where it
+        // was put is decoded and reaches the output, give or take a rounding (moved ahead by its latency, and that taken
+        // off again).
+        source.Start();
+        source.AdvanceBy(0.0001);
+
+        for (int i = 0; i < 4; i++)
+        {
+            reference.CurrentTime += 16;
+            interpolating.ProcessFrame();
+
+            Assert.That(interpolating.CurrentTime, Is.EqualTo(1000).Within(0.001), "Ran on ahead of a source that hadn't moved yet");
+        }
+
+        source.AdvanceBy(16);
+        reference.CurrentTime += 16;
+        interpolating.ProcessFrame();
+        Assert.That(interpolating.CurrentTime, Is.EqualTo(1016).Within(0.001));
+
+        source.AdvanceBy(16);
+        reference.CurrentTime += 16;
+        interpolating.ProcessFrame();
+        Assert.That(interpolating.IsInterpolating, Is.True, "Didn't go back to interpolating once the source moved");
+        Assert.That(interpolating.CurrentTime, Is.EqualTo(1032).Within(1));
+    }
+
+    [Test]
+    public void TestNeverThrowsNorRunsBackwardsAgainstAnErraticSource()
+    {
+        var random = new Random(1234);
+
+        source.Start();
+        source.AdvanceBy(1000);
+        interpolating.ProcessFrame();
+
+        double last = interpolating.CurrentTime;
+
+        for (int i = 0; i < 20_000; i++)
+        {
+            double elapsed = random.NextDouble() * 50;
+            reference.CurrentTime += elapsed;
+
+            // Mostly in step, now and then stalling or jumping either way by up to 40 ms.
+            source.AdvanceBy(elapsed + (random.NextDouble() < 0.2 ? (random.NextDouble() - 0.5) * 80 : 0));
+
+            Assert.DoesNotThrow(() => interpolating.ProcessFrame());
+
+            if (interpolating.IsInterpolating)
+                Assert.That(interpolating.CurrentTime, Is.GreaterThanOrEqualTo(last), "Interpolated time ran backwards");
+
+            last = interpolating.CurrentTime;
+        }
+    }
+
+    #endregion
 }

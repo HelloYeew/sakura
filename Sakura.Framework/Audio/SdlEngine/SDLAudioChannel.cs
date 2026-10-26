@@ -468,11 +468,11 @@ internal class SDLAudioChannel : ISDLChannel, IDuckable
 
             long pending = Interlocked.Read(ref pendingSeekMicroseconds);
 
-            // Reported uncompensated, as the native engine does for the same case: nothing of the new
-            // position has been mixed yet, let alone queued, so there is no output latency to subtract
-            // and subtracting one would report the seek as landing short of where it was sent.
+            // Reported as it will be once the seek lands, as the native engine does for the same case:
+            // nothing of the new position is heard until the output's latency has passed, and reported
+            // whole now, the position would step back by the latency as the seek landed.
             if (pending >= 0)
-                return pending / 1000.0;
+                return latency.Compensate(pending / 1000.0, Context.OutputLatencyMs, Frequency.Value * sourceTempo);
 
             return latency.Compensate(source.PositionMs, Context.OutputLatencyMs, Frequency.Value * sourceTempo);
         }
@@ -482,6 +482,9 @@ internal class SDLAudioChannel : ISDLChannel, IDuckable
                 return;
 
             long target = (long)(Math.Max(0, value) * 1000.0);
+
+            // Before the pending position is read: through the old floor, a short seek back would read as where it was.
+            latency.Reset();
             Interlocked.Exchange(ref pendingSeekMicroseconds, target);
 
             Context.EnqueueAction(() =>
@@ -498,6 +501,8 @@ internal class SDLAudioChannel : ISDLChannel, IDuckable
     }
 
     public double Length => source?.LengthMs ?? 0;
+
+    public double OutputLatency => Context.OutputLatencyMs;
 
     public float AmplitudeLeft => CurrentAmplitudes.AmplitudeLeft;
 

@@ -79,6 +79,13 @@ public interface IAudioChannel : IDisposable, IHasAmplitudes
     double CurrentTime { get; set; }
 
     /// <summary>
+    /// How long the output takes to bring what's mixed to the listener, in milliseconds of real time, which
+    /// <see cref="CurrentTime"/> is already behind the mix by. Started from a position, the channel is only heard there
+    /// this much later. 0 where the backend doesn't take it off <see cref="CurrentTime"/>.
+    /// </summary>
+    double OutputLatency => 0;
+
+    /// <summary>
     /// Gets the total length of the audio in milliseconds.
     /// </summary>
     double Length { get; }

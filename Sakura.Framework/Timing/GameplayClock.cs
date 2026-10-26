@@ -89,7 +89,14 @@ public class GameplayClock : IFrameBasedClock, IAdjustableClock
 
     public void Start() => decoupled.Start();
     public void Stop() => decoupled.Stop();
-    public bool Seek(double position) => decoupled.Seek(position);
+    public bool Seek(double position)
+    {
+        bool sought = decoupled.Seek(position);
+
+        // A seek is a jump to take as it is, however small: smoothed, one shorter than the allowable error was eased into.
+        interpolated.Resync();
+        return sought;
+    }
     public void Reset() => decoupled.Reset();
 
     public override string ToString() => $"GameplayClock: {CurrentTime:F2}ms (offset: {Offset}, rate: {Rate}, running: {IsRunning})";
