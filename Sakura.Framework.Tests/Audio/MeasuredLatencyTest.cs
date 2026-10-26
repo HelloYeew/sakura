@@ -112,4 +112,37 @@ public class MeasuredLatencyTest
         latency.Add(200);
         Assert.That(latency.Milliseconds, Is.EqualTo(200));
     }
+
+    [Test]
+    public void TestAFewImpossibleReadingsLeaveTheFigure()
+    {
+        var latency = new MeasuredLatency();
+        latency.Add(110);
+
+        for (int i = 0; i < 5; i++)
+            latency.Add(5000);
+
+        Assert.That(latency.Milliseconds, Is.EqualTo(110));
+    }
+
+    [Test]
+    public void TestReadingsThatKeepMakingNoSenseDropTheFigure()
+    {
+        var latency = new MeasuredLatency();
+        latency.Add(110);
+
+        // As after the system rebuilt the stream under it: a bad figure was taken, and nothing since adds up.
+        for (int i = 0; i < 3; i++)
+            latency.Add(862);
+
+        Assert.That(latency.Milliseconds, Is.EqualTo(862));
+
+        for (int i = 0; i < 10; i++)
+            latency.Add(-40_000);
+
+        Assert.That(latency.Milliseconds, Is.Null, "A figure nothing has borne out for a second was still being used");
+
+        latency.Add(112);
+        Assert.That(latency.Milliseconds, Is.EqualTo(112));
+    }
 }
