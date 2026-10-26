@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Threading;
 using Sakura.Framework.Logging;
 
 namespace Sakura.Framework.Threading;
@@ -17,7 +18,7 @@ public class ThreadRunner : IDisposable
     /// <summary>
     /// Held for the length of each single-threaded frame, so <see cref="Pause"/> can wait for one in progress.
     /// </summary>
-    private readonly object singleThreadedFrameLock = new object();
+    private readonly Lock singleThreadedFrameLock = new Lock();
 
     private volatile bool paused;
 

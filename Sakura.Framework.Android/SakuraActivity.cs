@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Threading;
 using Android.Content;
 using Android.Graphics;
 using Android.Hardware.Display;
@@ -51,7 +52,7 @@ public abstract class SakuraActivity : SDLActivity
 
     protected override SDLSurface CreateSDLSurface(Context? context) => new SakuraSurface(this, context!);
 
-    private readonly object coveredInsetsLock = new object();
+    private readonly Lock coveredInsetsLock = new Lock();
     private MarginPadding? coveredInsets;
 
     /// <summary>

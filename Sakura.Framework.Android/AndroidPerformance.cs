@@ -4,6 +4,7 @@
 using System;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Threading;
 using Android.App;
 using Android.Content;
 using Android.OS;
@@ -191,7 +192,7 @@ internal sealed class AndroidPerformance : IPlatformPerformance
         private const long interval_ms = 1000;
 
         private readonly Func<T, T> read;
-        private readonly object gate = new object();
+        private readonly Lock gate = new Lock();
         private T value;
 
         // Null until the first read, rather than a time long ago, which would overflow when subtracted from now.

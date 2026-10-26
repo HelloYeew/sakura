@@ -458,7 +458,7 @@ public abstract class AppHost : IDisposable
 
     private static readonly SemaphoreSlim host_running_mutex = new SemaphoreSlim(1);
 
-    private readonly object lifecycleLock = new object();
+    private readonly Lock lifecycleLock = new Lock();
     private bool inBackground;
 
     /// <summary>
