@@ -41,6 +41,20 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
     public VkPresentModeKHR PresentMode { get; private set; }
 
     /// <summary>
+    /// How the content is turned in the images, which are in the display's own orientation: as the surface is turned
+    /// from it (an upright phone's panel showing a landscape app, a quarter turn), so the system has nothing left to
+    /// turn. <see cref="Extent"/> is in the images' orientation, the window's size the other way round after a quarter
+    /// turn. Identity on surfaces that don't turn (desktops).
+    /// </summary>
+    public VkSurfaceTransformFlagsKHR Transform { get; private set; } = VkSurfaceTransformFlagsKHR.Identity;
+
+    /// <summary>
+    /// Whether <paramref name="transform"/> turns the content a quarter either way, swapping its width and height.
+    /// </summary>
+    public static bool IsQuarterTurn(VkSurfaceTransformFlagsKHR transform)
+        => transform is VkSurfaceTransformFlagsKHR.Rotate90 or VkSurfaceTransformFlagsKHR.Rotate270;
+
+    /// <summary>
     /// The pass every frame opens on this swapchain's images.
     /// </summary>
     public VkRenderPass RenderPass { get; private set; }
@@ -146,6 +160,7 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
 
         VulkanDevice.Check(queried, "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
 
+        var transform = chooseTransform(capabilities);
         var extent = chooseExtent(capabilities);
 
         if (extent.width == 0 || extent.height == 0)
@@ -154,15 +169,28 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
             return false;
         }
 
+        // The images stay in the display's own orientation, and the renderer draws into them turned (Transform). A
+        // landscape app on a phone whose panel is upright is turned a quarter: left to the system, it costs the
+        // compositor a rotation every frame, and Android reports every present suboptimal while the two differ.
+        if (IsQuarterTurn(transform))
+            extent = new VkExtent2D { width = extent.height, height = extent.width };
+
         device.WaitIdle();
 
+        // The surface can go between the capabilities above and these (a file picker opening over an Android app).
         if (!surfaceFormatChosen)
         {
-            surfaceFormat = chooseSurfaceFormat();
+            if (chooseSurfaceFormat() is not VkSurfaceFormatKHR format)
+                return surfaceLost();
+
+            surfaceFormat = format;
             surfaceFormatChosen = true;
         }
 
-        uncappedMode = chooseUncappedMode();
+        if (chooseUncappedMode() is not VkPresentModeKHR uncapped)
+            return surfaceLost();
+
+        uncappedMode = uncapped;
         var presentMode = vsync ? VkPresentModeKHR.Fifo : uncappedMode;
 
         uint imageCount = Math.Max(desired_image_count, capabilities.minImageCount);
@@ -199,9 +227,7 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
             imageSharingMode = shared ? VkSharingMode.Concurrent : VkSharingMode.Exclusive,
             queueFamilyIndexCount = shared ? 2u : 0u,
             pQueueFamilyIndices = shared ? families : null,
-            // Desktop surfaces don't rotate. A rotated surface (Android) would need its current transform
-            // here, with the window projection rotated to match.
-            preTransform = (capabilities.supportedTransforms & VkSurfaceTransformFlagsKHR.Identity) != 0 ? VkSurfaceTransformFlagsKHR.Identity : capabilities.currentTransform,
+            preTransform = transform,
             compositeAlpha = chooseCompositeAlpha(capabilities.supportedCompositeAlpha),
             presentMode = presentMode,
             clipped = true,
@@ -226,6 +252,7 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
         Handle = swapchain;
         Format = surfaceFormat.format;
         Extent = extent;
+        Transform = transform;
         PresentMode = presentMode;
         switchesModes = switching;
         RenderPass = renderPasses.Get(Format, VulkanPassKind.SwapchainClear);
@@ -374,6 +401,11 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
     /// </summary>
     public int ReadPastPresentationTimings(Span<VkPastPresentationTimingGOOGLE> timings)
     {
+        // Before the first build, and after the surface went with the background, there's no swapchain to ask, and
+        // Android's loader reads through whatever handle it's given.
+        if (Handle.IsNull)
+            return 0;
+
         uint count = (uint)timings.Length;
 
         fixed (VkPastPresentationTimingGOOGLE* first = timings)
@@ -393,7 +425,8 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
     /// <paramref name="timeoutNanoseconds"/> passes (<c>VK_TIMEOUT</c>; 0 only checks). Only valid for an
     /// ID this swapchain presented, so callers forget their IDs when it is rebuilt.
     /// </summary>
-    public VkResult WaitForPresent(ulong presentId, ulong timeoutNanoseconds) => device.Api.vkWaitForPresentKHR(Handle, presentId, timeoutNanoseconds);
+    public VkResult WaitForPresent(ulong presentId, ulong timeoutNanoseconds)
+        => Handle.IsNull ? VkResult.ErrorOutOfDateKHR : device.Api.vkWaitForPresentKHR(Handle, presentId, timeoutNanoseconds);
 
     public VkFramebuffer GetFramebuffer(uint imageIndex) => framebuffers[imageIndex];
 
@@ -532,15 +565,42 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
         };
     }
 
-    private VkSurfaceFormatKHR chooseSurfaceFormat()
+    /// <summary>
+    /// The turn the content is drawn at: the surface's own where it's a plain turn, so the system has none left to do,
+    /// and none for anything else (a mirrored transform, which no phone reports).
+    /// </summary>
+    private static VkSurfaceTransformFlagsKHR chooseTransform(VkSurfaceCapabilitiesKHR capabilities)
+    {
+        var current = capabilities.currentTransform;
+        bool plainTurn = current is VkSurfaceTransformFlagsKHR.Identity or VkSurfaceTransformFlagsKHR.Rotate90
+            or VkSurfaceTransformFlagsKHR.Rotate180 or VkSurfaceTransformFlagsKHR.Rotate270;
+
+        if (plainTurn && (capabilities.supportedTransforms & current) != 0)
+            return current;
+
+        return (capabilities.supportedTransforms & VkSurfaceTransformFlagsKHR.Identity) != 0 ? VkSurfaceTransformFlagsKHR.Identity : current;
+    }
+
+    /// <returns>Null when the surface was lost while asking.</returns>
+    private VkSurfaceFormatKHR? chooseSurfaceFormat()
     {
         var api = device.InstanceApi;
 
         uint count;
-        VulkanDevice.Check(api.vkGetPhysicalDeviceSurfaceFormatsKHR(device.PhysicalDevice, Surface, &count, null), "vkGetPhysicalDeviceSurfaceFormatsKHR");
+        var result = api.vkGetPhysicalDeviceSurfaceFormatsKHR(device.PhysicalDevice, Surface, &count, null);
+
+        if (result == VkResult.ErrorSurfaceLostKHR)
+            return null;
+
+        VulkanDevice.Check(result, "vkGetPhysicalDeviceSurfaceFormatsKHR");
 
         var formats = stackalloc VkSurfaceFormatKHR[(int)count];
-        VulkanDevice.Check(api.vkGetPhysicalDeviceSurfaceFormatsKHR(device.PhysicalDevice, Surface, &count, formats), "vkGetPhysicalDeviceSurfaceFormatsKHR");
+        result = api.vkGetPhysicalDeviceSurfaceFormatsKHR(device.PhysicalDevice, Surface, &count, formats);
+
+        if (result == VkResult.ErrorSurfaceLostKHR)
+            return null;
+
+        VulkanDevice.Check(result, "vkGetPhysicalDeviceSurfaceFormatsKHR");
 
         // Shaders write linear color and rely on the attachment to encode it, as the sRGB back buffers
         // of the other backends do. BGRA is what desktops usually offer, RGBA what Android does.
@@ -576,15 +636,26 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
     /// The mode presents use with vsync off. FIFO, the only mode every device has and the only one that
     /// waits for vertical blank, is the vsync mode.
     /// </summary>
-    private VkPresentModeKHR chooseUncappedMode()
+    /// <returns>Null when the surface was lost while asking: Android's asks the window, which may be gone.</returns>
+    private VkPresentModeKHR? chooseUncappedMode()
     {
         var api = device.InstanceApi;
 
         uint count;
-        VulkanDevice.Check(api.vkGetPhysicalDeviceSurfacePresentModesKHR(device.PhysicalDevice, Surface, &count, null), "vkGetPhysicalDeviceSurfacePresentModesKHR");
+        var result = api.vkGetPhysicalDeviceSurfacePresentModesKHR(device.PhysicalDevice, Surface, &count, null);
+
+        if (result == VkResult.ErrorSurfaceLostKHR)
+            return null;
+
+        VulkanDevice.Check(result, "vkGetPhysicalDeviceSurfacePresentModesKHR");
 
         var modes = stackalloc VkPresentModeKHR[(int)count];
-        VulkanDevice.Check(api.vkGetPhysicalDeviceSurfacePresentModesKHR(device.PhysicalDevice, Surface, &count, modes), "vkGetPhysicalDeviceSurfacePresentModesKHR");
+        result = api.vkGetPhysicalDeviceSurfacePresentModesKHR(device.PhysicalDevice, Surface, &count, modes);
+
+        if (result == VkResult.ErrorSurfaceLostKHR)
+            return null;
+
+        VulkanDevice.Check(result, "vkGetPhysicalDeviceSurfacePresentModesKHR");
 
         // Uncapped: tear rather than wait (IMMEDIATE), as the other renderers do, or at least never block
         // on the display (MAILBOX).
@@ -670,7 +741,8 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
     {
         // The size is left out: it changes on every resize, and the rest rarely does.
         string switching = switchesModes ? $", switching to {(vsync ? uncappedMode : VkPresentModeKHR.Fifo)} without a rebuild" : string.Empty;
-        string description = $"{Format} {surfaceFormat.colorSpace}, {PresentMode}{(vsync ? string.Empty : PresentMode == VkPresentModeKHR.Fifo ? " (uncapped requested, but FIFO is all the window offers)" : string.Empty)}{switching}, {images.Length} images";
+        string turned = Transform == VkSurfaceTransformFlagsKHR.Identity ? string.Empty : $", drawn turned ({Transform}) for the display";
+        string description = $"{Format} {surfaceFormat.colorSpace}, {PresentMode}{(vsync ? string.Empty : PresentMode == VkPresentModeKHR.Fifo ? " (uncapped requested, but FIFO is all the window offers)" : string.Empty)}{switching}, {images.Length} images{turned}";
 
         if (description == lastDescription)
             return;

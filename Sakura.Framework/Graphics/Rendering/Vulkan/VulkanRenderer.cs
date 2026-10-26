@@ -248,6 +248,17 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     private readonly ClipStack clips = new ClipStack();
 
     private Matrix4x4 projectionMatrix = Matrix4x4.Identity;
+
+    /// <summary>
+    /// The window's projection before the swapchain's turn (<see cref="VulkanSwapchain.Transform"/>) is applied.
+    /// </summary>
+    private Matrix4x4 windowProjection = Matrix4x4.Identity;
+
+    /// <summary>
+    /// The turn the window's projection was last given.
+    /// </summary>
+    private VkSurfaceTransformFlagsKHR windowTransform = VkSurfaceTransformFlagsKHR.Identity;
+
     private float renderScaleX = 1f;
     private float renderScaleY = 1f;
 
@@ -553,6 +564,9 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         targetStack.Clear();
         resetTextureSlotsToWhite();
 
+        // A rebuild in the acquire may have turned the display (a phone flipped over).
+        applySwapchainTransform();
+
         if (offscreenScreen is VulkanFrameBuffer screen)
         {
             currentTarget = screen;
@@ -577,12 +591,49 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
         // Vulkan's clip space points +Y down, so this "bottom-up" ortho puts the origin at the top-left,
         // exactly as it does on Metal, where the shader flips Y instead.
-        projectionMatrix = Matrix4x4.CreateOrthographicOffCenter(0, logicalWidth, 0, logicalHeight, -1, 1);
+        windowProjection = Matrix4x4.CreateOrthographicOffCenter(0, logicalWidth, 0, logicalHeight, -1, 1);
+        projectionMatrix = windowProjection * turnFor(windowTransform);
 
         FlushBatch();
         var block = new ProjectionBlock { Projection = projectionMatrix };
         writeUniform(0, in block);
     }
+
+    /// <summary>
+    /// Turns the window's projection to the swapchain's <see cref="VulkanSwapchain.Transform"/> after a rebuild changed
+    /// it. Only at the start of a frame, while the window is the target.
+    /// </summary>
+    private void applySwapchainTransform()
+    {
+        if (swapchain == null || swapchain.Transform == windowTransform)
+            return;
+
+        windowTransform = swapchain.Transform;
+        projectionMatrix = windowProjection * turnFor(windowTransform);
+
+        FlushBatch();
+        var block = new ProjectionBlock { Projection = projectionMatrix };
+        writeUniform(0, in block);
+    }
+
+    /// <summary>
+    /// The turn in clip space that draws the window into images in the display's own orientation, as
+    /// <paramref name="transform"/> asks of them. The images cover the whole clip space either way round, so the
+    /// viewport needs nothing more.
+    /// </summary>
+    /// <remarks>
+    /// The rotations about Z by 90, 180 and 270 degrees, as the platform's guide applies them to clip space, written out
+    /// exactly rather than through sines that leave a little of the other axis in.
+    /// </remarks>
+    private static Matrix4x4 turnFor(VkSurfaceTransformFlagsKHR transform) => transform switch
+    {
+        // (x, y) to (-y, x).
+        VkSurfaceTransformFlagsKHR.Rotate90 => new Matrix4x4(0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1),
+        VkSurfaceTransformFlagsKHR.Rotate180 => new Matrix4x4(-1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1),
+        // (x, y) to (y, -x).
+        VkSurfaceTransformFlagsKHR.Rotate270 => new Matrix4x4(0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1),
+        _ => Matrix4x4.Identity
+    };
 
     public void Draw(IClock clock)
     {
