@@ -111,6 +111,21 @@ internal sealed class NativeStreamFeeder : IDecodeSource, IDisposable
 
     private bool isDisposed;
 
+    /// <summary>
+    /// Whether the last <see cref="Seek"/> is still waiting for the audio of its position to be in the ring, and which
+    /// one it was.
+    /// </summary>
+    private bool seekUnfilled;
+
+    private int seekGeneration;
+
+    /// <summary>
+    /// Raised on the decode thread once the audio of the position the last <see cref="Seek"/> moved to is in the ring
+    /// (or there's none to be had, at the end), with the generation that seek was given. Until then the ring held the
+    /// old position's audio, then nothing.
+    /// </summary>
+    public Action<int>? SeekFilled;
+
     public double LengthMs { get; }
 
     /// <summary>
@@ -127,7 +142,7 @@ internal sealed class NativeStreamFeeder : IDecodeSource, IDisposable
                 if (isDisposed)
                     return false;
 
-                if (pendingSeekMs.HasValue)
+                if (pendingSeekMs.HasValue || seekUnfilled)
                     return true;
 
                 // Keep coming back while a discard is outstanding: the audio thread applies it on its
@@ -223,7 +238,9 @@ internal sealed class NativeStreamFeeder : IDecodeSource, IDisposable
     /// Records a seek for the decode thread to apply. Returns immediately; the audio thread's side of
     /// it is the channel's <see cref="SakuraAudioEngine.Seek"/>.
     /// </summary>
-    public void Seek(double milliseconds)
+    /// <param name="milliseconds">The position to decode from.</param>
+    /// <param name="generation">Handed back by <see cref="SeekFilled"/>, which tells this seek from an earlier one.</param>
+    public void Seek(double milliseconds, int generation = 0)
     {
         lock (sync)
         {
@@ -231,6 +248,8 @@ internal sealed class NativeStreamFeeder : IDecodeSource, IDisposable
                 return;
 
             pendingSeekMs = Math.Max(0, milliseconds);
+            seekUnfilled = true;
+            seekGeneration = generation;
 
             // Cleared here as well as by the flush so that WantsDecode does not read a stale end and
             // decline to refill the position we are seeking to.
@@ -249,6 +268,13 @@ internal sealed class NativeStreamFeeder : IDecodeSource, IDisposable
     }
 
     public bool PumpDecode()
+    {
+        bool pumped = pump();
+        reportFilled();
+        return pumped;
+    }
+
+    private bool pump()
     {
         lock (decodeSync)
         {
@@ -367,6 +393,32 @@ internal sealed class NativeStreamFeeder : IDecodeSource, IDisposable
     }
 
     /// <summary>
+    /// Raises <see cref="SeekFilled"/> once the last seek's discard has landed and the ring holds audio from its position,
+    /// or the decoder has none there. Holding <see cref="decodeSync"/>, so never after <see cref="Dispose"/>.
+    /// </summary>
+    private void reportFilled()
+    {
+        lock (decodeSync)
+        {
+            int generation;
+
+            lock (sync)
+            {
+                if (!seekUnfilled || isDisposed || pendingSeekMs.HasValue || engine.StreamFlushPending(voice))
+                    return;
+
+                if (!decoderDrained && engine.StreamBuffered(voice) <= 0)
+                    return;
+
+                seekUnfilled = false;
+                generation = seekGeneration;
+            }
+
+            SeekFilled?.Invoke(generation);
+        }
+    }
+
+    /// <summary>
     /// Decodes the next block into <see cref="convertScratch"/>, in the device's format.
     /// </summary>
     /// <param name="read">Floats the decoder produced before conversion: 0 once it has run out.</param>
@@ -378,6 +430,15 @@ internal sealed class NativeStreamFeeder : IDecodeSource, IDisposable
             // Already the device's format: decoded straight into the block that gets written.
             read = decoder!.Read(convertScratch);
             return read;
+        }
+
+        // A block's worth already converted goes out first. Resampling up makes more than it takes (a 44.1 kHz song played
+        // at 48 kHz, 9% more), and decoding a block every pass regardless would heap the rest up in the converter for the
+        // whole song.
+        if (converter.Available >= convertScratch.Length)
+        {
+            read = convertScratch.Length;
+            return converter.Get(convertScratch);
         }
 
         read = decoder!.Read(decodeScratch);
