@@ -35,8 +35,6 @@ namespace Sakura.Framework.Platform;
 
 public abstract class AppHost : IDisposable
 {
-    private static readonly int frame_sync_value_count = Enum.GetValues<FrameSync>().Length;
-
     private static readonly double ms_per_tick = 1000.0 / Stopwatch.Frequency;
 
     private static readonly GlobalStatistic<double> stat_uptime = GlobalStatistics.Get<double>("Host", "Uptime", StatisticKind.Gauge, StatisticUnit.Milliseconds);
@@ -1110,13 +1108,6 @@ public abstract class AppHost : IDisposable
 
         // Global hotkey
         // TODO: Global hotkey should be in list (don't have to be able to change since it's framework level)
-        if (!e.IsRepeat && e.Key == Key.F10 && (e.Modifiers & KeyModifiers.Control) > 0)
-        {
-            int currentValue = (int)FrameLimiter.Value;
-            int nextValue = (currentValue + 1) % frame_sync_value_count;
-            FrameLimiter.Value = (FrameSync)nextValue;
-        }
-
         if (!e.IsRepeat && e.Key == Key.F11 && (e.Modifiers & KeyModifiers.Control) == 0)
         {
             ScheduleToMainThread(() =>
