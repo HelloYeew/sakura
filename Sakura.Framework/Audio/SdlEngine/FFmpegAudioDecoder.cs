@@ -534,8 +534,17 @@ internal sealed unsafe class FFmpegAudioDecoder : IDisposable
         if (!handle.IsAllocated || handle.Target is not FFmpegAudioDecoder decoder || decoder.source == null)
             return ffmpeg.AVERROR_EOF;
 
-        int read = decoder.source.Read(new Span<byte>(buffer, bufferSize));
-        return read == 0 ? ffmpeg.AVERROR_EOF : read;
+        // Called from inside FFmpeg: an exception can't unwind through it, and would end the app.
+        try
+        {
+            int read = decoder.source.Read(new Span<byte>(buffer, bufferSize));
+            return read == 0 ? ffmpeg.AVERROR_EOF : read;
+        }
+        catch (Exception e)
+        {
+            Logger.Error("Could not read the audio being decoded; it ends here.", e);
+            return ffmpeg.AVERROR_EOF;
+        }
     }
 
     private static long seekStream(void* opaque, long offset, int whence)
@@ -545,15 +554,24 @@ internal sealed unsafe class FFmpegAudioDecoder : IDisposable
         if (!handle.IsAllocated || handle.Target is not FFmpegAudioDecoder decoder || decoder.source?.CanSeek != true)
             return -1;
 
-        return whence switch
+        // As in readPacket, nothing may be thrown back into FFmpeg.
+        try
         {
-            0 => decoder.source.Seek(offset, SeekOrigin.Begin),
-            1 => decoder.source.Seek(offset, SeekOrigin.Current),
-            2 => decoder.source.Seek(offset, SeekOrigin.End),
-            // AVSEEK_SIZE — report the total length rather than moving.
-            0x10000 => decoder.source.Length,
-            _ => -1
-        };
+            return whence switch
+            {
+                0 => decoder.source.Seek(offset, SeekOrigin.Begin),
+                1 => decoder.source.Seek(offset, SeekOrigin.Current),
+                2 => decoder.source.Seek(offset, SeekOrigin.End),
+                // AVSEEK_SIZE — report the total length rather than moving.
+                0x10000 => decoder.source.Length,
+                _ => -1
+            };
+        }
+        catch (Exception e)
+        {
+            Logger.Error("Could not seek in the audio being decoded.", e);
+            return -1;
+        }
     }
 
     private static string errorString(int error)
