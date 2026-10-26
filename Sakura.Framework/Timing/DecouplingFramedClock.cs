@@ -12,7 +12,8 @@ namespace Sakura.Framework.Timing;
 /// stopped (or the time is outside the source's valid range, e.g. negative lead-in time
 /// before an audio track starts), the clock continues running from an internal real-time
 /// reference. When the decoupled time re-enters the source's valid range, the source is
-/// sought to the current time and started automatically.
+/// sought to the current time and started automatically: ahead by its output latency, where it
+/// has one (<see cref="IHasOutputLatency"/>), so time carries straight on into what's heard.
 /// A source that stops by itself while this clock is following it (a track reaching its end) is
 /// left stopped, and the time carries on decoupled; it is only started again by an explicit
 /// <see cref="Start"/> or <see cref="Seek"/>. Restarting it would replay a finished track from the
@@ -89,8 +90,9 @@ public class DecouplingFramedClock : IFrameBasedClock, IAdjustableClock, ISource
         clearSourceStop();
 
         // Only a source that accepted the position is started: a track can't seek past its end, and
-        // starting one sitting at its end replays it from the beginning.
-        if (CurrentTime >= 0 && source.Seek(CurrentTime))
+        // starting one sitting at its end replays it from the beginning. Started ahead by its lead, so it's
+        // heard from where this clock is rather than reaching it a latency later.
+        if (CurrentTime + sourceLead >= 0 && seekSource(CurrentTime))
             source.Start();
         // If we're in negative (lead-in) time, ProcessFrame runs decoupled and will
         // start the source automatically when time crosses zero.
@@ -109,9 +111,10 @@ public class DecouplingFramedClock : IFrameBasedClock, IAdjustableClock, ISource
         CurrentTime = position;
         clearSourceStop();
 
-        if (position >= 0)
+        // Running, the source goes ahead by its lead as in Start; stopped, Start does that.
+        if (position + (isRunning ? sourceLead : 0) >= 0)
         {
-            if (source.Seek(position) && isRunning && !source.IsRunning)
+            if ((isRunning ? seekSource(position) : source.Seek(position)) && isRunning && !source.IsRunning)
                 source.Start();
         }
         else
@@ -149,7 +152,14 @@ public class DecouplingFramedClock : IFrameBasedClock, IAdjustableClock, ISource
             return;
         }
 
-        if (source.IsRunning)
+        if (source.IsRunning && CurrentTime + referenceElapsed * rate < 0)
+        {
+            // Started early by its lead (below), the source is on its way to being heard from zero but can't say a
+            // time before it: this clock runs on to zero by itself.
+            CurrentTime += referenceElapsed * rate;
+            IsDecoupled = true;
+        }
+        else if (source.IsRunning)
         {
             // Source-driven: report the source's time directly.
             CurrentTime = source.CurrentTime;
@@ -170,12 +180,36 @@ public class DecouplingFramedClock : IFrameBasedClock, IAdjustableClock, ISource
             IsDecoupled = true;
 
             // In the source's valid range (e.g. lead-in time crossing zero) — hand over to the source,
-            // if it takes the position. Not to one that ran out: starting a finished track replays it.
-            if (!sourceStoppedItself && Precision.AlmostBigger(CurrentTime, 0) && source.Seek(Math.Max(0, CurrentTime)))
+            // if it takes the position. Not to one that ran out: starting a finished track replays it. A
+            // source with a lead starts that much before, so its zero is heard as this clock reaches zero.
+            double target = CurrentTime + sourceLead;
+
+            if (!sourceStoppedItself && Precision.AlmostBigger(target, 0) && source.Seek(Math.Max(0, target)))
                 source.Start();
         }
 
         ElapsedFrameTime = CurrentTime - lastTime;
+    }
+
+    /// <summary>
+    /// How far ahead of this clock the source is started, in the source's time: its output latency at the current rate,
+    /// where it has one (<see cref="IHasOutputLatency"/>). A source whose time is what's heard, started from where this
+    /// clock is, would only get there that much later, and this clock, following it, would step back by as much each
+    /// time play started or resumed (by the output's whole latency: tens of milliseconds, hundreds over Bluetooth). The
+    /// latency's worth of the source past where it resumes goes unheard instead; from zero, nothing does, as the source
+    /// starts that much before it.
+    /// </summary>
+    private double sourceLead => source is IHasOutputLatency latent && rate > 0 ? Math.Max(0, latent.OutputLatency) * rate : 0;
+
+    /// <summary>
+    /// Moves the source to <paramref name="position"/> ahead by its lead, or to the position itself where the lead would
+    /// take it past its end (a seek to within a latency of a track's end): heard a latency late there, rather than the
+    /// seek being refused and lost.
+    /// </summary>
+    private bool seekSource(double position)
+    {
+        double lead = sourceLead;
+        return source.Seek(position + lead) || (lead > 0 && source.Seek(position));
     }
 
     private void clearSourceStop()

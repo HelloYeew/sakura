@@ -21,10 +21,24 @@ public class InterpolatingFramedClock : IFrameBasedClock, ISourceChangeableClock
 {
     /// <summary>
     /// The maximum amount the interpolated time may deviate from the source before snapping
-    /// back to it. Should be at least the source's update granularity
-    /// (one audio buffer, typically 5–10 ms).
+    /// back to it, at a rate of 1 (it scales with faster rates). Should be well over the source's
+    /// update granularity: an audio output's callbacks come a burst apart, a few milliseconds on a
+    /// phone's fast path, but 20 ms or more on others (Bluetooth), and every step past this is a
+    /// visible jump. Two frames at 60 Hz.
     /// </summary>
-    public double AllowableErrorMilliseconds { get; set; } = 10;
+    public double AllowableErrorMilliseconds { get; set; } = 1000.0 / 60 * 2;
+
+    /// <summary>
+    /// How quickly the interpolated time is drawn back to the source: half the gap closes in this
+    /// many milliseconds. 0 turns it off, leaving the time to follow the reference clock alone
+    /// between snaps.
+    /// </summary>
+    /// <remarks>
+    /// Without it, whatever gap the first frame left (up to a step of the source) stayed for good, and
+    /// the audio's clock running a touch faster or slower than the reference opened it further over a
+    /// song until it snapped. Either way, input was judged off by that much.
+    /// </remarks>
+    public double DriftRecoveryHalfLife { get; set; } = 50;
 
     /// <summary>
     /// Whether the last frame was produced by smooth interpolation (true) or by snapping
@@ -36,6 +50,30 @@ public class InterpolatingFramedClock : IFrameBasedClock, ISourceChangeableClock
     private readonly IClock reference;
     private double lastReferenceTime;
     private bool hasProcessed;
+
+    /// <summary>
+    /// Whether the time follows the source exactly until the source moves: after it was stopped, or snapped to. A
+    /// source started or moved holds where it was put until its audio gets going (a seek's audio decoded, a callback
+    /// or two), and running on ahead of it meanwhile only snapped back by as much once it was further than allowed.
+    /// </summary>
+    private bool pinned;
+
+    /// <summary>
+    /// Where the source was when the time was pinned to it: it has moved once it's further than
+    /// <see cref="pin_tolerance"/> from there. Not compared exactly, as a source put back where it was reports it give or
+    /// take a rounding, or a remeasured latency.
+    /// </summary>
+    private double pinnedSourceTime;
+
+    private const double pin_tolerance = 0.5;
+
+    /// <summary>
+    /// Has the next frame take the source's time as it is, as the first frame does: for a seek, which a small one would
+    /// otherwise be absorbed as the source's jitter, the time held back until the source caught up.
+    /// </summary>
+    internal void Resync() => resync = true;
+
+    private bool resync;
 
     public IClock Source => source;
 
@@ -65,6 +103,8 @@ public class InterpolatingFramedClock : IFrameBasedClock, ISourceChangeableClock
         CurrentTime = newSource.CurrentTime;
         lastReferenceTime = reference.CurrentTime;
         hasProcessed = false;
+        pinned = false;
+        resync = false;
     }
 
     public void ProcessFrame() => ProcessFrame(reference.CurrentTime);
@@ -87,34 +127,57 @@ public class InterpolatingFramedClock : IFrameBasedClock, ISourceChangeableClock
             // A stopped source is exact by definition — report it directly.
             CurrentTime = sourceTime;
             IsInterpolating = false;
+            pin(sourceTime);
         }
-        else if (!hasProcessed)
+        else if (!hasProcessed || resync)
         {
-            // First frame: no interpolation history yet.
+            // First frame: no interpolation history yet. After a seek, held there until the source moves on, as after
+            // a stop: it's put where it was asked and only moves once its audio does.
             CurrentTime = sourceTime;
             IsInterpolating = false;
+
+            if (resync)
+                pin(sourceTime);
+
             hasProcessed = true;
+            resync = false;
+        }
+        else if (pinned && Math.Abs(sourceTime - pinnedSourceTime) <= pin_tolerance)
+        {
+            CurrentTime = source.Rate >= 0 ? Math.Max(lastTime, sourceTime) : Math.Min(lastTime, sourceTime);
+            IsInterpolating = false;
         }
         else
         {
+            pinned = false;
+
             double candidate = lastTime + referenceElapsed * source.Rate;
 
-            if (Math.Abs(candidate - sourceTime) > AllowableErrorMilliseconds)
+            // Drawn towards the source a little every frame. The source moves in steps, so the pull
+            // averages them out rather than following each one.
+            if (DriftRecoveryHalfLife > 0 && referenceElapsed > 0)
+                candidate += (sourceTime - candidate) * (1 - Math.Pow(0.5, referenceElapsed / DriftRecoveryHalfLife));
+
+            double allowableError = AllowableErrorMilliseconds * Math.Max(1, Math.Abs(source.Rate));
+
+            if (Math.Abs(candidate - sourceTime) > allowableError)
             {
                 // Too far from the source to be a buffer-granularity artifact —
                 // treat as a discontinuity (seek / stall) and snap.
                 CurrentTime = sourceTime;
                 IsInterpolating = false;
+                pin(sourceTime);
             }
             else
             {
                 // Smooth advance, but never run backwards relative to the last frame
                 // while playing forwards, and never lead the source by more than the
-                // allowable error.
+                // allowable error. Not a clamp: the pull can leave the last frame past the
+                // lead allowed, and then holding still beats stepping back.
                 if (source.Rate >= 0)
-                    candidate = Math.Clamp(candidate, lastTime, sourceTime + AllowableErrorMilliseconds);
+                    candidate = Math.Max(Math.Min(candidate, sourceTime + allowableError), lastTime);
                 else
-                    candidate = Math.Clamp(candidate, sourceTime - AllowableErrorMilliseconds, lastTime);
+                    candidate = Math.Min(Math.Max(candidate, sourceTime - allowableError), lastTime);
 
                 CurrentTime = candidate;
                 IsInterpolating = true;
@@ -122,6 +185,12 @@ public class InterpolatingFramedClock : IFrameBasedClock, ISourceChangeableClock
         }
 
         ElapsedFrameTime = CurrentTime - lastTime;
+    }
+
+    private void pin(double sourceTime)
+    {
+        pinned = true;
+        pinnedSourceTime = sourceTime;
     }
 
     /// <summary>

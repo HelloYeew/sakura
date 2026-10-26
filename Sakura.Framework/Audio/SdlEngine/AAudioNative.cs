@@ -26,6 +26,7 @@ internal static class AAudioNative
     public const int USAGE_GAME = 14;
     public const int CONTENT_TYPE_MUSIC = 2;
 
+    public const int STREAM_STATE_UNKNOWN = 1;
     public const int STREAM_STATE_STOPPING = 9;
     public const int STREAM_STATE_DISCONNECTED = 13;
 

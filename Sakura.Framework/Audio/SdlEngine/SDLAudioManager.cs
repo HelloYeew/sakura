@@ -223,6 +223,23 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     // Readings before the measured latency is settled enough to put in the log.
     private const int aaudio_latency_readings_to_log = 20;
 
+    // How long a started stream's callback may stay away before the stream is taken for dead and replaced: far longer
+    // than any burst. Longer before the first callback since the stream (re)started, which a Bluetooth output can take
+    // over a second to make.
+    private const double aaudio_stall_ms = 1000;
+    private const double aaudio_first_callback_ms = 3000;
+
+    private long aaudioCallbacksSeen = -1;
+    private double aaudioStalledMs;
+    private bool aaudioCalledBackSinceStart;
+
+    // Whether the buffer is this manager's to size (nobody asked for one): two bursts, grown on underruns.
+    private readonly bool aaudioBufferAuto;
+
+    // While there's no stream, the engine is mixed here instead, into nothing, at the pace a stream would take it.
+    private float[]? unplayedMix;
+    private double unplayedFrames;
+
     /// <summary>
     /// The native engine's output on iOS, straight into RemoteIO with nothing of SDL's in between, or null where it plays
     /// through SDL's stream.
@@ -244,6 +261,9 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     // Starting (and starting again) shows in the unit's timestamps as a jump, which isn't a missed cycle: the jumps
     // counted while settling are left out of the xruns.
     private double remoteIOSettlingMs = aaudio_settle_ms;
+
+    // The engine's callbacks as of the last latency sample, to tell a unit that's rendering from one that's stopped.
+    private long remoteIOSampledCallbacks;
     private long remoteIODiscontinuitiesWhileSettling;
     private long remoteIOXruns;
 
@@ -418,7 +438,7 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     {
         this.systemRoute = systemRoute;
 
-        // AAudio's own buffer is in whole bursts already, so 0 leaves it as AAudio opens it.
+        // AAudio's buffer is sized in its own bursts, so 0 is left for openAAudio to make two of them.
         int aaudioBufferFrames = requestedDeviceBufferFrames;
 
         if (requestedDeviceBufferFrames <= 0 && nativeOutput?.FramesPerBurst > 0)
@@ -452,7 +472,10 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         // On Android the native engine plays straight into AAudio, on AAudio's own thread. Through SDL there'd be a
         // thread and up to two periods of SDL's buffering in between, and SDL keeps the stream's figures to itself.
         if (nativeEngine != null && AAudioOutput.IsAvailable)
+        {
             aaudioOutput = openAAudio(nativeEngine, aaudioBufferFrames);
+            aaudioBufferAuto = aaudioBufferFrames <= 0;
+        }
 
         // On iOS it plays straight into RemoteIO, on the system's I/O thread. Through SDL there'd be an Audio Queue in
         // between, six buffers deep at a phone's buffer size.
@@ -944,8 +967,15 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     /// </summary>
     private void pollAAudio(AAudioOutput output, double frameTime)
     {
-        if (output.Disconnected)
+        if (output.Disconnected || aaudioStalled(output, frameTime) || aaudioRebuilt(output))
         {
+            // Closed at once rather than at the next try, so this thread is the only one mixing the engine until another
+            // stream opens, and mixes what plays meanwhile into nothing. Unmixed, it would wait as commands, and every
+            // sample played in the meantime would start at once when a stream came back; positions would stand still.
+            output.Close();
+            resetAAudioWatchdog();
+            mixUnplayed(frameTime);
+
             // Every frame would be a stream opened and dropped at once while the output is still changing.
             sinceAAudioReopenMs += frameTime;
 
@@ -957,6 +987,11 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             if (!output.Reopen())
                 return;
 
+            // Two of the new output's bursts, as for the first stream: a grown buffer was grown for the output before.
+            if (aaudioBufferAuto && output.FramesPerBurst > 0)
+                output.SetBufferFrames(2 * output.FramesPerBurst);
+
+            unplayedFrames = 0;
             sinceAAudioReopenMs = aaudio_reopen_interval_ms;
             aaudioSettlingMs = aaudio_settle_ms;
             aaudioLatency.Reset();
@@ -1003,6 +1038,83 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         double latencyMs = aaudioLatency.Milliseconds ?? deviceBufferFrames / (double)output.SampleRate * 1000.0;
         deviceBufferMicroseconds = (int)Math.Round(latencyMs * 1000.0);
         deviceQueueMicroseconds = deviceBufferMicroseconds;
+    }
+
+    /// <summary>
+    /// Whether a stream meant to be playing has stopped asking for audio, whatever its state says. One whose callback
+    /// thread quit (the audio service timed a write out), or which never started, reads as playing for good, and nothing
+    /// else would replace it: the engine's commands are only taken on that callback, so the whole app would be silent.
+    /// </summary>
+    private bool aaudioStalled(AAudioOutput output, double frameTime)
+    {
+        if (!output.Started || !output.HasStream || nativeEngine == null)
+        {
+            aaudioCallbacksSeen = -1;
+            aaudioStalledMs = 0;
+            return false;
+        }
+
+        long callbacks = nativeEngine.GetStats().Callbacks;
+
+        if (callbacks != aaudioCallbacksSeen)
+        {
+            // The first count is only where to measure from.
+            aaudioCalledBackSinceStart |= aaudioCallbacksSeen >= 0;
+            aaudioCallbacksSeen = callbacks;
+            aaudioStalledMs = 0;
+            return false;
+        }
+
+        aaudioStalledMs += frameTime;
+
+        if (aaudioStalledMs < (aaudioCalledBackSinceStart ? aaudio_stall_ms : aaudio_first_callback_ms))
+            return false;
+
+        Logger.Verbose($"The audio output stopped asking for audio {aaudioStalledMs:F0} ms ago, so its stream is replaced.");
+        resetAAudioWatchdog();
+        return true;
+    }
+
+    /// <summary>
+    /// Starts the stall watchdog over, for a stream that (re)starts: it waits for that stream's first callback.
+    /// </summary>
+    private void resetAAudioWatchdog()
+    {
+        aaudioCallbacksSeen = -1;
+        aaudioStalledMs = 0;
+        aaudioCalledBackSinceStart = false;
+    }
+
+    private bool aaudioRebuilt(AAudioOutput output)
+    {
+        if (!output.Rebuilt)
+            return false;
+
+        Logger.Verbose("The system rebuilt the audio output's stream under it (its buffer changed by itself), so it's replaced.");
+        return true;
+    }
+
+    /// <summary>
+    /// Mixes the engine for <paramref name="frameTime"/> into nothing, as a stream would have taken it, while there's no
+    /// stream to: commands get applied, samples play out unheard and are freed, and tracks move on.
+    /// </summary>
+    private void mixUnplayed(double frameTime)
+    {
+        if (nativeEngine == null)
+            return;
+
+        // At most a quarter of a second at a time: a thread held up for longer doesn't owe the rest.
+        unplayedFrames = Math.Min(unplayedFrames + frameTime / 1000.0 * SampleRate, SampleRate / 4.0);
+        unplayedMix ??= new float[native_mix_block_frames * output_channels * 16];
+
+        int blockFrames = unplayedMix.Length / output_channels;
+
+        while (unplayedFrames >= 1)
+        {
+            int frames = (int)Math.Min(unplayedFrames, blockFrames);
+            nativeEngine.Mix(unplayedMix.AsSpan(0, frames * output_channels));
+            unplayedFrames -= frames;
+        }
     }
 
     /// <summary>
@@ -1099,7 +1211,12 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             Logger.Verbose($"The audio output missed a cycle ({remoteIOXruns} times so far), with a {deviceBufferFrames}-frame I/O buffer.");
         }
 
-        if (!output.TrySampleLatency(out double latency))
+        // Stopped (an interruption, the background), the unit's last timestamp only grows staler: no reading.
+        long callbacks = nativeEngine!.GetStats().Callbacks;
+        bool rendering = callbacks != remoteIOSampledCallbacks;
+        remoteIOSampledCallbacks = callbacks;
+
+        if (!rendering || !output.TrySampleLatency(out double latency))
             return;
 
         remoteIOLatency.Add(latency);
@@ -1318,7 +1435,7 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     /// Opens the AAudio output for <paramref name="engine"/>, or returns null to play through SDL instead.
     /// </summary>
     /// <param name="engine">The engine to play.</param>
-    /// <param name="bufferFrames">The buffer to start with, or 0 for the one AAudio opens with.</param>
+    /// <param name="bufferFrames">The buffer to start with, or 0 for two bursts.</param>
     private static AAudioOutput? openAAudio(SakuraAudioEngine engine, int bufferFrames)
     {
         var output = AAudioOutput.TryOpen(engine, aaudioUsage());
@@ -1334,8 +1451,13 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             return null;
         }
 
+        // Two bursts unless a size was asked for, where Oboe's latency tuner starts too, growing a burst whenever the output
+        // runs dry (growAAudioBuffer). Left to AAudio, it's half the buffer's capacity, or all of it on the path older
+        // phones take: tens of milliseconds more between a tap and its sound.
         if (bufferFrames > 0)
             output.SetBufferFrames(bufferFrames);
+        else if (output.FramesPerBurst > 0)
+            output.SetBufferFrames(2 * output.FramesPerBurst);
 
         return output;
     }
@@ -2004,6 +2126,7 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         if (aaudioOutput != null)
         {
             aaudioSettlingMs = aaudio_settle_ms;
+            resetAAudioWatchdog();
             aaudioOutput.Start();
         }
         else if (remoteIOOutput != null)

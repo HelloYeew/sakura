@@ -3,6 +3,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Threading;
 using Sakura.Framework.Logging;
 
@@ -32,6 +34,12 @@ internal sealed class AudioDecodeScheduler : IDisposable
     /// A source in that state is not idle, it is blocked on the audio thread
     /// </remarks>
     private static readonly TimeSpan blocked_delay = TimeSpan.FromMilliseconds(1);
+
+    /// <summary>
+    /// How long a source may stay blocked before it's asked at the idle rate instead: longer than any output takes to
+    /// apply a discard, which it does at its next callback.
+    /// </summary>
+    private static readonly TimeSpan blocked_for_long = TimeSpan.FromMilliseconds(100);
 
     /// <summary>
     /// Maximum consecutive pumps for one source before moving on.
@@ -90,6 +98,11 @@ internal sealed class AudioDecodeScheduler : IDisposable
 
     private void run()
     {
+        if (OperatingSystem.IsAndroid())
+            raiseOnAndroid();
+
+        long blockedSince = 0;
+
         while (!cancellation.IsCancellationRequested)
         {
             bool didWork = false;
@@ -131,10 +144,42 @@ internal sealed class AudioDecodeScheduler : IDisposable
                 }
             }
 
+            if (didWork || !blocked)
+                blockedSince = 0;
+            else if (blockedSince == 0)
+                blockedSince = Stopwatch.GetTimestamp();
+
+            // A discard lands within a callback or two of any output that's running. One still waiting after that
+            // waits on an output that isn't (stopped in the background, or gone), and asking a thousand times a second
+            // for as long as that lasts would only drain the battery.
+            bool longBlocked = blockedSince != 0 && Stopwatch.GetElapsedTime(blockedSince) > blocked_for_long;
+
             if (!didWork)
-                wakeup.WaitOne(blocked ? blocked_delay : idle_delay);
+                wakeup.WaitOne(blocked && !longBlocked ? blocked_delay : idle_delay);
         }
     }
+
+    // Android's THREAD_PRIORITY_URGENT_DISPLAY, which the frame threads are raised to (AndroidPerformance).
+    private const int android_frame_thread_priority = -8;
+
+    // setpriority's PRIO_PROCESS, which on Linux, given a thread's ID, applies to that thread alone.
+    private const int prio_process = 0;
+
+    /// <summary>
+    /// Puts this thread level with the frame threads. Thread.Priority changes nothing on Android, so it stayed below
+    /// them, and a frame thread that kept a core under load drained the half second it keeps ahead into a gap.
+    /// </summary>
+    private static void raiseOnAndroid()
+    {
+        if (setpriority(prio_process, gettid(), android_frame_thread_priority) != 0)
+            Logger.Verbose($"The audio decode thread stays at its priority: setpriority failed (error {Marshal.GetLastPInvokeError()}).");
+    }
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern int setpriority(int which, int who, int priority);
+
+    [DllImport("libc")]
+    private static extern int gettid();
 
     public void Dispose()
     {

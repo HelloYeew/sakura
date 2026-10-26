@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using System.Threading;
 using NUnit.Framework;
 using Sakura.Framework.Timing;
@@ -276,6 +277,154 @@ public class DecouplingFramedClockTest
 
         Assert.That(realDecoupled.CurrentTime, Is.GreaterThan(previousTime));
         Assert.That(realDecoupled.ElapsedFrameTime, Is.GreaterThan(0));
+    }
+
+    #endregion
+
+    #region Output latency
+
+    /// <summary>
+    /// A track whose time is what's heard: its mix runs <see cref="OutputLatency"/> ahead, as on a real output, so
+    /// started from a position it only reports it that much later.
+    /// </summary>
+    private sealed class HeardTestClock : IAdjustableClock, IHasOutputLatency
+    {
+        private double mixed;
+
+        public double OutputLatency { get; set; }
+        public double CurrentTime => Math.Max(0, mixed - OutputLatency * Rate);
+        public double Rate { get; set; } = 1;
+        public bool IsRunning { get; private set; }
+        public double LastSeek { get; private set; } = double.NaN;
+
+        public void Start() => IsRunning = true;
+        public void Stop() => IsRunning = false;
+
+        public double Length { get; set; } = double.MaxValue;
+
+        public bool Seek(double position)
+        {
+            if (position < 0 || position > Length)
+                return false;
+
+            mixed = position;
+            LastSeek = position;
+            return true;
+        }
+
+        public void Reset()
+        {
+            IsRunning = false;
+            mixed = 0;
+        }
+
+        /// <summary>
+        /// Real time passing for the output: a running track mixes on.
+        /// </summary>
+        public void Pass(double milliseconds)
+        {
+            if (IsRunning)
+                mixed += milliseconds * Rate;
+        }
+    }
+
+    [Test]
+    public void TestResumingCarriesStraightOnIntoWhatsHeard()
+    {
+        var track = new HeardTestClock { OutputLatency = 40 };
+        var clock = new DecouplingFramedClock(track, reference);
+
+        clock.Seek(1000);
+        clock.Start();
+
+        Assert.That(track.LastSeek, Is.EqualTo(1040), "The track wasn't started ahead by its latency");
+
+        clock.ProcessFrame();
+        Assert.That(clock.CurrentTime, Is.EqualTo(1000), "Time stepped back by the latency as play resumed");
+
+        reference.CurrentTime += 10;
+        track.Pass(10);
+        clock.ProcessFrame();
+
+        Assert.That(clock.CurrentTime, Is.EqualTo(1010));
+    }
+
+    [Test]
+    public void TestSeekingWhilePlayingLandsWhereAsked()
+    {
+        var track = new HeardTestClock { OutputLatency = 40 };
+        var clock = new DecouplingFramedClock(track, reference);
+
+        clock.Seek(500);
+        clock.Start();
+        clock.ProcessFrame();
+
+        clock.Seek(2000);
+        clock.ProcessFrame();
+
+        Assert.That(track.LastSeek, Is.EqualTo(2040));
+        Assert.That(clock.CurrentTime, Is.EqualTo(2000));
+    }
+
+    [Test]
+    public void TestLeadInStartsTheTrackSoItsStartIsHeardAtZero()
+    {
+        var track = new HeardTestClock { OutputLatency = 40 };
+        var clock = new DecouplingFramedClock(track, reference);
+
+        clock.Seek(-100);
+        clock.Start();
+        clock.ProcessFrame();
+
+        double last = clock.CurrentTime;
+
+        for (int frame = 1; frame <= 20; frame++)
+        {
+            reference.CurrentTime += 10;
+            track.Pass(10);
+            clock.ProcessFrame();
+
+            // Steady through the hand-over: 10 ms a frame, no step back to zero and no pause there.
+            Assert.That(clock.CurrentTime - last, Is.EqualTo(10).Within(0.001), $"Frame {frame} moved by {clock.CurrentTime - last} ms");
+            last = clock.CurrentTime;
+
+            if (clock.CurrentTime < -40)
+                Assert.That(track.IsRunning, Is.False, "Started earlier than its latency asks");
+        }
+
+        Assert.That(track.LastSeek, Is.EqualTo(0).Within(0.001), "The track wasn't started from its beginning");
+        Assert.That(clock.CurrentTime, Is.EqualTo(100).Within(0.001));
+        Assert.That(clock.IsDecoupled, Is.False, "Still running on its own past zero rather than following the track");
+    }
+
+    [Test]
+    public void TestSeekingCloserToTheEndThanTheLatencyStillLands()
+    {
+        var track = new HeardTestClock { OutputLatency = 40, Length = 10_000 };
+        var clock = new DecouplingFramedClock(track, reference);
+
+        clock.Seek(1000);
+        clock.Start();
+        clock.ProcessFrame();
+
+        // Ahead by the latency, that's past the end, which the track refuses: it goes there unled rather than not at all.
+        clock.Seek(9990);
+        clock.ProcessFrame();
+
+        Assert.That(track.LastSeek, Is.EqualTo(9990));
+        Assert.That(clock.CurrentTime, Is.GreaterThan(9900), "The seek was lost and the clock went back to where the track still was");
+    }
+
+    [Test]
+    public void TestATrackWithNoLatencyStartsWhereTheClockIs()
+    {
+        var track = new HeardTestClock();
+        var clock = new DecouplingFramedClock(track, reference);
+
+        clock.Seek(1000);
+        clock.Start();
+
+        Assert.That(track.LastSeek, Is.EqualTo(1000));
     }
 
     #endregion

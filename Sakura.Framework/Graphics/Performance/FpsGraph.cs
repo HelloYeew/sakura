@@ -260,9 +260,9 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
             lastMinimalRefresh = Clock.CurrentTime;
         }
 
-        // The audio backend's output latency is a live device figure, unlike everything else on this
-        // line, so it needs re-reading. Twice a second is plenty for a number that moves when the
-        // device buffer is renegotiated.
+        // The display and audio latencies are live figures, unlike everything else on this line, so
+        // they need re-reading. Twice a second is plenty: the display figure is already settled over
+        // many frames, and the audio one moves when the device buffer is renegotiated.
         if (Clock.CurrentTime - lastBackendRefresh >= 500)
         {
             updateBackendText();
@@ -295,11 +295,14 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
     {
         if (backendText.IsNull())
             return;
+        
+        double displayLatency = host.Renderer?.DisplayLatencyMilliseconds ?? double.NaN;
+        string displayLatencyText = double.IsNaN(displayLatency) ? string.Empty : $" {displayLatency:F1}ms shown";
 
-        double latency = host.AudioManager?.OutputLatencyMs ?? 0;
-        string latencyText = latency > 0 ? $" {latency:F1}ms out" : string.Empty;
+        double audioLatency = host.AudioManager?.OutputLatencyMs ?? 0;
+        string audioLatencyText = audioLatency > 0 ? $" {audioLatency:F1}ms out" : string.Empty;
 
-        backendText.Text = $"{getRendererText()} · {getAudioText()}{latencyText}";
+        backendText.Text = $"{getRendererText()}{displayLatencyText} · {getAudioText()}{audioLatencyText}";
     }
 
     private string getRendererText()

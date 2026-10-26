@@ -3,6 +3,7 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using System.Threading;
 using Sakura.Framework.Reactive;
 
 namespace Sakura.Framework.Audio.SdlEngine;
@@ -130,6 +131,34 @@ internal class SDLNativeAudioChannel : ISDLChannel, IDuckable
     private long lastEndEpoch;
 
     /// <summary>
+    /// Held over what's posted to move or start the voice: from the update thread, from the audio thread looping it,
+    /// and from the decode thread once a moved stream has its audio.
+    /// </summary>
+    private readonly Lock transport = new Lock();
+
+    /// <summary>
+    /// Whether a streaming voice was moved and its feeder doesn't have the new position's audio in yet. It's kept
+    /// stopped until then: playing on, it would play what the ring still held of the old position, counted as the new
+    /// one's, so the position would run ahead of what's heard by that much for the rest of the song.
+    /// </summary>
+    private bool awaitingSeekAudio;
+
+    /// <summary>
+    /// Whether to start the voice once <see cref="awaitingSeekAudio"/> clears.
+    /// </summary>
+    private bool playOnceFilled;
+
+    /// <summary>
+    /// Whether a stopped stream's decoder still has to be rewound before it plays (see <see cref="Stop"/>).
+    /// </summary>
+    private bool rewindOnPlay;
+
+    /// <summary>
+    /// Counts the seeks handed to the feeder, so a report about an earlier one is told apart.
+    /// </summary>
+    private int seekGeneration;
+
+    /// <summary>
     /// The tempo asked for, and the one the audio since the last seek was stretched at. Every ring frame
     /// played is this many frames of the song.
     /// </summary>
@@ -139,6 +168,8 @@ internal class SDLNativeAudioChannel : ISDLChannel, IDuckable
 
     public double Length { get; }
 
+    public double OutputLatency => Context.OutputLatencyMs;
+
     public SDLNativeAudioChannel(ISDLAudioContext context, SakuraAudioEngine engine, uint node, double lengthMs, NativeStreamFeeder? feeder = null)
     {
         Context = context;
@@ -146,6 +177,9 @@ internal class SDLNativeAudioChannel : ISDLChannel, IDuckable
         Node = node;
         Length = lengthMs;
         this.feeder = feeder;
+
+        if (feeder != null)
+            feeder.SeekFilled = onSeekFilled;
 
         IsRunning.ValueChanged += e =>
         {
@@ -235,7 +269,8 @@ internal class SDLNativeAudioChannel : ISDLChannel, IDuckable
     {
         filter?.Dispose();
 
-        var attached = new SDLLowPassFilter(Engine.SampleRate, Engine.Channels);
+        SDLLowPassFilter? attached = null;
+        attached = new SDLLowPassFilter(Engine.SampleRate, Engine.Channels, () => detachFilter(attached!));
 
         attached.CoefficientsChanged += publishFilter;
 
@@ -254,6 +289,20 @@ internal class SDLNativeAudioChannel : ISDLChannel, IDuckable
         Engine.SetFilter(Node, enabled, coefficients.B0, coefficients.B1, coefficients.B2, coefficients.A1, coefficients.A2);
     }
 
+    /// <summary>
+    /// Turns the voice's filter off with the managed one disposed. The voice would otherwise go on filtering at the
+    /// last cutoff published, which is wherever a sweep back up was when its owner let go: a duck released on a slow
+    /// frame left the music muffled until the song changed.
+    /// </summary>
+    private void detachFilter(SDLLowPassFilter disposed)
+    {
+        if (isDisposed || filter != disposed)
+            return;
+
+        filter = null;
+        Engine.SetFilter(Node, false, 1, 0, 0, 0, 0);
+    }
+
     #endregion
 
     #region Transport
@@ -263,13 +312,22 @@ internal class SDLNativeAudioChannel : ISDLChannel, IDuckable
         if (isDisposed)
             return;
 
-        // Replaying something that already finished should start it over rather than sit at the end
-        // producing silence. A shared buffer rewinds itself inside the engine; a stream cannot, since
-        // rewinding it means rewinding a decoder.
-        if (feeder != null && Engine.TryGetState(Node, out var state) && state.Ended != 0)
-            seekInternal(Looping ? RestartPoint : 0);
+        lock (transport)
+        {
+            // Replaying something that already finished should start it over rather than sit at the end
+            // producing silence. A shared buffer rewinds itself inside the engine; a stream cannot, since
+            // rewinding it means rewinding a decoder. Not one just moved somewhere, which is still marked
+            // ended until the move lands: that's where it was asked to play from. A stopped stream's
+            // decoder is rewound now too (see Stop).
+            if (feeder != null && !awaitingSeekAudio && (rewindOnPlay || (Engine.TryGetState(Node, out var state) && state.Ended != 0)))
+                seekInternal(rewindOnPlay ? 0 : Looping ? RestartPoint : 0);
 
-        Engine.Play(Node);
+            if (awaitingSeekAudio)
+                playOnceFilled = true;
+            else
+                Engine.Play(Node);
+        }
+
         IsRunning.Value = true;
 
         Context.WakeDecoder();
@@ -280,9 +338,19 @@ internal class SDLNativeAudioChannel : ISDLChannel, IDuckable
         if (isDisposed)
             return;
 
-        // Matches the BASS backend, where Stop rewinds and Pause does not.
-        Engine.Stop(Node);
-        armSeekReport(0);
+        lock (transport)
+        {
+            playOnceFilled = false;
+
+            // Matches the BASS backend, where Stop rewinds and Pause does not. The engine rewinds its cursor; a stream's
+            // decoder is rewound when it next plays, or it would carry on from where it stopped while the position
+            // counted from the start. Not here: a stop is often followed by disposing, and the decoding would be wasted.
+            long epoch = currentSeekEpoch();
+            Engine.Stop(Node);
+            armSeekReport(0, epoch);
+            rewindOnPlay = feeder != null;
+        }
+
         IsRunning.Value = false;
     }
 
@@ -291,7 +359,12 @@ internal class SDLNativeAudioChannel : ISDLChannel, IDuckable
         if (isDisposed)
             return;
 
-        Engine.Pause(Node);
+        lock (transport)
+        {
+            playOnceFilled = false;
+            Engine.Pause(Node);
+        }
+
         IsRunning.Value = false;
     }
 
@@ -301,15 +374,30 @@ internal class SDLNativeAudioChannel : ISDLChannel, IDuckable
     /// </summary>
     private void seekInternal(double milliseconds)
     {
-        // Order matters. The engine's seek resets the interpolation window, the filter's delay line
-        // and the metering, and zeroes its frame count; the feeder then discards what is buffered and
-        // decodes from the new position. Doing it the other way round would let the engine's reset
-        // land on audio the feeder had already written.
-        Engine.Seek(Node, millisecondsToFrames(milliseconds));
-        armSeekReport(milliseconds);
+        lock (transport)
+        {
+            rewindOnPlay = false;
 
-        feeder?.Seek(milliseconds);
-        amplitudes?.Reset();
+            // A playing stream stops until the feeder has the new position's audio (see awaitingSeekAudio), and starts
+            // again then. Before the seek, so the engine never mixes the old audio after its count was reset.
+            if (feeder != null && (IsRunning.Value || playOnceFilled))
+            {
+                Engine.Pause(Node);
+                playOnceFilled = true;
+            }
+
+            // Order matters. The engine's seek resets the interpolation window, the filter's delay line
+            // and the metering, and zeroes its frame count; the feeder then discards what is buffered and
+            // decodes from the new position. Doing it the other way round would let the engine's reset
+            // land on audio the feeder had already written. The epoch is read before posting: read after,
+            // a callback applying the seek in between would leave the position on the target for good.
+            long epoch = currentSeekEpoch();
+            Engine.Seek(Node, millisecondsToFrames(milliseconds));
+            armSeekReport(milliseconds, epoch);
+
+            seekFeeder(milliseconds);
+            amplitudes?.Reset();
+        }
 
         // A seek empties the ring, so every block until the decode thread refills it is silence out
         // of a running voice. Without this the seek waits out the scheduler's idle delay before it is
@@ -318,16 +406,52 @@ internal class SDLNativeAudioChannel : ISDLChannel, IDuckable
     }
 
     /// <summary>
+    /// Has the feeder decode from <paramref name="milliseconds"/>, the voice waiting for that audio to play.
+    /// </summary>
+    private void seekFeeder(double milliseconds)
+    {
+        if (feeder == null)
+            return;
+
+        awaitingSeekAudio = true;
+        feeder.Seek(milliseconds, ++seekGeneration);
+    }
+
+    /// <summary>
+    /// The feeder has the audio of the position a seek moved to in the ring. On the decode thread.
+    /// </summary>
+    private void onSeekFilled(int generation)
+    {
+        lock (transport)
+        {
+            if (isDisposed || generation != seekGeneration)
+                return;
+
+            awaitingSeekAudio = false;
+
+            if (!playOnceFilled)
+                return;
+
+            playOnceFilled = false;
+            Engine.Play(Node);
+        }
+    }
+
+    private long currentSeekEpoch() => Engine.TryGetState(Node, out var state) ? state.SeekEpoch : 0;
+
+    /// <summary>
     /// Records where the position is being moved to, and the seek epoch that was current when it was
     /// asked for, so <see cref="CurrentTime"/> can report the target until the engine confirms it.
     /// </summary>
-    private void armSeekReport(double milliseconds)
+    /// <param name="milliseconds">The position.</param>
+    /// <param name="epoch">The voice's seek epoch from before the seek was posted.</param>
+    private void armSeekReport(double milliseconds, long epoch)
     {
         latency.Reset();
         baseMs = feeder != null ? Math.Max(0, milliseconds) : 0;
         ringTempo = feeder != null ? requestedTempo : 1;
         seekTargetMs = Math.Max(0, milliseconds);
-        seekPostedAtEpoch = Engine.TryGetState(Node, out var state) ? state.SeekEpoch : 0;
+        seekPostedAtEpoch = epoch;
     }
 
     public double CurrentTime
@@ -338,11 +462,11 @@ internal class SDLNativeAudioChannel : ISDLChannel, IDuckable
                 return 0;
 
             // Still waiting on the audio thread: the cursor it is reporting belongs to the position we
-            // are leaving, so answer with the one we are going to. Uncompensated on purpose — nothing
-            // of the new position has been mixed yet, let alone queued, so there is no latency to
-            // subtract and subtracting one would report a seek as landing short.
+            // are leaving, so answer with the one we are going to, as it's reported once there. Nothing of
+            // it is heard until the output's latency has passed, so that's taken off as it will be then:
+            // reported whole now, the position would step back by the latency as the seek landed.
             if (state.SeekEpoch == seekPostedAtEpoch)
-                return seekTargetMs;
+                return latency.Compensate(seekTargetMs, Context.OutputLatencyMs, Frequency.Value * ringTempo);
 
             double raw = baseMs + state.SourceFrames / (double)Engine.SampleRate * 1000.0 * ringTempo;
 
@@ -403,6 +527,10 @@ internal class SDLNativeAudioChannel : ISDLChannel, IDuckable
 
             return;
         }
+
+        // Ended: a start waiting on a seek's audio would play a voice that reports itself stopped.
+        lock (transport)
+            playOnceFilled = false;
 
         IsRunning.Value = false;
 

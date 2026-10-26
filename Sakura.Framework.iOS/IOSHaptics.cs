@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using CoreHaptics;
 using Foundation;
 using Sakura.Framework.Logging;
@@ -18,7 +19,7 @@ namespace Sakura.Framework.iOS;
 /// </summary>
 internal sealed class IOSHaptics : IPlatformHaptics
 {
-    private readonly object engineLock = new object();
+    private readonly Lock engineLock = new Lock();
 
     private CHHapticEngine? engine;
     private bool running;

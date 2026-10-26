@@ -381,6 +381,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
         else if (!e.IsRepeat && e.Key == Key.F7 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
             toggleExecutionMode();
+            return true;
         }
         // Not on a function key like the rest: macOS keeps Ctrl+F3 to Ctrl+F8 for its own keyboard navigation by
         // default, and those left are taken.
@@ -392,6 +393,11 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
         else if (!e.IsRepeat && e.Key == Key.F9 && (e.Modifiers & KeyModifiers.Control) > 0)
         {
             toggleAudioMixer();
+            return true;
+        }
+        else if (!e.IsRepeat && e.Key == Key.F10 && (e.Modifiers & KeyModifiers.Control) > 0)
+        {
+            cycleFrameLimiter();
             return true;
         }
         if (!e.IsRepeat && e.Key == Key.F11 && (e.Modifiers & KeyModifiers.Control) > 0)

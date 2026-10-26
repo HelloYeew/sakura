@@ -3,6 +3,7 @@
 
 using System;
 using System.Runtime.InteropServices;
+using System.Threading;
 using Sakura.Framework.Logging;
 using static Sakura.Framework.Audio.SdlEngine.AAudioNative;
 
@@ -63,9 +64,44 @@ internal sealed class AAudioOutput : IDisposable
     public int Reopens { get; private set; }
 
     /// <summary>
-    /// Whether the stream is gone: AAudio disconnected it, or a reopen failed. <see cref="Reopen"/> makes another.
+    /// Whether the stream is gone: AAudio disconnected it, it was closed, or a reopen failed. <see cref="Reopen"/> makes
+    /// another.
     /// </summary>
-    public bool Disconnected => stream == 0 || AAudioStream_getState(stream) == STREAM_STATE_DISCONNECTED;
+    /// <remarks>
+    /// The state is fetched from the audio service first. Read as it was last updated, it can stay what it was for good
+    /// after the service let the stream go: a stream with no callback running (paused for the background) only takes
+    /// the disconnect in when asked, and a callback thread that stopped (a write the service timed out) said so to an
+    /// error callback alone.
+    /// </remarks>
+    public bool Disconnected
+    {
+        get
+        {
+            if (stream == 0)
+                return true;
+
+            int result = AAudioStream_waitForStateChange(stream, STREAM_STATE_UNKNOWN, out int state, 0);
+
+            if (result == ERROR_DISCONNECTED)
+                return true;
+
+            if (result != OK)
+                state = AAudioStream_getState(stream);
+
+            return state == STREAM_STATE_DISCONNECTED;
+        }
+    }
+
+    /// <summary>
+    /// Whether there's a stream open, mixing the engine on its callback once started. Without one, nothing does.
+    /// </summary>
+    public bool HasStream => stream != 0;
+
+    /// <summary>
+    /// Whether the stream is meant to be playing: <see cref="Start"/> was called last rather than <see cref="Pause"/>,
+    /// whether or not it took.
+    /// </summary>
+    public bool Started => started;
 
     /// <summary>
     /// The ID of the device the stream plays on, as Android's AudioDeviceInfo has it, or 0 where there's no stream or
@@ -191,8 +227,20 @@ internal sealed class AAudioOutput : IDisposable
             return 0;
 
         int granted = AAudioStream_setBufferSizeInFrames(stream, frames);
-        return granted > 0 ? granted : BufferFrames;
+        grantedBufferFrames = granted > 0 ? granted : BufferFrames;
+        return grantedBufferFrames;
     }
+
+    // What the last SetBufferFrames was given, to tell when the stream's buffer changed under it.
+    private int grantedBufferFrames;
+
+    /// <summary>
+    /// Whether the stream's buffer is no longer the size it was given. On the path older phones take, that's the system
+    /// having rebuilt the track under the stream (its audio service restarted): at AAudio's default size, tens of
+    /// milliseconds more, and with its own frame counts, against which the stream's timestamps no longer add up.
+    /// <see cref="Reopen"/> starts over with a stream that's whole.
+    /// </summary>
+    public bool Rebuilt => stream != 0 && grantedBufferFrames > 0 && BufferFrames != grantedBufferFrames;
 
     /// <summary>
     /// Opens another stream in place of one AAudio disconnected, as it does when the output changes, with the same
@@ -205,8 +253,7 @@ internal sealed class AAudioOutput : IDisposable
         if (disposed)
             return false;
 
-        earlierXruns += currentXruns();
-        close();
+        Close();
 
         if (!open())
             return false;
@@ -268,6 +315,16 @@ internal sealed class AAudioOutput : IDisposable
 
     private int currentXruns() => stream == 0 ? 0 : Math.Max(0, AAudioStream_getXRunCount(stream));
 
+    /// <summary>
+    /// Closes the stream, keeping what it was set to (its buffer, and whether it plays) for <see cref="Reopen"/>. Once
+    /// this returns no callback mixes the engine, until another stream opens.
+    /// </summary>
+    public void Close()
+    {
+        earlierXruns += currentXruns();
+        close();
+    }
+
     private void close()
     {
         if (stream == 0)
@@ -284,6 +341,10 @@ internal sealed class AAudioOutput : IDisposable
                     break;
             }
         }
+
+        // Oboe's wait between stopping a stream and closing it, a burst and at least 10 ms: up to Android 11 a callback
+        // could still come in after the stop, and closing under it crashed inside libaaudio.
+        Thread.Sleep(Math.Max(10, FramesPerBurst * 1000 / Math.Max(1, SampleRate) + 1));
 
         AAudioStream_close(stream);
         stream = 0;

@@ -33,17 +33,33 @@ internal sealed class MeasuredLatency
     /// </summary>
     private const double max_ms = 1000;
 
+    /// <summary>
+    /// Readings in a row that can't be a latency before the settled figure is dropped: a second's worth at the rate
+    /// they're taken. They come when the output's timestamps stop adding up, as they do after the system rebuilt a
+    /// stream under it, and the figure from before stands for nothing then. Kept, it moved every position by it for
+    /// good (862 ms, once).
+    /// </summary>
+    private const int impossible_readings_to_forget = 10;
+
     private int farReadings;
+    private int impossibleReadings;
 
     /// <summary>
-    /// The settled latency, in milliseconds, or null before the first reading.
+    /// The settled latency, in milliseconds, or null before the first reading, and after readings stopped making sense.
     /// </summary>
     public double? Milliseconds { get; private set; }
 
     public void Add(double milliseconds)
     {
         if (milliseconds <= 0 || milliseconds > max_ms)
+        {
+            if (++impossibleReadings >= impossible_readings_to_forget)
+                Reset();
+
             return;
+        }
+
+        impossibleReadings = 0;
 
         if (Milliseconds is not double settled)
         {
@@ -73,5 +89,6 @@ internal sealed class MeasuredLatency
     {
         Milliseconds = null;
         farReadings = 0;
+        impossibleReadings = 0;
     }
 }

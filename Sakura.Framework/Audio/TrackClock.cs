@@ -22,7 +22,7 @@ namespace Sakura.Framework.Audio;
 /// move together through <see cref="IAudioChannel.Frequency"/>.
 /// </para>
 /// </summary>
-public class TrackClock : IAdjustableClock
+public class TrackClock : IAdjustableClock, IHasOutputLatency
 {
     private readonly IAudioChannel channel;
 
@@ -34,6 +34,8 @@ public class TrackClock : IAdjustableClock
     }
 
     public double CurrentTime => channel.CurrentTime;
+
+    public double OutputLatency => channel.OutputLatency;
 
     public bool IsRunning => channel.IsRunning.Value;
 

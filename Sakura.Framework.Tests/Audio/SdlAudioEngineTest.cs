@@ -863,7 +863,9 @@ public class SdlAudioEngineTest
 
         // Immediately, with no pumping at all. The audio thread has not applied the seek yet, and
         // reporting the old cursor against the new base here is what would read as a jump backwards.
-        Assert.That(channel.CurrentTime, Is.EqualTo(1000).Within(1), "The seek was not reported until it had been applied.");
+        // Behind the target by the output's latency, as it's reported once the seek lands: nothing of
+        // the new position is heard before then.
+        Assert.That(channel.CurrentTime, Is.EqualTo(1000 - manager.OutputLatencyMs).Within(1), "The seek was not reported until it had been applied.");
 
         timeout.Restart();
 
