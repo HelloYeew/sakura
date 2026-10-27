@@ -172,6 +172,10 @@ public abstract class AppHost : IDisposable
 
     private void dispatchInput(in PendingInput input)
     {
+        if (audioInterrupted && input.Type is PendingInputType.KeyDown or PendingInputType.MouseDown or PendingInputType.TouchDown or PendingInputType.GamepadButtonDown
+            && !(input.Type == PendingInputType.KeyDown && input.Key.IsRepeat))
+            OnPressWhileAudioInterrupted();
+
         switch (input.Type)
         {
             case PendingInputType.KeyDown:
@@ -567,6 +571,16 @@ public abstract class AppHost : IDisposable
         if (AudioManager != null)
             AudioManager.OutputInterrupted.Value = interrupted;
     });
+
+    /// <summary>
+    /// The player pressed a key or a button, or touched the screen, while the system had the audio output for something
+    /// else (<see cref="SetAudioInterrupted"/>). As games take it, that's the player back for the app's sound, so a
+    /// platform that gives the output up to another app's music for good asks for it back here, rather than the moment
+    /// it could. On the update thread, once a press.
+    /// </summary>
+    protected virtual void OnPressWhileAudioInterrupted()
+    {
+    }
 
     private void enterForeground()
     {
