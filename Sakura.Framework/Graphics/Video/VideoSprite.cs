@@ -20,10 +20,10 @@ namespace Sakura.Framework.Graphics.Video;
 /// </summary>
 /// <remarks>
 ///     <para>
-///         <b>Time model:</b> the decoder produces frames with PTS timestamps in milliseconds.
-///         <see cref="VideoSprite"/> tracks a playback clock that starts at 0 and increments with
-///         real elapsed time. Frames are displayed when their PTS (offset-adjusted to start from 0)
-///         is &lt;= the playback clock.
+///         <b>Time model:</b> the decoder produces frames timed in milliseconds from the start of the
+///         video (it takes the container's start offset off). A frame is displayed once the playback
+///         position, <see cref="CurrentTime"/>, reaches its time. The position is either the sprite's own,
+///         advancing with real elapsed time, or its <see cref="Drawable.Clock"/>'s (<see cref="SyncToClock"/>).
 ///     </para>
 ///     <para>
 ///         <b>Threading:</b>
@@ -73,13 +73,26 @@ public partial class VideoSprite : Drawable
     // - seekBaseMs: the absolute video position (ms, 0-based) we last seeked to. Stays constant between seeks.
     // - elapsedMs: how much real time has elapsed since the last seek. Incremented by ElapsedFrameTime each update while playing.
     // - CurrentTime: seekBaseMs + elapsedMs — the current absolute video position.
-    //
-    // - ptsBias: PTS of the first frame received after a seek.
-    //   targetPts = CurrentTime + ptsBias is what we compare frame PTSes against.
-    //   This is because the decoder's PTS timestamps are not 0-based — they start at some offset baked into the container.
     private double seekBaseMs;
     private double elapsedMs;
-    private double ptsBias = double.NaN;
+
+    /// <summary>
+    /// Whether no frame from the last seek has been displayed yet. The first one goes up as soon as it arrives, even if
+    /// it's timed after the position: a seek that lands short of a keyframe resumes at the next one, and until the position
+    /// gets there that's the nearest frame there is. Shown by its time instead, the frame from before the seek would stay up.
+    /// </summary>
+    private bool awaitingSeekFrame = true;
+
+    /// <summary>
+    /// How far the video has played since the last seek: the seek's position, or the latest frame displayed because the
+    /// position reached it. In <see cref="SyncToClock"/> mode, a clock this far behind it has been moved back.
+    /// </summary>
+    private double playedToMs;
+
+    /// <summary>
+    /// The time of the newest frame queued since the last seek, or NaN.
+    /// </summary>
+    private double newestQueuedMs = double.NaN;
 
     public bool IsPlaying { get; private set; }
     public bool Buffering { get; private set; }
@@ -92,21 +105,16 @@ public partial class VideoSprite : Drawable
     /// clock without any manual resync loop. When false (default) the video is self-contained
     /// and uses its own elapsed-time accumulator.
     /// <remarks>
-    /// <see cref="Seek"/> and <see cref="IsPlaying"/> still work normally when enabled.
-    /// The internal accumulator is not used, so there is no drift between the video
-    /// and the master clock regardless of frame timing jitter.
+    /// The video plays at the clock's rate, stands still when the clock does, and follows it when it's
+    /// moved: back by more than <see cref="sync_seek_back_ms"/>, or ahead by more than
+    /// <see cref="sync_seek_ahead_ms"/> past what's decoded, is a seek. Anything less is played through, so a
+    /// fast clock or a slow frame never makes the decoder start over. <see cref="IsPlaying"/> has no effect.
     /// </remarks>
     /// </summary>
     public bool SyncToClock
     {
         get => syncToClock;
-        set
-        {
-            syncToClock = value;
-            // Reset the jump-detection baseline so the first frame after switching
-            // modes doesn't falsely look like a seek.
-            lastSyncTime = double.NaN;
-        }
+        set => syncToClock = value;
     }
 
     /// <summary>
@@ -122,6 +130,13 @@ public partial class VideoSprite : Drawable
     /// </para>
     /// </remarks>
     public virtual double CurrentTime => SyncToClock ? Clock.CurrentTime : seekBaseMs + elapsedMs;
+
+    /// <summary>
+    /// The time of the frame on screen, from the start of the video, or NaN before the first. Behind
+    /// <see cref="CurrentTime"/> by up to a frame's length while playing; after a seek, ahead of it until the
+    /// position reaches the first frame the seek found.
+    /// </summary>
+    internal double DisplayedFrameTime => lastFrame?.Time ?? double.NaN;
 
     public double Duration => decoder?.Duration ?? 0;
     public double OriginalWidth => decoder?.Width ?? 0;
@@ -221,39 +236,73 @@ public partial class VideoSprite : Drawable
         seekBaseMs = absoluteMs;
         elapsedMs = 0;
 
-        // Reset jump-detection baseline so the frame right after a seek is not
-        // mistaken for another seek in SyncToClock mode.
-        lastSyncTime = double.NaN;
-
-        // The decoder's Seek() takes a 0-based absolute position in milliseconds. It internally
-        // adds the container's start_time when converting to a stream timestamp and subtracts it
-        // again when comparing decoded frame times against the skip target, so the start offset
-        // is fully handled decoder-side. We must NOT add ptsBias here — doing so double-counts
-        // the container start offset and makes every seek overshoot (the "seek lands elsewhere"
-        // bug). Pass the plain absolute position.
+        // The decoder's Seek() takes a 0-based absolute position in milliseconds, as are the times of the frames it
+        // produces: it adds the container's start_time when converting to a stream timestamp and subtracts it from
+        // what it decodes, so the start offset is handled decoder-side.
         decoder.Seek(absoluteMs);
 
         // Flush all buffered frames — they belong to the old position.
         decoder.ReturnFrames(availableFrames);
         availableFrames.Clear();
 
-        // Reset ptsBias — will be re-established from the first frame after this seek.
-        // This is safe because elapsedMs=0 and seekBaseMs=absoluteMs, so even if the
-        // first frame arrives with a slightly different PTS we'll re-anchor correctly.
-        ptsBias = double.NaN;
+        awaitingSeekFrame = true;
+        playedToMs = absoluteMs;
+        newestQueuedMs = double.NaN;
     }
 
     /// <summary>
-    /// Last clock time seen in <see cref="SyncToClock"/> mode, used to detect external seeks.
+    /// How far a <see cref="SyncToClock"/> clock has to go back from where the video has played to before the video seeks
+    /// after it, rather than holding its frame until the clock catches up. Over a frame or two, so that a clock correcting
+    /// itself by a little doesn't start the decoder over.
     /// </summary>
-    private double lastSyncTime = double.NaN;
+    private const double sync_seek_back_ms = 100;
 
     /// <summary>
-    /// How far the clock must jump (in ms) before it is treated as a seek rather
-    /// than normal elapsed time in <see cref="SyncToClock"/> mode.
-    /// Covers one worst-case audio buffer step (~10 ms) plus a frame at 30 fps (~33 ms).
+    /// How far a <see cref="SyncToClock"/> clock has to be ahead of the newest decoded frame before the video seeks to it,
+    /// rather than decoding its way there. Decoding through a second is quicker than a seek, which has to start from a
+    /// keyframe, and it's what keeps a clock running fast (a song sped up) from seeking at all.
     /// </summary>
-    private const double sync_seek_threshold_ms = 50.0;
+    private const double sync_seek_ahead_ms = 1000;
+
+    /// <summary>
+    /// How far a <see cref="SyncToClock"/> clock may get past a seek before its first frame has come before it's sought
+    /// again: a decoder slow to land on a frame shouldn't be told to start over while it's still getting there.
+    /// </summary>
+    private const double sync_seek_ahead_while_seeking_ms = 3000;
+
+    /// <summary>
+    /// Seeks after the clock in <see cref="SyncToClock"/> mode when it has moved somewhere this video can't play its way to.
+    /// </summary>
+    private void followClock()
+    {
+        double position = Math.Max(0, Clock.CurrentTime);
+
+        if (position < playedToMs - sync_seek_back_ms)
+        {
+            seekTo(position);
+            return;
+        }
+
+        // Past the end, the video is at its last frame: sought there like anywhere else, rather than decoded through to it
+        // all at once (a song whose preview starts after its video ends).
+        double target = Duration > 0 ? Math.Min(position, Duration) : position;
+
+        if (awaitingSeekFrame)
+        {
+            if (target > playedToMs + sync_seek_ahead_while_seeking_ms)
+                seekTo(target);
+
+            return;
+        }
+
+        if (decoder.State == VideoDecoder.DecoderState.EndOfStream && availableFrames.Count == 0)
+            return;
+
+        double newest = double.IsNaN(newestQueuedMs) ? lastFrame?.Time ?? playedToMs : newestQueuedMs;
+
+        if (target > newest + sync_seek_ahead_ms)
+            seekTo(target);
+    }
 
     public override void Update()
     {
@@ -265,20 +314,8 @@ public partial class VideoSprite : Drawable
 
         if (syncToClock)
         {
-            double clockTime = Clock.CurrentTime;
-
-            if (!double.IsNaN(lastSyncTime))
-            {
-                double delta = clockTime - lastSyncTime;
-
-                // A jump larger than the threshold (backwards or large forward) means the
-                // master clock was seeked externally — flush and re-anchor the decoder.
-                if (Math.Abs(delta) > sync_seek_threshold_ms)
-                    seekTo(Math.Max(0, clockTime));
-            }
-
-            lastSyncTime = clockTime;
             // No accumulator to advance — CurrentTime returns Clock.CurrentTime directly.
+            followClock();
         }
         else
         {
@@ -299,8 +336,8 @@ public partial class VideoSprite : Drawable
         // Each frame is stamped with the decoder's seek generation at decode time. Any frame
         // whose generation no longer matches the decoder's current generation belongs to a
         // position we have seeked away from — discard it (returning its texture) so it can
-        // never be displayed or used to (re)anchor ptsBias. This is what stops seek/reverse
-        // from jumping to the wrong place or freezing on a stale frame.
+        // never be displayed. This is what stops seek/reverse from jumping to the wrong place
+        // or freezing on a stale frame.
         int currentGeneration = decoder.SeekGeneration;
         foreach (var f in decoder.GetDecodedFrames())
         {
@@ -311,6 +348,7 @@ public partial class VideoSprite : Drawable
             }
 
             availableFrames.Enqueue(f);
+            newestQueuedMs = f.Time;
 
             // Schedule the actual GL upload for this frame's NativeTexture.
             // Runs in StartFrame() before any Draw() calls — safe GL ordering.
@@ -318,40 +356,32 @@ public partial class VideoSprite : Drawable
             renderer.ScheduleToDrawThread(() => capturedVt.FlushIfPending());
         }
 
-        // Establish ptsBias from the first frame received after a seek.
-        // ptsBias = firstFramePts - seekBaseMs
-        // This means: targetPts = seekBaseMs + elapsedMs + ptsBias
-        //           = seekBaseMs + elapsedMs + (firstFramePts - seekBaseMs)
-        //           = firstFramePts + elapsedMs (tracks correctly from any seek point)
-        if (double.IsNaN(ptsBias) && availableFrames.Count > 0)
-            ptsBias = availableFrames.Peek().Time - seekBaseMs;
+        // Frames are timed from the start of the video, as the position is, so each goes up once the position reaches it.
+        // Not timed from the first frame after a seek, as they once were: a seek that landed late then put the whole video
+        // that far ahead for good, where nothing could see it (a retry on a video whose first keyframe is a few frames in).
+        double position = CurrentTime;
+        int shown = 0;
 
-        if (!double.IsNaN(ptsBias))
+        while (availableFrames.Count > 0 && availableFrames.Peek().Time <= position)
         {
-            // Raw PTS value that corresponds to the current playback position.
-            double targetPts = CurrentTime + ptsBias;
-
-            // Advance lastFrame to the newest frame whose PTS <= targetPts.
-            while (availableFrames.Count > 0 && availableFrames.Peek().Time <= targetPts)
-            {
-                if (lastFrame != null)
-                    retire(lastFrame);
-
-                lastFrame = availableFrames.Dequeue();
-                GlobalStatistics.Get<int>("Video", "Frames Displayed", StatisticKind.Cumulative).Value++;
-            }
-
-            // Count frames still queued ahead of playback position as skipped
-            // (they arrived too late and will be superseded next update).
-            int skipped = 0;
-            foreach (var f in availableFrames)
-            {
-                if (f.Time < targetPts) skipped++;
-                else break;
-            }
-            if (skipped > 0)
-                GlobalStatistics.Get<int>("Video", "Frames Skipped", StatisticKind.Cumulative).Value += skipped;
+            var frame = availableFrames.Dequeue();
+            playedToMs = Math.Max(playedToMs, frame.Time);
+            display(frame);
+            shown++;
         }
+
+        if (awaitingSeekFrame && shown == 0 && availableFrames.Count > 0)
+        {
+            display(availableFrames.Dequeue());
+            shown++;
+        }
+
+        if (shown > 0)
+            awaitingSeekFrame = false;
+
+        // Frames that came up and went in one update were never drawn: the decoder fell behind the position.
+        if (shown > 1)
+            GlobalStatistics.Get<int>("Video", "Frames Skipped", StatisticKind.Cumulative).Value += shown - 1;
 
         if (lastFrame != null)
         {
@@ -389,6 +419,15 @@ public partial class VideoSprite : Drawable
         GlobalStatistics.Get<double>("Video", "Playback Position", StatisticKind.Gauge, StatisticUnit.Milliseconds).Value = Math.Round(CurrentTime, 1);
         GlobalStatistics.Get<int>("Video", "Queue Depth").Value = availableFrames.Count;
         GlobalStatistics.Get<int>("Video", "Frames Retiring").Value = retiringFrames.Count;
+    }
+
+    private void display(DecodedFrame frame)
+    {
+        if (lastFrame != null)
+            retire(lastFrame);
+
+        lastFrame = frame;
+        GlobalStatistics.Get<int>("Video", "Frames Displayed", StatisticKind.Cumulative).Value++;
     }
 
     /// <summary>
