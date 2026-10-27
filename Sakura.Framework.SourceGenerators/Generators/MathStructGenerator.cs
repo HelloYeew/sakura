@@ -3,7 +3,9 @@
 
 #nullable disable
 
+using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -64,10 +66,11 @@ public class MathStructGenerator : IIncrementalGenerator
             // but if Sakura's Vector4 is defined, we will use that instead.
             // This allows for more flexible usage of the generated methods.
             var typeMap = structs.ToDictionary(s => s.UnderlyingTypeFullName, s => s.WrapperName);
+            var fullTypeMap = structs.ToDictionary(s => s.UnderlyingTypeFullName, s => $"{s.NamespaceName}.{s.WrapperName}");
 
             foreach (var structInfo in structs)
             {
-                generateWrapperCode(spc, structInfo, typeMap, emitPath);
+                generateWrapperCode(spc, structInfo, typeMap, fullTypeMap, emitPath);
             }
         });
     }
@@ -79,18 +82,39 @@ public class MathStructGenerator : IIncrementalGenerator
         var valueField = structSymbol.GetMembers("Value").OfType<IFieldSymbol>().FirstOrDefault();
         if (valueField is null) return null;
 
+        // The static methods and operators the struct writes itself, which it then has instead of a forward.
+        var declared = structSymbol.GetMembers().OfType<IMethodSymbol>()
+                                   .Where(m => m.IsStatic && m.MethodKind is MethodKind.Ordinary or MethodKind.UserDefinedOperator)
+                                   .Select(m => signatureOf(m, t => t.ToDisplayString()))
+                                   .ToImmutableArray();
+
         return new StructInfo(
             structSymbol.Name,
             structSymbol.ContainingNamespace.ToDisplayString(),
-            valueField.Type
+            valueField.Type,
+            declared
         );
     }
 
+    /// <summary>
+    /// A method's name and parameter types, with each type named by <paramref name="typeName"/>, to tell a member the
+    /// struct writes itself from the forward that would otherwise be generated. ref, out and in read the same, as C#
+    /// can't tell overloads apart by those alone.
+    /// </summary>
+    private static string signatureOf(IMethodSymbol method, Func<ITypeSymbol, string> typeName)
+        => $"{method.Name}({string.Join(",", method.Parameters.Select(p => (p.RefKind == RefKind.None ? "" : "ref ") + typeName(p.Type)))})";
+
     private void generateWrapperCode(SourceProductionContext context, StructInfo structInfo,
-        IReadOnlyDictionary<string, string> typeMap, string emitPath)
+        IReadOnlyDictionary<string, string> typeMap, IReadOnlyDictionary<string, string> fullTypeMap, string emitPath)
     {
-        (string wrapperName, string namespaceName, var underlyingType) = structInfo;
+        (string wrapperName, string namespaceName, var underlyingType, var declaredSignatures) = structInfo;
         string underlyingTypeName = underlyingType.ToDisplayString();
+
+        var declared = new HashSet<string>(declaredSignatures);
+
+        // Whether the struct writes this member itself, as it would read once forwarded with its own types.
+        bool declaresItself(IMethodSymbol member)
+            => declared.Contains(signatureOf(member, t => fullTypeMap.TryGetValue(t.ToDisplayString(), out string name) ? name : t.ToDisplayString()));
 
         bool generatedEqualityOperator = false;
 
@@ -155,6 +179,9 @@ public class MathStructGenerator : IIncrementalGenerator
             if (!member.Parameters.All(p => typeMap.ContainsKey(p.Type.ToDisplayString()) || p.Type.SpecialType != SpecialType.None))
                 continue;
 
+            if (declaresItself(member))
+                continue;
+
             string operatorSymbol = getOperatorSymbol(member.Name);
 
             // Skip operators we don't have a symbol for.
@@ -202,6 +229,8 @@ public class MathStructGenerator : IIncrementalGenerator
         {
             // Skip methods that return types we don't know how to handle (e.g., generic types)
             if (member.IsGenericMethod) continue;
+
+            if (declaresItself(member)) continue;
 
             bool isUnsafe = member.ReturnType.TypeKind == TypeKind.Pointer || member.Parameters.Any(p => p.Type.TypeKind == TypeKind.Pointer);
             string unsafeModifier = isUnsafe ? "unsafe " : "";
@@ -433,7 +462,7 @@ public class MathStructGenerator : IIncrementalGenerator
     /// </summary>
     /// <param name="parameter">The parameter symbol to check.</param>
     /// <returns>The parameter modifier as a string for use in method signatures.</returns>
-    private string getParameterModifier(IParameterSymbol parameter)
+    private static string getParameterModifier(IParameterSymbol parameter)
     {
         return parameter.RefKind switch
         {
@@ -478,11 +507,12 @@ public class MathStructGenerator : IIncrementalGenerator
         return builder.ToString().TrimEnd();
     }
 
-    private record StructInfo(string WrapperName, string NamespaceName, ITypeSymbol UnderlyingType)
+    private record StructInfo(string WrapperName, string NamespaceName, ITypeSymbol UnderlyingType, ImmutableArray<string> DeclaredSignatures)
     {
         public string UnderlyingTypeFullName => UnderlyingType.ToDisplayString();
         public string WrapperName { get; } = WrapperName;
         public string NamespaceName { get; } = NamespaceName;
         public ITypeSymbol UnderlyingType { get; } = UnderlyingType;
+        public ImmutableArray<string> DeclaredSignatures { get; } = DeclaredSignatures;
     }
 }

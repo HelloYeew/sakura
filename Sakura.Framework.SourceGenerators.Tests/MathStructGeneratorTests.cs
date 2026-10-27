@@ -224,6 +224,50 @@ public class MathStructGeneratorTests
         });
     }
 
+    // A member the struct writes itself is left to it, while its other overloads are still forwarded
+
+    [Test]
+    public void Member_the_struct_writes_itself_is_not_forwarded()
+    {
+        const string source = """
+            using Sakura.Framework.Maths;
+            using SystemVector2 = System.Numerics.Vector2;
+            using SystemMatrix3x2 = System.Numerics.Matrix3x2;
+
+            namespace Sakura.Framework.Maths
+            {
+                [MathStruct]
+                public partial struct Vector2
+                {
+                    public SystemVector2 Value;
+
+                    public static Vector2 Transform(Vector2 position, Matrix3x2 matrix) => position;
+                }
+
+                [MathStruct]
+                public partial struct Matrix3x2
+                {
+                    public SystemMatrix3x2 Value;
+
+                    public static Matrix3x2 operator *(Matrix3x2 value1, Matrix3x2 value2) => value1;
+                }
+            }
+            """;
+
+        var result = GeneratorTestHelper.RunGenerator<MathStructGenerator>(attribute_stub, source);
+        var all = GeneratorTestHelper.GetAllGeneratedSources(result);
+        string vector2File = all.Values.First(s => s.Contains("partial struct Vector2"));
+        string matrixFile = all.Values.First(s => s.Contains("partial struct Matrix3x2"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(vector2File, Does.Not.Contain("Transform(Vector2 position, Matrix3x2 matrix)"));
+            Assert.That(vector2File, Does.Contain("Transform(Vector2 position, System.Numerics.Matrix4x4 matrix)"));
+            Assert.That(matrixFile, Does.Not.Contain("operator *(Matrix3x2 value1, Matrix3x2 value2)"));
+            Assert.That(matrixFile, Does.Contain("operator *(Matrix3x2 value1, float value2)"));
+        });
+    }
+
     // Generated code contains auto-generated header comment
 
     [Test]
