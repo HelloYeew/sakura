@@ -84,11 +84,11 @@ public class MathStructGeneratorTests
         var all = GeneratorTestHelper.GetAllGeneratedSources(result);
         string vector2File = all.Values.First(s => s.Contains("partial struct Vector2"));
 
-        Assert.Multiple(() =>
+        using (Assert.EnterMultipleScope())
         {
             Assert.That(vector2File, Does.Contain("public Vector2("));
             Assert.That(vector2File, Does.Contain("this.Value = new System.Numerics.Vector2("));
-        });
+        }
     }
 
     // Arithmetic operator overloads are generated (+, -, *)
@@ -100,12 +100,12 @@ public class MathStructGeneratorTests
         var all = GeneratorTestHelper.GetAllGeneratedSources(result);
         string vector2File = all.Values.First(s => s.Contains("partial struct Vector2"));
 
-        Assert.Multiple(() =>
+        using (Assert.EnterMultipleScope())
         {
             Assert.That(vector2File, Does.Contain("operator +"));
             Assert.That(vector2File, Does.Contain("operator -"));
             Assert.That(vector2File, Does.Contain("operator *"));
-        });
+        }
     }
 
     // Equality operators (== and !=) are generated
@@ -117,11 +117,11 @@ public class MathStructGeneratorTests
         var all = GeneratorTestHelper.GetAllGeneratedSources(result);
         string vector2File = all.Values.First(s => s.Contains("partial struct Vector2"));
 
-        Assert.Multiple(() =>
+        using (Assert.EnterMultipleScope())
         {
             Assert.That(vector2File, Does.Contain("operator =="));
             Assert.That(vector2File, Does.Contain("operator !="));
-        });
+        }
     }
 
     // IEquatable<T> is implemented when the underlying type supports it
@@ -134,12 +134,12 @@ public class MathStructGeneratorTests
         var all = GeneratorTestHelper.GetAllGeneratedSources(result);
         string vector2File = all.Values.First(s => s.Contains("partial struct Vector2"));
 
-        Assert.Multiple(() =>
+        using (Assert.EnterMultipleScope())
         {
             Assert.That(vector2File, Does.Contain("System.IEquatable<Vector2>"));
             Assert.That(vector2File, Does.Contain("public bool Equals(Vector2"));
             Assert.That(vector2File, Does.Contain("public override int GetHashCode()"));
-        });
+        }
     }
 
     // Static method forwarding — Normalize, Dot, etc. from System.Numerics.Vector2
@@ -217,11 +217,11 @@ public class MathStructGeneratorTests
         bool hasVector2 = all.Values.Any(s => s.Contains("partial struct Vector2"));
         bool hasVector3 = all.Values.Any(s => s.Contains("partial struct Vector3"));
 
-        Assert.Multiple(() =>
+        using (Assert.EnterMultipleScope())
         {
             Assert.That(hasVector2, Is.True, "No generated file for Vector2.");
             Assert.That(hasVector3, Is.True, "No generated file for Vector3.");
-        });
+        }
     }
 
     // A member the struct writes itself is left to it, while its other overloads are still forwarded
@@ -259,13 +259,13 @@ public class MathStructGeneratorTests
         string vector2File = all.Values.First(s => s.Contains("partial struct Vector2"));
         string matrixFile = all.Values.First(s => s.Contains("partial struct Matrix3x2"));
 
-        Assert.Multiple(() =>
+        using (Assert.EnterMultipleScope())
         {
             Assert.That(vector2File, Does.Not.Contain("Transform(Vector2 position, Matrix3x2 matrix)"));
             Assert.That(vector2File, Does.Contain("Transform(Vector2 position, System.Numerics.Matrix4x4 matrix)"));
             Assert.That(matrixFile, Does.Not.Contain("operator *(Matrix3x2 value1, Matrix3x2 value2)"));
             Assert.That(matrixFile, Does.Contain("operator *(Matrix3x2 value1, float value2)"));
-        });
+        }
     }
 
     // Generated code contains auto-generated header comment
