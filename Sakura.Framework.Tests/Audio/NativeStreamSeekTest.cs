@@ -249,6 +249,40 @@ public class NativeStreamSeekTest
     }
 
     /// <summary>
+    /// A change of speed is a seek to where the listener is, and the music stops until the new speed's audio is in. That
+    /// has to be no more than the hand-over itself: the callback that takes the old audio away, and the one after. It
+    /// used to be a frame of MP3 more (14 to 26 ms), as a decoder started on the target's own frame gave it back silent.
+    /// </summary>
+    [TestCase(1.0, 1.5)]
+    [TestCase(1.5, 2.0)]
+    [TestCase(2.0, 0.5)]
+    [TestCase(0.75, 1.0)]
+    public void ChangingSpeedOnlyPausesForTheHandOver(double from, double to)
+    {
+        var track = createTrack();
+        var (channel, feeder) = track;
+
+        channel.Tempo.Value = from;
+        render(track, 500, at: 3000);
+
+        channel.Tempo.Value = to;
+        float[] after = render(track, 100, playing: true);
+
+        int longest = 0;
+
+        for (int i = 0, run = 0; i < after.Length; i++)
+        {
+            run = Math.Abs(after[i]) < 1e-3f ? run + 1 : 0;
+            longest = Math.Max(longest, run);
+        }
+
+        Assert.That(longest, Is.LessThanOrEqualTo(2 * 128 + sample_rate / 1000),
+            $"The music stopped for {longest * 1000.0 / sample_rate:F1} ms at the change of speed.");
+
+        channel.Dispose();
+    }
+
+    /// <summary>
     /// The left channel of <paramref name="milliseconds"/> of the track, from <paramref name="at"/>, or from where it is
     /// when <paramref name="playing"/>.
     /// </summary>

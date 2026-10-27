@@ -81,6 +81,18 @@ internal sealed unsafe class FFmpegAudioDecoder : IDisposable
     private double? trimToSeconds;
 
     /// <summary>
+    /// How far before a seek's target decoding starts, so that the audio at the target comes out whole.
+    /// </summary>
+    /// <remarks>
+    /// A compressed frame can depend on the ones before it. An MP3 frame's data begins up to 511 bytes back, in the
+    /// frames before it (the bit reservoir), and decoded without them it comes out silent. Seeking straight to the
+    /// target's frame, a seek in an MP3 began with 14 ms of silence (as much as 31 ms), and a change of speed, which is
+    /// a seek to where the listener is, left a gap in the music. 150 ms is the reservoir's reach at 32 kb/s; a codec
+    /// that says it needs more (<c>seek_preroll</c>, Opus's 80 ms at its own rate) gets that.
+    /// </remarks>
+    private double seekPrerollSeconds = 0.15;
+
+    /// <summary>
     /// Samples decoded from the current frame that did not fit in the caller's buffer, carried over
     /// to the next <see cref="Read"/>. Grown to the largest frame seen and then reused.
     /// </summary>
@@ -184,6 +196,9 @@ internal sealed unsafe class FFmpegAudioDecoder : IDisposable
 
         SampleRate = codecContext->sample_rate;
         Channels = codecContext->ch_layout.nb_channels;
+
+        if (avStream->codecpar->seek_preroll > 0 && SampleRate > 0)
+            seekPrerollSeconds = Math.Max(seekPrerollSeconds, avStream->codecpar->seek_preroll / (double)SampleRate);
 
         if (SampleRate <= 0 || Channels <= 0)
             throw new InvalidDataException($"Audio stream reports an unusable format ({SampleRate}Hz, {Channels}ch).");
@@ -464,6 +479,8 @@ internal sealed unsafe class FFmpegAudioDecoder : IDisposable
     /// up to a packet early (an MP3 frame is ~26 ms, and a VBR seek table is coarser). Every caller then
     /// reports the requested time as its position, so the decoded audio before it is discarded here
     /// rather than played: otherwise the audio lags the clock by however far short the seek landed.
+    /// Decoding starts <see cref="seekPrerollSeconds"/> earlier still, so the frames the target's own
+    /// frame depends on have been decoded by the time it is.
     /// </remarks>
     public void Seek(double milliseconds)
     {
@@ -471,7 +488,7 @@ internal sealed unsafe class FFmpegAudioDecoder : IDisposable
             return;
 
         double target = Math.Max(0, milliseconds) / 1000.0;
-        long timestamp = startTimestamp + (long)(target / timeBaseInSeconds);
+        long timestamp = startTimestamp + (long)(Math.Max(0, target - seekPrerollSeconds) / timeBaseInSeconds);
 
         int result = ffmpeg.av_seek_frame(formatContext, audioStreamIndex, timestamp, ffmpeg.AVSEEK_FLAG_BACKWARD);
 

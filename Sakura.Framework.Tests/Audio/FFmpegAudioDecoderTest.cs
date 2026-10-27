@@ -185,6 +185,63 @@ public class FFmpegAudioDecoderTest
         });
     }
 
+    /// <summary>
+    /// The audio right after a seek is the file's, from its first sample: no silence, nothing still settling.
+    /// </summary>
+    /// <remarks>
+    /// An MP3 frame's data starts in the frames before it (the bit reservoir), so a decoder started on the target's own
+    /// frame gave that frame back silent. Every seek in an MP3 began with up to a frame of silence, and a change of
+    /// speed, a seek to where the listener is, put a gap in the music.
+    /// </remarks>
+    [TestCase("Tracks.test.mp3", 1000.0)]
+    [TestCase("Tracks.test.mp3", 1234.5)]
+    [TestCase("Tracks.test.mp3", 2017.3)]
+    [TestCase("Samples.long.mp3", 777.7)]
+    [TestCase("Samples.test.wav", 123.4)]
+    public void SeekIsHeardFromItsFirstSample(string resource, double targetMs)
+    {
+        float[] reference = decodeAll(resource, out int channels, out int sampleRate);
+
+        using var decoder = new FFmpegAudioDecoder(open(resource));
+        decoder.Seek(targetMs);
+
+        const int window_frames = 2048;
+
+        float[] afterSeek = new float[window_frames * channels];
+        int filled = 0;
+
+        while (filled < afterSeek.Length)
+        {
+            int read = decoder.Read(afterSeek.AsSpan(filled));
+
+            if (read == 0)
+                break;
+
+            filled += read;
+        }
+
+        Assert.That(filled, Is.EqualTo(afterSeek.Length), "Not enough audio after the seek to compare.");
+
+        long start = (long)Math.Round(targetMs / 1000.0 * sampleRate) * channels;
+        double error = 0;
+        int silent = 0;
+
+        for (int i = 0; i < afterSeek.Length; i++)
+        {
+            double difference = afterSeek[i] - reference[start + i];
+            error += difference * difference;
+
+            if (silent == i && afterSeek[i] == 0 && reference[start + i] != 0)
+                silent++;
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(silent / channels * 1000.0 / sampleRate, Is.Zero, "The seek began with silence (ms).");
+            Assert.That(error, Is.LessThan(1e-6), "The audio after the seek is not the file's.");
+        });
+    }
+
     private static float[] decodeAll(string resource, out int channels, out int sampleRate)
     {
         using var decoder = new FFmpegAudioDecoder(open(resource));
