@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading;
@@ -64,6 +65,84 @@ public class VideoDecoderSeekTest
             Assert.That(first, Is.LessThan(tolerance_ms), $"round {round}: seeking back to 0 from {reached:F0} ms resumed at {first:F0} ms");
         }
     }
+
+    /// <summary>
+    /// The decoder's first frame needs the first four packets read, so a seek made as soon as it opens (a song moved
+    /// past its video's end before the video is up) lands before any frame has come out.
+    /// </summary>
+    [Test]
+    public void SeekPastTheEndAsItOpensGivesTheLastFrame([Values] bool hardware)
+    {
+        for (int round = 0; round < 5; round++)
+        {
+            using var textureManager = new HeadlessTextureManager();
+            var renderer = new HeadlessRenderer(textureManager);
+
+            using var stream = typeof(VideoDecoderSeekTest).Assembly.GetManifestResourceStream(video_resource);
+            using var decoder = new VideoDecoder(renderer, textureManager, stream!);
+            decoder.HardwareAcceleration.Value = hardware;
+            decoder.Start();
+
+            var opening = Stopwatch.StartNew();
+            while (decoder.State == VideoDecoder.DecoderState.Preparing && opening.ElapsedMilliseconds < timeout_ms) { }
+
+            decoder.Seek(decoder.Duration);
+            double first = firstFrameOfCurrentGeneration(decoder);
+
+            Assert.That(isLastFrame(decoder, first), $"round {round}: the seek past the end gave {first:F0} ms");
+        }
+    }
+
+    /// <summary>
+    /// Played to the end as a sprite plays it, a texture coming back for each frame shown, the last frame comes out too:
+    /// the codec gives up the frames it held back all at once at the end, more of them than the one texture back.
+    /// </summary>
+    [Test]
+    public void PlayingToTheEndGivesTheLastFrame([Values] bool hardware)
+    {
+        using var textureManager = new HeadlessTextureManager();
+        var renderer = new HeadlessRenderer(textureManager);
+
+        using var stream = typeof(VideoDecoderSeekTest).Assembly.GetManifestResourceStream(video_resource);
+        using var decoder = new VideoDecoder(renderer, textureManager, stream!);
+        decoder.HardwareAcceleration.Value = hardware;
+        decoder.Start();
+
+        decoder.Seek(7000);
+
+        // Gives back one frame for each taken once the pool is out, as a sprite showing them in turn does.
+        var held = new Queue<DecodedFrame>();
+        var timeout = Stopwatch.StartNew();
+        double last = double.NaN;
+
+        while (!isLastFrame(decoder, last) && timeout.ElapsedMilliseconds < timeout_ms)
+        {
+            int generation = decoder.SeekGeneration;
+
+            foreach (var f in decoder.GetDecodedFrames())
+            {
+                if (f.Generation == generation)
+                    last = f.Time;
+
+                held.Enqueue(f);
+            }
+
+            Thread.Sleep(20);
+
+            if (held.Count > 0)
+                decoder.ReturnFrames(new[] { held.Dequeue() });
+        }
+
+        decoder.ReturnFrames(held);
+
+        Assert.That(isLastFrame(decoder, last), $"decoding stopped at {last:F0} ms (decoder state {decoder.State})");
+    }
+
+    /// <summary>late-keyframe.avi plays at 24 fps.</summary>
+    private const double frame_ms = 1000 / 24.0;
+
+    /// <summary>Whether <paramref name="time"/> is the last frame's, which starts a frame before the end.</summary>
+    private static bool isLastFrame(VideoDecoder decoder, double time) => time > decoder.Duration - frame_ms * 1.5;
 
     /// <summary>Consumes frames of the current generation until one at or past <paramref name="time"/>.</summary>
     private static double playUntil(VideoDecoder decoder, double time)

@@ -23,9 +23,12 @@ namespace Sakura.Framework.Audio.SdlEngine;
 /// music slowing down rather than a stutter.
 /// </para>
 /// <para>
-/// The parameters are SoundTouch's (the library BASS_FX's tempo is built on): an 8 ms crossfade,
-/// and a sequence length and search range that shrink as the tempo rises, so a slowed-down track
-/// does not repeat itself in audible chunks and a sped-up one does not skip whole notes.
+/// The sequences are short, as osu! sets BASS_FX's (30 ms), rather than SoundTouch's defaults of 50 to
+/// 125 ms. Slowed down, every bit of the input is played by two sequences in a row, so a drum hit is
+/// heard twice: a sequence apart, which with long ones was an echo 60 ms later that broke the music up.
+/// Sped up, the input between sequences is skipped, and with long ones that was long enough to lose a
+/// hit's attack. The search range is longer than osu!'s, to cover a bass note's period, and the
+/// crossfade is longer slowing down than speeding up (see <see cref="overlap_ms_slower"/>).
 /// </para>
 /// <para>
 /// The output stays in step with the input: output frame <c>n</c> carries the input from around
@@ -40,24 +43,26 @@ namespace Sakura.Framework.Audio.SdlEngine;
 internal sealed class TimeStretcher
 {
     /// <summary>
-    /// The crossfade between sequences. Long enough to hide the joint, short enough not to smear a
-    /// transient across it.
+    /// How long a sequence is. At 0.5× a hit is repeated a sequence later, and at 25 ms the repeat is
+    /// under 20 ms after it, which hears as the one hit.
     /// </summary>
-    private const double overlap_ms = 8;
+    private const double sequence_ms = 25;
 
     /// <summary>
-    /// The tempo range SoundTouch fits its automatic sequence and search lengths over. Tempos outside
-    /// it use the length at the nearer end.
+    /// How far the next sequence's start is searched for past where the arithmetic puts it. At least a
+    /// bass note's period (50 Hz is 20 ms): shorter, there may be nowhere in range that lines up with the
+    /// note being faded out of, and sustained notes come out rough.
     /// </summary>
-    private const double auto_tempo_low = 0.5;
+    private const double seek_ms = 20;
 
-    private const double auto_tempo_high = 2.0;
+    /// <summary>
+    /// The crossfade between sequences, slowing down and speeding up. A longer one hides a joint in a
+    /// sustained note better; a shorter one keeps a hit's attack sharp where a joint lands on it, which it
+    /// does more often sped up, as the input moves on further at each.
+    /// </summary>
+    private const double overlap_ms_slower = 8;
 
-    private const double sequence_ms_at_low = 125;
-    private const double sequence_ms_at_high = 50;
-
-    private const double seek_ms_at_low = 25;
-    private const double seek_ms_at_high = 15;
+    private const double overlap_ms_faster = 6;
 
     /// <summary>
     /// The tempo range accepted, matching what the BASS backend clamps to at the low end. Far past
@@ -69,7 +74,7 @@ internal sealed class TimeStretcher
 
     private readonly int sampleRate;
     private readonly int channels;
-    private readonly int overlapFrames;
+    private int overlapFrames;
 
     private double tempo = 1;
     private int sequenceFrames;
@@ -97,7 +102,8 @@ internal sealed class TimeStretcher
     private int outputFrames;
 
     /// <summary>
-    /// The last <see cref="overlapFrames"/> of the previous sequence, which the next one fades in over.
+    /// The last <see cref="overlapFrames"/> of the previous sequence, which the next one fades in over. Sized for the
+    /// longest crossfade.
     /// </summary>
     private readonly float[] mid;
 
@@ -123,9 +129,9 @@ internal sealed class TimeStretcher
         this.sampleRate = sampleRate;
         this.channels = channels;
 
-        overlapFrames = Math.Max(8, framesFor(overlap_ms));
-        mid = new float[overlapFrames * channels];
-        reference = new float[overlapFrames];
+        int longestOverlap = Math.Max(8, framesFor(Math.Max(overlap_ms_slower, overlap_ms_faster)));
+        mid = new float[longestOverlap * channels];
+        reference = new float[longestOverlap];
 
         Reset(1);
     }
@@ -159,11 +165,9 @@ internal sealed class TimeStretcher
     {
         tempo = Math.Clamp(newTempo, MIN_TEMPO, MAX_TEMPO);
 
-        // SoundTouch's automatic lengths: a straight line between the two ends of the fitted range.
-        double t = Math.Clamp((tempo - auto_tempo_low) / (auto_tempo_high - auto_tempo_low), 0, 1);
-
-        sequenceFrames = Math.Max(2 * overlapFrames + 1, framesFor(sequence_ms_at_low + (sequence_ms_at_high - sequence_ms_at_low) * t));
-        seekFrames = Math.Max(1, framesFor(seek_ms_at_low + (seek_ms_at_high - seek_ms_at_low) * t));
+        overlapFrames = Math.Max(8, framesFor(tempo < 1 ? overlap_ms_slower : overlap_ms_faster));
+        sequenceFrames = Math.Max(2 * overlapFrames + 1, framesFor(sequence_ms));
+        seekFrames = Math.Max(1, framesFor(seek_ms));
         nominalSkip = tempo * (sequenceFrames - overlapFrames);
 
         skipFract = 0;
@@ -402,7 +406,7 @@ internal sealed class TimeStretcher
             mono[frame] = sum;
         }
 
-        var weights = reference.AsSpan();
+        var weights = reference.AsSpan(0, overlapFrames);
 
         // The candidate's energy, slid along one frame at a time rather than summed afresh.
         double energy = 0;

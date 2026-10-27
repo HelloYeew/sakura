@@ -1034,7 +1034,16 @@ public unsafe class VideoDecoder : IDisposable
         }
         else if (readResult == ffmpeg.AVERROR_EOF)
         {
-            sendPacket(receiveFrame, null);
+            // The codec takes the end once and answers EOF after, so a drain the pool cut short (below) is read out
+            // from here.
+            if (sendPacket(receiveFrame, null) == ffmpeg.AVERROR_EOF)
+                readDecodedFrames(receiveFrame);
+
+            // Not the end until every frame is out: one still waiting on the pool is only retried while running, so
+            // ending here stranded it, and the video's last frame with it.
+            if (pendingUploadFrame != null)
+                return;
+
             if (Looping) Seek(0);
             else State = DecoderState.EndOfStream;
         }
@@ -1208,6 +1217,27 @@ public unsafe class VideoDecoder : IDisposable
 
             if (frame == null) continue;
 
+            var shape = shapeFor(frame);
+
+            // Schedule pool warm-up on the draw thread on the very first frame, and again whenever the
+            // frames stop matching what the pool holds. The decode loop then polls availableTextures
+            // until textures arrive (typically within one draw frame ~4ms); textures from the previous
+            // shape are dropped in tryEmitFrame as they come back. Done for a frame the skip below
+            // drops too: a seek past the end made before the first frame came out skips every frame,
+            // and the one held back for it had no pool to go into.
+            if (poolShape != shape)
+            {
+                poolShape = shape;
+
+                renderer.ScheduleToDrawThread(() =>
+                {
+                    for (int i = 0; i < max_pending_frames; i++)
+                        availableTextures.Enqueue(new VideoTexture(renderer, textureManager, shape));
+
+                    wake();
+                });
+            }
+
             // Post-seek skip: drop frames between the landed keyframe and the seek target so
             // playback resumes at the requested time. Critically, we HOLD BACK the most recent
             // skipped frame instead of discarding it, so that if the target lands past the last
@@ -1228,25 +1258,6 @@ public unsafe class VideoDecoder : IDisposable
                 skipHeldFrame?.Return();
                 skipHeldFrame = null;
                 skipOutputUntilTime = null;
-            }
-
-            var shape = shapeFor(frame);
-
-            // Schedule pool warm-up on the draw thread on the very first frame, and again whenever the
-            // frames stop matching what the pool holds. The decode loop then polls availableTextures
-            // until textures arrive (typically within one draw frame ~4ms); textures from the previous
-            // shape are dropped in tryEmitFrame as they come back.
-            if (poolShape != shape)
-            {
-                poolShape = shape;
-
-                renderer.ScheduleToDrawThread(() =>
-                {
-                    for (int i = 0; i < max_pending_frames; i++)
-                        availableTextures.Enqueue(new VideoTexture(renderer, textureManager, shape));
-
-                    wake();
-                });
             }
 
             // Try to upload into a pooled texture. If the pool is momentarily empty we keep the
