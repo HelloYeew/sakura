@@ -141,6 +141,10 @@ jobs:
   # and stripped, which nothing here can run. What only iOS exercises is checked on a simulator or a phone by hand.
   ios:
     name: iOS (build)
+    # Off until GitHub's macOS runners have Xcode 27. The .NET 11 iOS workload (27.0) builds against the iOS 27 SDK, which
+    # only Xcode 27 has; the runners' newest is Xcode 26 (iOS 26.5 SDK), so every build stops on types "introduced in iOS
+    # 27.0". Turn it back on when `ls /Applications | grep Xcode_27` finds one on macos-latest.
+    if: false
     runs-on: macos-latest
     timeout-minutes: 40
     env:
