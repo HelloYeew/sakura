@@ -218,6 +218,9 @@ public class AndroidAppHost : SDLAppHost
     // The app has already been told it was going to the background, which is its chance to save.
     protected override bool CanBlockExit => false;
 
+    // Another app's music took the output for good, and the player's press is them back for this one's.
+    protected override void OnPressWhileAudioInterrupted() => audioFocus?.TakeBack();
+
     // What the system does with Back on an app's first screen: it goes to the background, still running.
     protected override void OnUnhandledSystemBack() => activity.RunOnUiThread(() => activity.MoveTaskToBack(true));
 

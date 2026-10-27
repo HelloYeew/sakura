@@ -52,6 +52,26 @@ public class IOSAppHost : SDLAppHost
     // Only touched on the main thread, where the notifications come.
     private bool audioInterrupted;
 
+    // The player's press is them back for the app's sound, after something took the session and never said it was done
+    // (another app's music, started from a headset or the lock screen). On the main thread, with the notifications.
+    protected override void OnPressWhileAudioInterrupted() => NSRunLoop.Main.BeginInvokeOnMainThread(takeSessionBack);
+
+    private void takeSessionBack()
+    {
+        if (!audioInterrupted)
+            return;
+
+        // Refused while what interrupted still holds the output (a call), which then ends the interruption itself.
+        if (!AVAudioSession.SharedInstance().SetActive(true, out NSError? error))
+        {
+            Logger.Verbose($"The audio session stays interrupted: {error?.LocalizedDescription}");
+            return;
+        }
+
+        audioInterrupted = false;
+        SetAudioInterrupted(false);
+    }
+
     private void setInterrupted(bool interrupted)
     {
         if (interrupted == audioInterrupted)
