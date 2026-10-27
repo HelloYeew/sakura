@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using NUnit.Framework;
 using Sakura.Framework.Audio.SdlEngine;
 
@@ -184,11 +185,179 @@ public class TimeStretcherTest
 
         // Within a sequence the audio plays at its own speed, so an onset can be heard up to half a
         // sequence × |1 − tempo| of input from where the arithmetic puts it (the stretcher centres that
-        // drift), plus the search range and the crossfade. The longest sequence is 125 ms.
-        double toleranceMs = (125 / 2.0 * Math.Abs(1 - tempo) + 25 + 8) / tempo;
+        // drift), plus the search range and the crossfade: 25, 20 and at most 8 ms.
+        double toleranceMs = (25 / 2.0 * Math.Abs(1 - tempo) + 20 + 8) / tempo;
 
         Assert.That(heardMs, Is.EqualTo(expectedMs).Within(toleranceMs),
             $"The tone starts {onset / (double)rate * 1000:F0} ms into the input, so at tempo {tempo} it should be heard at {expectedMs:F0} ms.");
+    }
+
+    /// <summary>
+    /// Slowed down, every bit of the input goes out twice, a sequence apart, drum hits included. A short sequence keeps the
+    /// repeat close enough to be heard as the same hit; long ones made an echo of every hit, 60 ms later, and music that
+    /// sounded broken up.
+    /// </summary>
+    [TestCase(0.5)]
+    [TestCase(0.75)]
+    public void SlowedDownHitsAreHeardOnce(double tempo)
+    {
+        float[] input = hits(out var hitMs);
+        var onsets = attacks(stretch(input, tempo), hitStrength(input, hitMs) * 0.25);
+
+        int echoed = 0;
+
+        foreach (double hit in hitMs)
+        {
+            double heard = hit / tempo;
+            var around = onsets.Where(o => o.Ms >= heard - 40 && o.Ms <= heard + 250).ToList();
+
+            if (around.Count == 0)
+                continue;
+
+            double loudest = around.Max(o => o.Strength);
+            double first = around.First(o => o.Strength >= loudest / 2).Ms;
+
+            if (around.Any(o => o.Ms > first + 30 && o.Strength >= loudest / 2))
+                echoed++;
+        }
+
+        Assert.That(echoed / (double)hitMs.Count, Is.LessThanOrEqualTo(0.15),
+            $"{echoed} of {hitMs.Count} hits were heard again more than 30 ms after they started.");
+    }
+
+    /// <summary>
+    /// Sped up, the input between sequences is skipped. A short sequence keeps those gaps short of a hit's attack; long
+    /// ones lost the start of four hits in ten at double speed, which made the music sound broken up.
+    /// </summary>
+    [TestCase(1.5)]
+    [TestCase(2.0)]
+    public void SpedUpHitsKeepTheirAttack(double tempo)
+    {
+        float[] input = hits(out var hitMs);
+        double strength = hitStrength(input, hitMs);
+        var onsets = attacks(stretch(input, tempo), strength * 0.25);
+
+        int weakened = hitMs.Count(hit =>
+        {
+            double heard = hit / tempo;
+            return !onsets.Any(o => o.Ms >= heard - 40 && o.Ms <= heard + 60 && o.Strength >= strength * 0.4);
+        });
+
+        Assert.That(weakened / (double)hitMs.Count, Is.LessThanOrEqualTo(0.25),
+            $"{weakened} of {hitMs.Count} hits came out with under 40% of their attack.");
+    }
+
+    private const double hit_interval_ms = 375;
+
+    /// <summary>
+    /// Drum-like hits (a burst of noise, a sharp attack and a 30 ms decay) every <see cref="hit_interval_ms"/>, over a quiet
+    /// chord so the stretcher has something to line up between them.
+    /// </summary>
+    private static float[] hits(out List<double> hitMs, double seconds = 16)
+    {
+        int frames = (int)(seconds * rate);
+        float[] samples = new float[frames * channels];
+        var random = new Random(1);
+
+        for (int frame = 0; frame < frames; frame++)
+        {
+            double chord = 0;
+
+            foreach (double frequency in new[] { 110.0, 220, 330 })
+                chord += 0.04 * Math.Sin(2 * Math.PI * frequency * frame / rate + frequency);
+
+            for (int c = 0; c < channels; c++)
+                samples[frame * channels + c] = (float)chord;
+        }
+
+        hitMs = new List<double>();
+
+        for (double ms = 500; ms < seconds * 1000 - 500; ms += hit_interval_ms)
+        {
+            hitMs.Add(ms);
+            int start = (int)(ms / 1000 * rate);
+
+            for (int i = 0; i < rate / 5 && start + i < frames; i++)
+            {
+                double envelope = Math.Min(1, i / (0.0005 * rate)) * Math.Exp(-i / (0.03 * rate));
+                float value = (float)(envelope * 0.5 * (random.NextDouble() * 2 - 1));
+
+                for (int c = 0; c < channels; c++)
+                    samples[(start + i) * channels + c] += value;
+            }
+        }
+
+        return samples;
+    }
+
+    private readonly record struct Attack(int Ms, double Strength);
+
+    /// <summary>
+    /// How sharply the level rises, each millisecond: the left channel's RMS over 2 ms against the highest of the 3 to
+    /// 5 ms before.
+    /// </summary>
+    private static double[] attackStrength(float[] samples)
+    {
+        int frames = samples.Length / channels;
+        double[] level = new double[(int)((long)frames * 1000 / rate)];
+
+        for (int ms = 0; ms < level.Length; ms++)
+        {
+            double sum = 0;
+            int count = 0;
+
+            for (int frame = Math.Max(0, (ms - 1) * rate / 1000); frame < Math.Min(frames, (ms + 1) * rate / 1000); frame++)
+            {
+                sum += samples[frame * channels] * samples[frame * channels];
+                count++;
+            }
+
+            level[ms] = Math.Sqrt(sum / Math.Max(1, count));
+        }
+
+        double[] rise = new double[level.Length];
+
+        for (int ms = 5; ms < level.Length; ms++)
+            rise[ms] = Math.Max(0, level[ms] - Math.Max(level[ms - 3], Math.Max(level[ms - 4], level[ms - 5])));
+
+        return rise;
+    }
+
+    /// <summary>
+    /// The peaks of <see cref="attackStrength"/> above <paramref name="threshold"/>, any two at least 8 ms apart.
+    /// </summary>
+    private static List<Attack> attacks(float[] samples, double threshold)
+    {
+        double[] rise = attackStrength(samples);
+        var found = new List<Attack>();
+
+        for (int ms = 1; ms < rise.Length - 1; ms++)
+        {
+            if (rise[ms] < threshold || rise[ms] < rise[ms - 1] || rise[ms] <= rise[ms + 1])
+                continue;
+
+            if (found.Count > 0 && ms - found[^1].Ms < 8)
+            {
+                if (rise[ms] > found[^1].Strength)
+                    found[^1] = new Attack(ms, rise[ms]);
+
+                continue;
+            }
+
+            found.Add(new Attack(ms, rise[ms]));
+        }
+
+        return found;
+    }
+
+    /// <summary>
+    /// A typical hit's attack in <paramref name="input"/>: the median over the hits.
+    /// </summary>
+    private static double hitStrength(float[] input, List<double> hitMs)
+    {
+        double[] rise = attackStrength(input);
+        var strengths = hitMs.Select(ms => Enumerable.Range((int)ms - 3, 14).Max(i => rise[i])).OrderBy(x => x).ToList();
+        return strengths[strengths.Count / 2];
     }
 
     [Test]
