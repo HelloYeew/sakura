@@ -66,4 +66,37 @@ public partial struct Matrix3x2
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static implicit operator Matrix3x2(SilkMatrix3x2 v) => new Matrix3x2(v.M11, v.M12, v.M21, v.M22, v.M31, v.M32);
+
+    // Bypass fix of https://github.com/dotnet/runtime/pull/134105 until it release on .NET 12
+    // See https://github.com/HelloYeew/sakura/pull/206 for more details
+
+    /// <summary>
+    /// Multiplies two matrices together to compute the product.
+    /// </summary>
+    /// <param name="value1">The first matrix.</param>
+    /// <param name="value2">The second matrix.</param>
+    /// <returns>The product matrix: <paramref name="value1" /> applied first, then <paramref name="value2" />.</returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static Matrix3x2 operator *(Matrix3x2 value1, Matrix3x2 value2)
+    {
+        ref readonly var left = ref value1.Value;
+        ref readonly var right = ref value2.Value;
+
+        // Each row of the left one, transformed by the right one.
+        var product = new SystemMatrix3x2
+        {
+            X = right.X * left.M11 + right.Y * left.M12,
+            Y = right.X * left.M21 + right.Y * left.M22,
+            Z = right.X * left.M31 + right.Y * left.M32 + right.Z,
+        };
+
+        return new Matrix3x2 { Value = product };
+    }
+
+    /// <summary>Multiplies two matrices together to compute the product.</summary>
+    /// <param name="value1">The first matrix.</param>
+    /// <param name="value2">The second matrix.</param>
+    /// <returns>The product matrix.</returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static Matrix3x2 Multiply(Matrix3x2 value1, Matrix3x2 value2) => value1 * value2;
 }
