@@ -1317,6 +1317,15 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
     protected internal bool OwnGeometryInvalidated;
 
     /// <summary>
+    /// Set when the parent's <see cref="Container.UpdateSubTreeMasking"/> rebuilt this drawable's geometry to
+    /// test it against the mask, and cleared by any invalidation after that. While it's set, the pending
+    /// <see cref="InvalidationFlags.DrawInfo"/> is already built, so neither that pass nor <see cref="Update"/>
+    /// builds it again. Without it, a drawable that's masked away or hidden (whose flags stay set because its
+    /// <see cref="Update"/> doesn't clear them) is rebuilt every frame.
+    /// </summary>
+    internal bool TransformsUpdatedForMasking;
+
+    /// <summary>
     /// Marks all or part of this drawable as requiring re-computation.
     /// A <see cref="InvalidationFlags.DrawInfo"/> invalidation means this drawable's own geometry
     /// changed; parents are only notified when they declare interest (auto-size / flow layouts),
@@ -1335,6 +1344,10 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
         // about the change. The notification receiver is idempotent, so this is cheap.
         if (dirtiesGeometry && propagateToParent)
             Parent?.OnChildGeometryInvalidated();
+
+        // a change after the masking pass built this drawable finds the flags
+        // already set, and still has to be built again.
+        TransformsUpdatedForMasking = false;
 
         // Already invalidated in all requested ways — nothing else to do.
         if ((Invalidation & flags) == flags && (!dirtiesGeometry || OwnGeometryInvalidated))
@@ -1364,6 +1377,8 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
     /// </summary>
     protected internal void InvalidateLayout()
     {
+        TransformsUpdatedForMasking = false;
+
         if ((Invalidation & InvalidationFlags.DrawInfo) != 0)
             return;
 
@@ -1509,7 +1524,8 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
 
         if ((Invalidation & InvalidationFlags.DrawInfo) != 0)
         {
-            UpdateTransforms();
+            if (!TransformsUpdatedForMasking)
+                UpdateTransforms();
         }
         else if ((Invalidation & InvalidationFlags.Color) != 0)
         {

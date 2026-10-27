@@ -883,8 +883,11 @@ public partial class Container : Drawable
 
             if (maskToApply.HasValue)
             {
-                if ((child.Invalidation & InvalidationFlags.DrawInfo) != 0)
+                if ((child.Invalidation & InvalidationFlags.DrawInfo) != 0 && !child.TransformsUpdatedForMasking)
                 {
+                    // Set before building since anything the build itself invalidates (a size it measures,
+                    // padding it works out) clears it again, so the child's Update builds once more.
+                    child.TransformsUpdatedForMasking = true;
                     child.UpdateTransforms();
                 }
 
