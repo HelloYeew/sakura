@@ -1233,9 +1233,10 @@ static void configureBlend(MTLRenderPipelineColorAttachmentDescriptor* att, int 
 
     switch (blendMode)
     {
-        case 1: // Additive: SrcAlpha, One; alpha One, One
+        case 1: // Additive: SrcAlpha, One; alpha Zero, One (light leaves the coverage alone, see BlendingMode.Additive)
             att.sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
             att.destinationRGBBlendFactor = MTLBlendFactorOne;
+            att.sourceAlphaBlendFactor = MTLBlendFactorZero;
             att.destinationAlphaBlendFactor = MTLBlendFactorOne;
             break;
         case 2: // Opaque: One, Zero; alpha One, Zero

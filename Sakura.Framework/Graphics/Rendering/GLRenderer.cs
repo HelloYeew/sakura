@@ -738,8 +738,9 @@ public class GLRenderer : IGLRenderer, IDisposable
     {
         switch (blendingMode)
         {
+            // Light leaves the coverage alone: see BlendingMode.Additive.
             case BlendingMode.Additive:
-                gl.BlendFuncSeparate(BlendingFactor.SrcAlpha, BlendingFactor.One, BlendingFactor.One, BlendingFactor.One);
+                gl.BlendFuncSeparate(BlendingFactor.SrcAlpha, BlendingFactor.One, BlendingFactor.Zero, BlendingFactor.One);
                 break;
 
             case BlendingMode.Opaque:

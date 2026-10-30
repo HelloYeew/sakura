@@ -46,11 +46,11 @@ internal sealed class HeadlessRasterizer
 
         switch (mode)
         {
-            // Additive: (SrcAlpha, One), alpha (One, One).
+            // Additive: (SrcAlpha, One), alpha (Zero, One): light leaves the coverage alone.
             case BlendingMode.Additive:
                 srcRgb = src.W;
                 dstRgb = 1f;
-                srcA = 1f;
+                srcA = 0f;
                 dstA = 1f;
                 break;
 

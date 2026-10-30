@@ -13,8 +13,13 @@ public enum BlendingMode
 
     /// <summary>
     /// Adds color values together. Great for glowing effects, HUDs, and light overlays.
-    /// Math: Source * SrcAlpha + Destination * 1
+    /// Math: Source * SrcAlpha + Destination * 1; alpha: Destination alpha, unchanged
     /// </summary>
+    /// <remarks>
+    /// Light covers nothing, so it leaves the target's alpha as it was. On screen alpha isn't seen; in an
+    /// offscreen buffer (a <c>BufferedContainer</c>) it's the coverage the composite reads back, and light that
+    /// added to it would come back as an opaque patch over whatever is behind the container.
+    /// </remarks>
     Additive,
 
     /// <summary>
