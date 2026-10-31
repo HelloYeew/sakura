@@ -17,6 +17,11 @@ public class DrawNode
     public long InvalidationID { get; internal set; }
 
     /// <summary>
+    /// The <see cref="Drawable.VertexVersion"/> this node's vertices are a copy of.
+    /// </summary>
+    private long appliedVertexVersion;
+
+    /// <summary>
     /// Backing storage for <see cref="Vertices"/>. Grow-only, so its length is a capacity and says nothing
     /// about how many vertices are live (that is <see cref="VertexCount"/>).
     /// </summary>
@@ -86,6 +91,11 @@ public class DrawNode
     /// </summary>
     protected virtual void ApplyVertices(Drawable source)
     {
+        if (appliedVertexVersion == source.VertexVersion)
+            return;
+
+        appliedVertexVersion = source.VertexVersion;
+
         SetVertexCount(source.VertexCount);
         source.Vertices.AsSpan(0, source.VertexCount).CopyTo(WritableVertices);
     }

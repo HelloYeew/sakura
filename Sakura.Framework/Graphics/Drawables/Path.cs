@@ -89,10 +89,10 @@ public partial class Path : Drawable
     /// <summary>
     /// <see cref="GenerateVertices"/> bakes <see cref="Drawable.Color"/> into every segment vertex, so the
     /// default color-only fast path (which only rewrites the four quad corners) leaves a path's color stale.
-    /// Regenerate the full geometry instead, so a <see cref="Drawable.Color"/> change (e.g. a fade, or a
-    /// recolor) takes effect immediately rather than waiting for the next geometry invalidation.
+    /// A fade scales the vertices' alpha, and a recolor regenerates the geometry, so either takes effect
+    /// immediately rather than waiting for the next geometry invalidation.
     /// </summary>
-    protected override void UpdateDrawColor() => UpdateTransforms();
+    protected override void UpdateDrawColor() => UpdateVertexAlpha();
 
     protected override void GenerateVertices()
     {

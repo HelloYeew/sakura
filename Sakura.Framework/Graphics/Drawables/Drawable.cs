@@ -898,7 +898,17 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
 
         AppliedDrawSize = finalDrawSize;
 
+        verticesKept = false;
+
         GenerateVertices();
+
+        if (!verticesKept)
+        {
+            builtDrawAlpha = DrawAlpha;
+            builtColorInfo = colorInfo;
+            builtModelMatrix = ModelMatrix;
+            builtDrawSize = AppliedDrawSize;
+        }
 
         MarkDrawStateRecomputed();
     }
@@ -1265,12 +1275,28 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
     protected internal long DrawNodeInvalidationId { get; private set; } = 1;
 
     /// <summary>
+    /// Moves on whenever <see cref="Vertices"/> may have been written, so a draw node holding a copy from this version has
+    /// nothing to copy again.
+    /// </summary>
+    internal long VertexVersion { get; private set; } = 1;
+
+    /// <summary>
+    /// Whether what's being marked as recomputed left <see cref="Vertices"/> as they were.
+    /// </summary>
+    private bool verticesUntouched;
+
+    /// <summary>
     /// Announces that this drawable's drawn state (matrices, vertices, colors) has just been
     /// recomputed, so every buffered draw node holding an older snapshot must re-apply.
     /// </summary>
     protected void MarkDrawStateRecomputed()
     {
         DrawNodeInvalidationId++;
+
+        if (!verticesUntouched)
+            VertexVersion++;
+
+        verticesUntouched = false;
 
         if ((!IsMaskedAway || AlwaysPresent) && !IsEffectivelyHidden)
             Parent?.MarkSubtreeDrawStateDirty();
@@ -1551,7 +1577,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
     /// without regenerating geometry. Called for color-only invalidations. Handles both solid
     /// colors and per-corner gradients (via <see cref="ColorInfo"/>) for the default quad.
     /// Drawables whose vertices don't follow the default quad layout must override this
-    /// (falling back to <see cref="UpdateTransforms"/> is always correct).
+    /// (<see cref="UpdateVertexAlpha"/> if it applies; falling back to <see cref="UpdateTransforms"/> is always correct).
     /// </summary>
     protected virtual void UpdateDrawColor()
     {
@@ -1562,6 +1588,99 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
         writeCornerColors();
 
         MarkDrawStateRecomputed();
+    }
+
+    /// <summary>
+    /// What <see cref="Vertices"/> were last built with, for <see cref="UpdateVertexAlpha"/> and <see cref="KeepVertices"/>.
+    /// </summary>
+    private float builtDrawAlpha;
+
+    private ColorInfo builtColorInfo;
+    private Matrix3x2 builtModelMatrix;
+    private Vector2 builtDrawSize;
+
+    /// <summary>
+    /// Whether <see cref="GenerateVertices"/> chose to keep them, this time round.
+    /// </summary>
+    private bool verticesKept;
+
+    /// <summary>
+    /// An <see cref="UpdateDrawColor"/> for a drawable with many vertices of its own: when only how faded it is has changed,
+    /// scales the alpha of every vertex by as much, rather than building them all again. A drawable uses it by overriding
+    /// <see cref="UpdateDrawColor"/> with it, provided its <see cref="GenerateVertices"/> writes to <see cref="Vertices"/> and
+    /// has <see cref="DrawAlpha"/> as a factor of each vertex's alpha. One that carries anything else in its vertices' alpha
+    /// stays with <see cref="UpdateTransforms"/>.
+    /// </summary>
+    /// <remarks>
+    /// It builds them again when <see cref="ColorInfo"/> has changed, and when they were built at alpha 0, which leaves nothing
+    /// to scale. Faded to 0 they're left as they are, to scale back from: nothing is drawn at alpha 0.
+    /// </remarks>
+    protected void UpdateVertexAlpha()
+    {
+        if (builtDrawAlpha <= 0 || !colorInfo.Equals(builtColorInfo))
+        {
+            UpdateTransforms();
+            return;
+        }
+
+        DrawAlpha = (Parent?.ChildDrawAlpha ?? 1f) * Alpha;
+        verticesUntouched = !scaleVertexAlpha();
+
+        MarkDrawStateRecomputed();
+    }
+
+    /// <summary>
+    /// For a <see cref="GenerateVertices"/> whose drawable knows what it draws hasn't changed: keeps the vertices it has, when
+    /// they're still right. They are when its matrix, size and <see cref="ColorInfo"/> are what they were built with, as they
+    /// are when a parent's layout changed without moving it (a mask growing over it, say). Their alpha follows any fade, as
+    /// in <see cref="UpdateVertexAlpha"/>, and a draw node has nothing new to copy unless that moved them.
+    /// </summary>
+    /// <returns>Whether it kept them, so <see cref="GenerateVertices"/> has nothing to do.</returns>
+    protected bool KeepVertices()
+    {
+        if (builtDrawAlpha <= 0
+            || !colorInfo.Equals(builtColorInfo)
+            || AppliedDrawSize != builtDrawSize
+            || !isSameOnScreen(ModelMatrix, builtModelMatrix))
+            return false;
+
+        verticesKept = true;
+        verticesUntouched = !scaleVertexAlpha();
+
+        return true;
+    }
+
+    /// <summary>
+    /// Whether two matrices put things in the same place, as far as anyone can see. A parent's size goes into a child's matrix
+    /// and comes back out, so one that hasn't moved still differs by rounding. This is against what was built, not last frame,
+    /// so something moving slower than this per frame still gets built when it has moved.
+    /// </summary>
+    private static bool isSameOnScreen(in Matrix3x2 a, in Matrix3x2 b)
+    {
+        const float tolerance = 0.01f;
+
+        return Math.Abs(a.M31 - b.M31) <= tolerance && Math.Abs(a.M32 - b.M32) <= tolerance
+                                                    && Math.Abs(a.M11 - b.M11) <= tolerance && Math.Abs(a.M12 - b.M12) <= tolerance
+                                                    && Math.Abs(a.M21 - b.M21) <= tolerance && Math.Abs(a.M22 - b.M22) <= tolerance;
+    }
+
+    /// <summary>
+    /// Scales the vertices' alpha from what they were built with to <see cref="DrawAlpha"/>.
+    /// </summary>
+    /// <returns>Whether they changed.</returns>
+    private bool scaleVertexAlpha()
+    {
+        if (DrawAlpha <= 0 || DrawAlpha == builtDrawAlpha)
+            return false;
+
+        float scale = DrawAlpha / builtDrawAlpha;
+        Span<Vertex> vertices = Vertices.AsSpan(0, VertexCount);
+
+        for (int i = 0; i < vertices.Length; i++)
+            vertices[i].Color.W *= scale;
+
+        builtDrawAlpha = DrawAlpha;
+        return true;
     }
 
     /// <summary>
