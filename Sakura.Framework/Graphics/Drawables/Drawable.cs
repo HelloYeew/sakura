@@ -1515,7 +1515,15 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
         // a SpriteText, recomputing geometry means shaping its text.
         if (IsEffectivelyHidden)
         {
-            DrawAlpha = 0;
+            // An alpha set after this drawable's update last frame (by a parent, after its base.Update) went into that
+            // frame's draw nodes as the old one, so they have to hear about this too, or it stays drawn at that alpha.
+            if (DrawAlpha != 0)
+            {
+                DrawAlpha = 0;
+                DrawNodeInvalidationId++;
+                Parent?.MarkSubtreeDrawStateDirty();
+            }
+
             // Keep pending geometry invalidation (and the own-geometry marker) so a drawable
             // that moved while hidden recomputes — and cascades to children — once shown again.
             Invalidation &= ~InvalidationFlags.Color;
