@@ -73,6 +73,37 @@ public class PlotCanvasTest
         });
     }
 
+    /// <summary>
+    /// More than a batch holds (a timing graph's dots, a few thousand of them), and each piece in its place: joined up as
+    /// quads past the first flush, pieces at either side would draw across the middle.
+    /// </summary>
+    [Test]
+    public void MoreThanABatchHoldsStaysWhereItIs()
+    {
+        for (int i = 0; i < 6000; i++)
+        {
+            float x = i % 2 == 0 ? 10 : 80;
+            canvas.Triangle(new Vector2(x, 20), new Vector2(x + 10, 20), new Vector2(x, 30), Color.White);
+        }
+
+        var drawn = pixels.Render();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(canvas.VertexCount, Is.EqualTo(18000), "past the 12000 a batch holds");
+            Assert.That(filled(drawn, 12, 22), "the pieces on the left");
+            Assert.That(filled(drawn, 82, 22), "the pieces on the right");
+
+            for (int y = 0; y < surface; y += 5)
+            {
+                Assert.That(empty(drawn, 50, y), $"nothing between them, at {y}");
+                Assert.That(empty(drawn, 60, y), $"nothing between them, at {y}");
+            }
+
+            Assert.That(empty(drawn, 12, 40), "nothing under them");
+        });
+    }
+
     [Test]
     public void ATriangleFillsItsThreePoints()
     {
