@@ -647,9 +647,9 @@ public sealed class MetalRenderer : IMetalRenderer
     public void ApplyCurrentClip(Span<SakuraVertex> vertices) => clips.ApplyTo(vertices);
 
     /// <summary>
-    /// Pushes a clip region. Mirrors <c>GLRenderer.PushMask</c>: the new mask is intersected (as an
-    /// AABB, accounting for horizontal shear) with any parent mask, and the result becomes the active
-    /// clip carried into subsequent vertices by <see cref="DrawVertices"/>.
+    /// Pushes a clip region. Mirrors <c>GLRenderer.PushMask</c>: the new mask, inside any parent mask
+    /// (<see cref="ClipStack.Push"/>), becomes the active clip carried into subsequent vertices by
+    /// <see cref="DrawVertices"/>.
     /// </summary>
     public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius)
         => clips.Push(maskCenter, maskHalfSize, shearX, cornerRadius);

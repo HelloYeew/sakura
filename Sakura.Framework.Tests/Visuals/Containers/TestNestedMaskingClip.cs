@@ -207,6 +207,141 @@ public partial class TestNestedMaskingClip : TestScene
         });
     }
 
+    /// <summary>
+    /// Rounded cards scrolled past the edge of a scroll, as a page of them is: each cut straight across where it's cut, with
+    /// its corners only where it really has them. Whatever's in a card (a rounded cell, a pill with a radius past half its
+    /// height, a circle, a slanted button) is cut with it.
+    /// </summary>
+    [Test]
+    public void TestRoundedCardsInAScroll()
+    {
+        ScrollableContainer scroll = null!;
+
+        AddStep("Add a scroll of cards", () =>
+        {
+            Add(scroll = new ScrollableContainer
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Size = new Vector2(panel_width + 120, panel_height),
+                Direction = ScrollDirection.Vertical,
+                Child = new FlowContainer
+                {
+                    RelativeSizeAxes = Axes.X,
+                    AutoSizeAxes = Axes.Y,
+                    Direction = FlowDirection.Vertical,
+                    Spacing = new Vector2(0, 14),
+                    Children = new Drawable[]
+                    {
+                        card(Color.SteelBlue, cell(new Vector2(16), Color.LightSkyBlue), cell(new Vector2(136, 16), Color.LightSkyBlue)),
+                        card(Color.SeaGreen, pill(new Vector2(16, 40))),
+                        card(Color.SlateBlue, new Circle { Position = new Vector2(16, 12), Size = new Vector2(96), Color = Color.Khaki }, slanted(new Vector2(150, 30))),
+                        card(Color.Maroon, pill(new Vector2(16, 10)), pill(new Vector2(16, 62))),
+                        card(Color.SteelBlue, cell(new Vector2(16), Color.LightSkyBlue), cell(new Vector2(136, 16), Color.LightSkyBlue))
+                    }
+                }
+            });
+        });
+
+        AddUntilStep("wait for layout", () => scroll.ScrollableExtent.Y > 0);
+
+        AddSliderStep("Scrolled", 0f, 1f, 0.3f, v =>
+        {
+            if (scroll != null)
+                scroll.ScrollTo(new Vector2(0, v * scroll.ScrollableExtent.Y), animated: false);
+        });
+    }
+
+    /// <summary>
+    /// What's in a scroll filling a rounded panel follows the panel's corners, rather than poking past them.
+    /// </summary>
+    [Test]
+    public void TestScrollInARoundedPanel()
+    {
+        AddStep("Add a rounded panel with a scroll in it", () =>
+        {
+            Add(new Container
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Size = new Vector2(panel_width, panel_height),
+                Masking = true,
+                CornerRadius = 40,
+                Child = new ScrollableContainer
+                {
+                    RelativeSizeAxes = Axes.Both,
+                    Direction = ScrollDirection.Vertical,
+                    Child = new FlowContainer
+                    {
+                        RelativeSizeAxes = Axes.X,
+                        AutoSizeAxes = Axes.Y,
+                        Direction = FlowDirection.Vertical,
+                        Children = new Drawable[]
+                        {
+                            filler("Row A", Color.White),
+                            filler("Row B", Color.White),
+                            new Box { RelativeSizeAxes = Axes.X, Height = 900, Color = Color.DarkSlateBlue }
+                        }
+                    }
+                }
+            });
+        });
+    }
+
+    private static Container card(Color color, params Drawable[] content)
+    {
+        var card = new Container
+        {
+            RelativeSizeAxes = Axes.X,
+            Height = 120,
+            Masking = true,
+            CornerRadius = 14,
+            Child = new Box { RelativeSizeAxes = Axes.Both, Color = color }
+        };
+
+        card.AddRange(content);
+        return card;
+    }
+
+    private static Container cell(Vector2 position, Color color) => new Container
+    {
+        Position = position,
+        Size = new Vector2(104, 88),
+        Masking = true,
+        CornerRadius = 10,
+        Child = new Box { RelativeSizeAxes = Axes.Both, Color = color }
+    };
+
+    private static Container pill(Vector2 position) => new Container
+    {
+        Position = position,
+        Size = new Vector2(480, 40),
+        Masking = true,
+        CornerRadius = 30,
+        Children = new Drawable[]
+        {
+            new Box { RelativeSizeAxes = Axes.Both, Color = Color.White },
+            new SpriteText
+            {
+                Anchor = Anchor.CentreLeft,
+                Origin = Anchor.CentreLeft,
+                Margin = new MarginPadding { Left = 16 },
+                Text = "A pill longer than its card",
+                Color = Color.Black
+            }
+        }
+    };
+
+    private static Container slanted(Vector2 position) => new Container
+    {
+        Position = position,
+        Size = new Vector2(150, 60),
+        Masking = true,
+        CornerRadius = 8,
+        Shear = new Vector2(0.3f, 0),
+        Child = new Box { RelativeSizeAxes = Axes.Both, Color = Color.Coral }
+    };
+
     private static Container filler(string text, Color color) => new Container
     {
         RelativeSizeAxes = Axes.X,
