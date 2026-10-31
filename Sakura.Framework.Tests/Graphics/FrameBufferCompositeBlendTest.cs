@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System.Collections.Generic;
 using NUnit.Framework;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Textures;
@@ -144,6 +145,71 @@ public class FrameBufferCompositeBlendTest
         var withPremultiplied = drawThroughBuffer(BlendingMode.Premultiplied, opaque, opaque);
 
         assertSamePixel(withAlpha, withPremultiplied, "an opaque buffer composites the same either way");
+    }
+
+    /// <summary>
+    /// Light added over a half-transparent child composites as it draws directly: additive blending leaves the
+    /// buffer's coverage to the child, so the background still shows through where the child lets it.
+    /// </summary>
+    [Test]
+    public void AdditiveLightCompositesAsItDrawsDirectly()
+    {
+        var light = new Vector4(0.4f, 0.2f, 0f, 0.5f);
+        (Vector4, BlendingMode)[] layers = { (child_one, BlendingMode.Alpha), (light, BlendingMode.Additive) };
+
+        Assert.Multiple(() =>
+        {
+            assertSamePixel(drawLayers(layers, buffered: false), new Vector4(0.7f, 0.1f, 0.5f, 1f), "direct");
+            assertSamePixel(drawLayers(layers, buffered: true), new Vector4(0.7f, 0.1f, 0.5f, 1f), "buffered, premultiplied composite");
+        });
+    }
+
+    /// <summary>
+    /// Light alone in a buffer adds to what's behind the container and covers none of it. Were it to add to the
+    /// buffer's alpha, the composite would read it back as coverage and darken the background under the whole
+    /// quad, even where the light itself is dark.
+    /// </summary>
+    [Test]
+    public void AdditiveLightAloneDoesNotCoverTheBackground()
+    {
+        var light = new Vector4(0.4f, 0.2f, 0f, 0.5f);
+        var dark = new Vector4(0f, 0f, 0f, 1f);
+
+        Assert.Multiple(() =>
+        {
+            assertSamePixel(drawLayers(new[] { (light, BlendingMode.Additive) }, buffered: true), new Vector4(0.2f, 0.1f, 1f, 1f), "light over the background");
+            assertSamePixel(drawLayers(new[] { (dark, BlendingMode.Additive) }, buffered: true), background, "dark light leaves the background as it was");
+        });
+    }
+
+    /// <summary>
+    /// Draws each layer in its blending, straight onto the background or (<paramref name="buffered"/>) into an
+    /// offscreen buffer composited back as <c>BufferedContainerDrawNode</c> does: premultiplied, at full opacity.
+    /// </summary>
+    private Vector4 drawLayers(IEnumerable<(Vector4 Color, BlendingMode Blending)> layers, bool buffered)
+    {
+        capture.Begin(background);
+
+        var rect = new RectangleF(0, 0, surface_size, surface_size);
+        using var buffer = renderer.CreateFrameBuffer(surface_size, surface_size);
+
+        if (buffered)
+            renderer.BindFrameBuffer(buffer, rect);
+
+        foreach ((Vector4 color, BlendingMode blending) in layers)
+        {
+            renderer.SetBlendMode(blending);
+            renderer.DrawQuads(quad(color), renderer.WhitePixel);
+        }
+
+        if (buffered)
+        {
+            renderer.UnbindFrameBuffer();
+            renderer.SetBlendMode(BlendingMode.Premultiplied);
+            renderer.DrawQuads(compositeQuad(rect, new Vector4(1, 1, 1, 1)), buffer.Texture);
+        }
+
+        return centre(capture.End());
     }
 
     /// <summary>

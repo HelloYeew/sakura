@@ -266,7 +266,7 @@ internal sealed unsafe class VulkanPipelines : IDisposable
     {
         var (srcColor, dstColor, srcAlpha, dstAlpha) = blend switch
         {
-            BlendingMode.Additive => (VkBlendFactor.SrcAlpha, VkBlendFactor.One, VkBlendFactor.One, VkBlendFactor.One),
+            BlendingMode.Additive => (VkBlendFactor.SrcAlpha, VkBlendFactor.One, VkBlendFactor.Zero, VkBlendFactor.One),
             BlendingMode.Opaque => (VkBlendFactor.One, VkBlendFactor.Zero, VkBlendFactor.One, VkBlendFactor.Zero),
             BlendingMode.Multiply => (VkBlendFactor.DstColor, VkBlendFactor.OneMinusSrcAlpha, VkBlendFactor.One, VkBlendFactor.OneMinusSrcAlpha),
             BlendingMode.Screen => (VkBlendFactor.One, VkBlendFactor.OneMinusSrcColor, VkBlendFactor.One, VkBlendFactor.OneMinusSrcAlpha),
