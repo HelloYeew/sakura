@@ -285,6 +285,35 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
         }
     }
 
+    private Vector2? customOrigin;
+
+    /// <summary>
+    /// The point this drawable is placed, scaled, sheared and turned about, when it isn't one of <see cref="Origin"/>'s: as a
+    /// fraction of its own size, so (0, 0) is its top-left corner and (1, 1) its bottom-right, and a point outside it is
+    /// allowed. It takes the place of <see cref="Origin"/> while set. Null by default.
+    /// </summary>
+    public Vector2? CustomOrigin
+    {
+        get => customOrigin;
+        set
+        {
+            if (customOrigin == value) return;
+            customOrigin = value;
+            Invalidate(InvalidationFlags.DrawInfo);
+        }
+    }
+
+    /// <summary>
+    /// Where the point this drawable is placed by is, as a fraction of its own size: <see cref="CustomOrigin"/> if it has one,
+    /// or else <see cref="Origin"/>.
+    /// </summary>
+    protected internal Vector2 OriginVector => customOrigin ?? GetAnchorOriginVector(origin);
+
+    /// <summary>
+    /// Whether it's placed from its top-left corner in its parent's top-left corner, which laying it out can skip the sums for.
+    /// </summary>
+    protected internal bool IsPlacedFromTopLeft => anchor == Anchor.TopLeft && origin == Anchor.TopLeft && customOrigin == null;
+
     public Vector2 Position
     {
         get => position;
@@ -802,7 +831,7 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
 
         Matrix3x2 localMatrix;
         Vector2 finalDrawSize;
-        Vector2 originVector = GetAnchorOriginVector(Origin);
+        Vector2 originVector = OriginVector;
 
         if (Parent == null)
         {
