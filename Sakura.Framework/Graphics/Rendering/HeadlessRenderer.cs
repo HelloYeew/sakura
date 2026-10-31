@@ -137,9 +137,13 @@ public class HeadlessRenderer : IRenderer
 
     public void DrawVertices(ReadOnlySpan<Vertex.Vertex> vertices, Texture textureGl)
     {
-        // the capture path only understands quads, which is what every
-        // compositing path in the framework emits
-        DrawQuads(vertices, textureGl);
+        if (rasterizer == null || currentTarget is not { } target)
+            return;
+
+        var texture = surfaceOf(textureGl);
+
+        for (int i = 0; i + 3 <= vertices.Length; i += 3)
+            rasterizer.DrawTriangle(target, vertices.Slice(i, 3), texture, currentBlendMode, currentViewport);
     }
 
     public void DrawQuads(ReadOnlySpan<Vertex.Vertex> vertices, Texture textureGl)
