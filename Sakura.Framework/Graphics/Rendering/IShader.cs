@@ -36,7 +36,8 @@ public interface IShader : IDisposable
     /// Uploads a std140-laid-out uniform block by name. <typeparamref name="T"/> must match the
     /// block's GLSL layout exactly (see <c>Uniforms</c> structs). The backend owns the underlying
     /// buffer and binds it to the block's binding point. Replaces per-name <see cref="SetUniform(string,float)"/>
-    /// calls for shaders authored in GLSL 450 with uniform blocks.
+    /// calls for shaders authored in GLSL 450 with uniform blocks. A name the shader doesn't declare, or a block
+    /// nothing in it reads (the compiler removes those), is ignored on every backend.
     /// </summary>
     void SetUniformBlock<T>(string blockName, in T data) where T : unmanaged;
 

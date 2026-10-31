@@ -1230,24 +1230,28 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
     public IShader CreateShader(Storage storage, string vertexPath, string fragmentPath)
     {
-        var (vert, frag) = ShaderCompiler.GetOrCompile(
+        var (vert, frag, blocks) = ShaderCompiler.GetOrCompileWithBlocks(
             storage, vertexPath, fragmentPath, SPIRV.CrossCompileTarget.HLSL, ShaderCache);
-        return new D3D11Shader(device, context, vertexPath, vert, fragmentPath, frag, buildInputElements(), customShaderUniformBindings(), ShaderCache);
+        return new D3D11Shader(device, context, vertexPath, vert, fragmentPath, frag, buildInputElements(), customShaderUniformBindings(blocks), ShaderCache);
     }
 
     /// <summary>
-    /// Block -> (stage, cbuffer register) map for the BufferedContainer effect shaders (blur/grayscale)
-    /// and video. Same shape as the main shader (ProjectionBlock → VS b0; the single fragment block ->
-    /// PS b1) — the sakura-spirv per-kind counter assigns them identically.
+    /// Block -> (stages, cbuffer register) map for a custom shader, where <see cref="ShaderUniformBlocks"/> found each one.
+    /// One fragment block is the main shader's shape (ProjectionBlock → VS b0; the block → PS b1); a shader's further blocks
+    /// take b2 on, which the main shader never reads, so <see cref="rebindFrameState"/> only has b0 and b1 to put back.
     /// </summary>
-    private static IReadOnlyDictionary<string, D3D11Shader.UniformBinding> customShaderUniformBindings() =>
-        new Dictionary<string, D3D11Shader.UniformBinding>
+    private static Dictionary<string, D3D11Shader.UniformBinding> customShaderUniformBindings(ShaderUniformBlock[] blocks)
+    {
+        var bindings = new Dictionary<string, D3D11Shader.UniformBinding>(blocks.Length);
+
+        foreach (ShaderUniformBlock block in blocks)
         {
-            ["ProjectionBlock"] = new D3D11Shader.UniformBinding(D3D11Shader.Stage.Vertex, projection_cb_slot),
-            ["BlurBlock"] = new D3D11Shader.UniformBinding(D3D11Shader.Stage.Fragment, mask_cb_slot),
-            ["GrayscaleBlock"] = new D3D11Shader.UniformBinding(D3D11Shader.Stage.Fragment, mask_cb_slot),
-            ["VideoBlock"] = new D3D11Shader.UniformBinding(D3D11Shader.Stage.Fragment, mask_cb_slot),
-        };
+            var stage = (block.InVertex ? D3D11Shader.Stage.Vertex : 0) | (block.InFragment ? D3D11Shader.Stage.Fragment : 0);
+            bindings[block.Name] = new D3D11Shader.UniformBinding(stage, block.Index);
+        }
+
+        return bindings;
+    }
 
     public INativeVideoTexture CreateVideoTexture(int width, int height, VideoPlaneLayout layout, bool fromHardwareFrame = false) =>
         fromHardwareFrame

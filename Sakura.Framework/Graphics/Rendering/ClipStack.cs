@@ -49,6 +49,12 @@ internal readonly struct ClipState
     public static ClipState None => new ClipState(new Vector4(0, 0, -1, -1), 0, 0);
 
     /// <summary>
+    /// A clip that lets nothing through: a mask of no size, off where nothing's drawn. (Without corners: a radius rounds
+    /// even a shape of no size into a circle of that radius.)
+    /// </summary>
+    public static ClipState Nothing => new ClipState(new Vector4(-1000000, -1000000, 0.0001f, 0.0001f), 0, 0);
+
+    /// <summary>
     /// Writes this clip onto <paramref name="vertex"/>.
     /// </summary>
     public void ApplyTo(ref SakuraVertex vertex)
@@ -84,9 +90,13 @@ internal sealed class ClipStack
     }
 
     /// <summary>
-    /// Makes the intersection of the given mask with the current clip the new current clip. The
-    /// intersection is taken between axis-aligned bounding boxes, accounting for horizontal shear, and
-    /// the new mask's own shear and corner radius are kept.
+    /// Makes the given mask, inside the current clip, the new current clip. A vertex has room for one
+    /// shape, so one of the two masks stays a shape and the other goes along as straight edges, in the
+    /// fade (<see cref="cutFrom"/>): a mask cut by the one around it keeps its own box, slant and corners,
+    /// rather than growing corners where it's cut. Whichever is kept, what's lost is only ever the corners
+    /// or slant of the other, and the choice is the one that doesn't lose them where they'd show (see
+    /// <see cref="keepsParentsShape"/>). Only where two shapes overlap at a corner does the outer one's
+    /// corner go uncut.
     /// </summary>
     /// <param name="fade">How far in from each of the mask's edges its content fades in, in screen
     /// space. See <see cref="Fade"/>.</param>
@@ -95,42 +105,135 @@ internal sealed class ClipStack
         stack.Push(Current);
 
         // True AABB of this new mask, taking horizontal shear into account.
-        float skewOffset = Math.Abs(shearX * maskHalfSize.Y);
-        float left = maskCenter.X - maskHalfSize.X - skewOffset;
-        float right = maskCenter.X + maskHalfSize.X + skewOffset;
+        float skew = Math.Abs(shearX * maskHalfSize.Y);
+        float left = maskCenter.X - maskHalfSize.X - skew;
+        float right = maskCenter.X + maskHalfSize.X + skew;
         float top = maskCenter.Y - maskHalfSize.Y;
         float bottom = maskCenter.Y + maskHalfSize.Y;
 
         var parent = Current;
-        var (fadeEdges, fadeLength) = Fade(parent, left, top, right, bottom, fade);
+        var (edges, length) = Fade(parent, left, top, right, bottom, fade);
+        var ownData = new Vector4(maskCenter.X, maskCenter.Y, maskHalfSize.X, maskHalfSize.Y);
 
-        // If already inside a parent mask (Z > 0), intersect their bounding boxes.
-        if (parent.ClipData.Z > 0)
+        // (Z > 0 is a mask to be inside.)
+        if (parent.ClipData.Z <= 0)
         {
-            float parentSkew = Math.Abs(parent.ShearX * parent.ClipData.W);
-            float pLeft = parent.ClipData.X - parent.ClipData.Z - parentSkew;
-            float pRight = parent.ClipData.X + parent.ClipData.Z + parentSkew;
-            float pTop = parent.ClipData.Y - parent.ClipData.W;
-            float pBottom = parent.ClipData.Y + parent.ClipData.W;
-
-            left = Math.Max(left, pLeft);
-            right = Math.Min(right, pRight);
-            top = Math.Max(top, pTop);
-            bottom = Math.Min(bottom, pBottom);
+            Current = new ClipState(ownData, shearX, cornerRadius, edges, length);
+            return;
         }
 
-        var newCenter = new Vector2((left + right) / 2f, (top + bottom) / 2f);
-        var newHalfSize = new Vector2((right - left) / 2f, (bottom - top) / 2f);
+        float parentSkew = Math.Abs(parent.ShearX * parent.ClipData.W);
+        float pLeft = parent.ClipData.X - parent.ClipData.Z - parentSkew;
+        float pRight = parent.ClipData.X + parent.ClipData.Z + parentSkew;
+        float pTop = parent.ClipData.Y - parent.ClipData.W;
+        float pBottom = parent.ClipData.Y + parent.ClipData.W;
 
-        // Collapsed intersection (child entirely outside parent) → shrink to ~zero so the shader
-        // discards every fragment.
-        if (left >= right || top >= bottom)
-            newHalfSize = new Vector2(0.0001f, 0.0001f);
-        else
-            // Remove the skew offset again so the shader receives the true un-sheared half-size.
-            newHalfSize.X = Math.Max(0.0001f, newHalfSize.X - skewOffset);
+        if (left >= pRight || right <= pLeft || top >= pBottom || bottom <= pTop)
+        {
+            Current = ClipState.Nothing;
+            return;
+        }
 
-        Current = new ClipState(new Vector4(newCenter.X, newCenter.Y, newHalfSize.X, newHalfSize.Y), shearX, cornerRadius, fadeEdges, fadeLength);
+        if (keepsParentsShape(parent, parentSkew, left, top, right, bottom, pLeft, pTop, pRight, pBottom, cornerRadius, skew, shearX))
+        {
+            if (left > pLeft)
+                (edges.X, length.X) = cutFrom(edges.X, length.X, left);
+
+            if (top > pTop)
+                (edges.Y, length.Y) = cutFrom(edges.Y, length.Y, top);
+
+            if (right < pRight)
+                (edges.Z, length.Z) = cutBackFrom(edges.Z, length.Z, right);
+
+            if (bottom < pBottom)
+                (edges.W, length.W) = cutBackFrom(edges.W, length.W, bottom);
+
+            Current = new ClipState(parent.ClipData, parent.ShearX, parent.Radius, edges, length);
+            return;
+        }
+
+        if (left < pLeft)
+            (edges.X, length.X) = cutFrom(edges.X, length.X, pLeft);
+
+        if (top < pTop)
+            (edges.Y, length.Y) = cutFrom(edges.Y, length.Y, pTop);
+
+        if (right > pRight)
+            (edges.Z, length.Z) = cutBackFrom(edges.Z, length.Z, pRight);
+
+        if (bottom > pBottom)
+            (edges.W, length.W) = cutBackFrom(edges.W, length.W, pBottom);
+
+        Current = new ClipState(ownData, shearX, cornerRadius, edges, length);
+    }
+
+    /// <summary>
+    /// Whether the mask around stays the shape, with this one's box as edges, rather than the other way about. That's when
+    /// straight edges are all of this one that shows (none of its rounded corners do), and the shape around has corners or
+    /// slanted sides that it reaches.
+    /// </summary>
+    private static bool keepsParentsShape(in ClipState parent, float parentSkew, float left, float top, float right, float bottom,
+                                          float pLeft, float pTop, float pRight, float pBottom, float cornerRadius, float skew, float shearX)
+    {
+        float inLeft = pLeft - left, inTop = pTop - top, inRight = right - pRight, inBottom = bottom - pBottom;
+
+        // A slant shows all the way along its sides: only well outside the box around does it not.
+        if (shearX != 0)
+            return Math.Min(Math.Min(inLeft, inTop), Math.Min(inRight, inBottom)) >= cornerRadius + 2 * skew;
+
+        if (!(cornerIsHidden(inLeft, inTop, cornerRadius, parent.Radius)
+              && cornerIsHidden(inRight, inTop, cornerRadius, parent.Radius)
+              && cornerIsHidden(inLeft, inBottom, cornerRadius, parent.Radius)
+              && cornerIsHidden(inRight, inBottom, cornerRadius, parent.Radius)))
+            return false;
+
+        // A box between the corners or sides of the shape around it isn't touched by them. A slanted side runs the whole
+        // height, so only being between them across will do for one.
+        float acrossReach = parent.Radius + 2 * parentSkew;
+        bool clearAcross = left >= pLeft + acrossReach && right <= pRight - acrossReach;
+        bool clearDown = top >= pTop + parent.Radius && bottom <= pBottom - parent.Radius;
+
+        return !(clearAcross || (clearDown && parent.ShearX == 0));
+    }
+
+    /// <summary>
+    /// Whether a mask's rounding at a corner can't be seen inside the mask around it: it has none, it's past that mask's side
+    /// by its radius, or it's round that mask's corner, whose own rounding is what shows.
+    /// </summary>
+    /// <param name="inAcross">How far in from the mask's side that of the mask around it is, at this corner.</param>
+    /// <param name="inDown">The same for its top or bottom.</param>
+    /// <param name="radius">The mask's corner radius.</param>
+    /// <param name="parentRadius">That of the mask around it.</param>
+    private static bool cornerIsHidden(float inAcross, float inDown, float radius, float parentRadius) =>
+        radius <= 0 || inAcross >= radius || inDown >= radius || (inAcross >= 0 && inDown >= 0 && radius <= parentRadius + Math.Min(inAcross, inDown));
+
+    /// <summary>
+    /// Adds a straight cut at <paramref name="at"/> to the fade on a left or top side. The fade is a line from where it's
+    /// nothing to where it's whole; over a pixel centered on the cut, as its smoothstep runs, it's exactly the edge the
+    /// shader gives a mask (<c>applyClipping</c>). With a fade there already, the line goes from the further in of the two
+    /// zeroes to the further in of the two wholes, so it's never more than either.
+    /// </summary>
+    private static (float Edge, float Length) cutFrom(float edge, float length, float at)
+    {
+        float zero = at - 0.5f;
+        float whole = at + 0.5f;
+
+        if (length > 0)
+        {
+            zero = Math.Max(zero, edge);
+            whole = Math.Max(whole, edge + length);
+        }
+
+        return (zero, whole - zero);
+    }
+
+    /// <summary>
+    /// <see cref="cutFrom"/> for a right or bottom side, where in is back along the axis.
+    /// </summary>
+    private static (float Edge, float Length) cutBackFrom(float edge, float length, float at)
+    {
+        (float negated, float shared) = cutFrom(-edge, length, -at);
+        return (-negated, shared);
     }
 
     /// <summary>

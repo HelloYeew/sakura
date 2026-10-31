@@ -13,20 +13,21 @@ namespace Sakura.Framework.Graphics.Rendering.Metal;
 /// <see cref="BlendingMode"/>, since Metal bakes blend state into the pipeline) built from
 /// cross-compiled MSL plus the vertex layout.
 /// Uniforms travel as std140 blocks. For the main shader the renderer uploads the projection/mask
-/// blocks directly. for effect shaders (blur/grayscale) the buffered-container draw node calls
-/// <see cref="SetUniformBlock{T}"/> by name, which this class maps to the right stage + MSL buffer
-/// index and uploads via the device. The name -> binding map is supplied at construction (the indices
-/// are deterministic from the sakura-spirv resource ordering — see MetalRenderer for the derivation).
+/// blocks directly. For any other shader, a draw node calls <see cref="SetUniformBlock{T}"/> by name, which
+/// this class maps to the right stage + MSL buffer index and uploads via the device. The name -> binding
+/// map is supplied at construction: MSL doesn't keep a block's name, so <see cref="ShaderUniformBlocks"/>
+/// works it out when the shader is compiled.
 /// </summary>
 public sealed class MetalShader : IShader
 {
     /// <summary>
-    /// The stage a uniform block is bound on, for <see cref="UniformBinding"/>.
+    /// The stages a uniform block is bound on, for <see cref="UniformBinding"/>.
     /// </summary>
+    [Flags]
     public enum Stage
     {
-        Vertex,
-        Fragment,
+        Vertex = 1,
+        Fragment = 2,
     }
 
     /// <summary>
@@ -117,19 +118,20 @@ public sealed class MetalShader : IShader
     public void SetUniform(string name, float[] mat3X3) { }
 
     /// <summary>
-    /// Uploads a std140 uniform block by name to the stage + MSL buffer index recorded at
-    /// construction. Used by the effect passes (ProjectionBlock, BlurBlock, GrayscaleBlock).
+    /// Uploads a std140 uniform block by name to the stages + MSL buffer index recorded at
+    /// construction.
     /// </summary>
     public unsafe void SetUniformBlock<T>(string blockName, in T data) where T : unmanaged
     {
         if (!uniformBlockBindings.TryGetValue(blockName, out var binding))
-            return; // Unknown block on this shader, nothing to bind.
+            return; // A block this shader doesn't declare or never reads: nothing to bind.
 
         fixed (T* ptr = &data)
         {
-            if (binding.Stage == Stage.Vertex)
+            if ((binding.Stage & Stage.Vertex) != 0)
                 SakuraMetalNative.sakura_metal_set_vertex_uniform(device, ptr, sizeof(T), binding.BufferIndex);
-            else
+
+            if ((binding.Stage & Stage.Fragment) != 0)
                 SakuraMetalNative.sakura_metal_set_fragment_uniform(device, ptr, sizeof(T), binding.BufferIndex);
         }
     }

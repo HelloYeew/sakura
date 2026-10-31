@@ -3,6 +3,7 @@
 
 using NUnit.Framework;
 using Sakura.Framework.Graphics.Drawables;
+using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
@@ -198,5 +199,86 @@ public class DrawNodeCachingTest
 
         holderNode = (ContainerDrawNode)generate().Children[0];
         Assert.That(holderNode.Children, Is.Empty, "A removed child must leave the cached draw tree.");
+    }
+
+    /// <summary>
+    /// Whatever sets a child's alpha after <c>base.Update()</c>, as a container driving its children does, sets it after
+    /// the child's update this frame, so that frame's snapshot still has the old alpha. The next frame has to refresh it,
+    /// hidden or not: a drawable faded to nothing this way used to stay drawn at its last alpha.
+    /// </summary>
+    [Test]
+    public void TestHiddenAfterItsUpdateStopsDrawing([Values] AlphaTestDrawable kind, [Values] bool masked)
+    {
+        Drawable drawable = addForAlphaTest(kind, masked);
+        drawable.Alpha = 0.5f;
+        settle();
+
+        frame();
+        drawable.Alpha = 0;
+        generateAll();
+        frame();
+
+        for (int buffer = 0; buffer < 3; buffer++)
+            Assert.That(nodeForAlphaTest(generate(buffer), masked).DrawAlpha, Is.Zero, $"Buffer {buffer} must stop drawing it.");
+    }
+
+    /// <summary>
+    /// The same the other way: hidden from the start, shown by its alpha alone, each buffer draws it where it is.
+    /// </summary>
+    [Test]
+    public void TestShownAfterItsUpdateDraws([Values] AlphaTestDrawable kind, [Values] bool masked)
+    {
+        Drawable drawable = addForAlphaTest(kind, masked);
+        drawable.Alpha = 0;
+        settle();
+
+        frame();
+        drawable.Alpha = 0.5f;
+        generateAll();
+        frame();
+
+        for (int buffer = 0; buffer < 3; buffer++)
+        {
+            DrawNode node = nodeForAlphaTest(generate(buffer), masked);
+
+            using (Assert.EnterMultipleScope())
+            {
+                Assert.That(node.DrawAlpha, Is.EqualTo(0.5f).Within(0.001f), $"Buffer {buffer}'s alpha");
+                Assert.That(node.Vertices[0].Color.W, Is.EqualTo(0.5f).Within(0.001f), $"Buffer {buffer}'s vertices");
+                Assert.That(node.DrawRectangle.Width, Is.EqualTo(50).Within(0.01f), $"Buffer {buffer}'s rectangle");
+            }
+        }
+    }
+
+    public enum AlphaTestDrawable
+    {
+        Box,
+        Circle,
+        ContainerWithBox
+    }
+
+    private Drawable addForAlphaTest(AlphaTestDrawable kind, bool masked)
+    {
+        Drawable drawable = kind switch
+        {
+            AlphaTestDrawable.Box => new Box { Size = new Vector2(50) },
+            AlphaTestDrawable.Circle => new Circle { Size = new Vector2(50) },
+            _ => new Container { Size = new Vector2(50), Child = new Box { RelativeSizeAxes = Axes.Both } }
+        };
+
+        root.Add(masked ? new Container { Size = new Vector2(200), Masking = true, Child = drawable } : drawable);
+        return drawable;
+    }
+
+    private static DrawNode nodeForAlphaTest(ContainerDrawNode rootNode, bool masked)
+    {
+        DrawNode node = rootNode.Children[0];
+        return masked ? ((ContainerDrawNode)node).Children[0] : node;
+    }
+
+    private void generateAll()
+    {
+        for (int buffer = 0; buffer < 3; buffer++)
+            generate(buffer);
     }
 }

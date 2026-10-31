@@ -1,0 +1,47 @@
+#version 450
+
+// shader.vert, but passing on a block's color: with test-both-stages.frag, a block read in both stages.
+
+layout(location = 0) in vec2 aPosition;
+layout(location = 1) in vec2 aTexCoords;
+layout(location = 2) in vec4 aColor;
+layout(location = 3) in float aTexIndex;
+layout(location = 4) in vec4 aClipData;
+layout(location = 5) in float aClipShearX;
+layout(location = 6) in float aClipRadius;
+layout(location = 7) in vec4 aClipFadeEdges;
+layout(location = 8) in vec4 aClipFadeLength;
+
+layout(location = 0) out vec4 v_Color;
+layout(location = 1) out vec2 v_TexCoords;
+layout(location = 2) out vec2 v_FragPos;
+layout(location = 3) out float v_TexIndex;
+layout(location = 4) out vec4 v_ClipData;
+layout(location = 5) out float v_ClipShearX;
+layout(location = 6) out float v_ClipRadius;
+layout(location = 7) out vec4 v_ClipFadeEdges;
+layout(location = 8) out vec4 v_ClipFadeLength;
+
+layout(set = 0, binding = 0, std140) uniform ProjectionBlock
+{
+    mat4 u_Projection;
+};
+
+layout(set = 0, binding = 5, std140) uniform SharedBlock
+{
+    vec4 u_Shared;
+};
+
+void main()
+{
+    gl_Position = u_Projection * vec4(aPosition, 0.0, 1.0);
+    v_Color = u_Shared;
+    v_TexCoords = aTexCoords;
+    v_FragPos = aPosition;
+    v_TexIndex = aTexIndex;
+    v_ClipData = aClipData;
+    v_ClipShearX = aClipShearX;
+    v_ClipRadius = aClipRadius;
+    v_ClipFadeEdges = aClipFadeEdges;
+    v_ClipFadeLength = aClipFadeLength;
+}

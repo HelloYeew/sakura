@@ -54,7 +54,10 @@ public static class TextTruncation
     /// <param name="ellipsis">
     /// Appended to a shortened result. Pass an empty string for a hard cut with no marker.
     /// </param>
-    public static Result Apply(IFontStore store, FontUsage usage, string text, float dpiScale, float maxWidth, string ellipsis = DEFAULT_ELLIPSIS)
+    /// <param name="letterSpacing">
+    /// Extra room the text will be drawn with between glyphs, in logical pixels, which counts against the budget.
+    /// </param>
+    public static Result Apply(IFontStore store, FontUsage usage, string text, float dpiScale, float maxWidth, string ellipsis = DEFAULT_ELLIPSIS, float letterSpacing = 0)
     {
         ArgumentNullException.ThrowIfNull(store);
 
@@ -65,7 +68,7 @@ public static class TextTruncation
 
         // Unlimited budget, already fits, or a store that does not measure (the headless one reports
         // zero for everything) — in every case the text is used as-is.
-        if (float.IsNaN(maxWidth) || float.IsPositiveInfinity(maxWidth) || full.BoundingBox.X <= maxWidth)
+        if (float.IsNaN(maxWidth) || float.IsPositiveInfinity(maxWidth) || widthOf(full, letterSpacing) <= maxWidth)
             return new Result { Shaped = full, Text = text, Truncated = false };
 
         if (maxWidth <= 0)
@@ -86,7 +89,7 @@ public static class TextTruncation
             string candidate = compose(text, cuts[mid], ellipsis);
             var shaped = store.Shape(usage, candidate, dpiScale);
 
-            if (shaped.BoundingBox.X <= maxWidth)
+            if (widthOf(shaped, letterSpacing) <= maxWidth)
             {
                 best = new Result { Shaped = shaped, Text = candidate, Truncated = true };
                 found = true;
@@ -104,6 +107,9 @@ public static class TextTruncation
 
         return best;
     }
+
+    private static float widthOf(ShapedText shaped, float letterSpacing) =>
+        shaped.BoundingBox.X + Math.Max(0, shaped.Glyphs.Count - 1) * letterSpacing;
 
     /// <summary>
     /// The lengths <paramref name="text"/> may be cut at, ascending: zero, the start of every shaped
