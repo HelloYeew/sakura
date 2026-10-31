@@ -21,6 +21,22 @@ public struct MarginPadding : IEquatable<MarginPadding>
 
     public Vector2 Total => TopLeft + BottomRight;
 
+    /// <summary>
+    /// Sets <see cref="Left"/> and <see cref="Right"/> to the same value. <c>Total.X</c> reads their sum.
+    /// </summary>
+    public float Horizontal
+    {
+        set => Left = Right = value;
+    }
+
+    /// <summary>
+    /// Sets <see cref="Top"/> and <see cref="Bottom"/> to the same value. <c>Total.Y</c> reads their sum.
+    /// </summary>
+    public float Vertical
+    {
+        set => Top = Bottom = value;
+    }
+
     public MarginPadding(float all)
     {
         Top = Right = Bottom = Left = all;

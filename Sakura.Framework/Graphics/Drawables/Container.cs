@@ -433,8 +433,21 @@ public partial class Container : Drawable
         }
     }
 
+    /// <summary>
+    /// This container's only child. Setting it replaces whatever children it has.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Read while it has none, or more than one.</exception>
     public Drawable Child
     {
+        get
+        {
+            IReadOnlyList<Drawable> current = Children;
+
+            if (current.Count != 1)
+                throw new InvalidOperationException($"{nameof(Child)} reads a container's only child, and this one has {current.Count}.");
+
+            return current[0];
+        }
         set => Children = new[] { value };
     }
 
