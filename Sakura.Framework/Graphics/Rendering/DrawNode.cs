@@ -101,6 +101,11 @@ public class DrawNode
     }
 
     /// <summary>
+    /// Counts this node in the frame's statistics, for a subclass that draws in a way of its own.
+    /// </summary>
+    private protected static void CountDrawn() => stat_drawn_last_frame.Accumulator++;
+
+    /// <summary>
     /// Submits the node's state to the renderer.
     /// This should execute on the draw thread.
     /// </summary>
@@ -109,7 +114,7 @@ public class DrawNode
         if (DrawAlpha <= 0 || VertexCount == 0)
             return;
 
-        stat_drawn_last_frame.Accumulator++;
+        CountDrawn();
         renderer.SetBlendMode(Blending);
 
         if (Topology == VertexTopology.Quads)
