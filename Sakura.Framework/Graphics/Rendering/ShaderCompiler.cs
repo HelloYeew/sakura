@@ -81,10 +81,7 @@ public static partial class ShaderCompiler
         if (target == CrossCompileTarget.HLSL)
             fragmentSource = defineAfterVersion(fragmentSource, explicit_gradients_define);
 
-        string key = $"{DiskCache.HashString(vertexSource)}" +
-                     $"#{DiskCache.HashString(fragmentSource)}" +
-                     $"#{(int)target}#{cache_version}";
-
+        string key = crossCompileKey(vertexSource, fragmentSource, target);
         string label = !string.IsNullOrEmpty(name) ? name : (key.Length > 12 ? key[..12] : key);
 
         if (cache != null && cache.TryReadStrings(key, out string cachedVert, out string cachedFrag))
@@ -95,20 +92,11 @@ public static partial class ShaderCompiler
 
         Logger.Verbose($"☀️ Shader cache miss for {label} → {target}, compiling");
 
-        var options = new CrossCompileOptions(
-            // D3D clip space is [0,1] on Z (vs OpenGL/Metal's [-1,1]), so the depth range must be
-            // remapped for HLSL only.
-            fixClipSpaceZ: target == CrossCompileTarget.HLSL,
-            // Metal and Direct3D both use a top-left framebuffer origin (vs OpenGL's bottom-left),
-            // so flip Y for MSL and HLSL.
-            invertVertexOutputY: target == CrossCompileTarget.MSL || target == CrossCompileTarget.HLSL
-        );
-
         VertexFragmentCompilationResult result = SpirvCompilation.CompileVertexFragment(
             Encoding.UTF8.GetBytes(vertexSource),
             Encoding.UTF8.GetBytes(fragmentSource),
             target,
-            options);
+            crossCompileOptions(target));
 
         if (cache != null)
         {
@@ -118,6 +106,84 @@ public static partial class ShaderCompiler
 
         return (result.VertexShader, result.FragmentShader);
     }
+
+    /// <summary>
+    /// <see cref="GetOrCompile"/> for HLSL or MSL, also saying where each uniform block landed: their output doesn't keep
+    /// the blocks' names, so a backend can't find them by name itself.
+    /// </summary>
+    internal static (string vert, string frag, ShaderUniformBlock[] blocks) GetOrCompileWithBlocks(
+        Storage sourceStorage,
+        string vertexPath,
+        string fragmentPath,
+        CrossCompileTarget target,
+        DiskCache cache = null)
+    {
+        string vertSrc = ReadWithIncludes(sourceStorage, vertexPath);
+        string fragSrc = ReadWithIncludes(sourceStorage, fragmentPath);
+
+        return GetOrCompileSourceWithBlocks(vertSrc, fragSrc, target, cache, vertexPath, fragmentPath);
+    }
+
+    /// <summary>
+    /// <see cref="GetOrCompileSource"/> for HLSL or MSL, also saying where each uniform block landed. Its output is the same,
+    /// and shares the same cache entry.
+    /// </summary>
+    internal static (string vert, string frag, ShaderUniformBlock[] blocks) GetOrCompileSourceWithBlocks(
+        string vertexSource,
+        string fragmentSource,
+        CrossCompileTarget target,
+        DiskCache cache = null,
+        string vertexName = null,
+        string fragmentName = null)
+    {
+        if (target != CrossCompileTarget.HLSL && target != CrossCompileTarget.MSL)
+            throw new ArgumentException($"{target} keeps its blocks' names, and looks them up by those.", nameof(target));
+
+        if (target == CrossCompileTarget.HLSL)
+            fragmentSource = defineAfterVersion(fragmentSource, explicit_gradients_define);
+
+        string key = crossCompileKey(vertexSource, fragmentSource, target);
+        string blocksKey = $"blocks#{key}";
+
+        if (cache != null
+            && cache.TryReadStrings(key, out string cachedVert, out string cachedFrag)
+            && cache.TryReadStrings(blocksKey, out string cachedBlocks, out _)
+            && ShaderUniformBlocks.TryDeserialize(cachedBlocks, out ShaderUniformBlock[] blocks))
+        {
+            Logger.Verbose($"☀️ Shader cache hit for {vertexName}+{fragmentName} → {target}, loaded from cache");
+            return (cachedVert, cachedFrag, blocks);
+        }
+
+        Logger.Verbose($"☀️ Shader cache miss for {vertexName}+{fragmentName} → {target}, compiling");
+
+        // Given source, the cross-compiler would compile these same modules itself and throw them away. Each compile is
+        // most of the cost, so they're made here, to read the blocks from as well, rather than twice.
+        byte[] vertexSpirv = SpirvCompilation.CompileGlslToSpirv(vertexSource, vertexName, ShaderStages.Vertex, GlslCompileOptions.Default).SpirvBytes;
+        byte[] fragmentSpirv = SpirvCompilation.CompileGlslToSpirv(fragmentSource, fragmentName, ShaderStages.Fragment, GlslCompileOptions.Default).SpirvBytes;
+
+        VertexFragmentCompilationResult result = SpirvCompilation.CompileVertexFragment(vertexSpirv, fragmentSpirv, target, crossCompileOptions(target));
+        blocks = ShaderUniformBlocks.Find(vertexSource, vertexSpirv, fragmentSource, fragmentSpirv);
+
+        if (cache != null)
+        {
+            cache.WriteStrings(key, result.VertexShader, result.FragmentShader);
+            cache.WriteStrings(blocksKey, ShaderUniformBlocks.Serialize(blocks), string.Empty);
+        }
+
+        return (result.VertexShader, result.FragmentShader, blocks);
+    }
+
+    private static string crossCompileKey(string vertexSource, string fragmentSource, CrossCompileTarget target) =>
+        $"{DiskCache.HashString(vertexSource)}#{DiskCache.HashString(fragmentSource)}#{(int)target}#{cache_version}";
+
+    private static CrossCompileOptions crossCompileOptions(CrossCompileTarget target) => new CrossCompileOptions(
+        // D3D clip space is [0,1] on Z (vs OpenGL/Metal's [-1,1]), so the depth range must be
+        // remapped for HLSL only.
+        fixClipSpaceZ: target == CrossCompileTarget.HLSL,
+        // Metal and Direct3D both use a top-left framebuffer origin (vs OpenGL's bottom-left),
+        // so flip Y for MSL and HLSL.
+        invertVertexOutputY: target == CrossCompileTarget.MSL || target == CrossCompileTarget.HLSL
+    );
 
     /// <summary>
     /// Reads a vertex + fragment shader pair from <paramref name="sourceStorage"/> (resolving

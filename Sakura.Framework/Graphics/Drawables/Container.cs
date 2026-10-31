@@ -433,8 +433,21 @@ public partial class Container : Drawable
         }
     }
 
+    /// <summary>
+    /// This container's only child. Setting it replaces whatever children it has.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Read while it has none, or more than one.</exception>
     public Drawable Child
     {
+        get
+        {
+            IReadOnlyList<Drawable> current = Children;
+
+            if (current.Count != 1)
+                throw new InvalidOperationException($"{nameof(Child)} reads a container's only child, and this one has {current.Count}.");
+
+            return current[0];
+        }
         set => Children = new[] { value };
     }
 
@@ -933,7 +946,7 @@ public partial class Container : Drawable
             Vector2 margin = child.Margin.Total;
 
             // The common case, placed from the top-left corner both ways: just where it reaches to.
-            if (child.Anchor == Anchor.TopLeft && child.Origin == Anchor.TopLeft && child.RelativePositionAxes == Axes.None)
+            if (child.IsPlacedFromTopLeft && child.RelativePositionAxes == Axes.None)
             {
                 if ((axes & Axes.X) != 0 && countsOn(child, Axes.X))
                     required.X = Math.Max(required.X, position.X + size.X + margin.X);
@@ -945,7 +958,7 @@ public partial class Container : Drawable
             }
 
             Vector2 anchor = GetAnchorOriginVector(child.Anchor);
-            Vector2 origin = GetAnchorOriginVector(child.Origin);
+            Vector2 origin = child.OriginVector;
 
             if ((axes & Axes.X) != 0 && countsOn(child, Axes.X))
             {

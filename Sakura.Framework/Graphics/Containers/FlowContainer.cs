@@ -257,7 +257,7 @@ public partial class FlowContainer : Container
 
                 Vector2 position;
 
-                if (child.Anchor == Anchor.TopLeft && child.Origin == Anchor.TopLeft)
+                if (child.IsPlacedFromTopLeft)
                 {
                     // The common case: the slot's corner is the position.
                     position = horizontal ? new Vector2(currentFlow, line.CrossStart) : new Vector2(line.CrossStart, currentFlow);
@@ -289,7 +289,7 @@ public partial class FlowContainer : Container
     /// </summary>
     private static Vector2 positionFor(Drawable child, Vector2 anchor, Vector2 box, Vector2 drawSize, Vector2 content)
     {
-        Vector2 origin = GetAnchorOriginVector(child.Origin);
+        Vector2 origin = child.OriginVector;
         Vector2 margin = child.Margin.Total;
 
         return new Vector2(

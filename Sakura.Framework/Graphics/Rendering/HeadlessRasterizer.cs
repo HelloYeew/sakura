@@ -136,6 +136,35 @@ internal sealed class HeadlessRasterizer
         rasterizeTriangle(target, mapped[2], mapped[3], mapped[0], texture, mode);
     }
 
+    /// <summary>
+    /// Rasterize one triangle of a triangle list into <paramref name="target"/>.
+    /// </summary>
+    /// <param name="target">The surface being rendered into.</param>
+    /// <param name="triangle">Three vertices in screen space.</param>
+    /// <param name="texture">The texture surface, or null to sample opaque white.</param>
+    /// <param name="mode">The blend mode in force.</param>
+    /// <param name="viewport">
+    /// Maps screen space onto <paramref name="target"/>. Null when drawing to the screen surface, where the
+    /// mapping is the identity.
+    /// </param>
+    public void DrawTriangle(PixelSurface target, ReadOnlySpan<SakuraVertex> triangle, PixelSurface? texture, BlendingMode mode, ViewportTransform? viewport)
+    {
+        if (triangle.Length < 3)
+            return;
+
+        Span<SakuraVertex> mapped = stackalloc SakuraVertex[3];
+
+        for (int i = 0; i < 3; i++)
+        {
+            mapped[i] = triangle[i];
+
+            if (viewport is { } v)
+                mapped[i].Position = v.Apply(triangle[i].Position);
+        }
+
+        rasterizeTriangle(target, mapped[0], mapped[1], mapped[2], texture, mode);
+    }
+
     private static void rasterizeTriangle(PixelSurface target, SakuraVertex a, SakuraVertex b, SakuraVertex c, PixelSurface? texture, BlendingMode mode)
     {
         float area = edge(a.Position, b.Position, c.Position);

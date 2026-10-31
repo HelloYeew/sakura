@@ -29,7 +29,9 @@ public partial class ClickableContainer : Container
 
     public readonly ReactiveBool Enabled = new ReactiveBool();
 
-    public override bool OnClick(MouseButtonEvent e)
+    public override bool OnClick(MouseButtonEvent e) => TriggerClick();
+
+    public bool TriggerClick()
     {
         if (!Enabled.Value)
             return false;

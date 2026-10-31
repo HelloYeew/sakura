@@ -165,10 +165,6 @@ public sealed class VertexBatch
     /// </summary>
     internal void AddRange(ReadOnlySpan<SakuraVertex> newVertices, float textureIndex, in ClipState clip)
     {
-        // Triangle-list vertices break the quad alignment, so this flush must use the dynamic index
-        // buffer rather than a static quad pattern.
-        HasNonQuad = true;
-
         // Added a triangle at a time so a capacity flush can never split one across two draws (which
         // would leave a draw with a vertex count that isn't a multiple of three, silently dropping the
         // remainder).
@@ -176,6 +172,11 @@ public sealed class VertexBatch
         {
             int group = Math.Min(3, newVertices.Length - i);
             ensureCapacity(group, Indexed ? group : 0);
+
+            // Triangle-list vertices break the quad alignment, so this flush must use the dynamic index
+            // buffer rather than a static quad pattern. Said after making room, as a flush starts over
+            // and forgets: the rest of a long list, read as quads, would join its triangles up.
+            HasNonQuad = true;
 
             for (int j = 0; j < group; j++)
             {

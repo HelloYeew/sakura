@@ -17,6 +17,11 @@ public class DrawNode
     public long InvalidationID { get; internal set; }
 
     /// <summary>
+    /// The <see cref="Drawable.VertexVersion"/> this node's vertices are a copy of.
+    /// </summary>
+    private long appliedVertexVersion;
+
+    /// <summary>
     /// Backing storage for <see cref="Vertices"/>. Grow-only, so its length is a capacity and says nothing
     /// about how many vertices are live (that is <see cref="VertexCount"/>).
     /// </summary>
@@ -86,9 +91,19 @@ public class DrawNode
     /// </summary>
     protected virtual void ApplyVertices(Drawable source)
     {
+        if (appliedVertexVersion == source.VertexVersion)
+            return;
+
+        appliedVertexVersion = source.VertexVersion;
+
         SetVertexCount(source.VertexCount);
         source.Vertices.AsSpan(0, source.VertexCount).CopyTo(WritableVertices);
     }
+
+    /// <summary>
+    /// Counts this node in the frame's statistics, for a subclass that draws in a way of its own.
+    /// </summary>
+    private protected static void CountDrawn() => stat_drawn_last_frame.Accumulator++;
 
     /// <summary>
     /// Submits the node's state to the renderer.
@@ -99,7 +114,7 @@ public class DrawNode
         if (DrawAlpha <= 0 || VertexCount == 0)
             return;
 
-        stat_drawn_last_frame.Accumulator++;
+        CountDrawn();
         renderer.SetBlendMode(Blending);
 
         if (Topology == VertexTopology.Quads)

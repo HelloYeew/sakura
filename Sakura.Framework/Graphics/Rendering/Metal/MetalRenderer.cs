@@ -269,24 +269,22 @@ public sealed class MetalRenderer : IMetalRenderer
         };
 
     /// <summary>
-    /// Custom shaders for BufferedContainer effects (blur/grayscale) and video. The bridge walks
-    /// resources sorted by (set, binding) with one global buffer counter, decorating each resource on
-    /// its own stage. For all three effect/video fragment shaders the shape is identical:
-    ///   (0,0) ProjectionBlock [vertex UBO]                        → vertex buffer 0
-    ///   (0,2|0,3|0,4) Grayscale/Blur/VideoBlock [single frag UBO] → fragment buffer 1
-    ///   (1,0..) u_Texture / u_TextureY,U,V [sampled images]       → texture/sampler 0 (and 1,2 for video)
-    /// Metal buffer indices are per-stage, so the fragment UBO at [[buffer(1)]] (with no fragment
-    /// buffer 0) is correct — same shape as the main shader's MaskBlock. Each shader only looks up the
-    /// block names it actually uses, so one combined map serves all custom shaders.
+    /// Each uniform block of a custom shader, where <see cref="ShaderUniformBlocks"/> found it. Metal buffer indices are
+    /// per stage, so a fragment block at [[buffer(1)]] with no fragment buffer 0 is correct: the same shape as the main
+    /// shader's MaskBlock. The native layer keeps buffer 30 for vertices, far past any shader's blocks.
     /// </summary>
-    private static IReadOnlyDictionary<string, MetalShader.UniformBinding> customShaderUniformBindings() =>
-        new Dictionary<string, MetalShader.UniformBinding>
+    private static Dictionary<string, MetalShader.UniformBinding> customShaderUniformBindings(ShaderUniformBlock[] blocks)
+    {
+        var bindings = new Dictionary<string, MetalShader.UniformBinding>(blocks.Length);
+
+        foreach (ShaderUniformBlock block in blocks)
         {
-            ["ProjectionBlock"] = new MetalShader.UniformBinding(MetalShader.Stage.Vertex, 0),
-            ["BlurBlock"] = new MetalShader.UniformBinding(MetalShader.Stage.Fragment, 1),
-            ["GrayscaleBlock"] = new MetalShader.UniformBinding(MetalShader.Stage.Fragment, 1),
-            ["VideoBlock"] = new MetalShader.UniformBinding(MetalShader.Stage.Fragment, 1),
-        };
+            var stage = (block.InVertex ? MetalShader.Stage.Vertex : 0) | (block.InFragment ? MetalShader.Stage.Fragment : 0);
+            bindings[block.Name] = new MetalShader.UniformBinding(stage, block.Index);
+        }
+
+        return bindings;
+    }
 
     public void Clear()
     {
@@ -649,9 +647,9 @@ public sealed class MetalRenderer : IMetalRenderer
     public void ApplyCurrentClip(Span<SakuraVertex> vertices) => clips.ApplyTo(vertices);
 
     /// <summary>
-    /// Pushes a clip region. Mirrors <c>GLRenderer.PushMask</c>: the new mask is intersected (as an
-    /// AABB, accounting for horizontal shear) with any parent mask, and the result becomes the active
-    /// clip carried into subsequent vertices by <see cref="DrawVertices"/>.
+    /// Pushes a clip region. Mirrors <c>GLRenderer.PushMask</c>: the new mask, inside any parent mask
+    /// (<see cref="ClipStack.Push"/>), becomes the active clip carried into subsequent vertices by
+    /// <see cref="DrawVertices"/>.
     /// </summary>
     public void PushMask(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius)
         => clips.Push(maskCenter, maskHalfSize, shearX, cornerRadius);
@@ -851,15 +849,15 @@ public sealed class MetalRenderer : IMetalRenderer
 
     /// <summary>
     /// Compiles a custom shader pair to MSL and builds a <see cref="MetalShader"/>. Used for the
-    /// buffered-container blur/grayscale effect shaders. The vertex layout matches the standard Vertex
-    /// struct (the effect shaders pair with shader.vert).
+    /// buffered-container blur/grayscale effect shaders, video, and a game's own shaders. The vertex layout
+    /// matches the standard Vertex struct.
     /// </summary>
     public IShader CreateShader(Storage storage, string vertexPath, string fragmentPath)
     {
-        var (vertMsl, fragMsl) = ShaderCompiler.GetOrCompile(
+        var (vertMsl, fragMsl, blocks) = ShaderCompiler.GetOrCompileWithBlocks(
             storage, vertexPath, fragmentPath, SPIRV.CrossCompileTarget.MSL, ShaderCache);
 
-        return new MetalShader(device, vertMsl, fragMsl, buildVertexAttributes(), SakuraVertex.Size, customShaderUniformBindings(), owner: this);
+        return new MetalShader(device, vertMsl, fragMsl, buildVertexAttributes(), SakuraVertex.Size, customShaderUniformBindings(blocks), owner: this);
     }
 
     /// <summary>

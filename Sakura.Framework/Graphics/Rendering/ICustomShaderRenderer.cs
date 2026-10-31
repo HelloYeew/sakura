@@ -7,8 +7,8 @@ namespace Sakura.Framework.Graphics.Rendering;
 
 /// <summary>
 /// A renderer that can draw with a custom shader. Draw nodes that bind their own shader and textures
-/// (the buffered-container effect passes, video) check for this interface instead of for each backend,
-/// and skip the custom pass on a renderer without it (headless).
+/// (the buffered-container effect passes, video, <see cref="CustomShaderDrawNode"/>) check for this interface
+/// instead of for each backend, and skip the custom pass on a renderer without it (headless).
 /// </summary>
 public interface ICustomShaderRenderer : IRenderer
 {

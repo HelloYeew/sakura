@@ -21,14 +21,15 @@ namespace Sakura.Framework.Graphics.Rendering.Direct3D11;
 /// </summary>
 public sealed class D3D11Shader : IShader
 {
+    [Flags]
     public enum Stage
     {
-        Vertex,
-        Fragment,
+        Vertex = 1,
+        Fragment = 2,
     }
 
     /// <summary>
-    /// Where a named uniform block binds, which stage and which cbuffer register.
+    /// Where a named uniform block binds, which stages and which cbuffer register.
     /// </summary>
     public readonly record struct UniformBinding(Stage Stage, int Slot);
 
@@ -246,8 +247,7 @@ public sealed class D3D11Shader : IShader
     public void SetUniform(string name, float[] mat3X3) { }
 
     /// <summary>
-    /// Uploads a std140-laid-out uniform block by name to its (stage, cbuffer register) and binds it.
-    /// Used by the effect passes (ProjectionBlock, BlurBlock, GrayscaleBlock) and video (VideoBlock).
+    /// Uploads a std140-laid-out uniform block by name to its (stages, cbuffer register) and binds it.
     /// </summary>
     public unsafe void SetUniformBlock<T>(string blockName, in T data) where T : unmanaged
     {
@@ -263,9 +263,10 @@ public sealed class D3D11Shader : IShader
             Buffer.MemoryCopy(src, (void*)mapped.DataPointer, size, sizeof(T));
         context.Unmap(cb, 0);
 
-        if (binding.Stage == Stage.Vertex)
+        if ((binding.Stage & Stage.Vertex) != 0)
             context.VSSetConstantBuffer((uint)binding.Slot, cb);
-        else
+
+        if ((binding.Stage & Stage.Fragment) != 0)
             context.PSSetConstantBuffer((uint)binding.Slot, cb);
     }
 
