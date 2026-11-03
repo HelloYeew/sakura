@@ -177,6 +177,38 @@ public static class ColorExtensions
     }
 
     /// <summary>
+    /// How light the color looks, as the WCAG contrast guidelines measure it: its channels in linear light, each weighted
+    /// by how bright it looks (0 is black, 1 is white). Unlike <see cref="GetBrightness"/>, which weighs the channels as
+    /// they're stored, this is what <see cref="GetContrastRatio"/> is built on. Alpha is ignored.
+    /// </summary>
+    /// <param name="color">Color to evaluate.</param>
+    /// <returns>Relative luminance (0 to 1).</returns>
+    public static float GetRelativeLuminance(this Color color) =>
+        0.2126f * SrgbToLinear(color.R) + 0.7152f * SrgbToLinear(color.G) + 0.0722f * SrgbToLinear(color.B);
+
+    /// <summary>
+    /// How much one color stands out against another, as the WCAG contrast guidelines measure it: from 1 (just as light)
+    /// to 21 (black on white), whichever is passed first. Text is usually asked to reach 4.5, large text and the shapes
+    /// of controls 3.
+    /// </summary>
+    /// <remarks>
+    /// Both are taken as opaque. A translucent color is blended with what's behind it as it's drawn, and on an sRGB
+    /// framebuffer that blend is in linear light, which lightens a faded dark color far more than its numbers blended in
+    /// sRGB suggest: #393947 at 90% on #C3C3CE drew as #565660, 4.15, where the same blend worked out in sRGB is #474754,
+    /// 5.23. Measure the color as it's drawn, or use an opaque one.
+    /// </remarks>
+    /// <param name="color">One color.</param>
+    /// <param name="other">The color it's seen against.</param>
+    /// <returns>The contrast ratio (1 to 21).</returns>
+    public static float GetContrastRatio(this Color color, Color other)
+    {
+        float a = color.GetRelativeLuminance();
+        float b = other.GetRelativeLuminance();
+
+        return (Math.Max(a, b) + 0.05f) / (Math.Min(a, b) + 0.05f);
+    }
+
+    /// <summary>
     /// Determines if the color is considered "dark" based on its brightness.
     /// A color is considered dark if its brightness is less than 0.5.
     /// </summary>
