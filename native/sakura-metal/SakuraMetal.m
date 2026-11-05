@@ -93,12 +93,24 @@ __attribute__((visibility("hidden")))
 @public
     os_unfair_lock lock;
     int64_t tag;
+    double gpuEndTime;    // when the GPU finished that frame, same clock; 0 where its completion wasn't in yet
     double presentedTime; // host time, seconds (CACurrentMediaTime's clock)
     uint64_t sequence;    // counts presentations recorded, so each is taken once
 }
 @end
 
 @implementation SakuraMetalPresentTimes
+@end
+
+// When the GPU finished one frame: written by the frame's last command buffer completing, read when the frame is shown.
+@interface SakuraMetalFrameEnd : NSObject
+{
+@public
+    _Atomic double gpuEndTime;
+}
+@end
+
+@implementation SakuraMetalFrameEnd
 @end
 
 // The GPU's time on one frame so far: each command buffer the frame commits adds its own when it completes, on Metal's
@@ -914,6 +926,13 @@ void sakura_metal_end_frame(SakuraMetalDevice* device)
 
             if (times != nil && tag != 0)
             {
+                // The GPU finishes a frame before it can be shown, so its completion is normally in by then.
+                SakuraMetalFrameEnd* end = [SakuraMetalFrameEnd new];
+
+                [top->commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> _Nonnull done) {
+                    atomic_store(&end->gpuEndTime, done.GPUEndTime);
+                }];
+
                 [device->drawable addPresentedHandler:^(id<MTLDrawable> _Nonnull presented) {
                     CFTimeInterval at = presented.presentedTime;
 
@@ -923,6 +942,7 @@ void sakura_metal_end_frame(SakuraMetalDevice* device)
 
                     os_unfair_lock_lock(&times->lock);
                     times->tag = tag;
+                    times->gpuEndTime = atomic_load(&end->gpuEndTime);
                     times->presentedTime = at;
                     times->sequence++;
                     os_unfair_lock_unlock(&times->lock);
@@ -1781,7 +1801,13 @@ void sakura_metal_set_frame_tag(SakuraMetalDevice* device, int64_t tag)
 
 int sakura_metal_take_presented(SakuraMetalDevice* device, int64_t* tag, double* presentedTime)
 {
-    if (device == NULL || device->presentTimes == nil || tag == NULL || presentedTime == NULL)
+    double gpuEndTime;
+    return sakura_metal_take_presented_frame(device, tag, &gpuEndTime, presentedTime);
+}
+
+int sakura_metal_take_presented_frame(SakuraMetalDevice* device, int64_t* tag, double* gpuEndTime, double* presentedTime)
+{
+    if (device == NULL || device->presentTimes == nil || tag == NULL || gpuEndTime == NULL || presentedTime == NULL)
         return 0;
 
     SakuraMetalPresentTimes* times = device->presentTimes;
@@ -1793,6 +1819,7 @@ int sakura_metal_take_presented(SakuraMetalDevice* device, int64_t* tag, double*
     {
         device->presentationsTaken = times->sequence;
         *tag = times->tag;
+        *gpuEndTime = times->gpuEndTime;
         *presentedTime = times->presentedTime;
         taken = 1;
     }
