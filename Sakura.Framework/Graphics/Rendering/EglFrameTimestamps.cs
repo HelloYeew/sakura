@@ -162,7 +162,7 @@ internal sealed unsafe class EglFrameTimestamps
 
             // Invalid (-1) for a frame that was never shown.
             if (shown > 0)
-                latency.Add(DisplayLatency.Between(contentTicks, DisplayLatency.TicksFromNanoseconds(shown)));
+                latency.AddFrame(contentTicks, DisplayLatency.TicksFromNanoseconds(shown));
         }
     }
 }

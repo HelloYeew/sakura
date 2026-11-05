@@ -245,6 +245,17 @@ public interface IRenderer
     double DisplayLatencyMilliseconds => double.NaN;
 
     /// <summary>
+    /// Takes the oldest frame measured on screen since the last call, for the host to split
+    /// <see cref="DisplayLatencyMilliseconds"/> into where the time goes. False once none is left, and always where the
+    /// backend can't tell when a frame reached the screen.
+    /// </summary>
+    bool TryTakeShownFrame(out ShownFrame frame)
+    {
+        frame = default;
+        return false;
+    }
+
+    /// <summary>
     /// The physical-pixels-per-logical-unit scale of the current output
     /// (e.g. 2.0 on HiDPI displays). Use to size offscreen buffers in physical pixels.
     /// </summary>

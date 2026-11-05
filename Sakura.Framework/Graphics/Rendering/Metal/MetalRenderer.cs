@@ -307,6 +307,8 @@ public sealed class MetalRenderer : IMetalRenderer
 
     public double DisplayLatencyMilliseconds => displayLatency.Milliseconds ?? double.NaN;
 
+    public bool TryTakeShownFrame(out ShownFrame frame) => displayLatency.TryTakeShown(out frame);
+
     /// <summary>
     /// 16384 on every GPU Metal runs on here: iOS 15 needs an A9 or later (Apple3 and up) and every Mac family has it.
     /// Only the A7 and A8 (Apple1/2) stopped at 8192.
@@ -380,19 +382,44 @@ public sealed class MetalRenderer : IMetalRenderer
 
         try
         {
-            if (SakuraMetalNative.sakura_metal_take_presented(device, out long contentTicks, out double presentedTime) == 0)
+            if (takePresented(out long contentTicks, out double gpuEndTime, out double presentedTime) == 0)
                 return;
 
             double hostNow = SakuraMetalNative.sakura_metal_host_time();
             long now = Stopwatch.GetTimestamp();
             long shown = now - (long)((hostNow - presentedTime) * Stopwatch.Frequency);
+            long gpuDone = gpuEndTime > 0 ? now - (long)((hostNow - gpuEndTime) * Stopwatch.Frequency) : 0;
 
-            displayLatency.Add(DisplayLatency.Between(contentTicks, shown));
+            displayLatency.AddFrame(contentTicks, shown, gpuDone);
         }
         catch (EntryPointNotFoundException)
         {
             framesTimed = false;
         }
+    }
+
+    // Cleared where the library predates handing back the GPU's end time with each frame shown.
+    private bool gpuEndTimed = true;
+
+    /// <summary>
+    /// The latest frame Metal has reported on screen, with when the GPU finished it where the library says (else 0).
+    /// </summary>
+    private int takePresented(out long contentTicks, out double gpuEndTime, out double presentedTime)
+    {
+        if (gpuEndTimed)
+        {
+            try
+            {
+                return SakuraMetalNative.sakura_metal_take_presented_frame(device, out contentTicks, out gpuEndTime, out presentedTime);
+            }
+            catch (EntryPointNotFoundException)
+            {
+                gpuEndTimed = false;
+            }
+        }
+
+        gpuEndTime = 0;
+        return SakuraMetalNative.sakura_metal_take_presented(device, out contentTicks, out presentedTime);
     }
 
     public void StartFrame()

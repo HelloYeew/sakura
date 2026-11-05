@@ -89,4 +89,45 @@ public class DisplayLatencyTest
 
         Assert.That(DisplayLatency.Between(content, shown), Is.EqualTo(50).Within(0.001));
     }
+
+    /// <summary>
+    /// A frame measured on screen counts towards the figure, and is kept for the host to split, oldest first.
+    /// </summary>
+    [Test]
+    public void TestShownFramesAreKeptForTheHost()
+    {
+        var latency = new DisplayLatency("a test");
+        latency.AddFrame(1_000, 1_000 + Stopwatch.Frequency / 25);
+        latency.AddFrame(2_000, 2_000 + Stopwatch.Frequency / 25);
+
+        Assert.That(latency.Milliseconds, Is.EqualTo(40).Within(0.001));
+
+        Assert.That(latency.TryTakeShown(out var frame), Is.True);
+        Assert.That(frame.Content, Is.EqualTo(1_000));
+        Assert.That(frame.Shown, Is.EqualTo(1_000 + Stopwatch.Frequency / 25));
+        Assert.That(frame.GpuDone, Is.EqualTo(0));
+
+        Assert.That(latency.TryTakeShown(out frame), Is.True);
+        Assert.That(frame.Content, Is.EqualTo(2_000));
+
+        Assert.That(latency.TryTakeShown(out _), Is.False);
+    }
+
+    /// <summary>
+    /// A frame that can't be a latency isn't kept, and a host that falls behind gets the newest frames.
+    /// </summary>
+    [Test]
+    public void TestOnlyTheNewestPossibleFramesAreKept()
+    {
+        var latency = new DisplayLatency("a test");
+        latency.AddFrame(5_000, 4_000);
+
+        Assert.That(latency.TryTakeShown(out _), Is.False, "shown before its update");
+
+        for (long i = 1; i <= 20; i++)
+            latency.AddFrame(i, i + Stopwatch.Frequency / 50);
+
+        Assert.That(latency.TryTakeShown(out var frame), Is.True);
+        Assert.That(frame.Content, Is.EqualTo(13), "the oldest of the newest eight");
+    }
 }

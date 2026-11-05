@@ -361,6 +361,15 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     public void SetFrameContentTime(long timestamp) => frameContentTicks = timestamp;
 
     public double DisplayLatencyMilliseconds => displayLatency?.Milliseconds ?? double.NaN;
+
+    public bool TryTakeShownFrame(out ShownFrame frame)
+    {
+        if (displayLatency != null)
+            return displayLatency.TryTakeShown(out frame);
+
+        frame = default;
+        return false;
+    }
     private ulong stagingAlignment;
     private bool mipmapsSupported;
 
@@ -844,7 +853,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
                 // Display timing says when exactly, where there is any.
                 if (!device!.SupportsDisplayTiming && contentTicks != 0)
-                    displayLatency?.Add(DisplayLatency.Between(contentTicks, seenAround));
+                    displayLatency?.AddFrame(contentTicks, seenAround);
             }
 
             pendingPresentFirst = (pendingPresentFirst + 1) % max_pending_presents;
@@ -868,7 +877,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
             long contentTicks = contentTicksOf(timings[i].presentID);
 
             if (contentTicks != 0)
-                displayLatency.Add(DisplayLatency.Between(contentTicks, DisplayLatency.TicksFromNanoseconds((long)timings[i].actualPresentTime)));
+                displayLatency.AddFrame(contentTicks, DisplayLatency.TicksFromNanoseconds((long)timings[i].actualPresentTime));
         }
     }
 

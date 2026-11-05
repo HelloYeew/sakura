@@ -1,7 +1,6 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
-using System;
 using System.Runtime.InteropServices;
 
 namespace Sakura.Framework.Graphics.Rendering.Metal;
@@ -41,6 +40,8 @@ internal static class SakuraMetalNative
 {
     private const string lib_name = "libsakura-metal";
 
+    #region Device and frame
+
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern nint sakura_metal_create(nint caMetalLayer);
 
@@ -56,7 +57,9 @@ internal static class SakuraMetalNative
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern void sakura_metal_end_frame(nint device);
 
-    // Frame timing (SakuraMetal.h). Newer than the rest: a library from before them throws EntryPointNotFoundException.
+    #endregion
+
+    #region Frame timing
 
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern void sakura_metal_set_frame_tag(nint device, long tag);
@@ -65,10 +68,14 @@ internal static class SakuraMetalNative
     public static extern int sakura_metal_take_presented(nint device, out long tag, out double presentedTime);
 
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int sakura_metal_take_presented_frame(nint device, out long tag, out double gpuEndTime, out double presentedTime);
+
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern double sakura_metal_host_time();
 
-    // Background, latency and pacing (SakuraMetal.h). Newer again: a library from before them throws
-    // EntryPointNotFoundException.
+    #endregion
+
+    #region Background, latency and pacing
 
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern void sakura_metal_suspend(nint device);
@@ -82,8 +89,9 @@ internal static class SakuraMetalNative
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern void sakura_metal_set_min_present_interval(nint device, double seconds);
 
-    // Statistics, memory and pixel snapping (SakuraMetal.h). As new: a library from before them throws
-    // EntryPointNotFoundException.
+    #endregion
+
+    #region Statistics, memory and pixel snapping
 
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern int sakura_metal_take_gpu_time(nint device, out double milliseconds);
@@ -96,6 +104,10 @@ internal static class SakuraMetalNative
 
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern void sakura_metal_set_texture_nearest(nint texture, int nearest);
+
+    #endregion
+
+    #region Pipeline and drawing
 
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern void sakura_metal_resize(nint device, int width, int height, float contentsScale);
@@ -125,6 +137,10 @@ internal static class SakuraMetalNative
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern unsafe void sakura_metal_draw_triangles(nint device, void* data, int vertexCount, int vertexStride);
 
+    #endregion
+
+    #region Render targets and textures
+
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern nint sakura_metal_create_render_target(nint device, int width, int height);
 
@@ -146,6 +162,10 @@ internal static class SakuraMetalNative
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern void sakura_metal_destroy_texture(nint texture);
 
+    #endregion
+
+    #region Video planes and sampling
+
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern nint sakura_metal_create_plane_texture(nint device, int width, int height, int channels);
 
@@ -163,4 +183,6 @@ internal static class SakuraMetalNative
 
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern void sakura_metal_set_fragment_texture_wrap(nint device, nint texture, int slot, int repeat);
+
+    #endregion
 }

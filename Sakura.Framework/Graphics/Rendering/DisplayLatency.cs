@@ -48,6 +48,14 @@ internal sealed class DisplayLatency
 
     private static readonly GlobalStatistic<double> stat_display_latency = GlobalStatistics.Get<double>("Renderer", "Display Latency", StatisticKind.Gauge, StatisticUnit.Milliseconds);
 
+    // Frames measured since the host last took them (TryTakeShown), for it to split each one's latency into where the
+    // time went. The host takes them every frame, so only the newest few are kept.
+    private const int shown_frames_kept = 8;
+
+    private readonly ShownFrame[] shownFrames = new ShownFrame[shown_frames_kept];
+    private int shownFirst;
+    private int shownCount;
+
     private readonly string source;
     private int farReadings;
     private int readings;
@@ -76,6 +84,47 @@ internal sealed class DisplayLatency
     public static long TicksFromNanoseconds(long nanoseconds) => Stopwatch.Frequency == 1_000_000_000
         ? nanoseconds
         : (long)(nanoseconds * (Stopwatch.Frequency / 1_000_000_000.0));
+
+    /// <summary>
+    /// Adds the reading for a frame showing the update made at <paramref name="contentTimestamp"/>, on screen at
+    /// <paramref name="shownTimestamp"/>, and keeps it for <see cref="TryTakeShown"/>, with when the GPU finished it
+    /// where the renderer knows (<paramref name="gpuDoneTimestamp"/>, else 0). All <see cref="Stopwatch"/> timestamps.
+    /// </summary>
+    public void AddFrame(long contentTimestamp, long shownTimestamp, long gpuDoneTimestamp = 0)
+    {
+        double milliseconds = Between(contentTimestamp, shownTimestamp);
+        Add(milliseconds);
+
+        if (milliseconds <= 0 || milliseconds > max_ms)
+            return;
+
+        // Full, the oldest gives way.
+        if (shownCount == shown_frames_kept)
+        {
+            shownFirst = (shownFirst + 1) % shown_frames_kept;
+            shownCount--;
+        }
+
+        shownFrames[(shownFirst + shownCount) % shown_frames_kept] = new ShownFrame(contentTimestamp, gpuDoneTimestamp, shownTimestamp);
+        shownCount++;
+    }
+
+    /// <summary>
+    /// Takes the oldest frame <see cref="AddFrame"/> kept, or returns false where none is left.
+    /// </summary>
+    public bool TryTakeShown(out ShownFrame frame)
+    {
+        if (shownCount == 0)
+        {
+            frame = default;
+            return false;
+        }
+
+        frame = shownFrames[shownFirst];
+        shownFirst = (shownFirst + 1) % shown_frames_kept;
+        shownCount--;
+        return true;
+    }
 
     public void Add(double milliseconds)
     {
@@ -112,5 +161,7 @@ internal sealed class DisplayLatency
         Milliseconds = null;
         farReadings = 0;
         readings = 0;
+        shownFirst = 0;
+        shownCount = 0;
     }
 }

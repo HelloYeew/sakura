@@ -283,6 +283,8 @@ public class GLRenderer : IGLRenderer, IDisposable
 
     public double DisplayLatencyMilliseconds => displayLatency.Milliseconds ?? double.NaN;
 
+    public bool TryTakeShownFrame(out ShownFrame frame) => displayLatency.TryTakeShown(out frame);
+
     /// <summary>
     /// Measures the frames Android's EGL reports on screen by now, setting up for the surface drawn to first if it's
     /// new. Nothing anywhere else: no other window system says when a GL frame was shown.

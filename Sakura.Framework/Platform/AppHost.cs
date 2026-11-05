@@ -279,6 +279,11 @@ public abstract class AppHost : IDisposable
     // When the update each of rootDrawNodes came from began, for the renderer to measure how long its frames take to
     // reach the screen from (IRenderer.SetFrameContentTime).
     private readonly long[] rootDrawNodeTimes = new long[3];
+
+    // When that update finished, for splitting the latency into where it went (DisplayLatencySplit).
+    private readonly long[] rootDrawNodeUpdatedTimes = new long[3];
+
+    private readonly DisplayLatencySplit displayLatencySplit = new DisplayLatencySplit();
     private DrawNode currentFrameDrawNode;
 
     private ThreadRunner threadRunner;
@@ -1417,6 +1422,7 @@ public abstract class AppHost : IDisposable
         int updateIndex = frameBufferManager.GetUpdateIndex();
         rootDrawNodes[updateIndex] = app?.GenerateDrawNodeSubtree(updateIndex);
         rootDrawNodeTimes[updateIndex] = updateTime;
+        rootDrawNodeUpdatedTimes[updateIndex] = Stopwatch.GetTimestamp();
         frameBufferManager.FinishUpdate();
     }
 
@@ -1431,6 +1437,7 @@ public abstract class AppHost : IDisposable
         Renderer?.StartFrame();
 
         int drawIndex = frameBufferManager.GetDrawIndex();
+        long takenTime = Stopwatch.GetTimestamp();
         var currentFrameNode = rootDrawNodes[drawIndex];
 
         if (currentFrameNode != null)
@@ -1449,6 +1456,13 @@ public abstract class AppHost : IDisposable
         // renderer and report their own wait. Only one of the two is ever non-zero.
         lastPresentMilliseconds = (Stopwatch.GetTimestamp() - swapStart) * ms_per_tick
                                   + (Renderer?.LastBlockedMilliseconds ?? 0);
+
+        // Handed over at the swap: the other backends have presented by then, and OpenGL presents in it.
+        if (currentFrameNode != null)
+            displayLatencySplit.AddDrawn(rootDrawNodeTimes[drawIndex], rootDrawNodeUpdatedTimes[drawIndex], takenTime, swapStart);
+
+        while (Renderer != null && Renderer.TryTakeShownFrame(out var shownFrame))
+            displayLatencySplit.AddShown(shownFrame);
     }
 
     /// <summary>
