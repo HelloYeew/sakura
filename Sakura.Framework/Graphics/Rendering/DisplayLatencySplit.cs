@@ -3,8 +3,10 @@
 
 using System;
 using System.Diagnostics;
+using System.Threading;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Statistic;
+using Sakura.Framework.Timing;
 
 namespace Sakura.Framework.Graphics.Rendering;
 
@@ -50,6 +52,8 @@ internal sealed class DisplayLatencySplit
     private readonly long[] submittedTicks = new long[drawn_frames_kept];
     private int nextDrawn;
 
+    // Written on the draw thread and read for the parts from any, under the gate: a double can tear on 32-bit runtimes.
+    private readonly Lock gate = new Lock();
     private double update;
     private double waiting;
     private double draw;
@@ -102,28 +106,34 @@ internal sealed class DisplayLatencySplit
         bool frameGpuKnown = frame.GpuDone >= submitted && frame.GpuDone <= frame.Shown;
         double frameGpu = frameGpuKnown ? (frame.GpuDone - submitted) * ms_per_tick : 0;
 
-        if (readings == 0)
-        {
-            update = frameUpdate;
-            waiting = frameWaiting;
-            draw = frameDraw;
-            afterSubmit = frameAfterSubmit;
-        }
-        else
-        {
-            update += (frameUpdate - update) * smoothing;
-            waiting += (frameWaiting - waiting) * smoothing;
-            draw += (frameDraw - draw) * smoothing;
-            afterSubmit += (frameAfterSubmit - afterSubmit) * smoothing;
-        }
+        (double Update, double Waiting, double Draw, double Gpu, double Presenting) parts;
 
-        if (frameGpuKnown)
+        lock (gate)
         {
-            gpu = gpuKnown ? gpu + (frameGpu - gpu) * smoothing : frameGpu;
-            gpuKnown = true;
-        }
+            if (readings == 0)
+            {
+                update = frameUpdate;
+                waiting = frameWaiting;
+                draw = frameDraw;
+                afterSubmit = frameAfterSubmit;
+            }
+            else
+            {
+                update += (frameUpdate - update) * smoothing;
+                waiting += (frameWaiting - waiting) * smoothing;
+                draw += (frameDraw - draw) * smoothing;
+                afterSubmit += (frameAfterSubmit - afterSubmit) * smoothing;
+            }
 
-        var parts = Milliseconds;
+            if (frameGpuKnown)
+            {
+                gpu = gpuKnown ? gpu + (frameGpu - gpu) * smoothing : frameGpu;
+                gpuKnown = true;
+            }
+
+            parts = Milliseconds;
+            readings++;
+        }
 
         stat_update.Value = Math.Round(parts.Update, 1);
         stat_waiting.Value = Math.Round(parts.Waiting, 1);
@@ -131,7 +141,7 @@ internal sealed class DisplayLatencySplit
         stat_gpu.Value = Math.Round(parts.Gpu, 1);
         stat_presenting.Value = Math.Round(parts.Presenting, 1);
 
-        if (++readings == readings_to_log)
+        if (readings == readings_to_log)
         {
             string afterDraw = gpuKnown
                 ? $"{parts.Gpu:0.0} ms on the GPU, {parts.Presenting:0.0} ms presenting"
@@ -140,6 +150,44 @@ internal sealed class DisplayLatencySplit
             Logger.Verbose($"Frames reach the screen {update + waiting + draw + afterSubmit:0.0} ms after their update began: {parts.Update:0.0} ms updating, "
                            + $"{parts.Waiting:0.0} ms waiting for the draw, {parts.Draw:0.0} ms drawing, {afterDraw}");
         }
+    }
+
+    /// <summary>
+    /// The parts of <paramref name="totalMilliseconds"/> (the renderer's <see cref="IRenderer.DisplayLatencyMilliseconds"/>),
+    /// settled from the frames split so far. Empty until a frame has been, or where the renderer can't tell.
+    /// </summary>
+    public DisplayLatencyPart[] GetParts(double totalMilliseconds)
+    {
+        if (double.IsNaN(totalMilliseconds))
+            return Array.Empty<DisplayLatencyPart>();
+
+        lock (gate)
+        {
+            return readings == 0 ? Array.Empty<DisplayLatencyPart>() : Parts(totalMilliseconds, update, waiting, draw, gpu, gpuKnown);
+        }
+    }
+
+    /// <summary>
+    /// The parts of <paramref name="totalMilliseconds"/>, all measured: the update, its wait for the draw, the draw, the
+    /// GPU where its time is known, and presenting, then the panel, which nothing can measure. Presenting is what's left of
+    /// the total, so they add up to it exactly though the renderer settles the whole on its own. Where the others come to
+    /// more than the total (as it falls, the parts follow a frame or two behind), they're scaled down to it.
+    /// </summary>
+    internal static DisplayLatencyPart[] Parts(double totalMilliseconds, double update, double waiting, double draw, double gpu, bool gpuKnown)
+    {
+        double known = update + waiting + draw + (gpuKnown ? gpu : 0);
+        double scale = known > totalMilliseconds && known > 0 ? Math.Max(0, totalMilliseconds) / known : 1;
+        double presenting = Math.Max(0, totalMilliseconds - known * scale);
+
+        var updatePart = new DisplayLatencyPart(DisplayLatencyPartKind.Update, update * scale, LatencySource.Measured);
+        var waitingPart = new DisplayLatencyPart(DisplayLatencyPartKind.WaitingForDraw, waiting * scale, LatencySource.Measured);
+        var drawPart = new DisplayLatencyPart(DisplayLatencyPartKind.Draw, draw * scale, LatencySource.Measured);
+        var presentingPart = new DisplayLatencyPart(DisplayLatencyPartKind.Presenting, presenting, LatencySource.Measured);
+        var panel = DisplayLatencyPart.NotReported(DisplayLatencyPartKind.Panel);
+
+        return gpuKnown
+            ? new[] { updatePart, waitingPart, drawPart, new DisplayLatencyPart(DisplayLatencyPartKind.Gpu, gpu * scale, LatencySource.Measured), presentingPart, panel }
+            : new[] { updatePart, waitingPart, drawPart, presentingPart, panel };
     }
 
     /// <summary>

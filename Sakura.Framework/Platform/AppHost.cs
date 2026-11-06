@@ -316,6 +316,17 @@ public abstract class AppHost : IDisposable
     public virtual ISystemAudioRoute? SystemAudioRoute => null;
 
     /// <summary>
+    /// What <see cref="IRenderer.DisplayLatencyMilliseconds"/> is made of, in the order a frame goes through them, adding
+    /// up to it: the update, its wait for the draw, the draw, the GPU (where the renderer can tell when it finished) and
+    /// presenting. Each says how it's known, and the panel's own delay, which no software can measure, comes last. Empty
+    /// until frames have been seen on screen, and for good where the renderer can't tell when they are.
+    /// </summary>
+    /// <remarks>
+    /// Made at each call from the figures as they are then, so for a settings screen or a report rather than each frame.
+    /// </remarks>
+    public IReadOnlyList<DisplayLatencyPart> GetDisplayLatencyParts() => displayLatencySplit.GetParts(Renderer?.DisplayLatencyMilliseconds ?? double.NaN);
+
+    /// <summary>
     /// The platform's performance services: the frame threads report their work through it, and an app can read how
     /// hot the device is running.
     /// </summary>
