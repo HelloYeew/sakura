@@ -2004,8 +2004,20 @@ public class SDLWindow : IWindow
 
     public unsafe void Show()
     {
-        if (window != null)
-            SDL_ShowWindow(window);
+        if (window == null)
+            return;
+
+        SDL_ShowWindow(window);
+
+        // A window that opens while another app keeps the focus (one started from a terminal or an IDE) never gets a
+        // focus-lost event, so it would count as focused until it first gained the focus and lost it again. A phone
+        // app always opens in front.
+        if (RuntimeInfo.IsDesktop && (SDL_GetWindowFlags(window) & SDL_WindowFlags.SDL_WINDOW_INPUT_FOCUS) == 0)
+        {
+            IsActive = false;
+            Logger.Debug("Window shown without the focus");
+            FocusLost.Invoke();
+        }
     }
 
     public unsafe void SwapBuffers()
