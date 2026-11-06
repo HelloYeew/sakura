@@ -145,6 +145,9 @@ typedef struct SakuraAudioWasapiConfig
     int32_t channels;        // the device format's channels, 1..SAKURA_AUDIO_MAX_CHANNELS
     int32_t sampleFormat;    // SAKURA_AUDIO_SAMPLE_*
     int32_t exclusive;       // 1 for an exclusive-mode stream, which takes the whole buffer at each event
+    int32_t fillFrames;      // shared mode: how many frames to keep queued in the endpoint buffer, from 1 to bufferFrames,
+                             // or 0 for all of it. A shared buffer can be several periods long, and everything in it is
+                             // delay; two periods is what SDL keeps at most
 } SakuraAudioWasapiConfig;
 
 typedef struct SakuraAudioWasapiOutput SakuraAudioWasapiOutput;
@@ -154,9 +157,9 @@ typedef struct SakuraAudioWasapiOutput SakuraAudioWasapiOutput;
 // Windows header and links nothing new. Returns NULL for a config it can't play.
 SakuraAudioWasapiOutput *sakura_audio_wasapi_create(SakuraAudioEngine *engine, const SakuraAudioWasapiConfig *config);
 
-// Runs the stream on the calling thread until sakura_audio_wasapi_stop. It fills the buffer with silence, starts the
-// client, then at each event mixes what the endpoint has room for (shared) or the whole buffer (exclusive) straight
-// into it, and stops the client before it returns. Each cycle publishes when that cycle's first frame is heard, from
+// Runs the stream on the calling thread until sakura_audio_wasapi_stop. It puts silence in first (fillFrames of it in
+// shared mode, the whole buffer in exclusive), starts the client, then at each event mixes straight into the endpoint
+// buffer: up to fillFrames queued (shared) or the whole buffer (exclusive). It stops the client before it returns. Each cycle publishes when that cycle's first frame is heard, from
 // IAudioClock's position at its QPC time, for sakura_audio_engine_get_device_time, in IAudioClock's 100 ns units.
 //
 // The managed side calls this from a thread of its own that stays in native code until it returns, so no managed code

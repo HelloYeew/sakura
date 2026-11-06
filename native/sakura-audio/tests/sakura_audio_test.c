@@ -1444,6 +1444,66 @@ static void test_wasapi_shared_render_loop(void)
     sakura_audio_engine_destroy(engine);
 }
 
+// Shared mode with a fill: a 960-frame endpoint kept at 480 frames queued, two of its 240-frame periods. The silence
+// before the start is the fill, and each event tops it up by what the device played, not to the whole buffer.
+static void test_wasapi_shared_fill(void)
+{
+    SakuraAudioEngine *engine = make_engine(128);
+    SakuraAudioEngine *reference = make_engine(128);
+
+    static float pcm[2048 * CHANNELS];
+    fill_test_signal(pcm, 2048);
+    attach_static_voice(engine, pcm, 2048, NULL);
+    attach_static_voice(reference, pcm, 2048, NULL);
+
+    SakuraAudioWasapiConfig config = fake_wasapi(960, 240, CHANNELS, SAKURA_AUDIO_SAMPLE_FLOAT32, 4, 0, 4);
+    config.fillFrames = 480;
+
+    SakuraAudioWasapiOutput *output = sakura_audio_wasapi_create(engine, &config);
+    CHECK(output != NULL);
+    wasapi_fake.output = output;
+
+    CHECK(sakura_audio_wasapi_run(output) == SAKURA_AUDIO_OK);
+
+    CHECK(wasapi_fake.getBufferCalls == 5);
+    CHECK(wasapi_fake.requested[0] == 480);
+    CHECK(wasapi_fake.releaseFlags[0] == 0x2u);
+
+    for (int i = 1; i < 5; i++)
+        CHECK(wasapi_fake.requested[i] == 240);
+
+    // Never more queued than the fill.
+    CHECK(wasapi_fake.padding <= 480);
+
+    // 480 frames of silence, then the engine's mix exactly.
+    static float expected[960 * CHANNELS];
+    sakura_audio_engine_mix(reference, expected, 960);
+
+    CHECK(wasapi_fake.playedBytes == (480 + 960) * CHANNELS * sizeof(float));
+
+    static float silence[480 * CHANNELS];
+    CHECK(memcmp(wasapi_fake.played, silence, sizeof(silence)) == 0);
+    CHECK(memcmp(wasapi_fake.played + sizeof(silence), expected, sizeof(expected)) == 0);
+
+    sakura_audio_wasapi_destroy(output);
+
+    // A fill past the buffer is the whole buffer; a negative one isn't a config.
+    config = fake_wasapi(960, 240, CHANNELS, SAKURA_AUDIO_SAMPLE_FLOAT32, 4, 0, 1);
+    config.fillFrames = 4000;
+    output = sakura_audio_wasapi_create(engine, &config);
+    CHECK(output != NULL);
+    wasapi_fake.output = output;
+    CHECK(sakura_audio_wasapi_run(output) == SAKURA_AUDIO_OK);
+    CHECK(wasapi_fake.requested[0] == 960);
+    sakura_audio_wasapi_destroy(output);
+
+    config.fillFrames = -1;
+    CHECK(sakura_audio_wasapi_create(engine, &config) == NULL);
+
+    sakura_audio_engine_destroy(reference);
+    sakura_audio_engine_destroy(engine);
+}
+
 // Exclusive mode takes the whole buffer at every event and never reads the padding. Here into 16-bit samples, rounded
 // from the engine's mix.
 static void test_wasapi_exclusive_to_int16(void)
@@ -2413,6 +2473,7 @@ int main(void)
     RUN(test_audio_unit_callback);
     RUN(test_audio_unit_device_time);
     RUN(test_wasapi_shared_render_loop);
+    RUN(test_wasapi_shared_fill);
     RUN(test_wasapi_exclusive_to_int16);
     RUN(test_wasapi_formats_and_widths);
     RUN(test_wasapi_failures);

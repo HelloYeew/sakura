@@ -75,7 +75,7 @@ internal struct SakuraAudioPipeWireConfig
 
 /// <summary>
 /// A WASAPI stream for the native render loop, made and initialized by <see cref="WasapiOutput"/>. Layout must match the
-/// native <c>SakuraAudioWasapiConfig</c>: 48 bytes on x86, 64 on x64 and arm64.
+/// native <c>SakuraAudioWasapiConfig</c>: 48 bytes on x86, 72 on x64 and arm64.
 /// </summary>
 [StructLayout(LayoutKind.Sequential)]
 internal struct SakuraAudioWasapiConfig
@@ -129,6 +129,11 @@ internal struct SakuraAudioWasapiConfig
     /// 1 for an exclusive-mode stream, which takes the whole buffer at each event.
     /// </summary>
     public int Exclusive;
+
+    /// <summary>
+    /// Shared mode: how many frames to keep queued in the endpoint buffer, or 0 for all of it.
+    /// </summary>
+    public int FillFrames;
 }
 
 /// <summary>

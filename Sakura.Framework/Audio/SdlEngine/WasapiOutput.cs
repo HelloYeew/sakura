@@ -54,7 +54,8 @@ internal sealed class WasapiOutput : IDisposable
     public bool IsExclusive => stream?.Exclusive ?? false;
 
     /// <summary>
-    /// The endpoint buffer the engine keeps filled, in frames: the app's own part of the delay.
+    /// What the engine keeps queued in the endpoint buffer at most, in frames: two periods in shared mode, the whole
+    /// buffer in exclusive. The app's own part of the delay.
     /// </summary>
     public int BufferFrames => stream?.BufferFrames ?? 0;
 
@@ -331,6 +332,9 @@ internal sealed class WasapiOutput : IDisposable
         public string? EndpointId { get; private set; }
         public string? DeviceName { get; private set; }
         private string mode = string.Empty;
+
+        // A shared stream's period, in the engine's frames, which it keeps two of queued; 0 in exclusive mode.
+        private int periodFrames;
         private string formatName = string.Empty;
 
         /// <summary>
@@ -376,7 +380,7 @@ internal sealed class WasapiOutput : IDisposable
         public void Start() => startRequested.Set();
 
         public string Describe() =>
-            $"WASAPI {mode} on {DeviceName ?? "the default output"}, {engine.SampleRate} Hz, {formatName}, a buffer of {BufferFrames} frames "
+            $"WASAPI {mode} on {DeviceName ?? "the default output"}, {engine.SampleRate} Hz, {formatName}, {BufferFrames} frames kept queued "
             + $"({BufferFrames * 1000.0 / engine.SampleRate:F1} ms)";
 
         private void run()
@@ -487,6 +491,10 @@ internal sealed class WasapiOutput : IDisposable
                 if (clock != 0 && GetClockFrequency(clock, out frequency) < 0)
                     frequency = 0;
 
+                // Shared, two periods queued, the most SDL keeps: a shared buffer can be several periods long, and all of
+                // it would be delay. Exclusive takes the whole buffer at each event regardless.
+                int fillFrames = Exclusive || periodFrames <= 0 ? 0 : Math.Min((int)bufferFrames, 2 * periodFrames);
+
                 var config = new SakuraAudioWasapiConfig
                 {
                     ClockFrequency = frequency,
@@ -500,10 +508,11 @@ internal sealed class WasapiOutput : IDisposable
                     BufferFrames = (int)bufferFrames,
                     Channels = format.Format.Channels,
                     SampleFormat = sampleFormat,
-                    Exclusive = Exclusive ? 1 : 0
+                    Exclusive = Exclusive ? 1 : 0,
+                    FillFrames = fillFrames
                 };
 
-                BufferFrames = (int)bufferFrames;
+                BufferFrames = fillFrames > 0 ? fillFrames : (int)bufferFrames;
 
                 nint output = SakuraAudioNative.sakura_audio_wasapi_create(engine.Handle, &config);
 
@@ -556,6 +565,7 @@ internal sealed class WasapiOutput : IDisposable
                     if (InitializeSharedAudioStream(client, STREAM_FLAG_EVENT_CALLBACK, period, &mix) >= 0)
                     {
                         format = mix;
+                        periodFrames = (int)period;
                         mode = $"shared, at a {period}-frame period ({period * 1000.0 / engine.SampleRate:F1} ms)";
                         formatName = describeFormat(format);
                         return true;
@@ -576,7 +586,15 @@ internal sealed class WasapiOutput : IDisposable
                     return false;
             }
 
+            // The engine's default period, which this stream gets an event at.
+            if (GetDevicePeriod(client, out long defaultPeriod, out _) >= 0 && defaultPeriod > 0)
+                periodFrames = (int)Math.Round(defaultPeriod * engine.SampleRate / units_per_second);
+
             mode = mix.Format.SamplesPerSecond == engine.SampleRate ? "shared" : $"shared, converted to the endpoint's {mix.Format.SamplesPerSecond} Hz";
+
+            if (periodFrames > 0)
+                mode += $", at a {periodFrames}-frame period ({periodFrames * 1000.0 / engine.SampleRate:F1} ms)";
+
             formatName = describeFormat(format);
             return true;
         }

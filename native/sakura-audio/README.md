@@ -78,8 +78,11 @@ its own and sets MMCSS ("Pro Audio") on it first. A thread inside a P/Invoke is 
 collection doesn't stop it, and no managed code runs until it returns. It must never be bound with
 `SuppressGCTransition`, which would hold every collection up instead.
 
-- It fills the buffer with silence, starts the client, and then at each event mixes straight into the endpoint buffer.
-  In shared mode that's what the endpoint has room for, and in exclusive mode the whole buffer.
+- It puts silence in first, starts the client, and then at each event mixes straight into the endpoint buffer.
+  - **Shared mode:** it tops the buffer up to the config's `fillFrames`, which the managed side sets to two periods,
+    the most SDL keeps queued. A shared buffer can be several periods long, and all of it would be delay. 0 means the
+    whole buffer.
+  - **Exclusive mode:** it takes the whole buffer at each event.
 - A device format other than float at the engine's width is mixed into a scratch buffer and converted:
   16, packed 24 or 32 bits, a mono device getting the average, a wider one silence in the extra channels.
 - Each cycle reads `IAudioClock::GetPosition` and publishes when its first frame is heard, in QPC's 100 ns units, for

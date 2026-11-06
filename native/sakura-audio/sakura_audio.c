@@ -1856,6 +1856,7 @@ struct SakuraAudioWasapiOutput
     SakuraAudioEngine *engine;
     SakuraAudioWasapiConfig config;
     int frameBytes;         // one frame in the device's format
+    uint32_t fillFrames;    // shared mode: the frames kept queued in the endpoint buffer, at most the whole of it
     float *scratch;         // the mix at the engine's width, a buffer long, where the device's format or width differs
     uint64_t framesWritten; // audio-thread-owned: every frame handed to the endpoint, the silence before the start too
     sakura_atomic_u32 stopRequested;
@@ -1988,7 +1989,8 @@ static int wasapi_render_cycle(SakuraAudioWasapiOutput *output)
         if (result < 0)
             return result;
 
-        frames = padding < frames ? frames - padding : 0;
+        // Topped up to the fill, not the whole buffer: what's queued is delay.
+        frames = padding < output->fillFrames ? output->fillFrames - padding : 0;
     }
 
     if (frames == 0)
@@ -2034,7 +2036,7 @@ SakuraAudioWasapiOutput *sakura_audio_wasapi_create(SakuraAudioEngine *engine, c
 {
     if (engine == NULL || config == NULL || config->audioClient == NULL || config->renderClient == NULL || config->event == NULL
         || config->wait == NULL || config->bufferFrames <= 0 || config->bufferFrames > WASAPI_MAX_BUFFER_FRAMES || config->channels < 1
-        || config->channels > SAKURA_AUDIO_MAX_CHANNELS || wasapi_sample_bytes(config->sampleFormat) == 0)
+        || config->channels > SAKURA_AUDIO_MAX_CHANNELS || wasapi_sample_bytes(config->sampleFormat) == 0 || config->fillFrames < 0)
         return NULL;
 
     SakuraAudioWasapiOutput *output = (SakuraAudioWasapiOutput *)calloc(1, sizeof(SakuraAudioWasapiOutput));
@@ -2045,6 +2047,9 @@ SakuraAudioWasapiOutput *sakura_audio_wasapi_create(SakuraAudioEngine *engine, c
     output->engine = engine;
     output->config = *config;
     output->frameBytes = config->channels * wasapi_sample_bytes(config->sampleFormat);
+    output->fillFrames = config->exclusive || config->fillFrames == 0 || config->fillFrames > config->bufferFrames
+        ? (uint32_t)config->bufferFrames
+        : (uint32_t)config->fillFrames;
 
     // Float at the engine's width is mixed straight into the endpoint buffer. Anything else goes through the scratch.
     if (config->sampleFormat != SAKURA_AUDIO_SAMPLE_FLOAT32 || config->channels != engine->config.channels)
@@ -2071,19 +2076,20 @@ int sakura_audio_wasapi_run(SakuraAudioWasapiOutput *output)
 
     void *client = output->config.audioClient;
     void *render = output->config.renderClient;
-    uint32_t bufferFrames = (uint32_t)output->config.bufferFrames;
 
-    // The whole buffer silent before the start, so the first period has something to play, as WASAPI's samples do.
+    // Silent before the start, so the first period has something to play, as WASAPI's samples do: the fill (the whole
+    // buffer in exclusive mode), so the stream starts as far ahead as it then stays.
+    uint32_t prefill = output->fillFrames;
     uint8_t *data = NULL;
-    int32_t result = ((get_buffer_fn)com_method_at(render, RENDER_CLIENT_GET_BUFFER))(render, bufferFrames, &data);
+    int32_t result = ((get_buffer_fn)com_method_at(render, RENDER_CLIENT_GET_BUFFER))(render, prefill, &data);
 
     if (result >= 0)
-        result = ((release_buffer_fn)com_method_at(render, RENDER_CLIENT_RELEASE_BUFFER))(render, bufferFrames, WASAPI_BUFFER_SILENT);
+        result = ((release_buffer_fn)com_method_at(render, RENDER_CLIENT_RELEASE_BUFFER))(render, prefill, WASAPI_BUFFER_SILENT);
 
     if (result < 0)
         return result;
 
-    output->framesWritten += bufferFrames;
+    output->framesWritten += prefill;
 
     result = ((audio_client_call_fn)com_method_at(client, AUDIO_CLIENT_START))(client);
 

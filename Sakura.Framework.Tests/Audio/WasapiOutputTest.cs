@@ -26,7 +26,7 @@ public class WasapiOutputTest
         {
             Assert.That(sizeof(WaveFormatEx), Is.EqualTo(18), "WAVEFORMATEX, packed");
             Assert.That(sizeof(WaveFormatExtensible), Is.EqualTo(40), "WAVEFORMATEXTENSIBLE, packed");
-            Assert.That(sizeof(SakuraAudioWasapiConfig), Is.EqualTo(IntPtr.Size == 8 ? 64 : 48), "SakuraAudioWasapiConfig");
+            Assert.That(sizeof(SakuraAudioWasapiConfig), Is.EqualTo(IntPtr.Size == 8 ? 72 : 48), "SakuraAudioWasapiConfig");
         });
     }
 
