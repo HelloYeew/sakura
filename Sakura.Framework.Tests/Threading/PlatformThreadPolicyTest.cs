@@ -47,6 +47,21 @@ public class PlatformThreadPolicyTest
         Assert.That(LinuxThreadPolicy.TimerSlackFor(activity), Is.EqualTo(slack));
     }
 
+    /// <summary>
+    /// Raised to the urgent display priority only in play, and back to where it started otherwise. A thread that
+    /// started higher than that keeps its own.
+    /// </summary>
+    [TestCase(ThreadActivity.Tight, -4, -8)]
+    [TestCase(ThreadActivity.Smooth, -4, -4)]
+    [TestCase(ThreadActivity.Background, -4, -4)]
+    [TestCase(ThreadActivity.Hidden, -4, -4)]
+    [TestCase(ThreadActivity.Tight, 0, -8)]
+    [TestCase(ThreadActivity.Tight, -10, -10)]
+    public void AndroidRaisesFrameThreadsOnlyInPlay(ThreadActivity activity, int startingNice, int nice)
+    {
+        Assert.That(AndroidThreadPolicy.NiceFor(activity, startingNice), Is.EqualTo(nice));
+    }
+
     [Test]
     [SupportedOSPlatform("windows")]
     public void AWindowsThreadGetsEcoQoSAndGivesItBack()

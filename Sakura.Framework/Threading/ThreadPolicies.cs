@@ -26,6 +26,10 @@ internal static class ThreadPolicies
         if (OperatingSystem.IsWindows())
             return role == ThreadRole.Audio ? null : new WindowsThreadPolicy(threadName);
 
+        // The audio thread stays at the display priority it starts with: the sound is mixed on AAudio's own thread.
+        if (OperatingSystem.IsAndroid())
+            return role == ThreadRole.Audio ? null : new AndroidThreadPolicy(role, threadName);
+
         // Likewise on Linux, where the audio thread never waits precisely and so has no use for less slack.
         if (OperatingSystem.IsLinux())
             return role == ThreadRole.Audio ? null : new LinuxThreadPolicy(threadName);

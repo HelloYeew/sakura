@@ -10,6 +10,7 @@ using Android.Content;
 using Android.OS;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
+using Sakura.Framework.Threading;
 using AndroidGameMode = Android.App.GameMode;
 using AndroidGameState = Android.App.GameState;
 using GameMode = Sakura.Framework.Platform.GameMode;
@@ -18,11 +19,12 @@ using GameState = Sakura.Framework.Platform.GameState;
 namespace Sakura.Framework.Android;
 
 /// <summary>
-/// Android's performance services: hint sessions (ADPF) for the frame threads and, for a game, a higher priority for
-/// them, from the NDK and libc; the thermal headroom from the NDK; battery saver, the game mode and the game state from
-/// the system's managers. A hint session tells the system how long each frame's work took against its target, so it
-/// raises the clocks before frames run late instead of after; without one, a thread that has to finish in time could
-/// only spin.
+/// Android's performance services: hint sessions (ADPF) for the frame threads, from the NDK; the thermal headroom from
+/// the NDK; battery saver, the game mode and the game state from the system's managers. A hint session tells the system
+/// how long each frame's work took against its target, so it raises the clocks before frames run late instead of after;
+/// without one, a thread that has to finish in time could only spin. The session follows the thread's level: it asks
+/// for power efficiency outside play, and for the clocks up front as play starts. The frame threads' priority is set by
+/// the framework's own thread policy.
 /// </summary>
 internal sealed class AndroidPerformance : IPlatformPerformance
 {
@@ -119,9 +121,6 @@ internal sealed class AndroidPerformance : IPlatformPerformance
     {
         int threadId = gettid();
 
-        if (!preferPowerEfficiency)
-            raiseToUrgentDisplayPriority(threadName, threadId);
-
         // The NDK API came in 33. Android 12 has it in Java only, and few devices backed it before 13.
         if (!OperatingSystem.IsAndroidVersionAtLeast(33))
             return null;
@@ -146,39 +145,6 @@ internal sealed class AndroidPerformance : IPlatformPerformance
                        + (preferPowerEfficiency ? ", preferring power efficiency" : string.Empty));
 
         return new FrameWorkHint(session, targetMilliseconds);
-    }
-
-    // Android's THREAD_PRIORITY_URGENT_DISPLAY. Every thread the app makes already runs at THREAD_PRIORITY_DISPLAY (-4),
-    // which SDL gives its own thread and every thread made from it inherits, the app's background work (decoders,
-    // loading) included. This puts a game's frame threads ahead of that work, still behind audio (-16).
-    private const int urgent_display_priority = -8;
-
-    // sched_setscheduler's SCHED_OTHER, the normal policy, with SCHED_RESET_ON_FORK: a thread made by one with a raised
-    // priority starts at the default instead of inheriting it, so thread-pool workers and decoders started from a
-    // frame thread don't end up level with it.
-    private const int sched_other_reset_on_fork = 0x40000000;
-
-    // setpriority's PRIO_PROCESS, which on Linux, given a thread's ID, applies to that thread alone.
-    private const int prio_process = 0;
-
-    private static void raiseToUrgentDisplayPriority(string threadName, int threadId)
-    {
-        var parameters = new SchedParam();
-
-        if (sched_setscheduler(threadId, sched_other_reset_on_fork, ref parameters) != 0)
-        {
-            Logger.Verbose($"{threadName} stays at its priority: threads it made would inherit a raised one (error {Marshal.GetLastPInvokeError()}).");
-            return;
-        }
-
-        if (setpriority(prio_process, threadId, urgent_display_priority) != 0)
-            Logger.Verbose($"{threadName} stays at its priority: setpriority failed (error {Marshal.GetLastPInvokeError()}).");
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct SchedParam
-    {
-        public int Priority;
     }
 
     private static long nanoseconds(double milliseconds) => (long)(milliseconds * 1_000_000);
@@ -230,6 +196,10 @@ internal sealed class AndroidPerformance : IPlatformPerformance
     {
         private IntPtr session;
         private long targetNanoseconds;
+        private ThreadActivity? activity;
+
+        // Set on entering play where the system has no wake-up call: the next report then asks for more on its own.
+        private bool wakeUp;
 
         public FrameWorkHint(IntPtr session, double targetMilliseconds)
         {
@@ -252,7 +222,43 @@ internal sealed class AndroidPerformance : IPlatformPerformance
                 APerformanceHint_updateTargetWorkDuration(session, target);
             }
 
+            // One frame reported half again over its target, which the system answers by raising the clocks.
+            if (wakeUp)
+            {
+                wakeUp = false;
+                work = Math.Max(work, target * 3 / 2);
+            }
+
             APerformanceHint_reportActualWorkDuration(session, work);
+        }
+
+        public void SetActivity(ThreadActivity next)
+        {
+            if (session == IntPtr.Zero)
+                return;
+
+            // The system pauses a backgrounded app's sessions and drops a target sent meanwhile, while this side keeps
+            // it, so the same target sent again would never go out. Off by a nanosecond, the next frame sends it anew.
+            if (targetNanoseconds > 0)
+            {
+                targetNanoseconds++;
+                APerformanceHint_updateTargetWorkDuration(session, targetNanoseconds);
+            }
+
+            // Only play needs the clocks up front; menus and an application run as well on less.
+            if (OperatingSystem.IsAndroidVersionAtLeast(35))
+                APerformanceHint_setPreferPowerEfficiency(session, next != ThreadActivity.Tight);
+
+            // Play starting, often after a menu that let the clocks drop: say so before the first frame runs late.
+            if (next == ThreadActivity.Tight && activity != ThreadActivity.Tight)
+            {
+                if (OperatingSystem.IsAndroidVersionAtLeast(36))
+                    APerformanceHint_notifyWorkloadReset(session, true, false, "play");
+                else
+                    wakeUp = true;
+            }
+
+            activity = next;
         }
 
         public void Dispose()
@@ -268,12 +274,6 @@ internal sealed class AndroidPerformance : IPlatformPerformance
     [DllImport("c")]
     private static extern int gettid();
 
-    [DllImport("c", SetLastError = true)]
-    private static extern int sched_setscheduler(int pid, int policy, ref SchedParam parameters);
-
-    [DllImport("c", SetLastError = true)]
-    private static extern int setpriority(int which, int who, int priority);
-
     [DllImport(library)]
     private static extern IntPtr APerformanceHint_getManager();
 
@@ -288,6 +288,10 @@ internal sealed class AndroidPerformance : IPlatformPerformance
 
     [DllImport(library)]
     private static extern int APerformanceHint_setPreferPowerEfficiency(IntPtr session, [MarshalAs(UnmanagedType.U1)] bool enabled);
+
+    [DllImport(library)]
+    private static extern int APerformanceHint_notifyWorkloadReset(IntPtr session, [MarshalAs(UnmanagedType.U1)] bool cpu, [MarshalAs(UnmanagedType.U1)] bool gpu,
+                                                                   [MarshalAs(UnmanagedType.LPUTF8Str)] string debugName);
 
     [DllImport(library)]
     private static extern void APerformanceHint_closeSession(IntPtr session);
