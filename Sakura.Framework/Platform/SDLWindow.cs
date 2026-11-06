@@ -486,6 +486,8 @@ public class SDLWindow : IWindow
 
     public bool IsActive { get; private set; } = true;
     public bool IsExiting { get; private set; }
+
+    private bool isOccluded;
     public int DisplayHz { get; private set; } = 60;
     public Reactive<string> DisplayName { get; } = new Reactive<string>(string.Empty);
 
@@ -495,6 +497,7 @@ public class SDLWindow : IWindow
     public event Action FocusGained = delegate { };
     public event Action Minimized = delegate { };
     public event Action Restored = delegate { };
+    public event Action<bool> OcclusionChanged = delegate { };
     public event Action ExitRequested = delegate { };
     public event Action EnteringBackground = delegate { };
     public event Action EnteredForeground = delegate { };
@@ -1357,6 +1360,27 @@ public class SDLWindow : IWindow
                 Restored.Invoke();
                 break;
 
+            case SDL_EventType.SDL_EVENT_WINDOW_OCCLUDED:
+                if (!isOccluded)
+                {
+                    isOccluded = true;
+                    Logger.Debug("Window occluded");
+                    OcclusionChanged.Invoke(true);
+                }
+
+                break;
+
+            // Sent whenever the window needs drawing again, not only when it stops being covered.
+            case SDL_EventType.SDL_EVENT_WINDOW_EXPOSED:
+                if (isOccluded)
+                {
+                    isOccluded = false;
+                    Logger.Debug("Window no longer occluded");
+                    OcclusionChanged.Invoke(false);
+                }
+
+                break;
+
             case SDL_EventType.SDL_EVENT_WINDOW_DISPLAY_CHANGED:
                 updateDisplayHz();
                 updateDisplayName();
@@ -1980,8 +2004,20 @@ public class SDLWindow : IWindow
 
     public unsafe void Show()
     {
-        if (window != null)
-            SDL_ShowWindow(window);
+        if (window == null)
+            return;
+
+        SDL_ShowWindow(window);
+
+        // A window that opens while another app keeps the focus (one started from a terminal or an IDE) never gets a
+        // focus-lost event, so it would count as focused until it first gained the focus and lost it again. A phone
+        // app always opens in front.
+        if (RuntimeInfo.IsDesktop && (SDL_GetWindowFlags(window) & SDL_WindowFlags.SDL_WINDOW_INPUT_FOCUS) == 0)
+        {
+            IsActive = false;
+            Logger.Debug("Window shown without the focus");
+            FocusLost.Invoke();
+        }
     }
 
     public unsafe void SwapBuffers()

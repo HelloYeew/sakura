@@ -4,6 +4,7 @@
 using System;
 using System.Diagnostics;
 using System.Threading;
+using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Statistic;
 using Sakura.Framework.Timing;
@@ -47,12 +48,30 @@ public class AppThread
     public Func<double>? GetDeadlineMilliseconds { get; set; }
 
     /// <summary>
-    /// Whether the last stretch of each frame wait may busy-spin for precise pacing (see <see cref="FrameWaiter"/>).
-    /// When it returns false the thread sleeps for the full remaining time instead,
-    /// trading sub-millisecond timing jitter for CPU/battery savings.
-    /// Defaults to always spinning.
+    /// Whether each frame wait should land precisely on its deadline (see <see cref="FrameWaiter"/>): with the most
+    /// precise timer the platform has, and, when <see cref="AllowSpinning"/>, a busy-spin over the last stretch. When it
+    /// returns false the thread sleeps for the full remaining time instead, trading sub-millisecond timing jitter for
+    /// CPU/battery savings. Asked before every wait. Defaults to always precise.
     /// </summary>
     public Func<bool> UsePreciseTiming { get; set; } = static () => true;
+
+    /// <summary>
+    /// Whether a precise wait may busy-spin its last stretch. Without it, a precise wait only uses the more precise
+    /// timer. Defaults to true.
+    /// </summary>
+    public bool AllowSpinning { get; set; } = true;
+
+    /// <summary>
+    /// The level the host wants this thread at, asked at the top of each frame. Applied by the thread to itself through
+    /// <see cref="CreatePolicy"/> whenever it changes. Defaults to always <see cref="ThreadActivity.Tight"/>.
+    /// </summary>
+    public Func<ThreadActivity> GetActivity { get; set; } = static () => ThreadActivity.Tight;
+
+    /// <summary>
+    /// Optional. Creates, on this thread as it starts running on its own, what applies <see cref="GetActivity"/>'s level
+    /// to it on this platform. Null where the platform has nothing to apply.
+    /// </summary>
+    internal Func<IThreadPolicy?>? CreatePolicy { get; set; }
 
     /// <summary>
     /// Whether to register this thread with the Windows Multimedia Class Scheduler Service while it runs
@@ -98,9 +117,14 @@ public class AppThread
         internalThread = new Thread(runLoop)
         {
             Name = Name,
-            IsBackground = true,
-            Priority = Priority
+            IsBackground = true
         };
+
+        // Only Windows gains from it. On Apple platforms .NET's priorities all fall where other apps' work can hold the
+        // thread back, so the thread's policy sets its own there instead, and on Linux and Android they change nothing.
+        if (OperatingSystem.IsWindows())
+            internalThread.Priority = Priority;
+
         internalThread.Start();
     }
 
@@ -232,7 +256,7 @@ public class AppThread
         // Owned by this run of the loop rather than the thread object, because switching execution mode
         // stops and later restarts the loop. A waiter disposed by the previous run would keep a closed
         // timer handle on Windows, failing every sleep over to Thread.Sleep.
-        using var waiter = new FrameWaiter(Name);
+        using var waiter = new FrameWaiter(Name, AllowSpinning);
 
         // Registration applies to the calling thread, so it can only happen here, on the thread itself.
         using var multimediaScheduler = UseMultimediaClassScheduler && OperatingSystem.IsWindows()
@@ -243,6 +267,12 @@ public class AppThread
         double firstHz = GetTargetHz();
         using var workHint = CreateWorkHint?.Invoke(Name, firstHz > 0 ? 1000.0 / firstHz : 1000.0 / 60);
 
+        // Likewise: a thread's priority can only be set by the thread itself on some platforms.
+        using var policy = CreatePolicy?.Invoke();
+
+        // Per run of the loop, because a restarted loop is a new thread with nothing applied yet.
+        ThreadActivity? appliedActivity = null;
+
         // Absolute next-frame deadline, expressed in stopwatch ticks. We advance it by exactly one
         // frame quantum each iteration so cadence is locked to wall-clock time rather than drifting
         // with however long each sleep happens to overshoot.
@@ -250,11 +280,14 @@ public class AppThread
 
         while (isRunning)
         {
+            bool wasParked = false;
+
             lock (pauseLock)
             {
                 while (pauseRequested && isRunning)
                 {
                     parked = true;
+                    wasParked = true;
                     Monitor.PulseAll(pauseLock);
                     Monitor.Wait(pauseLock);
                 }
@@ -264,11 +297,25 @@ public class AppThread
 
             if (!isRunning) break;
 
+            // A phone's app pauses its threads while it's away, and the system may have reset what it was told meanwhile.
+            if (wasParked)
+                appliedActivity = null;
+
+            var activity = GetActivity();
+
+            if (activity != appliedActivity)
+            {
+                applyActivity(policy, workHint, activity);
+                appliedActivity = activity;
+            }
+
             Clock.Update();
             double currentHz = GetTargetHz();
             double targetFrameTimeMs = currentHz > 0 ? 1000.0 / currentHz : 0;
 
+            policy?.BeginFrame(targetFrameTimeMs);
             long now = invokeFrameAction(targetFrameTimeMs, GetDeadlineMilliseconds?.Invoke() ?? 0, out double workMilliseconds);
+            policy?.EndFrame();
 
             workHint?.ReportFrame(targetFrameTimeMs, workMilliseconds);
 
@@ -281,8 +328,8 @@ public class AppThread
                 if (now > nextFrameTime)
                     nextFrameTime = now;
 
-                // Precision spinning may be disabled (battery-constrained targets, inactive
-                // window): sleep the entire remaining time and accept sub-ms pacing jitter.
+                // Precise only when it pays (a focused game in play). Otherwise sleep the entire
+                // remaining time and accept sub-ms pacing jitter.
                 waiter.WaitUntil(nextFrameTime, UsePreciseTiming());
             }
             else
@@ -290,5 +337,25 @@ public class AppThread
                 nextFrameTime = now;
             }
         }
+
+        if (statActivity != null)
+            statActivity.Value = "Stopped";
+    }
+
+    private GlobalStatistic<string>? statActivity;
+
+    /// <summary>
+    /// Applies a level to this thread through its policy and its work hint, and shows what it set in the statistics.
+    /// </summary>
+    private void applyActivity(IThreadPolicy? policy, IFrameWorkHint? workHint, ThreadActivity activity)
+    {
+        string? applied = policy?.Apply(activity);
+        workHint?.SetActivity(activity);
+        string description = applied == null ? activity.ToString() : $"{activity}: {applied}";
+
+        statActivity ??= GlobalStatistics.Get<string>("Threading", $"{Name} Activity");
+        statActivity.Value = description;
+
+        Logger.Verbose($"{Name} is now {description}");
     }
 }

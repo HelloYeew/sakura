@@ -210,6 +210,20 @@ public interface IWindow : IDisposable
     event Action Restored;
 
     /// <summary>
+    /// Invoked with true when other windows come to cover this one entirely, and with false once any of it can be seen
+    /// again, where the platform says (macOS does, for one). Never invoked where it doesn't.
+    /// </summary>
+    event Action<bool> OcclusionChanged
+    {
+        add
+        {
+        }
+        remove
+        {
+        }
+    }
+
+    /// <summary>
     /// Invoked when the user asks the OS to close the window (e.g. the title-bar close button).
     /// This is only a request: it does not close the window on its own. The host decides whether to
     /// exit (optionally after a confirmation) and calls <see cref="Close"/> when it actually does.
