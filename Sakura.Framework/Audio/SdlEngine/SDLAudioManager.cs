@@ -277,6 +277,15 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     private int wasapiLatencyReadings;
 
     /// <summary>
+    /// The native engine's output on Linux, straight into a PipeWire stream with nothing of SDL's in between, or null where
+    /// it plays through SDL's stream. Not readonly: a device picked by name moves the sound to SDL for good.
+    /// </summary>
+    private PipeWireOutput? pipeWireOutput;
+
+    private readonly MeasuredLatency pipeWireLatency = new MeasuredLatency();
+    private int pipeWireLatencyReadings;
+
+    /// <summary>
     /// The push-model mix thread, or null when the native engine owns the device callback.
     /// </summary>
     private readonly Thread? mixThread;
@@ -340,6 +349,7 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     // whose endpoint holds one and a half on average.
     private bool coreAudio;
     private bool wasapi;
+    private bool pipeWire;
 
     private double sinceDeviceCheckMs;
 
@@ -473,6 +483,7 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         ownsAudioSubsystem = true;
         coreAudio = SDL_GetCurrentAudioDriver() == "coreaudio";
         wasapi = SDL_GetCurrentAudioDriver() == "wasapi";
+        pipeWire = SDL_GetCurrentAudioDriver() == "pipewire";
 
         preferredDevice = outputDevice;
         OutputDevice.Value = outputDevice;
@@ -530,7 +541,18 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
                 updateWasapiBufferDuration(wasapiOutput);
         }
 
-        if (aaudioOutput == null && audioUnitOutput == null && wasapiOutput == null)
+        // On Linux it plays straight into a PipeWire stream, on PipeWire's real-time thread, with the stream's time to say how
+        // late it is. Only on the default output and in place of SDL's PipeWire: SDL knows PipeWire's node for a device
+        // picked by name.
+        if (nativeEngine != null && PipeWireOutput.IsAvailable && pipeWire && string.IsNullOrEmpty(preferredDevice))
+        {
+            pipeWireOutput = PipeWireOutput.TryOpen(nativeEngine, requestedDeviceBufferFrames, SDL_GetAppMetadataProperty(SDL_PROP_APP_METADATA_NAME_STRING) ?? "Sakura");
+
+            if (pipeWireOutput != null)
+                updatePipeWireBufferDuration(pipeWireOutput);
+        }
+
+        if (aaudioOutput == null && audioUnitOutput == null && wasapiOutput == null && pipeWireOutput == null)
         {
             applyDeviceBufferHint(requestedDeviceBufferFrames);
 
@@ -612,6 +634,8 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             audioUnitOutput.Start();
         else if (wasapiOutput != null)
             wasapiOutput.Start();
+        else if (pipeWireOutput != null)
+            pipeWireOutput.Start();
         else if (!SDL_ResumeAudioStreamDevice(deviceStream))
             Logger.Error($"Failed to start the SDL audio device: {SDL_GetError()}");
 
@@ -774,6 +798,11 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
         if (wasapiOutput != null)
             return WasapiLatencyParts(deviceMs, appBufferMicroseconds / 1000.0, outputLatencyMeasured);
+
+        // The stream's time measures the graph's delay to the device, the hardware's included, as AAudio's timestamps do:
+        // split the same way, at the quantum the app writes each cycle.
+        if (pipeWireOutput != null)
+            return AAudioLatencyParts(deviceMs, appBufferMicroseconds / 1000.0, outputLatencyMeasured);
 
         return SDLLatencyParts(outputLatencyFrames / (double)SampleRate * 1000.0, deviceMs, routeMs, systemRoute?.ReachesListener ?? true);
     }
@@ -1457,6 +1486,114 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     }
 
     /// <summary>
+    /// Keeps the PipeWire output's figures current: how late its frames are heard, from the stream's time, and once a second
+    /// whether the stream is still connected. One that went into error is opened again, and played through SDL where it
+    /// won't open.
+    /// </summary>
+    private void pollPipeWire(PipeWireOutput output, double frameTime)
+    {
+        sinceLatencySampleMs += frameTime;
+
+        if (sinceLatencySampleMs >= native_latency_sample_interval_ms)
+        {
+            sinceLatencySampleMs = 0;
+
+            if (output.TrySampleLatency(out double latency))
+            {
+                pipeWireLatency.Add(latency);
+
+                if (++pipeWireLatencyReadings == aaudio_latency_readings_to_log && pipeWireLatency.Milliseconds is double settled)
+                {
+                    Logger.Verbose($"Output latency, measured: {settled:F1} ms from the mix to the device, "
+                                   + $"{output.FramesPerCycle / (double)SampleRate * 1000.0:F1} ms of it the quantum the app writes.");
+                }
+
+                updatePipeWireBufferDuration(output);
+            }
+        }
+
+        sinceDeviceCheckMs += frameTime;
+
+        if (sinceDeviceCheckMs < device_check_interval_ms)
+            return;
+
+        sinceDeviceCheckMs = 0;
+
+        if (refreshOutputDevices())
+            RaiseEvent(() => OutputDevicesChanged?.Invoke());
+
+        if (output.Failed)
+        {
+            output.Dispose();
+            pipeWireOutput = PipeWireOutput.TryOpen(nativeEngine!, requestedDeviceBufferFrames,
+                SDL_GetAppMetadataProperty(SDL_PROP_APP_METADATA_NAME_STRING) ?? "Sakura");
+
+            pipeWireLatency.Reset();
+            pipeWireLatencyReadings = 0;
+
+            if (pipeWireOutput == null)
+            {
+                moveFromPipeWireToSDL("the PipeWire stream failed and wouldn't open again");
+                return;
+            }
+
+            Logger.Verbose($"The PipeWire stream failed, so it was opened again: {pipeWireOutput.Describe()}");
+            pipeWireOutput.Start();
+            updatePipeWireBufferDuration(pipeWireOutput);
+        }
+
+        refreshPlayingDevice();
+    }
+
+    /// <summary>
+    /// The device half of <see cref="OutputLatencyMs"/> for PipeWire: what the stream's time measured once it has, the
+    /// quantum until then.
+    /// </summary>
+    private void updatePipeWireBufferDuration(PipeWireOutput output)
+    {
+        deviceBufferFrames = output.FramesPerCycle;
+        appBufferMicroseconds = (int)Math.Round(output.FramesPerCycle / (double)SampleRate * 1_000_000.0);
+
+        double latencyMs = pipeWireLatency.Milliseconds ?? output.FramesPerCycle / (double)SampleRate * 1000.0;
+        deviceBufferMicroseconds = (int)Math.Round(latencyMs * 1000.0);
+        deviceQueueMicroseconds = deviceBufferMicroseconds;
+        outputLatencyMeasured = pipeWireLatency.Milliseconds.HasValue;
+    }
+
+    /// <summary>
+    /// Plays through SDL's stream instead of PipeWire's from now on: for a device picked by name, which SDL finds, or a
+    /// stream that won't open again.
+    /// </summary>
+    private void moveFromPipeWireToSDL(string why)
+    {
+        pipeWireOutput?.Dispose();
+        pipeWireOutput = null;
+        outputLatencyMeasured = false;
+
+        Logger.Verbose($"Playing through SDL from now on: {why}.");
+
+        applyDeviceBufferHint(requestedDeviceBufferFrames);
+        deviceStream = createDeviceStream(SampleRate, nativeEngine);
+
+        var target = resolvePreferredDevice();
+
+        if (deviceStream == null
+            || (!bindTo(target, start: true) && (target == SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK || !bindTo(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, start: true))))
+        {
+            Logger.Error("No audio device would open through SDL either. Audio has stopped until one is plugged in.");
+            return;
+        }
+
+        // Read for the new device by the next check, which logs it.
+        lastSeenDeviceRate = 0;
+        lastSeenDeviceBufferFrames = 0;
+        sinceDeviceCheckMs = device_check_interval_ms;
+
+        Logger.Verbose($"Playing on {describeBoundDevice()}");
+        refreshPlayingDevice();
+    }
+
+    /// <summary>
     /// Reads the unit's timestamps: one more reading of how late the renders go out, and the cycles missed since it
     /// started, leaving out the jumps its starting makes.
     /// </summary>
@@ -1658,6 +1795,15 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             return;
         }
 
+        // PipeWire's stream follows the default by itself. A device picked by name is SDL's to find.
+        if (pipeWireOutput != null)
+        {
+            if (!string.IsNullOrEmpty(preferredDevice))
+                moveFromPipeWireToSDL("the device picked plays through SDL, which finds it by name");
+
+            return;
+        }
+
         // AAudio and RemoteIO play on wherever the system sends the sound; there's nothing to pick there.
         if (deviceStream == null)
             return;
@@ -1704,6 +1850,11 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             playingAAudioDeviceId = id;
             name = id > 0 ? describeAAudioDevice?.Invoke(id) ?? string.Empty : string.Empty;
         }
+        else if (pipeWireOutput != null)
+        {
+            // The stream plays on the default output, which SDL names.
+            name = deviceName(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK);
+        }
         else if (wasapiOutput?.DeviceName is string endpoint)
         {
             // The endpoint's friendly name, as SDL lists it.
@@ -1742,6 +1893,9 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
         if (wasapiOutput != null)
             return wasapiOutput.Describe();
+
+        if (pipeWireOutput != null)
+            return pipeWireOutput.Describe();
 
         return boundTarget == SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK
             ? $"the system's default output ({deviceName(logicalDevice)})"
@@ -1853,6 +2007,8 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             logAudioUnitDetails(audioUnitOutput, localRequestedDeviceBufferFrames);
         else if (wasapiOutput != null)
             Logger.Verbose($"Output: {wasapiOutput.Describe()}, with nothing of SDL's in between");
+        else if (pipeWireOutput != null)
+            Logger.Verbose($"Output: {pipeWireOutput.Describe()}, with nothing of SDL's in between");
         else
             logDeviceDetails(localRequestedDeviceBufferFrames);
 
@@ -1870,7 +2026,7 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
         if (nativeEngine != null)
         {
-            string callback = aaudioOutput != null ? "AAudio" : audioUnitOutput != null ? audioUnitOutput.Kind : wasapiOutput != null ? "WASAPI render" : "device";
+            string callback = aaudioOutput != null ? "AAudio" : audioUnitOutput != null ? audioUnitOutput.Kind : wasapiOutput != null ? "WASAPI render" : pipeWireOutput != null ? "PipeWire process" : "device";
             Logger.Verbose($"Mix engine: libsakura-audio (native, ABI {SakuraAudioNative.ABI_VERSION}), on the {callback} callback");
             Logger.Verbose($"Mix block: {native_mix_block_frames} frames ({native_mix_block_frames / (double)SampleRate * 1000.0:F1} ms)");
         }
@@ -2397,6 +2553,10 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         {
             pollWasapi(wasapiOutput, frameTime);
         }
+        else if (pipeWireOutput != null)
+        {
+            pollPipeWire(pipeWireOutput, frameTime);
+        }
         else
         {
             sampleOutputLatency(frameTime);
@@ -2524,6 +2684,7 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         aaudioOutput?.Dispose();
         audioUnitOutput?.Dispose();
         wasapiOutput?.Dispose();
+        pipeWireOutput?.Dispose();
 
         ISDLChannel[] toDispose;
 

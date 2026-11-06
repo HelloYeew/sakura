@@ -157,6 +157,33 @@ internal sealed class SakuraAudioEngine : IDisposable
         }
     }
 
+    private static nint? pipeWireCallback;
+
+    /// <summary>
+    /// The pw_stream_events process function to add as a stream's listener, with a PipeWire output as its data, or zero
+    /// where the library predates it.
+    /// </summary>
+    public static nint PipeWireCallback
+    {
+        get
+        {
+            if (pipeWireCallback.HasValue)
+                return pipeWireCallback.Value;
+
+            try
+            {
+                pipeWireCallback = IsAvailable ? SakuraAudioNative.sakura_audio_get_pipewire_process_callback() : 0;
+            }
+            catch (EntryPointNotFoundException)
+            {
+                Logger.Verbose("This libsakura-audio predates its PipeWire output, so it plays through SDL.");
+                pipeWireCallback = 0;
+            }
+
+            return pipeWireCallback.Value;
+        }
+    }
+
     private static nint? audioUnitCallback;
 
     /// <summary>

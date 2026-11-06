@@ -41,6 +41,39 @@ internal struct SakuraAudioStats
 }
 
 /// <summary>
+/// A pw_stream for the native process callback, made by <see cref="PipeWireOutput"/>. Layout must match the native
+/// <c>SakuraAudioPipeWireConfig</c>.
+/// </summary>
+[StructLayout(LayoutKind.Sequential)]
+internal struct SakuraAudioPipeWireConfig
+{
+    /// <summary>
+    /// The pw_stream, playing interleaved float32 at the engine's rate and channels.
+    /// </summary>
+    public nint Stream;
+
+    /// <summary>
+    /// pw_stream_dequeue_buffer.
+    /// </summary>
+    public nint Dequeue;
+
+    /// <summary>
+    /// pw_stream_queue_buffer.
+    /// </summary>
+    public nint Queue;
+
+    /// <summary>
+    /// What to write where the stream doesn't say: the quantum asked for in node.latency.
+    /// </summary>
+    public int FramesPerCycle;
+
+    /// <summary>
+    /// 1 where libpipewire is 0.3.49 or later, whose pw_buffer says how much it wants.
+    /// </summary>
+    public int HasRequested;
+}
+
+/// <summary>
 /// A WASAPI stream for the native render loop, made and initialized by <see cref="WasapiOutput"/>. Layout must match the
 /// native <c>SakuraAudioWasapiConfig</c>: 48 bytes on x86, 64 on x64 and arm64.
 /// </summary>
@@ -356,6 +389,29 @@ internal static class SakuraAudioNative
     /// </summary>
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern void sakura_audio_wasapi_destroy(nint output);
+
+    #endregion
+
+    #region PipeWire
+
+    /// <summary>
+    /// The output for a pw_stream, or 0 for a config it can't play. A library from before the PipeWire output doesn't
+    /// have it, which throws <see cref="EntryPointNotFoundException"/>.
+    /// </summary>
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern unsafe nint sakura_audio_pipewire_create(nint engine, SakuraAudioPipeWireConfig* config);
+
+    /// <summary>
+    /// The pw_stream_events process function, to add as a listener with the output as its data.
+    /// </summary>
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern nint sakura_audio_get_pipewire_process_callback();
+
+    /// <summary>
+    /// Frees the output, once the stream is disconnected and can't call the process function again.
+    /// </summary>
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void sakura_audio_pipewire_destroy(nint output);
 
     #endregion
 
