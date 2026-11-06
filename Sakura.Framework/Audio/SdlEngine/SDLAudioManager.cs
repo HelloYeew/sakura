@@ -327,8 +327,10 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     /// </summary>
     private volatile int deviceQueueMicroseconds;
 
-    // Whether SDL plays through Core Audio (macOS and iOS), whose output keeps several buffers queued.
+    // Whether SDL plays through Core Audio (macOS and iOS), whose output keeps several buffers queued, or WASAPI (Windows),
+    // whose endpoint holds one and a half on average.
     private bool coreAudio;
+    private bool wasapi;
 
     private double sinceDeviceCheckMs;
 
@@ -457,6 +459,7 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
         ownsAudioSubsystem = true;
         coreAudio = SDL_GetCurrentAudioDriver() == "coreaudio";
+        wasapi = SDL_GetCurrentAudioDriver() == "wasapi";
 
         preferredDevice = outputDevice;
         OutputDevice.Value = outputDevice;
@@ -730,24 +733,31 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         if (remoteIOOutput != null)
             return RemoteIOLatencyParts(deviceMs, routeMs, outputLatencyMeasured);
 
-        return SDLLatencyParts(outputLatencyFrames / (double)SampleRate * 1000.0, deviceMs, routeMs);
+        return SDLLatencyParts(outputLatencyFrames / (double)SampleRate * 1000.0, deviceMs, routeMs, systemRoute?.ReachesListener ?? true);
     }
 
     /// <summary>
     /// Through SDL's device: the stream's queue, counted, then SDL's device buffers, worked out from their size, then the
-    /// system's route, where the platform reports one.
+    /// system's route, where the platform reports one. A route that stops at the device leaves the rest unreported.
     /// </summary>
     /// <param name="queueMs">What waits in the stream.</param>
     /// <param name="deviceMs">What waits in SDL's device buffers.</param>
     /// <param name="routeMs">The system's route after them, or null where the platform has none.</param>
-    internal static AudioLatencyPart[] SDLLatencyParts(double queueMs, double deviceMs, double? routeMs) => new[]
+    /// <param name="routeReachesListener">Whether the route goes all the way to the listener.</param>
+    internal static AudioLatencyPart[] SDLLatencyParts(double queueMs, double deviceMs, double? routeMs, bool routeReachesListener)
     {
-        new AudioLatencyPart(AudioLatencyPartKind.Queue, queueMs, LatencySource.Counted),
-        new AudioLatencyPart(AudioLatencyPartKind.AppBuffer, deviceMs, LatencySource.FromBufferSizes),
-        routeMs is double route
-            ? new AudioLatencyPart(AudioLatencyPartKind.System, route, LatencySource.ReportedBySystem)
-            : AudioLatencyPart.NotReported(AudioLatencyPartKind.System)
-    };
+        var queue = new AudioLatencyPart(AudioLatencyPartKind.Queue, queueMs, LatencySource.Counted);
+        var buffers = new AudioLatencyPart(AudioLatencyPartKind.AppBuffer, deviceMs, LatencySource.FromBufferSizes);
+
+        if (routeMs is not double route)
+            return new[] { queue, buffers, AudioLatencyPart.NotReported(AudioLatencyPartKind.System) };
+
+        var system = new AudioLatencyPart(AudioLatencyPartKind.System, route, LatencySource.ReportedBySystem);
+
+        return routeReachesListener
+            ? new[] { queue, buffers, system }
+            : new[] { queue, buffers, system, AudioLatencyPart.NotReported(AudioLatencyPartKind.AfterDevice) };
+    }
 
     /// <summary>
     /// Through AAudio: its buffer, then the rest of the way to the listener, once AAudio's timestamps have measured it.
@@ -839,21 +849,36 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     private void updateDeviceBufferDuration(int frames, int rate)
     {
         deviceBufferMicroseconds = rate > 0 ? (int)Math.Round(frames / (double)rate * 1_000_000.0) : 0;
-        deviceQueueMicroseconds = deviceBufferMicroseconds * queuedDeviceBuffers(frames, rate);
+        deviceQueueMicroseconds = (int)Math.Round(deviceBufferMicroseconds * queuedDeviceBuffers(frames, rate));
     }
 
     // What SDL's Core Audio output keeps queued at the least, in milliseconds (MINIMUM_AUDIO_BUFFER_TIME_MS).
     private const double core_audio_minimum_queue_ms = 15;
 
     /// <summary>
-    /// How many device buffers the sound waits behind. One, except on Core Audio: SDL keeps several Audio Queue
-    /// buffers in flight there, three, or twice as many as make 15 ms when a buffer is shorter than that
-    /// (<c>SDL_coreaudio.m</c>). Counting one undercounted the delay by tens of milliseconds: about 30 at the desktop's
-    /// 128 frames, and 46 at iOS's old 1024.
+    /// How many device buffers the sound waits behind, on average. One, except on Core Audio and WASAPI.
     /// </summary>
-    private int queuedDeviceBuffers(int frames, int rate)
+    /// <remarks>
+    /// <para>
+    /// SDL keeps several Audio Queue buffers in flight on Core Audio: three, or twice as many as make 15 ms when a buffer
+    /// is shorter than that (<c>SDL_coreaudio.m</c>). Counting one undercounted the delay by tens of milliseconds: about
+    /// 30 at the desktop's 128 frames, and 46 at iOS's old 1024.
+    /// </para>
+    /// <para>
+    /// On WASAPI, SDL writes a period into the endpoint's buffer each time the engine has left a period or less in it
+    /// (<c>SDL_wasapi.c</c>), so what it writes waits behind up to a period, and is itself a period long: one and a half
+    /// periods on average.
+    /// </para>
+    /// </remarks>
+    private double queuedDeviceBuffers(int frames, int rate)
     {
-        if (!coreAudio || frames <= 0 || rate <= 0)
+        if (frames <= 0 || rate <= 0)
+            return 1;
+
+        if (wasapi)
+            return 1.5;
+
+        if (!coreAudio)
             return 1;
 
         double bufferMs = frames * 1000.0 / rate;
@@ -1668,7 +1693,11 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             Logger.Verbose($"Device buffer: {deviceFrames} frames ({deviceBufferMs:F1} ms{granted})");
 
             if (queuedDeviceBuffers(deviceFrames, deviceSpec.freq) is var queued and > 1)
-                Logger.Verbose($"Device queue: {queued} buffers ({deviceQueueMicroseconds / 1000.0:F1} ms), as Core Audio keeps them");
+            {
+                Logger.Verbose(wasapi
+                    ? $"Device queue: {queued:0.#} buffers ({deviceQueueMicroseconds / 1000.0:F1} ms), as WASAPI's endpoint holds them on average"
+                    : $"Device queue: {queued:0.#} buffers ({deviceQueueMicroseconds / 1000.0:F1} ms), as Core Audio keeps them");
+            }
         }
         else
         {

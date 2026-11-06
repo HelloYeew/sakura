@@ -35,9 +35,10 @@ public class DesktopAppHost : SDLAppHost
     protected override IWindow CreateWindow() => new DesktopWindow();
 
     /// <summary>
-    /// On macOS, the Core Audio device SDL plays on, whose buffer and latencies come after SDL's own.
+    /// What comes after SDL's own buffers: on macOS the Core Audio device SDL plays on, and on Windows the shared audio
+    /// engine's period on its endpoint. Nothing on Linux.
     /// </summary>
-    public override ISystemAudioRoute SystemAudioRoute { get; } = RuntimeInfo.IsMacOS ? new MacOSAudioRoute() : null;
+    public override ISystemAudioRoute SystemAudioRoute { get; } = RuntimeInfo.IsMacOS ? new MacOSAudioRoute() : RuntimeInfo.IsWindows ? new WindowsAudioRoute() : null;
 
     public override bool OpenFileExternally(string filename)
     {

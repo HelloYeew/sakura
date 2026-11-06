@@ -20,7 +20,7 @@ public class OutputLatencyPartsTest
     [Test]
     public void ThroughSDLWithoutARouteNothingReportsTheSystemsPart()
     {
-        var parts = SDLAudioManager.SDLLatencyParts(queueMs: 0.5, deviceMs: 32, routeMs: null);
+        var parts = SDLAudioManager.SDLLatencyParts(queueMs: 0.5, deviceMs: 32, routeMs: null, routeReachesListener: true);
 
         Assert.That(parts, Is.EqualTo(new[]
         {
@@ -34,10 +34,23 @@ public class OutputLatencyPartsTest
     [Test]
     public void ThroughSDLTheRouteIsTheSystemsPart()
     {
-        var parts = SDLAudioManager.SDLLatencyParts(queueMs: 0, deviceMs: 32, routeMs: 7.4);
+        var parts = SDLAudioManager.SDLLatencyParts(queueMs: 0, deviceMs: 32, routeMs: 7.4, routeReachesListener: true);
 
         Assert.That(parts[^1], Is.EqualTo(new AudioLatencyPart(AudioLatencyPartKind.System, 7.4, LatencySource.ReportedBySystem)));
         assertAddsUpTo(parts, 39.4);
+    }
+
+    [Test]
+    public void ThroughSDLARouteThatStopsAtTheDeviceLeavesTheRestUnreported()
+    {
+        var parts = SDLAudioManager.SDLLatencyParts(queueMs: 0, deviceMs: 15, routeMs: 10, routeReachesListener: false);
+
+        Assert.That(parts.Skip(2), Is.EqualTo(new[]
+        {
+            new AudioLatencyPart(AudioLatencyPartKind.System, 10, LatencySource.ReportedBySystem),
+            AudioLatencyPart.NotReported(AudioLatencyPartKind.AfterDevice)
+        }));
+        assertAddsUpTo(parts, 25);
     }
 
     [Test]
