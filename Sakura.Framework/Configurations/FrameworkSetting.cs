@@ -29,5 +29,6 @@ public enum FrameworkSetting
     AudioDeviceBufferFrames,
     SafeAreaPreview,
     ShowLogOverlay,
-    AudioDevice
+    AudioDevice,
+    AudioExclusiveMode
 }

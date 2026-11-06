@@ -9,8 +9,8 @@ using Sakura.Framework.Logging;
 namespace Sakura.Framework.Threading;
 
 /// <summary>
-/// The calling thread's registration with the Windows Multimedia Class Scheduler Service (MMCSS) as a
-/// "Games" task. Must be disposed on the thread that registered.
+/// The calling thread's registration with the Windows Multimedia Class Scheduler Service (MMCSS): a "Games" task for
+/// the frame threads, "Pro Audio" for an audio render thread. Must be disposed on the thread that registered.
 /// </summary>
 [SupportedOSPlatform("windows")]
 internal sealed class WindowsMultimediaScheduler : IDisposable
@@ -21,8 +21,6 @@ internal sealed class WindowsMultimediaScheduler : IDisposable
     [DllImport("avrt.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool AvRevertMmThreadCharacteristics(IntPtr avrtHandle);
-
-    private const string task_name = "Games";
 
     private readonly IntPtr handle;
 
@@ -35,15 +33,16 @@ internal sealed class WindowsMultimediaScheduler : IDisposable
     /// Registers the calling thread.
     /// </summary>
     /// <param name="threadName">The thread's name, for logging.</param>
+    /// <param name="taskName">The MMCSS task, as the registry lists it under SystemProfile\Tasks.</param>
     /// <returns>The registration, or null if MMCSS is unavailable (for example, the service is disabled).</returns>
-    public static WindowsMultimediaScheduler? Register(string threadName)
+    public static WindowsMultimediaScheduler? Register(string threadName, string taskName = "Games")
     {
         uint taskIndex = 0;
         IntPtr handle;
 
         try
         {
-            handle = AvSetMmThreadCharacteristicsW(task_name, ref taskIndex);
+            handle = AvSetMmThreadCharacteristicsW(taskName, ref taskIndex);
         }
         catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException)
         {
@@ -57,7 +56,7 @@ internal sealed class WindowsMultimediaScheduler : IDisposable
             return null;
         }
 
-        Logger.Debug($"'{threadName}' registered with MMCSS as a '{task_name}' task");
+        Logger.Debug($"'{threadName}' registered with MMCSS as a '{taskName}' task");
         return new WindowsMultimediaScheduler(handle);
     }
 

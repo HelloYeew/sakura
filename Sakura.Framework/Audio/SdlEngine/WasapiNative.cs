@@ -8,9 +8,10 @@ using System.Runtime.InteropServices;
 namespace Sakura.Framework.Audio.SdlEngine;
 
 /// <summary>
-/// The parts of Windows' Core Audio (the MMDevice and WASAPI COM interfaces) that read an output endpoint's figures.
-/// Called through each interface's table of methods, as the system lays it out, so nothing goes through .NET's COM
-/// support. Every object is made, used and released within one call, on the thread that makes it.
+/// The parts of Windows' Core Audio (the MMDevice and WASAPI COM interfaces) that read an output endpoint's figures and
+/// open a stream on it. Called through each interface's table of methods, as the system lays it out, so nothing goes
+/// through .NET's COM support. Every object is made, used and released on one thread: within one call for the route,
+/// and on its own render thread for <see cref="WasapiOutput"/>.
 /// </summary>
 [SuppressMessage("ReSharper", "InconsistentNaming")]
 internal static unsafe class WasapiNative
@@ -31,6 +32,28 @@ internal static unsafe class WasapiNative
     private static readonly Guid iid_imm_device_enumerator = new Guid("A95664D2-9614-4F35-A746-DE8DB63617E6");
     private static readonly Guid iid_iaudio_client = new Guid("1CB9AD4C-DBFA-4C32-B178-C2F568A703B2");
     private static readonly Guid iid_iaudio_client3 = new Guid("7ED4EE07-8E67-4CD4-8C1A-2B7A5987AD42");
+    private static readonly Guid iid_iaudio_render_client = new Guid("F294ACFC-3146-4483-A7BF-ADDCA7C260E2");
+    private static readonly Guid iid_iaudio_clock = new Guid("CD63314F-3FBA-4A1B-812C-EF96358728E7");
+
+    public const int SHARE_MODE_SHARED = 0;
+    public const int SHARE_MODE_EXCLUSIVE = 1;
+
+    public const uint STREAM_FLAG_EVENT_CALLBACK = 0x00040000;
+    public const uint STREAM_FLAG_AUTO_CONVERT_PCM = 0x80000000;
+    public const uint STREAM_FLAG_SRC_DEFAULT_QUALITY = 0x08000000;
+
+    public const int AUDCLNT_E_DEVICE_INVALIDATED = unchecked((int)0x88890004);
+    public const int AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED = unchecked((int)0x88890019);
+
+    public const ushort WAVE_FORMAT_PCM = 1;
+    public const ushort WAVE_FORMAT_IEEE_FLOAT = 3;
+    public const ushort WAVE_FORMAT_EXTENSIBLE = 0xFFFE;
+
+    // The size of WAVEFORMATEXTENSIBLE's part after WAVEFORMATEX, which its cbSize says.
+    public const ushort EXTENSIBLE_EXTRA_SIZE = 22;
+
+    public static readonly Guid SUBTYPE_PCM = new Guid("00000001-0000-0010-8000-00AA00389B71");
+    public static readonly Guid SUBTYPE_IEEE_FLOAT = new Guid("00000003-0000-0010-8000-00AA00389B71");
 
     // PKEY_Device_FriendlyName: the name SDL lists an endpoint under.
     private static readonly PropertyKey friendly_name = new PropertyKey
@@ -63,8 +86,11 @@ internal static unsafe class WasapiNative
         public nint Value2;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct WaveFormatEx
+    /// <summary>
+    /// WAVEFORMATEX, packed as the system declares it (18 bytes).
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct WaveFormatEx
     {
         public ushort FormatTag;
         public ushort Channels;
@@ -73,6 +99,44 @@ internal static unsafe class WasapiNative
         public ushort BlockAlign;
         public ushort BitsPerSample;
         public ushort ExtraSize;
+    }
+
+    /// <summary>
+    /// WAVEFORMATEXTENSIBLE (40 bytes): the format, the bits that carry the sample, which speakers the channels are, and
+    /// what the samples are.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct WaveFormatExtensible
+    {
+        public WaveFormatEx Format;
+        public ushort ValidBitsPerSample;
+        public uint ChannelMask;
+        public Guid SubFormat;
+    }
+
+    [DllImport("kernel32.dll")]
+    public static extern nint CreateEventW(void* attributes, int manualReset, int initialState, char* name);
+
+    [DllImport("kernel32.dll")]
+    public static extern int SetEvent(nint handle);
+
+    [DllImport("kernel32.dll")]
+    public static extern int CloseHandle(nint handle);
+
+    private static nint waitForSingleObject;
+
+    /// <summary>
+    /// The address of kernel32's WaitForSingleObject, which the native render loop waits on the stream's event with.
+    /// </summary>
+    public static nint WaitForSingleObject
+    {
+        get
+        {
+            if (waitForSingleObject == 0)
+                waitForSingleObject = NativeLibrary.GetExport(NativeLibrary.Load("kernel32.dll"), "WaitForSingleObject");
+
+            return waitForSingleObject;
+        }
     }
 
     [DllImport(ole32)]
@@ -261,6 +325,184 @@ internal static unsafe class WasapiNative
         {
             Release(client);
         }
+    }
+
+    /// <summary>
+    /// The endpoint's ID, which stays the same while it's plugged in and tells two of the same name apart.
+    /// </summary>
+    /// <returns>The ID, or null where it can't be read.</returns>
+    public static string? GetId(nint device)
+    {
+        char* id;
+
+        // IMMDevice::GetId
+        if (((delegate* unmanaged[Stdcall]<nint, char**, int>)method(device, 5))(device, &id) < 0 || id == null)
+            return null;
+
+        string value = new string(id);
+        CoTaskMemFree(id);
+        return value;
+    }
+
+    /// <summary>
+    /// An IAudioClient on the endpoint, as IAudioClient3 where the system has it (Windows 10 on): its methods come after
+    /// IAudioClient's, so one pointer serves both.
+    /// </summary>
+    /// <param name="device">The endpoint.</param>
+    /// <param name="client3">Whether it's an IAudioClient3.</param>
+    /// <returns>The client, to <see cref="Release"/>, or 0 where the endpoint has none.</returns>
+    public static nint ActivateClient(nint device, out bool client3)
+    {
+        nint client = activate(device, iid_iaudio_client3);
+        client3 = client != 0;
+        return client3 ? client : activate(device, iid_iaudio_client);
+    }
+
+    /// <summary>
+    /// IAudioClient::GetMixFormat: the shared engine's format on the endpoint, as WAVEFORMATEXTENSIBLE whatever form it
+    /// came in.
+    /// </summary>
+    public static int GetMixFormat(nint client, out WaveFormatExtensible format)
+    {
+        format = default;
+        WaveFormatEx* mix;
+
+        int result = ((delegate* unmanaged[Stdcall]<nint, WaveFormatEx**, int>)method(client, 8))(client, &mix);
+
+        if (result < 0)
+            return result;
+
+        if (mix->FormatTag == WAVE_FORMAT_EXTENSIBLE && mix->ExtraSize >= EXTENSIBLE_EXTRA_SIZE)
+        {
+            format = *(WaveFormatExtensible*)mix;
+        }
+        else
+        {
+            format.Format = *mix;
+            format.ValidBitsPerSample = mix->BitsPerSample;
+            format.SubFormat = mix->FormatTag == WAVE_FORMAT_IEEE_FLOAT ? SUBTYPE_IEEE_FLOAT : SUBTYPE_PCM;
+        }
+
+        CoTaskMemFree(mix);
+        return result;
+    }
+
+    /// <summary>
+    /// IAudioClient::IsFormatSupported, for exclusive mode: S_OK where the device plays the format as it is.
+    /// </summary>
+    public static int IsFormatSupported(nint client, int shareMode, WaveFormatExtensible* format)
+    {
+        WaveFormatEx* closest = null;
+
+        // Exclusive mode takes no closest match to fill in.
+        WaveFormatEx** closestMatch = shareMode == SHARE_MODE_EXCLUSIVE ? null : &closest;
+
+        int result = ((delegate* unmanaged[Stdcall]<nint, int, WaveFormatExtensible*, WaveFormatEx**, int>)method(client, 7))(client, shareMode, format, closestMatch);
+
+        if (closest != null)
+            CoTaskMemFree(closest);
+
+        return result;
+    }
+
+    /// <summary>
+    /// IAudioClient::Initialize. The durations are in 100 ns units.
+    /// </summary>
+    public static int Initialize(nint client, int shareMode, uint flags, long bufferDuration, long periodicity, WaveFormatExtensible* format) =>
+        ((delegate* unmanaged[Stdcall]<nint, int, uint, long, long, WaveFormatExtensible*, Guid*, int>)method(client, 3))(client, shareMode, flags, bufferDuration, periodicity, format, null);
+
+    /// <summary>
+    /// IAudioClient::GetDevicePeriod, in 100 ns units: the shared engine's default period, and the shortest an exclusive
+    /// stream can have.
+    /// </summary>
+    public static int GetDevicePeriod(nint client, out long defaultPeriod, out long minimumPeriod)
+    {
+        long defaultValue, minimumValue;
+        int result = ((delegate* unmanaged[Stdcall]<nint, long*, long*, int>)method(client, 9))(client, &defaultValue, &minimumValue);
+
+        defaultPeriod = defaultValue;
+        minimumPeriod = minimumValue;
+        return result;
+    }
+
+    /// <summary>
+    /// IAudioClient3::GetSharedModeEnginePeriod: the periods the shared engine can run a stream of this format at, in
+    /// frames. A low-latency stream's must be a multiple of the fundamental one, from the minimum to the maximum.
+    /// </summary>
+    public static int GetSharedModeEnginePeriod(nint client3, WaveFormatExtensible* format, out uint defaultPeriod, out uint fundamentalPeriod,
+                                                out uint minimumPeriod, out uint maximumPeriod)
+    {
+        uint defaultValue, fundamentalValue, minimumValue, maximumValue;
+
+        int result = ((delegate* unmanaged[Stdcall]<nint, WaveFormatExtensible*, uint*, uint*, uint*, uint*, int>)method(client3, 18))(
+            client3, format, &defaultValue, &fundamentalValue, &minimumValue, &maximumValue);
+
+        defaultPeriod = defaultValue;
+        fundamentalPeriod = fundamentalValue;
+        minimumPeriod = minimumValue;
+        maximumPeriod = maximumValue;
+        return result;
+    }
+
+    /// <summary>
+    /// IAudioClient3::InitializeSharedAudioStream: a shared stream at a period shorter than the engine's default, which
+    /// shortens the engine's own on the endpoint while it plays.
+    /// </summary>
+    public static int InitializeSharedAudioStream(nint client3, uint flags, uint periodFrames, WaveFormatExtensible* format) =>
+        ((delegate* unmanaged[Stdcall]<nint, uint, uint, WaveFormatExtensible*, Guid*, int>)method(client3, 20))(client3, flags, periodFrames, format, null);
+
+    /// <summary>
+    /// IAudioClient::GetBufferSize, in frames.
+    /// </summary>
+    public static int GetBufferSize(nint client, out uint frames)
+    {
+        uint value;
+        int result = ((delegate* unmanaged[Stdcall]<nint, uint*, int>)method(client, 4))(client, &value);
+
+        frames = value;
+        return result;
+    }
+
+    /// <summary>
+    /// IAudioClient::SetEventHandle: the event the stream signals each time it wants more.
+    /// </summary>
+    public static int SetEventHandle(nint client, nint handle) => ((delegate* unmanaged[Stdcall]<nint, nint, int>)method(client, 13))(client, handle);
+
+    /// <summary>
+    /// IAudioClient::Reset, once stopped: drops what's left in the buffer.
+    /// </summary>
+    public static int Reset(nint client) => ((delegate* unmanaged[Stdcall]<nint, int>)method(client, 12))(client);
+
+    /// <summary>
+    /// IAudioClient::GetService for the stream's IAudioRenderClient.
+    /// </summary>
+    /// <returns>It, to <see cref="Release"/>, or 0.</returns>
+    public static nint GetRenderClient(nint client) => getService(client, iid_iaudio_render_client);
+
+    /// <summary>
+    /// IAudioClient::GetService for the stream's IAudioClock.
+    /// </summary>
+    /// <returns>It, to <see cref="Release"/>, or 0.</returns>
+    public static nint GetClock(nint client) => getService(client, iid_iaudio_clock);
+
+    /// <summary>
+    /// IAudioClock::GetFrequency: the device position's units a second.
+    /// </summary>
+    public static int GetClockFrequency(nint clock, out ulong frequency)
+    {
+        ulong value;
+        int result = ((delegate* unmanaged[Stdcall]<nint, ulong*, int>)method(clock, 3))(clock, &value);
+
+        frequency = value;
+        return result;
+    }
+
+    private static nint getService(nint client, Guid interfaceId)
+    {
+        nint service;
+
+        // IAudioClient::GetService
+        return ((delegate* unmanaged[Stdcall]<nint, Guid*, nint*, int>)method(client, 14))(client, &interfaceId, &service) >= 0 ? service : 0;
     }
 
     /// <summary>
