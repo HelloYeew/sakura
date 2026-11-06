@@ -12,7 +12,8 @@ namespace Sakura.Framework.Tests.Audio;
 
 /// <summary>
 /// How each of the SDL backend's outputs splits its latency: where the app's own buffers end and the system's part
-/// starts, and how each part is known. AAudio and RemoteIO only play on a phone, so they're split here from figures.
+/// starts, and how each part is known. AAudio and RemoteIO only play on a phone, so they're split here from figures. The
+/// HAL output on macOS splits the way RemoteIO does.
 /// </summary>
 [TestFixture]
 public class OutputLatencyPartsTest
@@ -90,9 +91,9 @@ public class OutputLatencyPartsTest
     }
 
     [Test]
-    public void ThroughRemoteIOItIsAllTheSystemsPart()
+    public void ThroughAnAudioUnitItIsAllTheSystemsPart()
     {
-        var parts = SDLAudioManager.RemoteIOLatencyParts(deviceMs: 10, routeMs: 15, measured: true);
+        var parts = SDLAudioManager.AudioUnitLatencyParts(deviceMs: 10, routeMs: 15, measured: true);
 
         Assert.That(parts, Is.EqualTo(new[]
         {
@@ -101,9 +102,9 @@ public class OutputLatencyPartsTest
     }
 
     [Test]
-    public void ThroughRemoteIOBeforeTheTimestampsTheSessionReportsIt()
+    public void ThroughAnAudioUnitBeforeTheTimestampsTheSystemReportsIt()
     {
-        var parts = SDLAudioManager.RemoteIOLatencyParts(deviceMs: 0, routeMs: 20, measured: false);
+        var parts = SDLAudioManager.AudioUnitLatencyParts(deviceMs: 0, routeMs: 20, measured: false);
 
         Assert.That(parts, Is.EqualTo(new[]
         {
@@ -112,9 +113,9 @@ public class OutputLatencyPartsTest
     }
 
     [Test]
-    public void ThroughRemoteIOWithoutARouteNothingReportsWhatComesAfterTheDevice()
+    public void ThroughAnAudioUnitWithoutARouteNothingReportsWhatComesAfterTheDevice()
     {
-        var parts = SDLAudioManager.RemoteIOLatencyParts(deviceMs: 5.3, routeMs: null, measured: false);
+        var parts = SDLAudioManager.AudioUnitLatencyParts(deviceMs: 5.3, routeMs: null, measured: false);
 
         Assert.That(parts, Is.EqualTo(new[]
         {

@@ -27,6 +27,7 @@ internal static unsafe class CoreAudioNative
     public const uint PROPERTY_TRANSPORT_TYPE = 0x7472616e; // 'tran'
     public const uint PROPERTY_NOMINAL_SAMPLE_RATE = 0x6e737274; // 'nsrt'
     public const uint PROPERTY_BUFFER_FRAME_SIZE = 0x6673697a; // 'fsiz'
+    public const uint PROPERTY_BUFFER_FRAME_SIZE_RANGE = 0x66737a23; // 'fsz#'
     public const uint PROPERTY_SAFETY_OFFSET = 0x73616674; // 'saft'
     public const uint PROPERTY_STREAMS = 0x73746d23; // 'stm#'
 
@@ -47,6 +48,13 @@ internal static unsafe class CoreAudioNative
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    public struct AudioValueRange
+    {
+        public double Minimum;
+        public double Maximum;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     public struct CFRange
     {
         public nint Location;
@@ -60,6 +68,10 @@ internal static unsafe class CoreAudioNative
     [DllImport(core_audio)]
     public static extern int AudioObjectGetPropertyData(uint objectId, AudioObjectPropertyAddress* address, uint qualifierDataSize, void* qualifierData,
                                                         uint* dataSize, void* data);
+
+    [DllImport(core_audio)]
+    public static extern int AudioObjectSetPropertyData(uint objectId, AudioObjectPropertyAddress* address, uint qualifierDataSize, void* qualifierData,
+                                                        uint dataSize, void* data);
 
     [DllImport(core_foundation)]
     public static extern nint CFStringGetLength(nint text);
@@ -92,6 +104,54 @@ internal static unsafe class CoreAudioNative
         value = read ? result : default;
         return read;
     }
+
+    /// <summary>
+    /// Sets a property that's one fixed-size value.
+    /// </summary>
+    /// <returns>The status Core Audio gave, <see cref="NO_ERR"/> where it took it.</returns>
+    public static int Set<T>(uint objectId, uint selector, uint scope, T value)
+        where T : unmanaged
+    {
+        var address = new AudioObjectPropertyAddress
+        {
+            Selector = selector,
+            Scope = scope,
+            Element = ELEMENT_MAIN
+        };
+
+        return AudioObjectSetPropertyData(objectId, &address, 0, null, (uint)sizeof(T), &value);
+    }
+
+    /// <summary>
+    /// The system's default output device, which follows what's picked in the menu bar and in System Settings.
+    /// </summary>
+    /// <returns>The device, or 0 where there's none.</returns>
+    public static uint DefaultOutputDevice() => TryGet(SYSTEM_OBJECT, PROPERTY_DEFAULT_OUTPUT_DEVICE, SCOPE_GLOBAL, out uint device) ? device : 0;
+
+    /// <summary>
+    /// Finds the output device SDL lists under <paramref name="name"/>.
+    /// </summary>
+    /// <returns>The device, or 0 where no output device has the name.</returns>
+    public static uint FindOutputDevice(string name)
+    {
+        foreach (uint device in GetObjects(SYSTEM_OBJECT, PROPERTY_DEVICES, SCOPE_GLOBAL))
+        {
+            // A headset is two devices of the same name, the microphone and the speakers.
+            if (GetObjects(device, PROPERTY_STREAMS, SCOPE_OUTPUT).Length == 0)
+                continue;
+
+            if (GetDeviceName(device) == name)
+                return device;
+        }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// An output device's name, as SDL lists it: Core Audio's, less the spaces some devices' names end in.
+    /// </summary>
+    /// <returns>The name, or null where the device can't say.</returns>
+    public static string? GetDeviceName(uint device) => GetString(device, PROPERTY_NAME, SCOPE_OUTPUT)?.TrimEnd(' ');
 
     /// <summary>
     /// Reads a property that's a list of objects: the system's devices, or a device's streams.

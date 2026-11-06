@@ -8,14 +8,15 @@ using static Sakura.Framework.Audio.SdlEngine.CoreAudioNative;
 namespace Sakura.Framework.Audio.SdlEngine;
 
 /// <summary>
-/// The Core Audio device SDL plays on, on macOS. Past SDL's own buffers, the sound waits in the device's I/O buffer and
-/// its safety offset, then goes through the device and its stream: a few milliseconds on a wired device, and whatever a
-/// Bluetooth one reports. It gives no name, so the output keeps the one SDL lists it under, which players already know.
+/// The Core Audio device the sound plays on, on macOS. Past SDL's own buffers, or straight from the HAL output's render,
+/// the sound waits in the device's I/O buffer and its safety offset, then goes through the device and its stream: a few
+/// milliseconds on a wired device, and whatever a Bluetooth one reports. It gives no name, so the output keeps the one
+/// SDL lists it under, which players already know.
 /// </summary>
 [SuppressMessage("ReSharper", "InconsistentNaming")]
 internal sealed class MacOSAudioRoute : ISystemAudioRoute
 {
-    // The device SDL plays on, by SDL's name for it, or empty for the system's default output.
+    // The device the sound plays on, by SDL's name for it, or empty for the system's default output.
     private string playingDevice = string.Empty;
 
     // The device that name was found as. 0 to look it up again: plugged back in, a device comes back as a new one.
@@ -50,7 +51,7 @@ internal sealed class MacOSAudioRoute : ISystemAudioRoute
     /// <returns>Whether the device was found and said.</returns>
     private bool tryRead(out DeviceLatency latency)
     {
-        uint device = playingDevice.Length == 0 ? defaultDevice() : namedDevice != 0 ? namedDevice : findDevice(playingDevice);
+        uint device = playingDevice.Length == 0 ? DefaultOutputDevice() : namedDevice != 0 ? namedDevice : FindOutputDevice(playingDevice);
 
         if (device == 0 || !DeviceLatency.TryRead(device, out latency))
         {
@@ -61,8 +62,8 @@ internal sealed class MacOSAudioRoute : ISystemAudioRoute
             {
                 loggedMissing = true;
                 Logger.Verbose(playingDevice.Length == 0
-                    ? "Core Audio has no default output device to read, so the delay after SDL's buffers isn't counted."
-                    : $"Core Audio has no output device named {playingDevice}, so the delay after SDL's buffers isn't counted.");
+                    ? "Core Audio has no default output device to read, so the device's own delay isn't counted."
+                    : $"Core Audio has no output device named {playingDevice}, so the device's own delay isn't counted.");
             }
 
             return false;
@@ -80,28 +81,6 @@ internal sealed class MacOSAudioRoute : ISystemAudioRoute
         }
 
         return true;
-    }
-
-    private static uint defaultDevice() => TryGet(SYSTEM_OBJECT, PROPERTY_DEFAULT_OUTPUT_DEVICE, SCOPE_GLOBAL, out uint device) ? device : 0;
-
-    /// <summary>
-    /// Finds the output device SDL lists under <paramref name="name"/>.
-    /// </summary>
-    /// <returns>The device, or 0 where no output device has the name.</returns>
-    private static uint findDevice(string name)
-    {
-        foreach (uint device in GetObjects(SYSTEM_OBJECT, PROPERTY_DEVICES, SCOPE_GLOBAL))
-        {
-            // A headset is two devices of the same name, the microphone and the speakers.
-            if (GetObjects(device, PROPERTY_STREAMS, SCOPE_OUTPUT).Length == 0)
-                continue;
-
-            // SDL trims the spaces some devices' names end in.
-            if (GetString(device, PROPERTY_NAME, SCOPE_OUTPUT)?.TrimEnd(' ') == name)
-                return device;
-        }
-
-        return 0;
     }
 
     /// <summary>
@@ -150,13 +129,13 @@ internal sealed class MacOSAudioRoute : ISystemAudioRoute
         /// </summary>
         public string Describe()
         {
-            string name = GetString(Device, PROPERTY_NAME, SCOPE_OUTPUT)?.TrimEnd(' ') ?? $"device {Device}";
+            string name = GetDeviceName(Device) ?? $"device {Device}";
             // A four-character code: 'bltn', 'usb ', 'blue' (Bluetooth), 'blea' (Bluetooth LE), 'hdmi', 'airp' (AirPlay).
             string transport = TryGet(Device, PROPERTY_TRANSPORT_TYPE, SCOPE_GLOBAL, out uint type)
                 ? new string(new[] { (char)(type >> 24), (char)((type >> 16) & 0xff), (char)((type >> 8) & 0xff), (char)(type & 0xff) })
                 : "unknown";
 
-            return $"{name} (over '{transport}', {SampleRate:0} Hz), {TotalMilliseconds:F1} ms after SDL's buffers: "
+            return $"{name} (over '{transport}', {SampleRate:0} Hz), {TotalMilliseconds:F1} ms from its I/O buffer on: "
                    + $"an I/O buffer of {BufferFrames} frames, a safety offset of {SafetyOffset}, a device latency of {DeviceFrames} "
                    + $"and a stream latency of {StreamFrames}";
         }
