@@ -222,7 +222,10 @@ jobs:
 
           $tests = if ('${{ matrix.can_run_tests }}' -eq 'true') { 'ON' } else { 'OFF' }
 
-          cmake -S . -B $env:BUILD_DIR -A ${{ matrix.platform }} -DSAKURA_AUDIO_BUILD_TESTS=$tests
+          # Quoted, or PowerShell passes -D...=$tests through as it's written, without putting the value in.
+          # CMake's if() reads that text as true, so the tests still build, but option() reads it as OFF,
+          # which left the benchmark out of every Windows build.
+          cmake -S . -B $env:BUILD_DIR -A ${{ matrix.platform }} "-DSAKURA_AUDIO_BUILD_TESTS=$tests"
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
           cmake --build $env:BUILD_DIR --config Release
@@ -240,8 +243,8 @@ jobs:
       # Informational, and the reason the benchmark exists: MSVC compiles the atomics to different
       # instructions from every other leg, and this is the only place they are measured.
       #
-      # Found wherever the build put it rather than at a fixed path, and when it isn't there at all,
-      # every exe the build did make is listed. continue-on-error shows this step green either way.
+      # When it's missing, every exe and project the build made is listed: continue-on-error shows this
+      # step green either way, which is how a build without the benchmark went unnoticed.
       - name: Benchmark
         if: ${{ matrix.can_run_tests }}
         continue-on-error: true
