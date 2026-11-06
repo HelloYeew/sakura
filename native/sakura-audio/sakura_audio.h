@@ -34,7 +34,9 @@ extern "C" {
 //     decode thread, and it is the only producer for that voice's ring.
 //   * the *audio* thread is SDL's, and only ever enters through the callback returned by
 //     sakura_audio_get_stream_callback -- or on Android, AAudio's, through the one returned by
-//     sakura_audio_get_aaudio_callback, and on iOS, RemoteIO's, through sakura_audio_get_audio_unit_callback.
+//     sakura_audio_get_aaudio_callback, on iOS, RemoteIO's, through sakura_audio_get_audio_unit_callback, on
+//     Windows, the thread the managed side runs sakura_audio_wasapi_run on, and on Linux, PipeWire's data thread,
+//     through sakura_audio_get_pipewire_process_callback.
 //   * reads of published state -- sakura_audio_node_get_state, sakura_audio_node_read_spectrum,
 //     sakura_audio_engine_get_stats -- are safe from any thread and never block the audio thread.
 //     The FFT behind read_spectrum runs on the calling thread by design; it must never be moved
@@ -112,6 +114,98 @@ void *sakura_audio_get_aaudio_callback(void);
 // Core Audio type appears here.
 void *sakura_audio_get_audio_unit_callback(void);
 
+// --- WASAPI --------------------------------------------------------------------------------------
+
+// COM methods and Win32 functions use __stdcall on 32-bit x86 Windows. Everywhere else there's one calling convention.
+#if defined(_WIN32) && (defined(_M_IX86) || defined(__i386__))
+#define SAKURA_AUDIO_STDCALL __stdcall
+#else
+#define SAKURA_AUDIO_STDCALL
+#endif
+
+// WaitForSingleObject, injected like SDL's put, so this library links nothing new.
+typedef uint32_t (SAKURA_AUDIO_STDCALL *sakura_wait_fn)(void *handle, uint32_t milliseconds);
+
+// The device format's samples, which the mix is converted to on the way into the endpoint buffer.
+#define SAKURA_AUDIO_SAMPLE_FLOAT32 0
+#define SAKURA_AUDIO_SAMPLE_INT16 1
+#define SAKURA_AUDIO_SAMPLE_INT24 2 // packed, three bytes a sample
+#define SAKURA_AUDIO_SAMPLE_INT32 3 // also 24 valid bits in 32, which WASAPI aligns to the top
+
+typedef struct SakuraAudioWasapiConfig
+{
+    uint64_t clockFrequency; // IAudioClock::GetFrequency: the device position's units a second. First, so its offset
+                             // is the same on every target
+    void *audioClient;       // IAudioClient, initialized event-driven with `event` as its event handle, not started
+    void *renderClient;      // its IAudioRenderClient
+    void *audioClock;        // its IAudioClock, or NULL to publish no device time
+    void *event;             // the event handle
+    sakura_wait_fn wait;     // WaitForSingleObject
+    int32_t bufferFrames;    // IAudioClient::GetBufferSize
+    int32_t channels;        // the device format's channels, 1..SAKURA_AUDIO_MAX_CHANNELS
+    int32_t sampleFormat;    // SAKURA_AUDIO_SAMPLE_*
+    int32_t exclusive;       // 1 for an exclusive-mode stream, which takes the whole buffer at each event
+} SakuraAudioWasapiConfig;
+
+typedef struct SakuraAudioWasapiOutput SakuraAudioWasapiOutput;
+
+// The render loop for a WASAPI stream on Windows, where the engine plays without SDL in between. The managed side
+// makes and initializes the COM objects and the event. This library calls them through their vtables, so it needs no
+// Windows header and links nothing new. Returns NULL for a config it can't play.
+SakuraAudioWasapiOutput *sakura_audio_wasapi_create(SakuraAudioEngine *engine, const SakuraAudioWasapiConfig *config);
+
+// Runs the stream on the calling thread until sakura_audio_wasapi_stop. It fills the buffer with silence, starts the
+// client, then at each event mixes what the endpoint has room for (shared) or the whole buffer (exclusive) straight
+// into it, and stops the client before it returns. Each cycle publishes when that cycle's first frame is heard, from
+// IAudioClock's position at its QPC time, for sakura_audio_engine_get_device_time, in IAudioClock's 100 ns units.
+//
+// The managed side calls this from a thread of its own that stays in native code until it returns, so no managed code
+// runs on the audio path and a garbage collection can't stop it. Never with SuppressGCTransition, which would hold every
+// collection up instead. MMCSS ("Pro Audio") is the managed side's to set on that thread first.
+//
+// Returns SAKURA_AUDIO_OK once stopped, the failing HRESULT where a WASAPI call failed (AUDCLNT_E_DEVICE_INVALIDATED
+// when the device went away), SAKURA_AUDIO_TIMEOUT where no event came for two seconds, SAKURA_AUDIO_ERROR where the
+// wait failed. Once per output.
+int sakura_audio_wasapi_run(SakuraAudioWasapiOutput *output);
+
+// Asks sakura_audio_wasapi_run to stop at its next wake-up. From any thread, before or during the run. Signalling the
+// event afterwards (SetEvent) wakes it at once rather than at the next period.
+void sakura_audio_wasapi_stop(SakuraAudioWasapiOutput *output);
+
+// Frees the output, once sakura_audio_wasapi_run has returned or was never called. Releases none of the COM objects.
+void sakura_audio_wasapi_destroy(SakuraAudioWasapiOutput *output);
+
+// --- PipeWire ------------------------------------------------------------------------------------
+
+// pw_stream_dequeue_buffer and pw_stream_queue_buffer, injected so this library links nothing new.
+typedef void *(*sakura_pw_dequeue_fn)(void *stream);
+typedef int (*sakura_pw_queue_fn)(void *stream, void *buffer);
+
+typedef struct SakuraAudioPipeWireConfig
+{
+    void *stream;                 // the pw_stream, playing interleaved float32 at the engine's rate and channels
+    sakura_pw_dequeue_fn dequeue; // pw_stream_dequeue_buffer
+    sakura_pw_queue_fn queue;     // pw_stream_queue_buffer
+    int32_t framesPerCycle;       // what to write when the stream doesn't say: the quantum asked for in node.latency
+    int32_t hasRequested;         // 1 where libpipewire is 0.3.49 or later, whose pw_buffer says how much it wants
+} SakuraAudioPipeWireConfig;
+
+typedef struct SakuraAudioPipeWireOutput SakuraAudioPipeWireOutput;
+
+// The output for a pw_stream on Linux, where the engine plays without SDL in between. Returns NULL for a config it
+// can't play. The managed side loads libpipewire, makes the stream, and adds a listener whose process event is
+// sakura_audio_get_pipewire_process_callback, with this output as its data.
+SakuraAudioPipeWireOutput *sakura_audio_pipewire_create(SakuraAudioEngine *engine, const SakuraAudioPipeWireConfig *config);
+
+// The pw_stream_events process function: dequeues a buffer, mixes what the stream asked for straight into it, and
+// queues it back, with its size in frames so pw_stream_get_time_n's `queued` counts frames. Wants a stream made with
+// PW_STREAM_FLAG_RT_PROCESS, so it runs on PipeWire's real-time data thread. Returned as void* so that no PipeWire type
+// appears here.
+void *sakura_audio_get_pipewire_process_callback(void);
+
+// Frees the output, once the stream is disconnected and can't call the process function again.
+void sakura_audio_pipewire_destroy(SakuraAudioPipeWireOutput *output);
+
 // --- Engine --------------------------------------------------------------------------------------
 
 typedef struct SakuraAudioConfig
@@ -156,12 +250,14 @@ typedef struct SakuraAudioStats
 
 int sakura_audio_engine_get_stats(SakuraAudioEngine *engine, SakuraAudioStats *stats);
 
-// The device's own clock, where its callback gives one: the audio unit callback (iOS's RemoteIO) does.
+// The device's own clock, where its callback gives one: the audio unit callback (iOS's RemoteIO) and the WASAPI render
+// loop do.
 typedef struct SakuraAudioDeviceTime
 {
     int64_t framesMixed;     // frames the engine had mixed when the device's latest callback began
     uint64_t hostTime;       // the host time that callback's first frame goes out at, in the platform's host clock
-                             // (mach_absolute_time's ticks on Apple's): before the route after it, such as Bluetooth
+                             // (mach_absolute_time's ticks on Apple's, QPC time in 100 ns units under WASAPI): before
+                             // the route after it, such as Bluetooth
     int64_t discontinuities; // callbacks whose sample time didn't carry on from the one before, each a cycle the
                              // output missed, or a stop and start
 } SakuraAudioDeviceTime;
