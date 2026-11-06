@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using System;
+using Sakura.Framework.Threading;
 
 namespace Sakura.Framework.Platform;
 
@@ -48,8 +49,7 @@ public interface IPlatformPerformance
 
     /// <summary>
     /// Opens a session that tells the system how long each frame of the calling thread takes against its target.
-    /// Called on that thread as it starts. Unless power efficiency is preferred, a platform may also raise the thread's
-    /// priority, even where it has no sessions. Null where the platform has no such service.
+    /// Called on that thread as it starts. Null where the platform has no such service.
     /// </summary>
     /// <param name="threadName">The thread's name, for logging.</param>
     /// <param name="targetMilliseconds">The first frame's target.</param>
@@ -70,6 +70,15 @@ public interface IFrameWorkHint : IDisposable
     /// <param name="targetMilliseconds">The frame's target, or 0 if it had none, in which case it isn't reported.</param>
     /// <param name="workMilliseconds">How long the frame's work took, not counting waits on a device.</param>
     void ReportFrame(double targetMilliseconds, double workMilliseconds);
+
+    /// <summary>
+    /// Tells the session how much the thread should ask for now (see <see cref="AppHost.SetGameState"/>). Called before
+    /// the first frame, whenever the level changes, and again when the thread resumes after a pause, since a system
+    /// may have dropped what it was told while the app was away.
+    /// </summary>
+    void SetActivity(ThreadActivity activity)
+    {
+    }
 }
 
 /// <summary>

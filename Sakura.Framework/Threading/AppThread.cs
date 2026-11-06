@@ -280,11 +280,14 @@ public class AppThread
 
         while (isRunning)
         {
+            bool wasParked = false;
+
             lock (pauseLock)
             {
                 while (pauseRequested && isRunning)
                 {
                     parked = true;
+                    wasParked = true;
                     Monitor.PulseAll(pauseLock);
                     Monitor.Wait(pauseLock);
                 }
@@ -294,11 +297,15 @@ public class AppThread
 
             if (!isRunning) break;
 
+            // A phone's app pauses its threads while it's away, and the system may have reset what it was told meanwhile.
+            if (wasParked)
+                appliedActivity = null;
+
             var activity = GetActivity();
 
             if (activity != appliedActivity)
             {
-                applyActivity(policy, activity);
+                applyActivity(policy, workHint, activity);
                 appliedActivity = activity;
             }
 
@@ -338,11 +345,12 @@ public class AppThread
     private GlobalStatistic<string>? statActivity;
 
     /// <summary>
-    /// Applies a level to this thread through its policy, and shows what it set in the statistics.
+    /// Applies a level to this thread through its policy and its work hint, and shows what it set in the statistics.
     /// </summary>
-    private void applyActivity(IThreadPolicy? policy, ThreadActivity activity)
+    private void applyActivity(IThreadPolicy? policy, IFrameWorkHint? workHint, ThreadActivity activity)
     {
         string? applied = policy?.Apply(activity);
+        workHint?.SetActivity(activity);
         string description = applied == null ? activity.ToString() : $"{activity}: {applied}";
 
         statActivity ??= GlobalStatistics.Get<string>("Threading", $"{Name} Activity");

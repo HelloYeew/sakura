@@ -7,6 +7,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using NUnit.Framework;
+using Sakura.Framework.Platform;
 using Sakura.Framework.Threading;
 
 namespace Sakura.Framework.Tests.Threading;
@@ -122,6 +123,46 @@ public class AppThreadActivityTest
         Assert.That(policies.Select(p => p.Applied.Count), Is.EqualTo(new[] { 1, 1 }));
     }
 
+    /// <summary>
+    /// A phone's app pauses its threads while it's away, and the system may drop what it was told meanwhile: on resuming,
+    /// the thread tells its policy and its work hint the level again, though the level didn't change.
+    /// </summary>
+    [Test]
+    public void AThreadResumedAfterAPauseAppliesItsLevelAgain()
+    {
+        var policy = new RecordingPolicy();
+        var hint = new RecordingHint();
+        var thread = new AppThread("PausedThread", () => { }, () => 200)
+        {
+            CreatePolicy = () => policy,
+            CreateWorkHint = (_, _) => hint
+        };
+
+        thread.StartMultiThreaded();
+
+        try
+        {
+            waitFor(() => policy.Frames >= 5);
+
+            thread.PauseMultiThreaded();
+            Assert.That(thread.WaitUntilPaused(TimeSpan.FromSeconds(5)), Is.True);
+            thread.ResumeMultiThreaded();
+
+            int resumedAt = policy.Frames;
+            waitFor(() => policy.Frames >= resumedAt + 5);
+        }
+        finally
+        {
+            thread.StopMultiThreaded();
+        }
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(policy.Applied.Select(a => a.Activity), Is.EqualTo(new[] { ThreadActivity.Tight, ThreadActivity.Tight }));
+            Assert.That(hint.Activities, Is.EqualTo(new[] { ThreadActivity.Tight, ThreadActivity.Tight }), "the work hint is told too");
+        }
+    }
+
     private static void runUntil(AppThread thread, Func<bool> condition)
     {
         thread.StartMultiThreaded();
@@ -144,6 +185,21 @@ public class AppThreadActivityTest
             Thread.Sleep(5);
 
         Assert.That(condition(), Is.True, "timed out");
+    }
+
+    private sealed class RecordingHint : IFrameWorkHint
+    {
+        public readonly ConcurrentQueue<ThreadActivity> Activities = new ConcurrentQueue<ThreadActivity>();
+
+        public void ReportFrame(double targetMilliseconds, double workMilliseconds)
+        {
+        }
+
+        public void SetActivity(ThreadActivity activity) => Activities.Enqueue(activity);
+
+        public void Dispose()
+        {
+        }
     }
 
     private sealed class RecordingPolicy : IThreadPolicy
