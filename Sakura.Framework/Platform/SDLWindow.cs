@@ -486,6 +486,8 @@ public class SDLWindow : IWindow
 
     public bool IsActive { get; private set; } = true;
     public bool IsExiting { get; private set; }
+
+    private bool isOccluded;
     public int DisplayHz { get; private set; } = 60;
     public Reactive<string> DisplayName { get; } = new Reactive<string>(string.Empty);
 
@@ -495,6 +497,7 @@ public class SDLWindow : IWindow
     public event Action FocusGained = delegate { };
     public event Action Minimized = delegate { };
     public event Action Restored = delegate { };
+    public event Action<bool> OcclusionChanged = delegate { };
     public event Action ExitRequested = delegate { };
     public event Action EnteringBackground = delegate { };
     public event Action EnteredForeground = delegate { };
@@ -1355,6 +1358,27 @@ public class SDLWindow : IWindow
                 IsActive = true;
                 Logger.Debug("Window restored from minimized state");
                 Restored.Invoke();
+                break;
+
+            case SDL_EventType.SDL_EVENT_WINDOW_OCCLUDED:
+                if (!isOccluded)
+                {
+                    isOccluded = true;
+                    Logger.Debug("Window occluded");
+                    OcclusionChanged.Invoke(true);
+                }
+
+                break;
+
+            // Sent whenever the window needs drawing again, not only when it stops being covered.
+            case SDL_EventType.SDL_EVENT_WINDOW_EXPOSED:
+                if (isOccluded)
+                {
+                    isOccluded = false;
+                    Logger.Debug("Window no longer occluded");
+                    OcclusionChanged.Invoke(false);
+                }
+
                 break;
 
             case SDL_EventType.SDL_EVENT_WINDOW_DISPLAY_CHANGED:

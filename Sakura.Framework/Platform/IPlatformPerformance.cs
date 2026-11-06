@@ -37,7 +37,8 @@ public interface IPlatformPerformance
 
     /// <summary>
     /// Tells the system what the game is doing, so it can plan for it: it raises the CPU for loading, and interrupts
-    /// play that can't be paused less. Does nothing where the platform doesn't take it.
+    /// play that can't be paused less. Does nothing where the platform doesn't take it. An app calls
+    /// <see cref="AppHost.SetGameState"/>, which also sets what the host's threads ask for, and passes it on here.
     /// </summary>
     /// <param name="state">What the player is doing.</param>
     /// <param name="loading">Whether the game is loading, whatever it shows meanwhile.</param>

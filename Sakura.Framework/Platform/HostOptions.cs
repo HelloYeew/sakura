@@ -51,9 +51,10 @@ public class HostOptions
     /// on how late the platform's sleep wakes, from tens of microseconds on macOS to over half a
     /// millisecond on Windows. This gives the most precise frame timing on desktop, at the cost of
     /// constant CPU usage. Disable on battery-constrained targets (e.g. mobile) to trade
-    /// sub-millisecond pacing jitter for power savings. Spinning is automatically suspended while the
-    /// window is inactive regardless of this setting, and the audio thread and multi-threaded input
-    /// loop never spin. Only applies to <see cref="Platform.AppType.Game"/>.
+    /// sub-millisecond pacing jitter for power savings. Spinning only happens at
+    /// <see cref="Threading.ThreadActivity.Tight"/>, a focused game in play (see <see cref="AppHost.SetGameState"/>),
+    /// regardless of this setting, and the audio thread and multi-threaded input loop never spin. Only
+    /// applies to <see cref="Platform.AppType.Game"/>.
     /// </summary>
     /// <remarks>
     /// Off by default on phones and tablets, where a spinning core costs battery and heat, and a hot phone
@@ -72,4 +73,16 @@ public class HostOptions
     /// threads' busy-spinning may trigger.
     /// </remarks>
     public bool UseMultimediaClassScheduler { get; set; }
+
+    /// <summary>
+    /// macOS and iOS only. Whether the update and draw threads tell the system's performance controller when each frame
+    /// is due, so it picks the cores and the clock speed to match: fast cores at full speed for a game in play, and
+    /// efficient cores that still finish in time for menus and applications. Without it, an idle Mac runs short frames
+    /// on slow clocks and efficient cores, and they take about twice as long, unevenly.
+    /// </summary>
+    /// <remarks>
+    /// Apple documents work intervals for real-time audio threads. They're measured to work the same for frame threads,
+    /// and the threads carry on without one if the system won't give one.
+    /// </remarks>
+    public bool UseWorkIntervals { get; set; } = true;
 }

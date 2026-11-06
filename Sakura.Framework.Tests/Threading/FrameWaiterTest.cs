@@ -47,6 +47,91 @@ public class FrameWaiterTest
     }
 
     /// <summary>
+    /// Stands in for a platform sleep that returns at once, recording how long it was asked to sleep.
+    /// </summary>
+    private class RecordingSleep : INativeSleep
+    {
+        public readonly List<double> RequestedMicroseconds = new List<double>();
+        private readonly bool succeeds;
+
+        public RecordingSleep(bool succeeds = true)
+        {
+            this.succeeds = succeeds;
+        }
+
+        public bool Sleep(TimeSpan duration)
+        {
+            RequestedMicroseconds.Add(duration.TotalMicroseconds);
+            return succeeds;
+        }
+
+        public void Dispose()
+        {
+        }
+    }
+
+    [Test]
+    public void TestPlainWaitUsesThePlainSleep()
+    {
+        var plain = new RecordingSleep();
+        var precise = new RecordingSleep();
+
+        using (var waiter = new FrameWaiter(plain, precise))
+            waiter.WaitUntil(Stopwatch.GetTimestamp() + ticks(2000), precise: false);
+
+        Assert.That(plain.RequestedMicroseconds, Has.Count.EqualTo(1));
+        Assert.That(precise.RequestedMicroseconds, Is.Empty);
+    }
+
+    [Test]
+    public void TestPreciseWaitSleepsUpToTheGuardOnThePreciseSleep()
+    {
+        var plain = new RecordingSleep();
+        var precise = new RecordingSleep();
+
+        using (var waiter = new FrameWaiter(plain, precise))
+            waiter.WaitUntil(Stopwatch.GetTimestamp() + ticks(2000), precise: true);
+
+        Assert.That(plain.RequestedMicroseconds, Is.Empty);
+        Assert.That(precise.RequestedMicroseconds.Single(), Is.EqualTo(2000 - 100).Within(50), "the wait less the starting guard");
+    }
+
+    /// <summary>
+    /// A phone doesn't spin, but still gains from the more precise timer.
+    /// </summary>
+    [Test]
+    public void TestPreciseWaitWithoutSpinningSleepsTheWholeWaitOnThePreciseSleep()
+    {
+        var plain = new RecordingSleep();
+        var precise = new RecordingSleep();
+        double guardBefore;
+        double guardAfter;
+
+        using (var waiter = new FrameWaiter(plain, precise, allowSpinning: false))
+        {
+            guardBefore = waiter.GuardTicks;
+            waiter.WaitUntil(Stopwatch.GetTimestamp() + ticks(2000), precise: true);
+            guardAfter = waiter.GuardTicks;
+        }
+
+        Assert.That(plain.RequestedMicroseconds, Is.Empty);
+        Assert.That(precise.RequestedMicroseconds.Single(), Is.EqualTo(2000).Within(100));
+        Assert.That(guardAfter, Is.EqualTo(guardBefore), "nothing spun, so there's nothing to learn");
+    }
+
+    [Test]
+    public void TestAPreciseSleepThatFailsFallsBackToThePlainOne()
+    {
+        var plain = new RecordingSleep();
+        var precise = new RecordingSleep(succeeds: false);
+
+        using (var waiter = new FrameWaiter(plain, precise, allowSpinning: false))
+            waiter.WaitUntil(Stopwatch.GetTimestamp() + ticks(2000), precise: true);
+
+        Assert.That(plain.RequestedMicroseconds.Single(), Is.EqualTo(precise.RequestedMicroseconds.Single()));
+    }
+
+    /// <summary>
     /// Settles from either side, since the starting guard sits between the two platforms it has to serve:
     /// above what macOS needs and below what Windows needs.
     /// </summary>
