@@ -240,14 +240,22 @@ jobs:
       # Informational, and the reason the benchmark exists: MSVC compiles the atomics to different
       # instructions from every other leg, and this is the only place they are measured.
       #
-      # The ./ matters: PowerShell looks a relative command path up along PATH, not from the current
-      # folder, so without it the exe the build just made "is not recognized". continue-on-error kept
-      # that hidden behind a green step.
+      # Found wherever the build put it rather than at a fixed path, and when it isn't there at all,
+      # every exe the build did make is listed. continue-on-error shows this step green either way.
       - name: Benchmark
         if: ${{ matrix.can_run_tests }}
         continue-on-error: true
         run: |
-          & "./$env:BUILD_DIR/Release/sakura-audio-bench.exe"
+          $bench = Get-ChildItem -Path $env:BUILD_DIR -Recurse -Filter sakura-audio-bench.exe | Select-Object -First 1
+
+          if (-not $bench) {
+            Write-Host "::warning::sakura-audio-bench.exe wasn't built. The exes under $env:BUILD_DIR are:"
+            Get-ChildItem -Path $env:BUILD_DIR -Recurse -Filter *.exe | ForEach-Object { Write-Host "  $($_.FullName)" }
+            Get-ChildItem -Path $env:BUILD_DIR -Filter *.vcxproj | ForEach-Object { Write-Host "  project: $($_.Name)" }
+            exit 1
+          }
+
+          & $bench.FullName
 
       - name: Verify architecture
         run: |
