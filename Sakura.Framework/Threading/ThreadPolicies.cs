@@ -1,6 +1,8 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
+
 namespace Sakura.Framework.Threading;
 
 /// <summary>
@@ -19,6 +21,14 @@ internal static class ThreadPolicies
     {
         if (DarwinThreadPolicy.IsAvailable)
             return new DarwinThreadPolicy(role, threadName, useWorkIntervals && role != ThreadRole.Audio);
+
+        // The audio thread keeps Windows' choice: it moves the music's state on even with the app out of sight.
+        if (OperatingSystem.IsWindows())
+            return role == ThreadRole.Audio ? null : new WindowsThreadPolicy(threadName);
+
+        // Likewise on Linux, where the audio thread never waits precisely and so has no use for less slack.
+        if (OperatingSystem.IsLinux())
+            return role == ThreadRole.Audio ? null : new LinuxThreadPolicy(threadName);
 
         return null;
     }

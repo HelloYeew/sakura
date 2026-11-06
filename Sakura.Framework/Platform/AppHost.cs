@@ -366,7 +366,14 @@ public abstract class AppHost : IDisposable
         KeepScreenOn = new Reactive<bool>(Options.AppType == AppType.Game);
 
         threadActivity = new ThreadActivityTracker(Options.AppType);
-        threadActivity.Changed += (previous, next, reason) => Logger.Verbose($"Threads go from {previous} to {next}: {reason}");
+        threadActivity.Changed += (previous, next, reason) =>
+        {
+            Logger.Verbose($"Threads go from {previous} to {next}: {reason}");
+
+            // Process-wide, so it follows the host's level rather than any one thread's.
+            if (OperatingSystem.IsWindows() && WindowsTimerResolution.PeriodFor(previous) != WindowsTimerResolution.PeriodFor(next))
+                WindowsTimerResolution.Apply(next);
+        };
     }
 
     /// <summary>
