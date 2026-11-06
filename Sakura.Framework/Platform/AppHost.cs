@@ -292,6 +292,11 @@ public abstract class AppHost : IDisposable
     private readonly ThreadActivityTracker threadActivity;
 
     /// <summary>
+    /// Feral's GameMode, held while in play, where <see cref="HostOptions.UseLinuxGameMode"/> asks for it.
+    /// </summary>
+    private LinuxGameMode linuxGameMode;
+
+    /// <summary>
     /// How much the host's threads ask the system for right now. See <see cref="SetGameState"/>.
     /// </summary>
     internal ThreadActivity ThreadActivity => threadActivity.Current;
@@ -373,6 +378,8 @@ public abstract class AppHost : IDisposable
             // Process-wide, so it follows the host's level rather than any one thread's.
             if (OperatingSystem.IsWindows() && WindowsTimerResolution.PeriodFor(previous) != WindowsTimerResolution.PeriodFor(next))
                 WindowsTimerResolution.Apply(next);
+
+            linuxGameMode?.Want(next == ThreadActivity.Tight);
         };
     }
 
@@ -844,6 +851,12 @@ public abstract class AppHost : IDisposable
             onResize(initialPhysicalWidth, initialPhysicalHeight, Window.Width, Window.Height);
 
             threadActivity.SetFocused(Window.IsActive);
+
+            if (OperatingSystem.IsLinux() && Options.AppType == AppType.Game && Options.UseLinuxGameMode)
+            {
+                linuxGameMode = LinuxGameMode.Open();
+                linuxGameMode?.Want(threadActivity.Current == ThreadActivity.Tight);
+            }
 
             // Precise waits are only worth it for a focused game in play. Whether they may also spin is up to HostOptions,
             // for battery-constrained targets.
@@ -1630,6 +1643,9 @@ public abstract class AppHost : IDisposable
         }
 
         FrameworkConfigManager?.Flush();
+
+        linuxGameMode?.Dispose();
+        linuxGameMode = null;
 
         Logger.Shutdown();
 

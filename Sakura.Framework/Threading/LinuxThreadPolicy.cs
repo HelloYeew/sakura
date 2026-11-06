@@ -22,8 +22,8 @@ namespace Sakura.Framework.Threading;
 /// shader, would run into RLIMIT_RTTIME and get the process killed.
 /// </para>
 /// <para>
-/// The first policy made logs what the system allows, so a player's log says whether a custom slice or a reversible
-/// nice could be used.
+/// The first policy made logs what the system allows, so a player's log says whether a custom slice, a reversible nice
+/// (RLIMIT_NICE or rtkit) or GameMode could be used.
 /// </para>
 /// </remarks>
 internal sealed class LinuxThreadPolicy : IThreadPolicy
@@ -93,8 +93,37 @@ internal sealed class LinuxThreadPolicy : IThreadPolicy
             ? $"RLIMIT_NICE {describeLimit(limit.Current)} soft / {describeLimit(limit.Maximum)} hard"
             : "RLIMIT_NICE unknown";
 
+        // rtkit is what lets an unprivileged app raise a thread's priority and drop it again; it's started on demand
+        // over D-Bus, so its service file says whether it's there.
+        string rtkit = File.Exists("/usr/share/dbus-1/system-services/org.freedesktop.RealtimeKit1.service") ? "rtkit installed" : "no rtkit";
+
+        // Since 1.8, GameMode only changes the CPU governor for users in its group.
+        string gameMode = LinuxGameMode.IsInstalled ? $"GameMode installed ({(isInGroup("gamemode") ? "in" : "not in")} the gamemode group)" : "no GameMode";
+
         return $"kernel {kernel}, sched_ext {schedExt}{(schedExtOps.Length > 0 ? $" ({schedExtOps})" : string.Empty)}, {nice}, "
-               + $"default timer slack {describeSlack(prctl(pr_get_timerslack, 0, 0, 0, 0))}, cpufreq {cpufreq}";
+               + $"default timer slack {describeSlack(prctl(pr_get_timerslack, 0, 0, 0, 0))}, cpufreq {cpufreq}, {rtkit}, {gameMode}";
+    }
+
+    /// <summary>
+    /// Whether the process runs with a group among its groups, by name.
+    /// </summary>
+    private static bool isInGroup(string name)
+    {
+        IntPtr entry = getgrnam(name);
+
+        if (entry == IntPtr.Zero)
+            return false;
+
+        // struct group: gr_name, gr_passwd, then gr_gid.
+        uint groupId = (uint)Marshal.ReadInt32(entry, 2 * IntPtr.Size);
+
+        if (getgid() == groupId)
+            return true;
+
+        uint[] groups = new uint[256];
+        int count = getgroups(groups.Length, groups);
+
+        return count > 0 && Array.IndexOf(groups, groupId, 0, count) >= 0;
     }
 
     // RLIMIT_NICE's ceiling is 20 - limit: 0 allows no raise at all, 40 allows nice -20.
@@ -124,4 +153,13 @@ internal sealed class LinuxThreadPolicy : IThreadPolicy
 
     [DllImport("libc", SetLastError = true)]
     private static extern int getrlimit(int resource, out ResourceLimit limit);
+
+    [DllImport("libc")]
+    private static extern IntPtr getgrnam([MarshalAs(UnmanagedType.LPUTF8Str)] string name);
+
+    [DllImport("libc")]
+    private static extern uint getgid();
+
+    [DllImport("libc")]
+    private static extern int getgroups(int size, [Out] uint[] list);
 }

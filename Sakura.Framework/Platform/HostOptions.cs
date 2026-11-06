@@ -86,4 +86,15 @@ public class HostOptions
     /// and the threads carry on without one if the system won't give one.
     /// </remarks>
     public bool UseWorkIntervals { get; set; } = true;
+
+    /// <summary>
+    /// Linux only. Whether to ask Feral's GameMode for the user's game settings (the CPU governor, I/O priority, the GPU's
+    /// performance mode, a screensaver inhibit, their own scripts) while the game is in play, and give it back otherwise.
+    /// Needs GameMode installed, and since 1.8 the user in the <c>gamemode</c> group for the CPU governor. Only applies to
+    /// <see cref="Platform.AppType.Game"/>.
+    /// </summary>
+    /// <remarks>
+    /// Off by default: it changes system-wide settings the user chose for themselves, and runs their scripts each time.
+    /// </remarks>
+    public bool UseLinuxGameMode { get; set; }
 }
