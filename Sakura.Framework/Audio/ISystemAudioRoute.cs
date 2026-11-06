@@ -26,4 +26,14 @@ public interface ISystemAudioRoute
     /// filling that buffer itself measures along with its own. 0 where the platform doesn't say.
     /// </summary>
     double BufferMilliseconds => 0;
+
+    /// <summary>
+    /// Says which device the sound plays on, for a platform whose route depends on it by the name the audio backend
+    /// lists it under, or empty while the sound follows the system's default output. Said whenever it moves, on the
+    /// thread that reads the route.
+    /// </summary>
+    /// <param name="name">The device's name, or empty for the system's default output.</param>
+    void SetPlayingDevice(string name)
+    {
+    }
 }

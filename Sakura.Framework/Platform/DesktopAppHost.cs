@@ -6,6 +6,8 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using Sakura.Framework.Audio;
+using Sakura.Framework.Audio.SdlEngine;
 using Sakura.Framework.Extensions;
 using Sakura.Framework.Logging;
 
@@ -31,6 +33,11 @@ public class DesktopAppHost : SDLAppHost
     public override Storage GetStorage(string path) => new DesktopStorage(path, this);
 
     protected override IWindow CreateWindow() => new DesktopWindow();
+
+    /// <summary>
+    /// On macOS, the Core Audio device SDL plays on, whose buffer and latencies come after SDL's own.
+    /// </summary>
+    public override ISystemAudioRoute SystemAudioRoute { get; } = RuntimeInfo.IsMacOS ? new MacOSAudioRoute() : null;
 
     public override bool OpenFileExternally(string filename)
     {

@@ -1512,9 +1512,12 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
         if (systemRoute != null)
         {
+            // Where the route has no name of its own, the output keeps SDL's, logged with the device.
+            string routeName = systemRoute.Name.Length > 0 ? $"{systemRoute.Name}, " : string.Empty;
+
             Logger.Verbose(remoteIOOutput != null
-                ? $"System route: {systemRoute.Name}, {systemRouteLatencyMs:F1} ms, the I/O buffer included"
-                : $"System route: {systemRoute.Name}, {systemRouteLatencyMs:F1} ms after the device buffer");
+                ? $"System route: {routeName}{systemRouteLatencyMs:F1} ms, the I/O buffer included"
+                : $"System route: {routeName}{systemRouteLatencyMs:F1} ms after the device buffer");
         }
 
         Logger.Verbose($"Mix format: {SampleRate} Hz, {output_channels} ch, {formatName(SDLAudioConverter.SAMPLE_FORMAT)}");
@@ -1719,6 +1722,9 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
         logicalDevice = device;
         boundTarget = target;
+
+        // So the route reads this device from now on.
+        systemRoute?.SetPlayingDevice(PlayingOn);
         return true;
     }
 
