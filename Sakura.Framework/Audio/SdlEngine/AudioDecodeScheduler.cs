@@ -100,6 +100,8 @@ internal sealed class AudioDecodeScheduler : IDisposable
     {
         if (OperatingSystem.IsAndroid())
             raiseOnAndroid();
+        else if (OperatingSystem.IsLinux())
+            batchOnLinux();
 
         long blockedSince = 0;
 
@@ -174,6 +176,30 @@ internal sealed class AudioDecodeScheduler : IDisposable
         if (setpriority(prio_process, gettid(), android_frame_thread_priority) != 0)
             Logger.Verbose($"The audio decode thread stays at its priority: setpriority failed (error {Marshal.GetLastPInvokeError()}).");
     }
+
+    // sched_setscheduler's SCHED_BATCH.
+    private const int sched_batch = 3;
+
+    /// <summary>
+    /// Marks this thread as batch work on desktop Linux. It keeps its share of the CPU, but waking up no longer lets it
+    /// cut in on a frame thread mid-frame: it decodes half a second ahead, so a few milliseconds' wait costs nothing.
+    /// </summary>
+    private static void batchOnLinux()
+    {
+        var parameters = new SchedParam();
+
+        if (sched_setscheduler(0, sched_batch, ref parameters) != 0)
+            Logger.Debug($"The audio decode thread stays on the normal policy: sched_setscheduler failed (error {Marshal.GetLastPInvokeError()}).");
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SchedParam
+    {
+        public int Priority;
+    }
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern int sched_setscheduler(int threadId, int policy, ref SchedParam parameters);
 
     [DllImport("libc", SetLastError = true)]
     private static extern int setpriority(int which, int who, int priority);
