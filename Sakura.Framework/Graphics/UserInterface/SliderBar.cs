@@ -127,8 +127,7 @@ public abstract partial class SliderBar<T> : Container, IHasTooltip, ITabStop wh
     {
         if (decimalPlaces is int places && !Current.IsInteger)
         {
-            double roundedRaw = Math.Round(double.CreateTruncating(e.NewValue), places, MidpointRounding.AwayFromZero);
-            T rounded = T.Clamp(T.CreateTruncating(roundedRaw), MinValue, MaxValue);
+            T rounded = T.Clamp(roundToPlaces(e.NewValue, places), MinValue, MaxValue);
 
             if (rounded != e.NewValue)
             {
@@ -140,6 +139,20 @@ public abstract partial class SliderBar<T> : Container, IHasTooltip, ITabStop wh
         }
 
         OnValueChanged(Current.Value);
+    }
+
+    /// <remarks>
+    /// A decimal is rounded as a decimal. Going through double instead gives back the double's
+    /// binary approximation: since .NET 11 a double converts to decimal exactly, so 0.3 came back as
+    /// 0.2999999999999999888977697537, and before that the conversion kept only 15 significant
+    /// digits, so 12345678901234.56 came back as 12345678901234.6.
+    /// </remarks>
+    private static T roundToPlaces(T value, int places)
+    {
+        if (typeof(T) == typeof(decimal))
+            return T.CreateTruncating(Math.Round(decimal.CreateTruncating(value), places, MidpointRounding.AwayFromZero));
+
+        return T.CreateTruncating(Math.Round(double.CreateTruncating(value), places, MidpointRounding.AwayFromZero));
     }
 
     public override void OnFocus(FocusEvent e)
