@@ -239,11 +239,15 @@ jobs:
 
       # Informational, and the reason the benchmark exists: MSVC compiles the atomics to different
       # instructions from every other leg, and this is the only place they are measured.
+      #
+      # The ./ matters: PowerShell looks a relative command path up along PATH, not from the current
+      # folder, so without it the exe the build just made "is not recognized". continue-on-error kept
+      # that hidden behind a green step.
       - name: Benchmark
         if: ${{ matrix.can_run_tests }}
         continue-on-error: true
         run: |
-          & "$env:BUILD_DIR/Release/sakura-audio-bench.exe"
+          & "./$env:BUILD_DIR/Release/sakura-audio-bench.exe"
 
       - name: Verify architecture
         run: |
