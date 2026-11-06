@@ -539,6 +539,36 @@ public partial class TestBasicSliderBar : ManualInputManagerTestScene
         AddAssert("Assignment below range clamps to MinValue", () => decimalSlider.Current.Value == decimalSlider.MinValue);
     }
 
+    [Test]
+    public void TestDecimalPlacesKeepsDecimalValuesExact()
+    {
+        BasicSliderBar<decimal> decimalSlider = null!;
+
+        AddStep("Add decimal slider with DecimalPlaces = 2", () =>
+        {
+            TestContent.Add(decimalSlider = new BasicSliderBar<decimal>
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Position = new Vector2(0, 190),
+                Size = new Vector2(220, 18),
+                MinValue = 0m,
+                MaxValue = 100000000000000m,
+                DecimalPlaces = 2
+            });
+        });
+
+        // A double has no exact 0.3, so rounding through one hands back its binary neighbour.
+        AddStep("Assign 0.3", () => decimalSlider.Current.Value = 0.3m);
+        AddAssert("Value is exactly 0.3", () => decimalSlider.Current.Value == 0.3m);
+
+        AddStep("Assign a value with 16 significant digits", () => decimalSlider.Current.Value = 12345678901234.56m);
+        AddAssert("No digit is lost", () => decimalSlider.Current.Value == 12345678901234.56m);
+
+        AddStep("Assign a value with a third decimal place", () => decimalSlider.Current.Value = 0.125m);
+        AddAssert("Value rounds half away from zero to 0.13", () => decimalSlider.Current.Value == 0.13m);
+    }
+
     private void clickSliderAt<T>(BasicSliderBar<T> target, float progress) where T : struct, INumber<T>, IMinMaxValue<T>
     {
         var position = new Vector2(
