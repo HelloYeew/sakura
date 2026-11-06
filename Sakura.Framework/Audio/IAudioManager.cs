@@ -90,6 +90,17 @@ public interface IAudioManager
     double OutputLatencyMs => 0;
 
     /// <summary>
+    /// What <see cref="OutputLatencyMs"/> is made of, in the order the sound goes through them, adding up to it. Each says
+    /// how it's known, and a part without a figure is a delay there that nothing reports. Empty for a backend that
+    /// measures nothing.
+    /// </summary>
+    /// <remarks>
+    /// Made at each call from the figures as they are then, so for a settings screen or a report rather than for each
+    /// channel each frame.
+    /// </remarks>
+    IReadOnlyList<AudioLatencyPart> GetOutputLatencyParts() => Array.Empty<AudioLatencyPart>();
+
+    /// <summary>
     /// Whether playing, stopping or seeking a channel only takes effect at the next <see cref="Update"/>, so how often
     /// that runs adds to how late a sound starts.
     /// </summary>

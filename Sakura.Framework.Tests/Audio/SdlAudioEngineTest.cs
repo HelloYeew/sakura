@@ -12,6 +12,7 @@ using NUnit.Framework;
 using Sakura.Framework.Audio;
 using Sakura.Framework.Audio.SdlEngine;
 using Sakura.Framework.Statistic;
+using Sakura.Framework.Timing;
 using static SDL.SDL3;
 
 namespace Sakura.Framework.Tests.Audio;
@@ -421,6 +422,69 @@ public class SdlAudioEngineTest
         manager.Update(2000);
 
         Assert.That(manager.DeviceBufferFrames, Is.EqualTo(before));
+    }
+
+    /// <summary>
+    /// The parts add up to the figure positions are moved by. With no route from the platform, nothing reports the
+    /// system's part.
+    /// </summary>
+    [TestCase(true)]
+    [TestCase(false)]
+    public void Manager_OutputLatencyPartsAddUpToIt(bool native)
+    {
+        using var manager = createManager(native);
+
+        Thread.Sleep(200);
+        manager.Update(0);
+
+        var parts = manager.GetOutputLatencyParts();
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(parts.Select(p => p.Kind), Is.EqualTo(new[] { AudioLatencyPartKind.Queue, AudioLatencyPartKind.AppBuffer, AudioLatencyPartKind.System }));
+            Assert.That(parts.Sum(p => p.Milliseconds ?? 0), Is.EqualTo(manager.OutputLatencyMs).Within(1e-9));
+            Assert.That(parts[2], Is.EqualTo(AudioLatencyPart.NotReported(AudioLatencyPartKind.System)));
+        }
+    }
+
+    /// <summary>
+    /// The platform's route is the system's part, and it's told the device the sound plays on: the default here.
+    /// </summary>
+    [Test]
+    public void Manager_CountsThePlatformsRouteAsTheSystemsPart()
+    {
+        var route = new FixedAudioRoute(12.5);
+        using var manager = new SDLAudioManager(useNativeMixEngine: SakuraAudioEngine.IsAvailable, systemRoute: route);
+
+        manager.Update(0);
+
+        var parts = manager.GetOutputLatencyParts();
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(parts[^1], Is.EqualTo(new AudioLatencyPart(AudioLatencyPartKind.System, 12.5, LatencySource.ReportedBySystem)));
+            Assert.That(parts.Sum(p => p.Milliseconds ?? 0), Is.EqualTo(manager.OutputLatencyMs).Within(1e-9));
+            Assert.That(route.PlayingDevice, Is.Empty, "on the system's default");
+        }
+    }
+
+    /// <summary>
+    /// A route that always takes the same time, and remembers the device it was last told of.
+    /// </summary>
+    private sealed class FixedAudioRoute : ISystemAudioRoute
+    {
+        public FixedAudioRoute(double latencyMilliseconds)
+        {
+            LatencyMilliseconds = latencyMilliseconds;
+        }
+
+        public string Name => string.Empty;
+
+        public double LatencyMilliseconds { get; }
+
+        public string? PlayingDevice { get; private set; }
+
+        public void SetPlayingDevice(string name) => PlayingDevice = name;
     }
 
     #endregion

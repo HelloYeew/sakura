@@ -712,10 +712,103 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     /// </remarks>
     public double OutputLatencyMs => outputLatencyFrames / (double)SampleRate * 1000.0 + deviceQueueMicroseconds / 1000.0 + systemRouteLatencyMs;
 
+    /// <summary>
+    /// The terms of <see cref="OutputLatencyMs"/>, split where the app's own buffers end. Through SDL: the stream's queue,
+    /// SDL's device buffers, then the system's route where the platform has one (nothing reports it elsewhere). Through
+    /// AAudio: its buffer, then the rest of what its timestamps measure. Through RemoteIO all of it is the system's,
+    /// since the engine renders straight into the system's I/O buffer.
+    /// </summary>
+    public IReadOnlyList<AudioLatencyPart> GetOutputLatencyParts()
+    {
+        // Each read once, so the parts add up to what OutputLatencyMs makes of the same figures.
+        double deviceMs = deviceQueueMicroseconds / 1000.0;
+        double? routeMs = systemRoute != null ? systemRouteLatencyMs : null;
+
+        if (aaudioOutput != null)
+            return AAudioLatencyParts(deviceMs, appBufferMicroseconds / 1000.0, outputLatencyMeasured);
+
+        if (remoteIOOutput != null)
+            return RemoteIOLatencyParts(deviceMs, routeMs, outputLatencyMeasured);
+
+        return SDLLatencyParts(outputLatencyFrames / (double)SampleRate * 1000.0, deviceMs, routeMs);
+    }
+
+    /// <summary>
+    /// Through SDL's device: the stream's queue, counted, then SDL's device buffers, worked out from their size, then the
+    /// system's route, where the platform reports one.
+    /// </summary>
+    /// <param name="queueMs">What waits in the stream.</param>
+    /// <param name="deviceMs">What waits in SDL's device buffers.</param>
+    /// <param name="routeMs">The system's route after them, or null where the platform has none.</param>
+    internal static AudioLatencyPart[] SDLLatencyParts(double queueMs, double deviceMs, double? routeMs) => new[]
+    {
+        new AudioLatencyPart(AudioLatencyPartKind.Queue, queueMs, LatencySource.Counted),
+        new AudioLatencyPart(AudioLatencyPartKind.AppBuffer, deviceMs, LatencySource.FromBufferSizes),
+        routeMs is double route
+            ? new AudioLatencyPart(AudioLatencyPartKind.System, route, LatencySource.ReportedBySystem)
+            : AudioLatencyPart.NotReported(AudioLatencyPartKind.System)
+    };
+
+    /// <summary>
+    /// Through AAudio: its buffer, then the rest of the way to the listener, once AAudio's timestamps have measured it.
+    /// </summary>
+    /// <param name="deviceMs">What the timestamps measured, the buffer included, or the buffer alone before they have.</param>
+    /// <param name="bufferMs">AAudio's buffer, the app's own.</param>
+    /// <param name="measured">Whether the timestamps have measured it yet.</param>
+    internal static AudioLatencyPart[] AAudioLatencyParts(double deviceMs, double bufferMs, bool measured)
+    {
+        if (!measured)
+        {
+            return new[]
+            {
+                new AudioLatencyPart(AudioLatencyPartKind.AppBuffer, deviceMs, LatencySource.FromBufferSizes),
+                AudioLatencyPart.NotReported(AudioLatencyPartKind.System)
+            };
+        }
+
+        // Never more than was measured, so the system's part can't go below 0.
+        double appMs = Math.Min(bufferMs, deviceMs);
+
+        return new[]
+        {
+            new AudioLatencyPart(AudioLatencyPartKind.AppBuffer, appMs, LatencySource.FromBufferSizes),
+            new AudioLatencyPart(AudioLatencyPartKind.System, deviceMs - appMs, LatencySource.Measured)
+        };
+    }
+
+    /// <summary>
+    /// Through RemoteIO, all of it is the system's: the engine renders straight into the system's I/O buffer. Measured
+    /// from the unit's timestamps up to the device's output once they've settled, and the session's route after that.
+    /// </summary>
+    /// <param name="deviceMs">What the timestamps measured; before they have, the I/O buffer without a route, else 0.</param>
+    /// <param name="routeMs">
+    /// The session's route: after the device's output once measured, the I/O buffer too before then. Null where there's none.
+    /// </param>
+    /// <param name="measured">Whether the timestamps have measured it yet.</param>
+    internal static AudioLatencyPart[] RemoteIOLatencyParts(double deviceMs, double? routeMs, bool measured)
+    {
+        var source = measured ? LatencySource.Measured : routeMs == null ? LatencySource.FromBufferSizes : LatencySource.NotReported;
+
+        if (routeMs != null)
+            source |= LatencySource.ReportedBySystem;
+
+        var system = new AudioLatencyPart(AudioLatencyPartKind.System, deviceMs + (routeMs ?? 0), source);
+
+        // Without the session's route, nothing says how long the way past the device's output takes.
+        return routeMs != null ? new[] { system } : new[] { system, AudioLatencyPart.NotReported(AudioLatencyPartKind.AfterDevice) };
+    }
+
     private readonly ISystemAudioRoute? systemRoute;
 
     // The system route's delay as last read, by the device check, as a route change moves it.
     private double systemRouteLatencyMs;
+
+    // Whether the output's own timestamps have measured its latency yet (AAudio and RemoteIO): until they have, the
+    // device half of OutputLatencyMs is worked out from the buffers.
+    private volatile bool outputLatencyMeasured;
+
+    // AAudio's buffer, the part of what its timestamps measure that's the app's own.
+    private volatile int appBufferMicroseconds;
 
     // The native engine's channels call into it directly, from whichever thread plays them. The managed mixer's
     // queue their changes for the audio thread.
@@ -1033,11 +1126,13 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         }
 
         deviceBufferFrames = output.BufferFrames;
+        appBufferMicroseconds = (int)Math.Round(deviceBufferFrames / (double)output.SampleRate * 1_000_000.0);
 
         // What's buffered is all that's known until AAudio's timestamps say how long the rest of the way takes.
         double latencyMs = aaudioLatency.Milliseconds ?? deviceBufferFrames / (double)output.SampleRate * 1000.0;
         deviceBufferMicroseconds = (int)Math.Round(latencyMs * 1000.0);
         deviceQueueMicroseconds = deviceBufferMicroseconds;
+        outputLatencyMeasured = aaudioLatency.Milliseconds.HasValue;
     }
 
     /// <summary>
@@ -1244,11 +1339,13 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         {
             deviceQueueMicroseconds = (int)Math.Round(measured * 1000.0);
             systemRouteLatencyMs = remoteIORouteMs - remoteIORouteBufferMs;
+            outputLatencyMeasured = true;
         }
         else
         {
             deviceQueueMicroseconds = systemRoute == null ? deviceBufferMicroseconds : 0;
             systemRouteLatencyMs = remoteIORouteMs;
+            outputLatencyMeasured = false;
         }
     }
 

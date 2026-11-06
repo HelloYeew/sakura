@@ -93,6 +93,17 @@ internal class BassAudioManager : IAudioManager, IDisposable
     public double OutputLatencyMs { get; private set; }
 
     /// <summary>
+    /// One part: everything past BASS's own playback buffer, which BASS leaves out of positions itself, as it measured
+    /// it when the device started.
+    /// </summary>
+    public IReadOnlyList<AudioLatencyPart> GetOutputLatencyParts() => new[]
+    {
+        OutputLatencyMs > 0
+            ? new AudioLatencyPart(AudioLatencyPartKind.System, OutputLatencyMs, LatencySource.ReportedAtStart)
+            : AudioLatencyPart.NotReported(AudioLatencyPartKind.System)
+    };
+
+    /// <summary>
     /// The playback buffer BASS is keeping, in milliseconds.
     /// </summary>
     /// <remarks>
