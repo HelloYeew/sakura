@@ -180,6 +180,9 @@ public sealed class MetalRenderer : IMetalRenderer
         WhitePixel = new Texture(whiteTex, TextureOwnership.Shared);
 
         logDeviceInfo();
+
+        // VSync may have been set before the device was there.
+        applyDrawables();
     }
 
     /// <summary>
@@ -295,6 +298,64 @@ public sealed class MetalRenderer : IMetalRenderer
     public double LastBlockedMilliseconds => blockedMilliseconds;
 
     private double blockedMilliseconds;
+
+    // Two drawables under VSync where asked for: the CPU is held back to the display, and frames reach the screen up to
+    // a refresh sooner, at the risk of one running late missing its refresh. Asked for with SAKURA_METAL_DRAWABLES=2
+    // while it's measured against three, today's. Without VSync it stays three, so the CPU can run ahead.
+    private const string drawables_variable = "SAKURA_METAL_DRAWABLES";
+
+    private static readonly int vsync_drawables_asked = Environment.GetEnvironmentVariable(drawables_variable) == "2" ? 2 : 3;
+
+    private int vsyncDrawables = vsync_drawables_asked;
+    private bool vsyncOn;
+
+    // The layer's own count, three, until set otherwise, so a renderer that never asks for two never calls the library.
+    private int appliedDrawables = 3;
+
+    public void SetVSync(bool enabled)
+    {
+        vsyncOn = enabled;
+        applyDrawables();
+    }
+
+    /// <inheritdoc/>
+    public bool SupportsLateLatch => true;
+
+    /// <inheritdoc/>
+    public bool QueueMoreFrames()
+    {
+        if (vsyncDrawables >= 3)
+            return false;
+
+        vsyncDrawables = 3;
+        Logger.Verbose("Frames kept missing their refresh with two drawables, so Metal keeps three again.");
+        applyDrawables();
+        return true;
+    }
+
+    /// <summary>
+    /// Has the layer keep two drawables or three, as VSync and <see cref="QueueMoreFrames"/> have it, from the next frame.
+    /// </summary>
+    private void applyDrawables()
+    {
+        int count = vsyncOn ? vsyncDrawables : 3;
+
+        if (device == nint.Zero || count == appliedDrawables)
+            return;
+
+        try
+        {
+            // Frames in flight stay the library's three.
+            SakuraMetalNative.sakura_metal_set_frame_latency(device, 0, count);
+            appliedDrawables = count;
+            Logger.Verbose($"Metal keeps {count} drawables{(vsyncOn ? " under VSync" : string.Empty)}.");
+        }
+        catch (EntryPointNotFoundException)
+        {
+            // A library from before the control: the layer's own three.
+            appliedDrawables = count;
+        }
+    }
 
     // When the update the frame being drawn shows was made, which the native side tags the frame with, and whether
     // it can: a library from before frame timing can't.

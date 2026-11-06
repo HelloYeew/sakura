@@ -55,6 +55,20 @@ public interface IRenderer
     void SetVSync(bool enabled) { }
 
     /// <summary>
+    /// Whether the host may wait after <see cref="StartFrame"/> before taking the update to draw (late latch): true for a
+    /// renderer whose <see cref="StartFrame"/> waits for the display to hand it the next drawable, and that says when frames
+    /// were shown (<see cref="TryTakeShownFrame"/>), which the next refresh is predicted from.
+    /// </summary>
+    bool SupportsLateLatch => false;
+
+    /// <summary>
+    /// For a renderer that queues fewer frames under VSync than it could, for a fresher picture: the host saw frames keep
+    /// missing their refresh, so it should queue more again.
+    /// </summary>
+    /// <returns>Whether it now queues more. False where it queues all it can already.</returns>
+    bool QueueMoreFrames() => false;
+
+    /// <summary>
     /// Lets go of everything tied to the window's surface, before the system takes the surface away (an Android
     /// app going to the background). Drawing picks the surface up again once the window has one. Called with the
     /// draw thread stopped. Backends whose surface outlives backgrounding leave this a no-op.

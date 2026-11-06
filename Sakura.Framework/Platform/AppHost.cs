@@ -284,6 +284,22 @@ public abstract class AppHost : IDisposable
     private readonly long[] rootDrawNodeUpdatedTimes = new long[3];
 
     private readonly DisplayLatencySplit displayLatencySplit = new DisplayLatencySplit();
+
+    // When frames reach the screen under VSync, refresh by refresh, for the late latch and for missed refreshes. And the
+    // late latch, made on the draw thread at its first frame. Both are the draw thread's alone.
+    private readonly RefreshCadence refreshCadence = new RefreshCadence();
+    private LateLatch lateLatch;
+    private bool cadenceUnderVSync;
+
+    // Turns the late latch on (1) or off (0) whatever HostOptions.UseLateLatch says, for comparing.
+    private const string late_latch_variable = "SAKURA_LATE_LATCH";
+
+    private static readonly bool? late_latch_asked = Environment.GetEnvironmentVariable(late_latch_variable) switch
+    {
+        "1" => true,
+        "0" => false,
+        _ => null
+    };
     private DrawNode currentFrameDrawNode;
 
     private ThreadRunner threadRunner;
@@ -1514,6 +1530,26 @@ public abstract class AppHost : IDisposable
         Renderer?.Clear();
         Renderer?.StartFrame();
 
+        // Frames come one a refresh only under VSync, focused: anything else paces them otherwise, and their cadence says
+        // nothing about refreshes missed.
+        bool cadence = FrameLimiter?.Value == FrameSync.VSync && Window?.IsActive == true;
+        double refreshTicks = Stopwatch.Frequency / getDisplayHz();
+
+        if (cadence != cadenceUnderVSync)
+        {
+            refreshCadence.Reset();
+            cadenceUnderVSync = cadence;
+        }
+
+        // With the drawable in hand, as late as the frame can still make the next refresh: the update it takes is fresher.
+        if (cadence && (late_latch_asked ?? Options.UseLateLatch) && Renderer?.SupportsLateLatch == true)
+        {
+            lateLatch ??= new LateLatch(Options.AllowThreadSpinning);
+
+            var split = displayLatencySplit.Milliseconds;
+            lateLatch.Wait(refreshCadence, refreshTicks, split.Draw, split.Gpu, threadActivity.For(ThreadRole.Draw) == ThreadActivity.Tight);
+        }
+
         int drawIndex = frameBufferManager.GetDrawIndex();
         long takenTime = Stopwatch.GetTimestamp();
         var currentFrameNode = rootDrawNodes[drawIndex];
@@ -1540,7 +1576,24 @@ public abstract class AppHost : IDisposable
             displayLatencySplit.AddDrawn(rootDrawNodeTimes[drawIndex], rootDrawNodeUpdatedTimes[drawIndex], takenTime, swapStart);
 
         while (Renderer != null && Renderer.TryTakeShownFrame(out var shownFrame))
+        {
             displayLatencySplit.AddShown(shownFrame);
+
+            if (!cadence)
+                continue;
+
+            bool missed = refreshCadence.Add(shownFrame.Shown, refreshTicks);
+
+            if (lateLatch is { Waited: true })
+                lateLatch.FrameShown(missed);
+        }
+
+        // More than 1% of a few seconds' frames late: a renderer queuing fewer frames for a fresher picture queues more.
+        if (cadence && refreshCadence.TryEndWindow(out int misses) && Renderer?.QueueMoreFrames() == true)
+        {
+            Logger.Verbose($"{misses} frames missed their refresh in the last few seconds, so the renderer queues more frames.");
+            refreshCadence.Reset();
+        }
     }
 
     /// <summary>
@@ -1671,6 +1724,9 @@ public abstract class AppHost : IDisposable
 
         linuxGameMode?.Dispose();
         linuxGameMode = null;
+
+        lateLatch?.Dispose();
+        lateLatch = null;
 
         Logger.Shutdown();
 
