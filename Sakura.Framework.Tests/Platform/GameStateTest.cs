@@ -6,6 +6,7 @@ using System.Linq;
 using System.Reflection;
 using NUnit.Framework;
 using Sakura.Framework.Platform;
+using Sakura.Framework.Threading;
 
 namespace Sakura.Framework.Tests.Platform;
 
@@ -27,6 +28,34 @@ public class GameStateTest
     public void AnApplicationSaysNothing()
     {
         Assert.That(run(AppType.Application), Is.Empty);
+    }
+
+    /// <summary>
+    /// The startup loading is the host's own, so a game that never says anything keeps its threads as for play.
+    /// </summary>
+    [Test]
+    public void StartupLeavesTheThreadsAsForPlay()
+    {
+        using var host = new RecordingHost(AppType.Game, new RecordingPerformance());
+
+        host.Run(new ExitingApp(host));
+
+        Assert.That(host.ThreadActivity, Is.EqualTo(ThreadActivity.Tight));
+    }
+
+    [Test]
+    public void WhatAGameSaysReachesThePlatformAndItsThreads()
+    {
+        var performance = new RecordingPerformance();
+        using var host = new RecordingHost(AppType.Game, performance);
+
+        host.SetGameState(GameState.None);
+        Assert.That(host.ThreadActivity, Is.EqualTo(ThreadActivity.Smooth), "in a menu");
+
+        host.SetGameState(GameState.Gameplay, loading: true);
+        Assert.That(host.ThreadActivity, Is.EqualTo(ThreadActivity.Tight), "in play");
+
+        Assert.That(performance.States, Is.EqualTo(new[] { (GameState.None, false), (GameState.Gameplay, true) }));
     }
 
     private static (GameState State, bool Loading)[] run(AppType appType)

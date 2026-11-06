@@ -14,6 +14,7 @@ using Sakura.Framework.Logging;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Reactive;
 using Sakura.Framework.Statistic;
+using Sakura.Framework.Threading;
 using Sakura.Framework.Timing;
 using SDL;
 using static SDL.SDL3;
@@ -2272,6 +2273,11 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
     private void runMixLoop()
     {
+        // On Apple platforms .NET's highest priority is still one other apps' work can hold back. This thread mixes the
+        // sound, so it takes the frame threads' top one.
+        if (DarwinThreadPolicy.IsAvailable)
+            DarwinThreadPolicy.SetOwnPriority(DarwinThreadPolicy.PriorityFor(ThreadRole.Audio, ThreadActivity.Tight));
+
         var stopwatch = new Stopwatch();
 
         // Starvation is derived from how long each iteration took rather than observed while it was

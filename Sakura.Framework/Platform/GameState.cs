@@ -4,7 +4,7 @@
 namespace Sakura.Framework.Platform;
 
 /// <summary>
-/// What a game is doing, for the system to plan around. See <see cref="IPlatformPerformance.SetGameState"/>.
+/// What a game is doing, for the framework and the system to plan around. See <see cref="AppHost.SetGameState"/>.
 /// </summary>
 public enum GameState
 {

@@ -7,6 +7,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Sakura.Framework.Logging;
+using Sakura.Framework.Threading;
 
 namespace Sakura.Framework.Audio.SdlEngine;
 
@@ -98,15 +99,22 @@ internal sealed class AudioDecodeScheduler : IDisposable
 
     private void run()
     {
-        if (OperatingSystem.IsAndroid())
-            raiseOnAndroid();
+        if (OperatingSystem.IsLinux())
+            batchOnLinux();
 
         long blockedSince = 0;
+        int? androidNice = null;
 
         while (!cancellation.IsCancellationRequested)
         {
             bool didWork = false;
             bool blocked = false;
+
+            // Level with the frame threads, which drop their raised priority outside play. Thread.Priority changes
+            // nothing on Android, and below them a frame thread that kept a core under load drained the half second
+            // decoded ahead into a gap. Until they've started, at the priority they take in play.
+            if (OperatingSystem.IsAndroid())
+                AndroidThreadPolicy.FollowFrameThreads(ref androidNice, android_play_nice);
 
             // registration during a pass is picked up next time
             // around, which is soon enough and keeps the lock off the decode path.
@@ -159,27 +167,32 @@ internal sealed class AudioDecodeScheduler : IDisposable
         }
     }
 
-    // Android's THREAD_PRIORITY_URGENT_DISPLAY, which the frame threads are raised to (AndroidPerformance).
-    private const int android_frame_thread_priority = -8;
+    // Android's THREAD_PRIORITY_URGENT_DISPLAY, which a game's frame threads take in play.
+    private const int android_play_nice = -8;
 
-    // setpriority's PRIO_PROCESS, which on Linux, given a thread's ID, applies to that thread alone.
-    private const int prio_process = 0;
+    // sched_setscheduler's SCHED_BATCH.
+    private const int sched_batch = 3;
 
     /// <summary>
-    /// Puts this thread level with the frame threads. Thread.Priority changes nothing on Android, so it stayed below
-    /// them, and a frame thread that kept a core under load drained the half second it keeps ahead into a gap.
+    /// Marks this thread as batch work on desktop Linux. It keeps its share of the CPU, but waking up no longer lets it
+    /// cut in on a frame thread mid-frame: it decodes half a second ahead, so a few milliseconds' wait costs nothing.
     /// </summary>
-    private static void raiseOnAndroid()
+    private static void batchOnLinux()
     {
-        if (setpriority(prio_process, gettid(), android_frame_thread_priority) != 0)
-            Logger.Verbose($"The audio decode thread stays at its priority: setpriority failed (error {Marshal.GetLastPInvokeError()}).");
+        var parameters = new SchedParam();
+
+        if (sched_setscheduler(0, sched_batch, ref parameters) != 0)
+            Logger.Debug($"The audio decode thread stays on the normal policy: sched_setscheduler failed (error {Marshal.GetLastPInvokeError()}).");
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SchedParam
+    {
+        public int Priority;
     }
 
     [DllImport("libc", SetLastError = true)]
-    private static extern int setpriority(int which, int who, int priority);
-
-    [DllImport("libc")]
-    private static extern int gettid();
+    private static extern int sched_setscheduler(int threadId, int policy, ref SchedParam parameters);
 
     public void Dispose()
     {

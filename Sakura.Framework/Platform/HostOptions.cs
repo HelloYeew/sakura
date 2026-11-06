@@ -51,9 +51,10 @@ public class HostOptions
     /// on how late the platform's sleep wakes, from tens of microseconds on macOS to over half a
     /// millisecond on Windows. This gives the most precise frame timing on desktop, at the cost of
     /// constant CPU usage. Disable on battery-constrained targets (e.g. mobile) to trade
-    /// sub-millisecond pacing jitter for power savings. Spinning is automatically suspended while the
-    /// window is inactive regardless of this setting, and the audio thread and multi-threaded input
-    /// loop never spin. Only applies to <see cref="Platform.AppType.Game"/>.
+    /// sub-millisecond pacing jitter for power savings. Spinning only happens at
+    /// <see cref="Threading.ThreadActivity.Tight"/>, a focused game in play (see <see cref="AppHost.SetGameState"/>),
+    /// regardless of this setting, and the audio thread and multi-threaded input loop never spin. Only
+    /// applies to <see cref="Platform.AppType.Game"/>.
     /// </summary>
     /// <remarks>
     /// Off by default on phones and tablets, where a spinning core costs battery and heat, and a hot phone
@@ -72,4 +73,28 @@ public class HostOptions
     /// threads' busy-spinning may trigger.
     /// </remarks>
     public bool UseMultimediaClassScheduler { get; set; }
+
+    /// <summary>
+    /// macOS and iOS only. Whether the update and draw threads tell the system's performance controller when each frame
+    /// is due, while the app is focused, so it keeps the clocks just high enough for every frame to finish in time.
+    /// Without it, an idle Mac runs short frames on slow clocks and efficient cores, unevenly, and some run into the
+    /// next frame. It costs some power: measured in yuuki, about 0.3 W of CPU for update work at p99 0.8 ms instead of
+    /// 2.5 ms.
+    /// </summary>
+    /// <remarks>
+    /// Apple documents work intervals for real-time audio threads. They're measured to work the same for frame threads,
+    /// and the threads carry on without one if the system won't give one.
+    /// </remarks>
+    public bool UseWorkIntervals { get; set; } = true;
+
+    /// <summary>
+    /// Linux only. Whether to ask Feral's GameMode for the user's game settings (the CPU governor, I/O priority, the GPU's
+    /// performance mode, a screensaver inhibit, their own scripts) while the game is in play, and give it back otherwise.
+    /// Needs GameMode installed, and since 1.8 the user in the <c>gamemode</c> group for the CPU governor. Only applies to
+    /// <see cref="Platform.AppType.Game"/>.
+    /// </summary>
+    /// <remarks>
+    /// Off by default: it changes system-wide settings the user chose for themselves, and runs their scripts each time.
+    /// </remarks>
+    public bool UseLinuxGameMode { get; set; }
 }

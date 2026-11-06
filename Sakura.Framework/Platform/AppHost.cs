@@ -291,6 +291,21 @@ public abstract class AppHost : IDisposable
     private AppThread drawThread;
     private AppThread audioThread;
 
+    /// <summary>
+    /// How much the threads ask the system for, from the window's state and what the app says it's doing.
+    /// </summary>
+    private readonly ThreadActivityTracker threadActivity;
+
+    /// <summary>
+    /// Feral's GameMode, held while in play, where <see cref="HostOptions.UseLinuxGameMode"/> asks for it.
+    /// </summary>
+    private LinuxGameMode linuxGameMode;
+
+    /// <summary>
+    /// How much the host's threads ask the system for right now. See <see cref="SetGameState"/>.
+    /// </summary>
+    internal ThreadActivity ThreadActivity => threadActivity.Current;
+
     // TODO: This "should" not be accessible from outside the framework.
     public Storage FrameworkStorage { get => field ??= new EmbeddedResourceStorage(typeof(AppHost).Assembly, "Sakura.Framework.Resources"); private set; }
 
@@ -370,6 +385,34 @@ public abstract class AppHost : IDisposable
 
         Name = appName;
         KeepScreenOn = new Reactive<bool>(Options.AppType == AppType.Game);
+
+        threadActivity = new ThreadActivityTracker(Options.AppType);
+        threadActivity.Changed += (previous, next, reason) =>
+        {
+            Logger.Verbose($"Threads go from {previous} to {next}: {reason}");
+
+            // Process-wide, so it follows the host's level rather than any one thread's.
+            if (OperatingSystem.IsWindows() && WindowsTimerResolution.PeriodFor(previous) != WindowsTimerResolution.PeriodFor(next))
+                WindowsTimerResolution.Apply(next);
+
+            linuxGameMode?.Want(next == ThreadActivity.Tight);
+        };
+    }
+
+    /// <summary>
+    /// Tells the framework and the system what the game is doing. In play, the update and draw threads ask for the most
+    /// the system gives: a priority above other apps' work, and precise waits. Anywhere else they ask for
+    /// less, which saves power, and keeps the computer responsive for whatever else runs. Until a game first calls this,
+    /// it's taken to be in play whenever it's focused. Android also hears of it, and raises the CPU while the game loads.
+    /// Safe to call from any thread.
+    /// </summary>
+    /// <param name="state">What the player is doing: <see cref="GameState.Gameplay"/> while they play,
+    /// <see cref="GameState.Content"/> for a replay, <see cref="GameState.None"/> in menus.</param>
+    /// <param name="loading">Whether the game is loading, whatever it shows meanwhile.</param>
+    public void SetGameState(GameState state, bool loading = false)
+    {
+        threadActivity.SetGameState(state, loading);
+        Performance.SetGameState(state, loading);
     }
 
     /// <summary>
@@ -707,6 +750,7 @@ public abstract class AppHost : IDisposable
             SetupForRun();
 
             // Startup is a game's first loading screen: the system can raise the CPU for it.
+            // Straight to the platform: the app hasn't said anything yet, so its threads stay as for a game in play.
             if (Options.AppType == AppType.Game)
                 Performance.SetGameState(GameState.None, loading: true);
 
@@ -783,6 +827,13 @@ public abstract class AppHost : IDisposable
                 Type = PendingInputType.ExitRequested
             });
             Window.FocusLost += updateTargetUpdateHz;
+            Window.FocusLost += () => threadActivity.SetFocused(false);
+            Window.FocusGained += () => threadActivity.SetFocused(true);
+            Window.Minimized += () => threadActivity.SetMinimized(true);
+            Window.Restored += () => threadActivity.SetMinimized(false);
+            Window.OcclusionChanged += occluded => threadActivity.SetOccluded(occluded);
+            Window.EnteringBackground += () => threadActivity.SetInBackground(true);
+            Window.EnteredForeground += () => threadActivity.SetInBackground(false);
 
             // Whatever is let go of in another window never reaches this one, so release it here.
             Window.FocusLost += () => inputQueue.Enqueue(new PendingInput
@@ -815,10 +866,18 @@ public abstract class AppHost : IDisposable
             Window.GetPhysicalSize(out int initialPhysicalWidth, out int initialPhysicalHeight);
             onResize(initialPhysicalWidth, initialPhysicalHeight, Window.Width, Window.Height);
 
-            // Precision busy-spinning is only worthwhile for a game while the window is focused (and may
-            // be disabled entirely via HostOptions for battery-constrained targets).
-            Func<bool> usePreciseTiming = () => allowSpinning && Window?.IsActive != false;
+            threadActivity.SetFocused(Window.IsActive);
+
+            if (OperatingSystem.IsLinux() && Options.AppType == AppType.Game && Options.UseLinuxGameMode)
+            {
+                linuxGameMode = LinuxGameMode.Open();
+                linuxGameMode?.Want(threadActivity.Current == ThreadActivity.Tight);
+            }
+
+            // Precise waits are only worth it for a focused game in play. Whether they may also spin is up to HostOptions,
+            // for battery-constrained targets.
             bool useMultimediaClassScheduler = Options.AppType == AppType.Game && Options.UseMultimediaClassScheduler;
+            bool useWorkIntervals = Options.UseWorkIntervals;
 
             // The two threads a frame waits on. An application only has to run smoothly, so the system may favour the
             // battery for it.
@@ -829,14 +888,20 @@ public abstract class AppHost : IDisposable
             {
                 GetDeadlineMilliseconds = GetPresentationDeadlineMs,
                 Priority = ThreadPriority.AboveNormal,
-                UsePreciseTiming = usePreciseTiming,
+                GetActivity = () => threadActivity.For(ThreadRole.Update),
+                UsePreciseTiming = () => threadActivity.For(ThreadRole.Update) == ThreadActivity.Tight,
+                AllowSpinning = allowSpinning,
+                CreatePolicy = () => ThreadPolicies.Create(ThreadRole.Update, "UpdateThread", useWorkIntervals),
                 UseMultimediaClassScheduler = useMultimediaClassScheduler,
                 CreateWorkHint = createWorkHint
             };
             drawThread = new AppThread("DrawThread", PerformDraw, getDrawTargetHz)
             {
                 Priority = ThreadPriority.Normal,
-                UsePreciseTiming = usePreciseTiming,
+                GetActivity = () => threadActivity.For(ThreadRole.Draw),
+                UsePreciseTiming = () => threadActivity.For(ThreadRole.Draw) == ThreadActivity.Tight,
+                AllowSpinning = allowSpinning,
+                CreatePolicy = () => ThreadPolicies.Create(ThreadRole.Draw, "DrawThread", useWorkIntervals),
                 UseMultimediaClassScheduler = useMultimediaClassScheduler,
                 GetBlockedMilliseconds = () => lastPresentMilliseconds,
                 GetDeadlineMilliseconds = GetPresentationDeadlineMs,
@@ -846,8 +911,10 @@ public abstract class AppHost : IDisposable
             {
                 GetDeadlineMilliseconds = GetPresentationDeadlineMs,
                 Priority = ThreadPriority.Highest,
+                GetActivity = () => threadActivity.For(ThreadRole.Audio),
+                CreatePolicy = () => ThreadPolicies.Create(ThreadRole.Audio, "AudioThread", false),
 
-                // Never spins. The sound itself is mixed on the audio device's own thread, so this one only
+                // Never waits precisely. The sound itself is mixed on the audio device's own thread, so this one only
                 // advances AudioManager state, which a tick landing a fraction of a millisecond late does not
                 // disturb. Spinning bought nothing but a core's worth of CPU.
                 UsePreciseTiming = static () => false
@@ -929,7 +996,7 @@ public abstract class AppHost : IDisposable
             appLoopStopwatch.Start();
             long nextMainFrameTime = Stopwatch.GetTimestamp();
 
-            var mainWaiter = new FrameWaiter("MainThread");
+            var mainWaiter = new FrameWaiter("MainThread", allowSpinning);
 
             try
             {
@@ -1012,10 +1079,10 @@ public abstract class AppHost : IDisposable
                             nextMainFrameTime = now;
 
                         // Multi-threaded, this loop only polls input, and the events carry their own timestamps,
-                        // so it sleeps rather than spins. Single-threaded it drives every frame, so it follows
-                        // the app threads' policy: spin unless disabled or the window is inactive.
+                        // so it waits plainly. Single-threaded it drives every frame, so it follows the update
+                        // thread: precise for a focused game in play.
                         bool mainPreciseTiming = ExecutionMode.Value == Threading.ExecutionMode.SingleThread
-                                                 && allowSpinning && Window?.IsActive != false;
+                                                 && threadActivity.For(ThreadRole.Update) == ThreadActivity.Tight;
                         mainWaiter.WaitUntil(nextMainFrameTime, mainPreciseTiming);
                     }
                     else
@@ -1601,6 +1668,9 @@ public abstract class AppHost : IDisposable
         }
 
         FrameworkConfigManager?.Flush();
+
+        linuxGameMode?.Dispose();
+        linuxGameMode = null;
 
         Logger.Shutdown();
 

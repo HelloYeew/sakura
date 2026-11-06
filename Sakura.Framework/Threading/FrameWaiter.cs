@@ -12,6 +12,9 @@ namespace Sakura.Framework.Threading;
 /// <summary>
 /// Waits for a frame deadline by sleeps through the bulk of the wait with the platform's
 /// <see cref="INativeSleep"/>, then busy-spins the last stretch (the guard) so the frame lands on time.
+/// A precise wait sleeps with the platform's most precise timer: on Apple platforms a kernel timer that
+/// the system may not delay to save power (<see cref="DarwinCriticalSleep"/>), which shrinks the guard
+/// from about a millisecond to about a tenth of one.
 /// </summary>
 /// <remarks>
 /// The guard is learned per thread rather than fixed, because how late the OS wakes a sleeping thread
@@ -38,6 +41,13 @@ internal sealed class FrameWaiter : IDisposable
     private const double initial_guard_us = 500;
 
     /// <summary>
+    /// Where the guard starts with a precise sleep, which wakes tens of microseconds late. The guard rises in a few
+    /// dozen late wakes but falls by a fraction of a microsecond per wake, so starting high would spin away the
+    /// difference for the first half-minute or so.
+    /// </summary>
+    private const double initial_precise_guard_us = 100;
+
+    /// <summary>
     /// Past this, frames are allowed to run late rather than spin away most of a frame. Only reachable
     /// when the OS cannot sleep accurately at all.
     /// </summary>
@@ -49,26 +59,37 @@ internal sealed class FrameWaiter : IDisposable
     private static readonly double timespan_ticks_per_stopwatch_tick = (double)TimeSpan.TicksPerSecond / Stopwatch.Frequency;
 
     private readonly INativeSleep? nativeSleep;
+    private readonly INativeSleep? preciseSleep;
+    private readonly bool allowSpinning;
     private readonly string? name;
     private GlobalStatistic<double>? statGuard;
 
     /// <summary>
     /// How much of each precise wait is left to the spin, in stopwatch ticks.
     /// </summary>
-    internal double GuardTicks { get; private set; } = initial_guard_us * ticks_per_us;
+    internal double GuardTicks { get; private set; }
 
     /// <param name="name">The owning thread, used to label its guard in <see cref="GlobalStatistics"/>.</param>
-    public FrameWaiter(string name)
-        : this(CreateNativeSleep())
+    /// <param name="allowSpinning">Whether a precise wait may spin its last stretch.</param>
+    public FrameWaiter(string name, bool allowSpinning = true)
+        : this(CreateNativeSleep(), CreatePreciseSleep(), allowSpinning)
     {
         this.name = name;
 
-        Logger.Debug($"FrameWaiter '{name}' initialized with native sleep: {(nativeSleep != null ? nativeSleep.GetType().Name : "none")}");
+        Logger.Debug($"FrameWaiter '{name}' initialized with native sleep: {nativeSleep?.GetType().Name ?? "none"}, "
+                     + $"precise sleep: {preciseSleep?.GetType().Name ?? "the same"}, spinning {(allowSpinning ? "allowed" : "off")}");
     }
 
-    internal FrameWaiter(INativeSleep? nativeSleep)
+    /// <param name="nativeSleep">The sleep for plain waits, or null for <see cref="Thread.Sleep(TimeSpan)"/>.</param>
+    /// <param name="preciseSleep">The sleep for precise waits, or null to use <paramref name="nativeSleep"/>.</param>
+    /// <param name="allowSpinning">Whether a precise wait may spin its last stretch.</param>
+    internal FrameWaiter(INativeSleep? nativeSleep, INativeSleep? preciseSleep = null, bool allowSpinning = true)
     {
         this.nativeSleep = nativeSleep;
+        this.preciseSleep = preciseSleep;
+        this.allowSpinning = allowSpinning;
+
+        GuardTicks = (preciseSleep != null ? initial_precise_guard_us : initial_guard_us) * ticks_per_us;
     }
 
     /// <summary>
@@ -76,18 +97,19 @@ internal sealed class FrameWaiter : IDisposable
     /// </summary>
     /// <param name="deadline">The timestamp to return at.</param>
     /// <param name="precise">
-    /// Whether to spin the guard. When false the whole wait is slept and the OS's lateness accepted to save
-    /// CPU. Those wakes also leave the guard alone: they come from a thread that never spins, or from an
-    /// inactive window whose timers may be throttled and are not the ones a focused window will see.
+    /// Whether to sleep with the precise timer and, if spinning is allowed, spin the guard. When false the
+    /// whole wait is slept with the plain one and the OS's lateness accepted to save CPU. Those wakes also
+    /// leave the guard alone: they come from a thread that never spins, or from an inactive window whose
+    /// timers may be throttled and are not the ones a focused window will see.
     /// </param>
     public void WaitUntil(long deadline, bool precise)
     {
         long now = Stopwatch.GetTimestamp();
 
-        if (!precise)
+        if (!precise || !allowSpinning)
         {
             if (deadline > now)
-                sleep(deadline - now);
+                sleep(deadline - now, precise);
 
             return;
         }
@@ -96,7 +118,7 @@ internal sealed class FrameWaiter : IDisposable
 
         if (sleepTicks > 0)
         {
-            sleep(sleepTicks);
+            sleep(sleepTicks, true);
             RecordOvershoot(Stopwatch.GetTimestamp() - (now + sleepTicks));
         }
 
@@ -126,11 +148,18 @@ internal sealed class FrameWaiter : IDisposable
         statGuard.Value = GuardTicks / ticks_per_us / 1000;
     }
 
-    public void Dispose() => nativeSleep?.Dispose();
+    public void Dispose()
+    {
+        nativeSleep?.Dispose();
+        preciseSleep?.Dispose();
+    }
 
-    private void sleep(long ticks)
+    private void sleep(long ticks, bool precise)
     {
         var duration = TimeSpan.FromTicks((long)(ticks * timespan_ticks_per_stopwatch_tick));
+
+        if (precise && preciseSleep?.Sleep(duration) == true)
+            return;
 
         if (nativeSleep?.Sleep(duration) != true)
             Thread.Sleep(duration);
@@ -143,4 +172,9 @@ internal sealed class FrameWaiter : IDisposable
 
         return UnixNativeSleep.IsAvailable ? new UnixNativeSleep() : null;
     }
+
+    /// <summary>
+    /// The platform's precise sleep, where it has one that's more precise than <see cref="CreateNativeSleep"/>'s.
+    /// </summary>
+    internal static INativeSleep? CreatePreciseSleep() => DarwinCriticalSleep.IsAvailable ? DarwinCriticalSleep.Create() : null;
 }
