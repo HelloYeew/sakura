@@ -88,6 +88,14 @@ public class HostOptions
     public bool UseWorkIntervals { get; set; } = true;
 
     /// <summary>
+    /// Under VSync, whether the draw waits, once the display has handed it the next frame to draw into, until shortly
+    /// before the next refresh, and only then takes the newest update (late latch). The picture is fresher by up to a
+    /// refresh, at the same frame rate. Only on a renderer that supports it (Metal), and it turns itself off where frames
+    /// keep missing their refresh. Off unless asked for. <c>SAKURA_LATE_LATCH</c> overrides it for comparing: 1 on, 0 off.
+    /// </summary>
+    public bool UseLateLatch { get; set; }
+
+    /// <summary>
     /// Linux only. Whether to ask Feral's GameMode for the user's game settings (the CPU governor, I/O priority, the GPU's
     /// performance mode, a screensaver inhibit, their own scripts) while the game is in play, and give it back otherwise.
     /// Needs GameMode installed, and since 1.8 the user in the <c>gamemode</c> group for the CPU governor. Only applies to

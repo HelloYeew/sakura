@@ -232,7 +232,9 @@ jobs:
 
           $tests = if ('${{ matrix.can_run_tests }}' -eq 'true') { 'ON' } else { 'OFF' }
 
-          cmake -S . -B $env:BUILD_DIR -A ${{ matrix.platform }} -DSAKURA_IMAGE_BUILD_TESTS=$tests
+          # Quoted, or PowerShell passes -D...=$tests through as it's written, without putting the value in,
+          # and CMake's if() reads that text as true: the tests built even where they're meant to be off.
+          cmake -S . -B $env:BUILD_DIR -A ${{ matrix.platform }} "-DSAKURA_IMAGE_BUILD_TESTS=$tests"
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
           cmake --build $env:BUILD_DIR --config Release

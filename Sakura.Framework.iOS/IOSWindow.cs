@@ -33,6 +33,7 @@ internal class IOSWindow : SDLWindow
     private const int frames_to_settle = 8;
 
     private CADisplayLink? displayLink;
+    private TouchTimeRecognizer? touchTimes;
     private float refreshRate;
     private float newRate;
     private int newRateFrames;
@@ -162,6 +163,19 @@ internal class IOSWindow : SDLWindow
         }
 
         displayLink.AddToRunLoop(NSRunLoop.Main, NSRunLoopMode.Default);
+
+        // Each touch at the time it happened, rather than SDL's stamp, which runs late by an amount it learns as it goes.
+        nint window = SDL_GetPointerProperty(SDL_GetWindowProperties(sdlWindow), SDL_PROP_WINDOW_UIKIT_WINDOW_POINTER, IntPtr.Zero);
+
+        if (ObjCRuntime.Runtime.GetNSObject<UIWindow>(window) is UIWindow uiWindow)
+        {
+            touchTimes = new TouchTimeRecognizer(SetTouchTime);
+            uiWindow.AddGestureRecognizer(touchTimes);
+        }
+        else
+        {
+            Logger.Verbose("SDL's UIKit window isn't there, so touches keep SDL's times.");
+        }
     }
 
     // On the main thread, which is the event thread here, once a frame.

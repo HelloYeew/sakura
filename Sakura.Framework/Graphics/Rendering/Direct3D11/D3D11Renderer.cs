@@ -680,6 +680,8 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
     public double DisplayLatencyMilliseconds => displayLatency.Milliseconds ?? double.NaN;
 
+    public bool TryTakeShownFrame(out ShownFrame frame) => displayLatency.TryTakeShown(out frame);
+
     /// <summary>
     /// Measures the latest present DXGI reports on screen, from the update it showed. Its time is a
     /// QueryPerformanceCounter reading, which is what <see cref="Stopwatch"/> reads on Windows.
@@ -697,7 +699,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         {
             if (presentCount == statistics.PresentCount && contentTicks != 0)
             {
-                displayLatency.Add(DisplayLatency.Between(contentTicks, statistics.SyncQPCTime));
+                displayLatency.AddFrame(contentTicks, statistics.SyncQPCTime);
                 return;
             }
         }

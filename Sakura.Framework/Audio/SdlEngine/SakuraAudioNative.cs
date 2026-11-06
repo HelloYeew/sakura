@@ -41,6 +41,102 @@ internal struct SakuraAudioStats
 }
 
 /// <summary>
+/// A pw_stream for the native process callback, made by <see cref="PipeWireOutput"/>. Layout must match the native
+/// <c>SakuraAudioPipeWireConfig</c>.
+/// </summary>
+[StructLayout(LayoutKind.Sequential)]
+internal struct SakuraAudioPipeWireConfig
+{
+    /// <summary>
+    /// The pw_stream, playing interleaved float32 at the engine's rate and channels.
+    /// </summary>
+    public nint Stream;
+
+    /// <summary>
+    /// pw_stream_dequeue_buffer.
+    /// </summary>
+    public nint Dequeue;
+
+    /// <summary>
+    /// pw_stream_queue_buffer.
+    /// </summary>
+    public nint Queue;
+
+    /// <summary>
+    /// What to write where the stream doesn't say: the quantum asked for in node.latency.
+    /// </summary>
+    public int FramesPerCycle;
+
+    /// <summary>
+    /// 1 where libpipewire is 0.3.49 or later, whose pw_buffer says how much it wants.
+    /// </summary>
+    public int HasRequested;
+}
+
+/// <summary>
+/// A WASAPI stream for the native render loop, made and initialized by <see cref="WasapiOutput"/>. Layout must match the
+/// native <c>SakuraAudioWasapiConfig</c>: 48 bytes on x86, 72 on x64 and arm64.
+/// </summary>
+[StructLayout(LayoutKind.Sequential)]
+internal struct SakuraAudioWasapiConfig
+{
+    /// <summary>
+    /// IAudioClock::GetFrequency: the device position's units a second.
+    /// </summary>
+    public ulong ClockFrequency;
+
+    /// <summary>
+    /// The IAudioClient, initialized event-driven with <see cref="Event"/> as its event handle, not started.
+    /// </summary>
+    public nint AudioClient;
+
+    /// <summary>
+    /// Its IAudioRenderClient.
+    /// </summary>
+    public nint RenderClient;
+
+    /// <summary>
+    /// Its IAudioClock, or 0 to publish no device time.
+    /// </summary>
+    public nint AudioClock;
+
+    /// <summary>
+    /// The event handle.
+    /// </summary>
+    public nint Event;
+
+    /// <summary>
+    /// kernel32's WaitForSingleObject.
+    /// </summary>
+    public nint Wait;
+
+    /// <summary>
+    /// IAudioClient::GetBufferSize.
+    /// </summary>
+    public int BufferFrames;
+
+    /// <summary>
+    /// The stream format's channels.
+    /// </summary>
+    public int Channels;
+
+    /// <summary>
+    /// One of the <c>SAMPLE_*</c> constants in <see cref="SakuraAudioNative"/>.
+    /// </summary>
+    public int SampleFormat;
+
+    /// <summary>
+    /// 1 for an exclusive-mode stream, which takes the whole buffer at each event.
+    /// </summary>
+    public int Exclusive;
+
+    /// <summary>
+    /// Shared mode: how many frames to keep queued in the endpoint buffer, or 0 for all of it.
+    /// </summary>
+    public int FillFrames;
+}
+
+/// <summary>
 /// The device's own clock, filled by <see cref="SakuraAudioNative.sakura_audio_engine_get_device_time"/>. Layout must match
 /// the native <c>SakuraAudioDeviceTime</c>.
 /// </summary>
@@ -260,6 +356,67 @@ internal static class SakuraAudioNative
     /// </summary>
     [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
     public static extern unsafe int sakura_audio_engine_mix(nint engine, float* destination, int frames);
+
+    #endregion
+
+    #region WASAPI
+
+    // The stream format's samples, which the mix is converted to on the way into the endpoint buffer.
+    public const int SAMPLE_FLOAT32 = 0;
+    public const int SAMPLE_INT16 = 1;
+    public const int SAMPLE_INT24 = 2;
+    public const int SAMPLE_INT32 = 3;
+
+    /// <summary>
+    /// The render loop for a WASAPI stream, or 0 for a config it can't play. A library from before the WASAPI output
+    /// doesn't have it, which throws <see cref="EntryPointNotFoundException"/>.
+    /// </summary>
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern unsafe nint sakura_audio_wasapi_create(nint engine, SakuraAudioWasapiConfig* config);
+
+    /// <summary>
+    /// Runs the stream on the calling thread until <see cref="sakura_audio_wasapi_stop"/>. Never with
+    /// [SuppressGCTransition]: the thread stays in here, and a thread that skipped the transition would hold up every
+    /// collection for as long as it did.
+    /// </summary>
+    /// <returns><see cref="OK"/> once stopped, the failing HRESULT, <see cref="TIMEOUT"/> or <see cref="ERROR"/>.</returns>
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int sakura_audio_wasapi_run(nint output);
+
+    /// <summary>
+    /// Asks the run to stop at its next wake-up, from any thread, before or during it.
+    /// </summary>
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void sakura_audio_wasapi_stop(nint output);
+
+    /// <summary>
+    /// Frees the output once its run has returned, or was never started. Releases none of the COM objects.
+    /// </summary>
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void sakura_audio_wasapi_destroy(nint output);
+
+    #endregion
+
+    #region PipeWire
+
+    /// <summary>
+    /// The output for a pw_stream, or 0 for a config it can't play. A library from before the PipeWire output doesn't
+    /// have it, which throws <see cref="EntryPointNotFoundException"/>.
+    /// </summary>
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern unsafe nint sakura_audio_pipewire_create(nint engine, SakuraAudioPipeWireConfig* config);
+
+    /// <summary>
+    /// The pw_stream_events process function, to add as a listener with the output as its data.
+    /// </summary>
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern nint sakura_audio_get_pipewire_process_callback();
+
+    /// <summary>
+    /// Frees the output, once the stream is disconnected and can't call the process function again.
+    /// </summary>
+    [DllImport(lib_name, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void sakura_audio_pipewire_destroy(nint output);
 
     #endregion
 

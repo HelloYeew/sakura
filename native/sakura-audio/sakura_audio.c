@@ -1738,19 +1738,24 @@ static void track_device_sample_time(SakuraAudioEngine *engine, const core_audio
     engine->deviceSampleTimeKnown = true;
 }
 
-// Publishes when the callback about to be mixed goes out, against the frames mixed before it, for the managed side to
-// work out how late what it mixes is heard.
+// Publishes when the cycle about to be mixed goes out, against the frames mixed before it, for the managed side to work
+// out how late what it mixes is heard.
+static void publish_device_time_at(SakuraAudioEngine *engine, uint64_t hostTime)
+{
+    uint32_t sequence = sakura_atomic_load_u32(&engine->deviceTimeSequence);
+
+    sakura_atomic_store_u32(&engine->deviceTimeSequence, sequence + 1);
+    sakura_atomic_store_i64(&engine->deviceTimeFrames, engine->framesMixed);
+    sakura_atomic_store_u64(&engine->deviceTimeHost, hostTime);
+    sakura_atomic_store_u32(&engine->deviceTimeSequence, sequence + 2);
+}
+
 static void publish_device_time(SakuraAudioEngine *engine, const core_audio_time_stamp *stamp)
 {
     if (stamp == NULL || (stamp->flags & AUDIO_TIME_STAMP_HOST_TIME_VALID) == 0)
         return;
 
-    uint32_t sequence = sakura_atomic_load_u32(&engine->deviceTimeSequence);
-
-    sakura_atomic_store_u32(&engine->deviceTimeSequence, sequence + 1);
-    sakura_atomic_store_i64(&engine->deviceTimeFrames, engine->framesMixed);
-    sakura_atomic_store_u64(&engine->deviceTimeHost, stamp->hostTime);
-    sakura_atomic_store_u32(&engine->deviceTimeSequence, sequence + 2);
+    publish_device_time_at(engine, stamp->hostTime);
 }
 
 // An audio unit's render callback (AURenderCallback), for iOS's RemoteIO output, where the engine plays without SDL in
@@ -1801,6 +1806,454 @@ static int32_t audio_unit_callback(void *refCon, uint32_t *actionFlags, const vo
 }
 
 void *sakura_audio_get_audio_unit_callback(void) { return (void *)audio_unit_callback; }
+
+// ---------------------------------------------------------------------------------------------
+// WASAPI
+//
+// The COM objects are called through their vtables, in audioclient.h's order, so no Windows header is needed. A vtable
+// holds function pointers, read as a generic one and cast to each method's own type.
+
+typedef void (*com_method)(void);
+
+typedef struct
+{
+    const com_method *vtable;
+} com_object;
+
+// After IUnknown's three. IAudioClient: Initialize 3, GetBufferSize 4, GetStreamLatency 5, GetCurrentPadding 6,
+// IsFormatSupported 7, GetMixFormat 8, GetDevicePeriod 9, Start 10, Stop 11. IAudioRenderClient: GetBuffer 3,
+// ReleaseBuffer 4. IAudioClock: GetFrequency 3, GetPosition 4.
+#define AUDIO_CLIENT_GET_CURRENT_PADDING 6
+#define AUDIO_CLIENT_START 10
+#define AUDIO_CLIENT_STOP 11
+#define RENDER_CLIENT_GET_BUFFER 3
+#define RENDER_CLIENT_RELEASE_BUFFER 4
+#define AUDIO_CLOCK_GET_POSITION 4
+
+typedef int32_t(SAKURA_AUDIO_STDCALL *audio_client_call_fn)(void *client);
+typedef int32_t(SAKURA_AUDIO_STDCALL *get_current_padding_fn)(void *client, uint32_t *padding);
+typedef int32_t(SAKURA_AUDIO_STDCALL *get_buffer_fn)(void *render, uint32_t frames, uint8_t **data);
+typedef int32_t(SAKURA_AUDIO_STDCALL *release_buffer_fn)(void *render, uint32_t frames, uint32_t flags);
+typedef int32_t(SAKURA_AUDIO_STDCALL *get_position_fn)(void *clock, uint64_t *position, uint64_t *qpcPosition);
+
+// AUDCLNT_BUFFERFLAGS_SILENT, and WaitForSingleObject's results.
+#define WASAPI_BUFFER_SILENT 0x2u
+#define WASAPI_WAIT_OBJECT_0 0x0u
+#define WASAPI_WAIT_TIMEOUT 0x102u
+
+// How long an event may take before the stream counts as stalled, as WASAPI's own samples have it. Far longer than any
+// period, so only a device that stopped asking gets here.
+#define WASAPI_WAIT_MILLISECONDS 2000u
+
+// Bigger than any endpoint buffer (about 87 s at 48 kHz), so the scratch's size can't overflow.
+#define WASAPI_MAX_BUFFER_FRAMES (1 << 22)
+
+// IAudioClock's QPC positions are in 100 ns units.
+#define WASAPI_HOST_TICKS_PER_SECOND 10000000.0
+
+struct SakuraAudioWasapiOutput
+{
+    SakuraAudioEngine *engine;
+    SakuraAudioWasapiConfig config;
+    int frameBytes;         // one frame in the device's format
+    uint32_t fillFrames;    // shared mode: the frames kept queued in the endpoint buffer, at most the whole of it
+    float *scratch;         // the mix at the engine's width, a buffer long, where the device's format or width differs
+    uint64_t framesWritten; // audio-thread-owned: every frame handed to the endpoint, the silence before the start too
+    sakura_atomic_u32 stopRequested;
+    sakura_atomic_u32 started;
+};
+
+static com_method com_method_at(void *object, int index) { return ((const com_object *)object)->vtable[index]; }
+
+static int wasapi_sample_bytes(int32_t format)
+{
+    switch (format)
+    {
+        case SAKURA_AUDIO_SAMPLE_FLOAT32:
+        case SAKURA_AUDIO_SAMPLE_INT32:
+            return 4;
+
+        case SAKURA_AUDIO_SAMPLE_INT24:
+            return 3;
+
+        case SAKURA_AUDIO_SAMPLE_INT16:
+            return 2;
+
+        default:
+            return 0;
+    }
+}
+
+// One device channel from one engine frame, where the two differ in width: mono goes to the front pair, a mono device
+// gets the front pair's average, and channels either side doesn't have are silent.
+static float wasapi_channel_sample(const float *frame, int engineChannels, int channel, int deviceChannels)
+{
+    if (engineChannels == deviceChannels)
+        return frame[channel];
+
+    if (engineChannels == 1)
+        return channel < 2 ? frame[0] : 0.0f;
+
+    if (deviceChannels == 1)
+        return (frame[0] + frame[1]) * 0.5f;
+
+    return channel < engineChannels ? frame[channel] : 0.0f;
+}
+
+// The mix, already clamped to [-1, 1], into the device's width and samples. Little-endian, as every Windows target is.
+static void wasapi_convert(const SakuraAudioWasapiOutput *output, const float *mix, uint8_t *destination, int frames)
+{
+    int engineChannels = output->engine->config.channels;
+    int deviceChannels = output->config.channels;
+    int format = output->config.sampleFormat;
+
+    for (int frame = 0; frame < frames; frame++)
+    {
+        const float *source = mix + (size_t)frame * (size_t)engineChannels;
+        uint8_t *target = destination + (size_t)frame * (size_t)output->frameBytes;
+
+        for (int channel = 0; channel < deviceChannels; channel++)
+        {
+            float sample = wasapi_channel_sample(source, engineChannels, channel, deviceChannels);
+
+            switch (format)
+            {
+                case SAKURA_AUDIO_SAMPLE_FLOAT32:
+                    memcpy(target + channel * 4, &sample, sizeof(sample));
+                    break;
+
+                case SAKURA_AUDIO_SAMPLE_INT16:
+                {
+                    int16_t value = (int16_t)lrintf(sample * 32767.0f);
+                    memcpy(target + channel * 2, &value, sizeof(value));
+                    break;
+                }
+
+                case SAKURA_AUDIO_SAMPLE_INT24:
+                {
+                    uint32_t value = (uint32_t)(int32_t)lrintf(sample * 8388607.0f);
+                    target[channel * 3] = (uint8_t)(value & 0xFFu);
+                    target[channel * 3 + 1] = (uint8_t)((value >> 8) & 0xFFu);
+                    target[channel * 3 + 2] = (uint8_t)((value >> 16) & 0xFFu);
+                    break;
+                }
+
+                default:
+                {
+                    int32_t value = (int32_t)lrint((double)sample * 2147483647.0);
+                    memcpy(target + channel * 4, &value, sizeof(value));
+                    break;
+                }
+            }
+        }
+    }
+}
+
+// When this cycle's first frame is heard: the frames handed over but not played yet, at the device position's QPC time.
+static void wasapi_publish_device_time(SakuraAudioWasapiOutput *output)
+{
+    void *clock = output->config.audioClock;
+
+    if (clock == NULL || output->config.clockFrequency == 0)
+        return;
+
+    uint64_t position = 0;
+    uint64_t qpcPosition = 0;
+
+    if (((get_position_fn)com_method_at(clock, AUDIO_CLOCK_GET_POSITION))(clock, &position, &qpcPosition) < 0)
+        return;
+
+    double rate = (double)output->engine->config.sampleRate;
+    double played = (double)position * rate / (double)output->config.clockFrequency;
+    double queued = (double)output->framesWritten - played;
+
+    if (queued < 0)
+        queued = 0;
+
+    publish_device_time_at(output->engine, qpcPosition + (uint64_t)llround(queued * WASAPI_HOST_TICKS_PER_SECOND / rate));
+}
+
+// One event's worth: what the endpoint has room for (shared) or the whole buffer (exclusive), mixed straight into it.
+static int wasapi_render_cycle(SakuraAudioWasapiOutput *output)
+{
+    SakuraAudioEngine *engine = output->engine;
+    void *client = output->config.audioClient;
+    void *render = output->config.renderClient;
+    uint32_t frames = (uint32_t)output->config.bufferFrames;
+
+    if (!output->config.exclusive)
+    {
+        uint32_t padding = 0;
+        int32_t result = ((get_current_padding_fn)com_method_at(client, AUDIO_CLIENT_GET_CURRENT_PADDING))(client, &padding);
+
+        if (result < 0)
+            return result;
+
+        // Topped up to the fill, not the whole buffer: what's queued is delay.
+        frames = padding < output->fillFrames ? output->fillFrames - padding : 0;
+    }
+
+    if (frames == 0)
+        return SAKURA_AUDIO_OK;
+
+    int64_t started = now_microseconds();
+
+    process_commands(engine);
+    sync_streams(engine);
+
+    wasapi_publish_device_time(output);
+
+    uint8_t *data = NULL;
+    int32_t result = ((get_buffer_fn)com_method_at(render, RENDER_CLIENT_GET_BUFFER))(render, frames, &data);
+
+    if (result < 0)
+        return result;
+
+    if (data == NULL)
+        return SAKURA_AUDIO_ERROR;
+
+    if (output->scratch == NULL)
+        mix_frames(engine, (float *)data, (int)frames);
+    else
+    {
+        mix_frames(engine, output->scratch, (int)frames);
+        wasapi_convert(output, output->scratch, data, (int)frames);
+    }
+
+    result = ((release_buffer_fn)com_method_at(render, RENDER_CLIENT_RELEASE_BUFFER))(render, frames, 0);
+
+    if (result < 0)
+        return result;
+
+    output->framesWritten += frames;
+
+    sakura_atomic_add_i64(&engine->statCallbacks, 1);
+    sakura_atomic_store_i64(&engine->statCallbackMicroseconds, now_microseconds() - started);
+    return SAKURA_AUDIO_OK;
+}
+
+SakuraAudioWasapiOutput *sakura_audio_wasapi_create(SakuraAudioEngine *engine, const SakuraAudioWasapiConfig *config)
+{
+    if (engine == NULL || config == NULL || config->audioClient == NULL || config->renderClient == NULL || config->event == NULL
+        || config->wait == NULL || config->bufferFrames <= 0 || config->bufferFrames > WASAPI_MAX_BUFFER_FRAMES || config->channels < 1
+        || config->channels > SAKURA_AUDIO_MAX_CHANNELS || wasapi_sample_bytes(config->sampleFormat) == 0 || config->fillFrames < 0)
+        return NULL;
+
+    SakuraAudioWasapiOutput *output = (SakuraAudioWasapiOutput *)calloc(1, sizeof(SakuraAudioWasapiOutput));
+
+    if (output == NULL)
+        return NULL;
+
+    output->engine = engine;
+    output->config = *config;
+    output->frameBytes = config->channels * wasapi_sample_bytes(config->sampleFormat);
+    output->fillFrames = config->exclusive || config->fillFrames == 0 || config->fillFrames > config->bufferFrames
+        ? (uint32_t)config->bufferFrames
+        : (uint32_t)config->fillFrames;
+
+    // Float at the engine's width is mixed straight into the endpoint buffer. Anything else goes through the scratch.
+    if (config->sampleFormat != SAKURA_AUDIO_SAMPLE_FLOAT32 || config->channels != engine->config.channels)
+    {
+        output->scratch = (float *)calloc((size_t)config->bufferFrames * (size_t)engine->config.channels, sizeof(float));
+
+        if (output->scratch == NULL)
+        {
+            free(output);
+            return NULL;
+        }
+    }
+
+    return output;
+}
+
+int sakura_audio_wasapi_run(SakuraAudioWasapiOutput *output)
+{
+    if (output == NULL || sakura_atomic_exchange_u32(&output->started, 1u) != 0u)
+        return SAKURA_AUDIO_INVALID;
+
+    if (sakura_atomic_load_u32(&output->stopRequested) != 0u)
+        return SAKURA_AUDIO_OK;
+
+    void *client = output->config.audioClient;
+    void *render = output->config.renderClient;
+
+    // Silent before the start, so the first period has something to play, as WASAPI's samples do: the fill (the whole
+    // buffer in exclusive mode), so the stream starts as far ahead as it then stays.
+    uint32_t prefill = output->fillFrames;
+    uint8_t *data = NULL;
+    int32_t result = ((get_buffer_fn)com_method_at(render, RENDER_CLIENT_GET_BUFFER))(render, prefill, &data);
+
+    if (result >= 0)
+        result = ((release_buffer_fn)com_method_at(render, RENDER_CLIENT_RELEASE_BUFFER))(render, prefill, WASAPI_BUFFER_SILENT);
+
+    if (result < 0)
+        return result;
+
+    output->framesWritten += prefill;
+
+    result = ((audio_client_call_fn)com_method_at(client, AUDIO_CLIENT_START))(client);
+
+    if (result < 0)
+        return result;
+
+    int status = SAKURA_AUDIO_OK;
+
+    while (sakura_atomic_load_u32(&output->stopRequested) == 0u)
+    {
+        uint32_t waited = output->config.wait(output->config.event, WASAPI_WAIT_MILLISECONDS);
+
+        if (sakura_atomic_load_u32(&output->stopRequested) != 0u)
+            break;
+
+        if (waited != WASAPI_WAIT_OBJECT_0)
+        {
+            status = waited == WASAPI_WAIT_TIMEOUT ? SAKURA_AUDIO_TIMEOUT : SAKURA_AUDIO_ERROR;
+            break;
+        }
+
+        status = wasapi_render_cycle(output);
+
+        if (status != SAKURA_AUDIO_OK)
+            break;
+    }
+
+    ((audio_client_call_fn)com_method_at(client, AUDIO_CLIENT_STOP))(client);
+    return status;
+}
+
+void sakura_audio_wasapi_stop(SakuraAudioWasapiOutput *output)
+{
+    if (output != NULL)
+        sakura_atomic_store_u32(&output->stopRequested, 1u);
+}
+
+void sakura_audio_wasapi_destroy(SakuraAudioWasapiOutput *output)
+{
+    if (output == NULL)
+        return;
+
+    free(output->scratch);
+    free(output);
+}
+
+// ---------------------------------------------------------------------------------------------
+// PipeWire
+//
+// libpipewire's pw_buffer and SPA's spa_buffer, spa_data and spa_chunk, laid out as pipewire/stream.h and
+// spa/buffer/buffer.h have them, so no PipeWire header is needed. pw_buffer's `requested` came in 0.3.49, so it's read
+// only where the managed side says the library has it. `time`, after it, isn't read at all.
+
+typedef struct
+{
+    uint32_t offset;
+    uint32_t size;
+    int32_t stride;
+    int32_t flags;
+} spa_chunk_layout;
+
+typedef struct
+{
+    uint32_t type;
+    uint32_t flags;
+    int64_t fd;
+    uint32_t mapOffset;
+    uint32_t maxSize;
+    void *data;
+    spa_chunk_layout *chunk;
+} spa_data_layout;
+
+typedef struct
+{
+    uint32_t metaCount;
+    uint32_t dataCount;
+    void *metas;
+    spa_data_layout *datas;
+} spa_buffer_layout;
+
+typedef struct
+{
+    spa_buffer_layout *buffer;
+    void *userData;
+    uint64_t size;
+    uint64_t requested;
+} pw_buffer_layout;
+
+struct SakuraAudioPipeWireOutput
+{
+    SakuraAudioEngine *engine;
+    SakuraAudioPipeWireConfig config;
+};
+
+// pw_stream_events' process, on PipeWire's data thread. Same discipline as stream_callback.
+static void pipewire_process(void *userdata)
+{
+    SakuraAudioPipeWireOutput *output = (SakuraAudioPipeWireOutput *)userdata;
+
+    if (output == NULL)
+        return;
+
+    // None free means this cycle goes without, which PipeWire counts as an underrun of its own.
+    pw_buffer_layout *buffer = (pw_buffer_layout *)output->config.dequeue(output->config.stream);
+
+    if (buffer == NULL)
+        return;
+
+    SakuraAudioEngine *engine = output->engine;
+    spa_data_layout *plane = buffer->buffer != NULL && buffer->buffer->dataCount > 0 ? buffer->buffer->datas : NULL;
+    uint32_t stride = (uint32_t)engine->config.channels * (uint32_t)sizeof(float);
+    uint64_t room = plane != NULL && plane->data != NULL ? plane->maxSize / stride : 0;
+    uint64_t frames = (uint64_t)output->config.framesPerCycle;
+
+    if (output->config.hasRequested && buffer->requested > 0)
+        frames = buffer->requested;
+
+    if (frames > room)
+        frames = room;
+
+    if (frames > 0)
+    {
+        int64_t started = now_microseconds();
+
+        process_commands(engine);
+        sync_streams(engine);
+
+        mix_frames(engine, (float *)plane->data, (int)frames);
+
+        sakura_atomic_add_i64(&engine->statCallbacks, 1);
+        sakura_atomic_store_i64(&engine->statCallbackMicroseconds, now_microseconds() - started);
+    }
+
+    if (plane != NULL && plane->chunk != NULL)
+    {
+        plane->chunk->offset = 0;
+        plane->chunk->stride = (int32_t)stride;
+        plane->chunk->size = (uint32_t)(frames * stride);
+    }
+
+    // In frames, so pw_stream_get_time_n's `queued` counts frames.
+    buffer->size = frames;
+    output->config.queue(output->config.stream, buffer);
+}
+
+void *sakura_audio_get_pipewire_process_callback(void) { return (void *)pipewire_process; }
+
+SakuraAudioPipeWireOutput *sakura_audio_pipewire_create(SakuraAudioEngine *engine, const SakuraAudioPipeWireConfig *config)
+{
+    if (engine == NULL || config == NULL || config->stream == NULL || config->dequeue == NULL || config->queue == NULL
+        || config->framesPerCycle <= 0)
+        return NULL;
+
+    SakuraAudioPipeWireOutput *output = (SakuraAudioPipeWireOutput *)calloc(1, sizeof(SakuraAudioPipeWireOutput));
+
+    if (output == NULL)
+        return NULL;
+
+    output->engine = engine;
+    output->config = *config;
+    return output;
+}
+
+void sakura_audio_pipewire_destroy(SakuraAudioPipeWireOutput *output) { free(output); }
 
 int sakura_audio_engine_mix(SakuraAudioEngine *engine, float *destination, int frames)
 {

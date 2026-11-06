@@ -1183,6 +1183,723 @@ static void test_audio_unit_device_time(void)
     sakura_audio_engine_destroy(engine);
 }
 
+// ---------------------------------------------------------------------------------------------
+// WASAPI, against fake COM objects: a vtable pointer first, methods in audioclient.h's slots, and a device model that
+// plays `period` frames between events.
+
+typedef void (*test_com_method)(void);
+
+typedef struct
+{
+    const test_com_method *vtable;
+} test_com_object;
+
+#define FAKE_WASAPI_MAX_PLAYED (1 << 19)
+#define FAKE_WASAPI_MAX_CALLS 64
+#define FAKE_WASAPI_STOP 0xFFFFFFFEu // what the fake wait does once its events run out: ask the output to stop
+
+#define TEST_DEVICE_INVALIDATED ((int32_t)0x88890004u) // AUDCLNT_E_DEVICE_INVALIDATED
+#define TEST_BUFFER_TOO_LARGE ((int32_t)0x88890006u)   // AUDCLNT_E_BUFFER_TOO_LARGE
+
+static struct
+{
+    SakuraAudioWasapiOutput *output;
+    uint32_t bufferFrames;
+    uint32_t period;
+    int frameBytes;
+    int exclusive;
+    int events;         // signalled before endResult
+    uint32_t endResult; // a WaitForSingleObject result, or FAKE_WASAPI_STOP
+    int failGetBufferAt;
+    int32_t failResult;
+
+    uint32_t padding;   // frames in the endpoint not played yet
+    uint64_t position;  // frames played, in the clock's units (its frequency is the rate)
+    uint64_t qpc;       // 1000 a period, in 100 ns units
+    int starts;
+    int stops;
+    int waits;
+    int paddingCalls;
+    int getBufferCalls;
+    int releases;
+    uint32_t requested[FAKE_WASAPI_MAX_CALLS];
+    uint32_t releaseFlags[FAKE_WASAPI_MAX_CALLS];
+    uint8_t endpoint[4096 * SAKURA_AUDIO_MAX_CHANNELS * 4];
+    uint8_t played[FAKE_WASAPI_MAX_PLAYED]; // every frame released, silence written out as zeros
+    size_t playedBytes;
+} wasapi_fake;
+
+static int32_t SAKURA_AUDIO_STDCALL fake_client_padding(void *self, uint32_t *padding)
+{
+    (void)self;
+    wasapi_fake.paddingCalls++;
+    *padding = wasapi_fake.padding;
+    return 0;
+}
+
+static int32_t SAKURA_AUDIO_STDCALL fake_client_start(void *self)
+{
+    (void)self;
+    wasapi_fake.starts++;
+    return 0;
+}
+
+static int32_t SAKURA_AUDIO_STDCALL fake_client_stop(void *self)
+{
+    (void)self;
+    wasapi_fake.stops++;
+    return 0;
+}
+
+static int32_t SAKURA_AUDIO_STDCALL fake_render_get_buffer(void *self, uint32_t frames, uint8_t **data)
+{
+    (void)self;
+    int call = wasapi_fake.getBufferCalls++;
+
+    if (call + 1 == wasapi_fake.failGetBufferAt)
+        return wasapi_fake.failResult;
+
+    // WASAPI's own rules: no more than the endpoint has room for, and the whole buffer in exclusive mode.
+    if (frames > wasapi_fake.bufferFrames - wasapi_fake.padding || (wasapi_fake.exclusive && frames != wasapi_fake.bufferFrames))
+        return TEST_BUFFER_TOO_LARGE;
+
+    if (call < FAKE_WASAPI_MAX_CALLS)
+        wasapi_fake.requested[call] = frames;
+
+    memset(wasapi_fake.endpoint, 0xCD, (size_t)frames * (size_t)wasapi_fake.frameBytes);
+    *data = wasapi_fake.endpoint;
+    return 0;
+}
+
+static int32_t SAKURA_AUDIO_STDCALL fake_render_release(void *self, uint32_t frames, uint32_t flags)
+{
+    (void)self;
+    int call = wasapi_fake.releases++;
+
+    if (call < FAKE_WASAPI_MAX_CALLS)
+        wasapi_fake.releaseFlags[call] = flags;
+
+    size_t bytes = (size_t)frames * (size_t)wasapi_fake.frameBytes;
+
+    if (wasapi_fake.playedBytes + bytes <= sizeof(wasapi_fake.played))
+    {
+        if (flags & 0x2u)
+            memset(wasapi_fake.played + wasapi_fake.playedBytes, 0, bytes);
+        else
+            memcpy(wasapi_fake.played + wasapi_fake.playedBytes, wasapi_fake.endpoint, bytes);
+
+        wasapi_fake.playedBytes += bytes;
+    }
+
+    wasapi_fake.padding += frames;
+    return 0;
+}
+
+static int32_t SAKURA_AUDIO_STDCALL fake_clock_position(void *self, uint64_t *position, uint64_t *qpcPosition)
+{
+    (void)self;
+    *position = wasapi_fake.position;
+    *qpcPosition = wasapi_fake.qpc;
+    return 0;
+}
+
+// Each event is a period the device played: the padding drains by it, the position and QPC time move on.
+static uint32_t SAKURA_AUDIO_STDCALL fake_wait(void *handle, uint32_t milliseconds)
+{
+    (void)handle;
+    (void)milliseconds;
+    wasapi_fake.waits++;
+
+    if (wasapi_fake.events > 0)
+    {
+        wasapi_fake.events--;
+
+        uint32_t played = wasapi_fake.period < wasapi_fake.padding ? wasapi_fake.period : wasapi_fake.padding;
+        wasapi_fake.padding -= played;
+        wasapi_fake.position += played;
+        wasapi_fake.qpc += 1000;
+        return 0;
+    }
+
+    if (wasapi_fake.endResult != FAKE_WASAPI_STOP)
+        return wasapi_fake.endResult;
+
+    // As the managed side stops it: asks, then signals the event.
+    sakura_audio_wasapi_stop(wasapi_fake.output);
+    return 0;
+}
+
+static const test_com_method fake_client_vtable[12] = {
+    NULL, NULL, NULL, NULL, NULL, NULL, (test_com_method)fake_client_padding, NULL, NULL, NULL, (test_com_method)fake_client_start,
+    (test_com_method)fake_client_stop,
+};
+
+static const test_com_method fake_render_vtable[5] = {
+    NULL, NULL, NULL, (test_com_method)fake_render_get_buffer, (test_com_method)fake_render_release,
+};
+
+static const test_com_method fake_clock_vtable[5] = {
+    NULL, NULL, NULL, NULL, (test_com_method)fake_clock_position,
+};
+
+static test_com_object fake_client = { fake_client_vtable };
+static test_com_object fake_render = { fake_render_vtable };
+static test_com_object fake_clock = { fake_clock_vtable };
+
+static SakuraAudioWasapiConfig fake_wasapi(uint32_t bufferFrames, uint32_t period, int channels, int format, int sampleBytes, int exclusive, int events)
+{
+    memset(&wasapi_fake, 0, sizeof(wasapi_fake));
+    wasapi_fake.bufferFrames = bufferFrames;
+    wasapi_fake.period = period;
+    wasapi_fake.frameBytes = channels * sampleBytes;
+    wasapi_fake.exclusive = exclusive;
+    wasapi_fake.events = events;
+    wasapi_fake.endResult = FAKE_WASAPI_STOP;
+
+    SakuraAudioWasapiConfig config;
+    memset(&config, 0, sizeof(config));
+    config.clockFrequency = SAMPLE_RATE;
+    config.audioClient = &fake_client;
+    config.renderClient = &fake_render;
+    config.audioClock = &fake_clock;
+    config.event = &wasapi_fake;
+    config.wait = fake_wait;
+    config.bufferFrames = (int32_t)bufferFrames;
+    config.channels = channels;
+    config.sampleFormat = format;
+    config.exclusive = exclusive;
+    return config;
+}
+
+static void fill_test_signal(float *pcm, int frames)
+{
+    for (int i = 0; i < frames * CHANNELS; i++)
+        pcm[i] = (float)sin(i * 0.01) * 0.5f;
+}
+
+// Shared mode: the buffer goes in silent before the start, then each event fills what the endpoint has room for with
+// exactly what the engine mixes, and the client is stopped before the run returns.
+static void test_wasapi_shared_render_loop(void)
+{
+    SakuraAudioEngine *engine = make_engine(128);
+    SakuraAudioEngine *reference = make_engine(128);
+
+    static float pcm[2048 * CHANNELS];
+    fill_test_signal(pcm, 2048);
+    attach_static_voice(engine, pcm, 2048, NULL);
+    attach_static_voice(reference, pcm, 2048, NULL);
+
+    // A 480-frame endpoint played 160 frames between events, five events.
+    SakuraAudioWasapiConfig config = fake_wasapi(480, 160, CHANNELS, SAKURA_AUDIO_SAMPLE_FLOAT32, 4, 0, 5);
+    SakuraAudioWasapiOutput *output = sakura_audio_wasapi_create(engine, &config);
+    CHECK(output != NULL);
+    wasapi_fake.output = output;
+
+    CHECK(sakura_audio_wasapi_run(output) == SAKURA_AUDIO_OK);
+
+    CHECK(wasapi_fake.starts == 1);
+    CHECK(wasapi_fake.stops == 1);
+    CHECK(wasapi_fake.waits == 6);
+    CHECK(wasapi_fake.paddingCalls == 5);
+    CHECK(wasapi_fake.getBufferCalls == 6);
+    CHECK(wasapi_fake.requested[0] == 480);
+    CHECK(wasapi_fake.releaseFlags[0] == 0x2u);
+
+    for (int i = 1; i < 6; i++)
+    {
+        CHECK(wasapi_fake.requested[i] == 160);
+        CHECK(wasapi_fake.releaseFlags[i] == 0);
+    }
+
+    // 480 frames of silence, then the engine's mix exactly.
+    static float expected[800 * CHANNELS];
+    sakura_audio_engine_mix(reference, expected, 800);
+
+    CHECK(wasapi_fake.playedBytes == (480 + 800) * CHANNELS * sizeof(float));
+
+    static float silence[480 * CHANNELS];
+    CHECK(memcmp(wasapi_fake.played, silence, sizeof(silence)) == 0);
+    CHECK(memcmp(wasapi_fake.played + sizeof(silence), expected, sizeof(expected)) == 0);
+
+    SakuraAudioStats stats;
+    sakura_audio_engine_get_stats(engine, &stats);
+    CHECK(stats.callbacks == 5);
+    CHECK(stats.framesMixed == 800);
+    CHECK(stats.activeVoices == 1);
+
+    // The last cycle: 1120 frames handed over, the silence included, 800 played at QPC time 5000. Its first frame goes
+    // out after the other 320, 320 / 44100 s later, which is 72562 of QPC's 100 ns units.
+    SakuraAudioDeviceTime time;
+    CHECK(sakura_audio_engine_get_device_time(engine, &time) == SAKURA_AUDIO_OK);
+    CHECK(time.framesMixed == 640);
+    CHECK(time.hostTime == 5000 + 72562);
+    CHECK(time.discontinuities == 0);
+
+    // Once per output.
+    CHECK(sakura_audio_wasapi_run(output) == SAKURA_AUDIO_INVALID);
+    CHECK(wasapi_fake.starts == 1);
+
+    sakura_audio_wasapi_destroy(output);
+    sakura_audio_engine_destroy(reference);
+    sakura_audio_engine_destroy(engine);
+}
+
+// Shared mode with a fill: a 960-frame endpoint kept at 480 frames queued, two of its 240-frame periods. The silence
+// before the start is the fill, and each event tops it up by what the device played, not to the whole buffer.
+static void test_wasapi_shared_fill(void)
+{
+    SakuraAudioEngine *engine = make_engine(128);
+    SakuraAudioEngine *reference = make_engine(128);
+
+    static float pcm[2048 * CHANNELS];
+    fill_test_signal(pcm, 2048);
+    attach_static_voice(engine, pcm, 2048, NULL);
+    attach_static_voice(reference, pcm, 2048, NULL);
+
+    SakuraAudioWasapiConfig config = fake_wasapi(960, 240, CHANNELS, SAKURA_AUDIO_SAMPLE_FLOAT32, 4, 0, 4);
+    config.fillFrames = 480;
+
+    SakuraAudioWasapiOutput *output = sakura_audio_wasapi_create(engine, &config);
+    CHECK(output != NULL);
+    wasapi_fake.output = output;
+
+    CHECK(sakura_audio_wasapi_run(output) == SAKURA_AUDIO_OK);
+
+    CHECK(wasapi_fake.getBufferCalls == 5);
+    CHECK(wasapi_fake.requested[0] == 480);
+    CHECK(wasapi_fake.releaseFlags[0] == 0x2u);
+
+    for (int i = 1; i < 5; i++)
+        CHECK(wasapi_fake.requested[i] == 240);
+
+    // Never more queued than the fill.
+    CHECK(wasapi_fake.padding <= 480);
+
+    // 480 frames of silence, then the engine's mix exactly.
+    static float expected[960 * CHANNELS];
+    sakura_audio_engine_mix(reference, expected, 960);
+
+    CHECK(wasapi_fake.playedBytes == (480 + 960) * CHANNELS * sizeof(float));
+
+    static float silence[480 * CHANNELS];
+    CHECK(memcmp(wasapi_fake.played, silence, sizeof(silence)) == 0);
+    CHECK(memcmp(wasapi_fake.played + sizeof(silence), expected, sizeof(expected)) == 0);
+
+    sakura_audio_wasapi_destroy(output);
+
+    // A fill past the buffer is the whole buffer; a negative one isn't a config.
+    config = fake_wasapi(960, 240, CHANNELS, SAKURA_AUDIO_SAMPLE_FLOAT32, 4, 0, 1);
+    config.fillFrames = 4000;
+    output = sakura_audio_wasapi_create(engine, &config);
+    CHECK(output != NULL);
+    wasapi_fake.output = output;
+    CHECK(sakura_audio_wasapi_run(output) == SAKURA_AUDIO_OK);
+    CHECK(wasapi_fake.requested[0] == 960);
+    sakura_audio_wasapi_destroy(output);
+
+    config.fillFrames = -1;
+    CHECK(sakura_audio_wasapi_create(engine, &config) == NULL);
+
+    sakura_audio_engine_destroy(reference);
+    sakura_audio_engine_destroy(engine);
+}
+
+// Exclusive mode takes the whole buffer at every event and never reads the padding. Here into 16-bit samples, rounded
+// from the engine's mix.
+static void test_wasapi_exclusive_to_int16(void)
+{
+    SakuraAudioEngine *engine = make_engine(128);
+    SakuraAudioEngine *reference = make_engine(128);
+
+    static float pcm[2048 * CHANNELS];
+    fill_test_signal(pcm, 2048);
+    attach_static_voice(engine, pcm, 2048, NULL);
+    attach_static_voice(reference, pcm, 2048, NULL);
+
+    SakuraAudioWasapiConfig config = fake_wasapi(256, 256, CHANNELS, SAKURA_AUDIO_SAMPLE_INT16, 2, 1, 3);
+    SakuraAudioWasapiOutput *output = sakura_audio_wasapi_create(engine, &config);
+    CHECK(output != NULL);
+    wasapi_fake.output = output;
+
+    CHECK(sakura_audio_wasapi_run(output) == SAKURA_AUDIO_OK);
+    CHECK(wasapi_fake.paddingCalls == 0);
+    CHECK(wasapi_fake.getBufferCalls == 4);
+
+    for (int i = 0; i < 4; i++)
+        CHECK(wasapi_fake.requested[i] == 256);
+
+    static float expected[768 * CHANNELS];
+    sakura_audio_engine_mix(reference, expected, 768);
+
+    CHECK(wasapi_fake.playedBytes == (256 + 768) * CHANNELS * sizeof(int16_t));
+
+    int mismatches = 0;
+
+    for (int i = 0; i < 768 * CHANNELS; i++)
+    {
+        int16_t sample;
+        memcpy(&sample, wasapi_fake.played + (256 * CHANNELS + i) * sizeof(int16_t), sizeof(sample));
+
+        if (sample != (int16_t)lrintf(expected[i] * 32767.0f))
+            mismatches++;
+    }
+
+    CHECK(mismatches == 0);
+
+    sakura_audio_wasapi_destroy(output);
+    sakura_audio_engine_destroy(reference);
+    sakura_audio_engine_destroy(engine);
+}
+
+// Runs one exclusive cycle of a steady stereo frame, left 0.25 and right -0.375, out to a device of another format or
+// width, and returns the first frame it played after the silence.
+static const uint8_t *wasapi_play_constant(int channels, int format, int sampleBytes)
+{
+    SakuraAudioEngine *engine = make_engine(128);
+
+    static float pcm[64 * CHANNELS];
+
+    for (int i = 0; i < 64; i++)
+    {
+        pcm[i * 2] = 0.25f;
+        pcm[i * 2 + 1] = -0.375f;
+    }
+
+    attach_static_voice(engine, pcm, 64, NULL);
+
+    SakuraAudioWasapiConfig config = fake_wasapi(32, 32, channels, format, sampleBytes, 1, 1);
+    SakuraAudioWasapiOutput *output = sakura_audio_wasapi_create(engine, &config);
+    CHECK(output != NULL);
+    wasapi_fake.output = output;
+
+    CHECK(sakura_audio_wasapi_run(output) == SAKURA_AUDIO_OK);
+    CHECK(wasapi_fake.playedBytes == (size_t)64 * (size_t)channels * (size_t)sampleBytes);
+
+    sakura_audio_wasapi_destroy(output);
+    sakura_audio_engine_destroy(engine);
+    return wasapi_fake.played + (size_t)32 * (size_t)channels * (size_t)sampleBytes;
+}
+
+// The device's samples and width: rounded to 16, packed 24 and 32 bits, little-endian; a wider device gets silence in
+// the channels the engine doesn't have, and a mono one the average.
+static void test_wasapi_formats_and_widths(void)
+{
+    const uint8_t *frame = wasapi_play_constant(CHANNELS, SAKURA_AUDIO_SAMPLE_INT16, 2);
+    int16_t pair16[2];
+    memcpy(pair16, frame, sizeof(pair16));
+    CHECK(pair16[0] == 8192);   // 8191.75
+    CHECK(pair16[1] == -12288); // -12287.625
+
+    frame = wasapi_play_constant(CHANNELS, SAKURA_AUDIO_SAMPLE_INT24, 3);
+    CHECK(frame[0] == 0x00 && frame[1] == 0x00 && frame[2] == 0x20); // 2097152
+    CHECK(frame[3] == 0x00 && frame[4] == 0x00 && frame[5] == 0xD0); // -3145728
+
+    frame = wasapi_play_constant(CHANNELS, SAKURA_AUDIO_SAMPLE_INT32, 4);
+    int32_t pair32[2];
+    memcpy(pair32, frame, sizeof(pair32));
+    CHECK(pair32[0] == 536870912);
+    CHECK(pair32[1] == -805306368);
+
+    frame = wasapi_play_constant(4, SAKURA_AUDIO_SAMPLE_FLOAT32, 4);
+    float quad[4];
+    memcpy(quad, frame, sizeof(quad));
+    CHECK(quad[0] == 0.25f && quad[1] == -0.375f);
+    CHECK(quad[2] == 0.0f && quad[3] == 0.0f);
+
+    frame = wasapi_play_constant(1, SAKURA_AUDIO_SAMPLE_FLOAT32, 4);
+    float mono;
+    memcpy(&mono, frame, sizeof(mono));
+    CHECK(mono == -0.0625f);
+}
+
+// The ways a run ends early. Each stops the client it started, and none starts one it was told to stop before.
+static void test_wasapi_failures(void)
+{
+    SakuraAudioEngine *engine = make_engine(128);
+
+    // The device went away mid-stream: the failing HRESULT comes back as it is.
+    SakuraAudioWasapiConfig config = fake_wasapi(480, 160, CHANNELS, SAKURA_AUDIO_SAMPLE_FLOAT32, 4, 0, 5);
+    wasapi_fake.failGetBufferAt = 3;
+    wasapi_fake.failResult = TEST_DEVICE_INVALIDATED;
+    SakuraAudioWasapiOutput *output = sakura_audio_wasapi_create(engine, &config);
+    wasapi_fake.output = output;
+    CHECK(sakura_audio_wasapi_run(output) == TEST_DEVICE_INVALIDATED);
+    CHECK(wasapi_fake.starts == 1 && wasapi_fake.stops == 1);
+    sakura_audio_wasapi_destroy(output);
+
+    // Before the start: nothing to stop.
+    config = fake_wasapi(480, 160, CHANNELS, SAKURA_AUDIO_SAMPLE_FLOAT32, 4, 0, 5);
+    wasapi_fake.failGetBufferAt = 1;
+    wasapi_fake.failResult = TEST_DEVICE_INVALIDATED;
+    output = sakura_audio_wasapi_create(engine, &config);
+    wasapi_fake.output = output;
+    CHECK(sakura_audio_wasapi_run(output) == TEST_DEVICE_INVALIDATED);
+    CHECK(wasapi_fake.starts == 0 && wasapi_fake.stops == 0);
+    sakura_audio_wasapi_destroy(output);
+
+    // No event for two seconds, and a wait that failed.
+    config = fake_wasapi(480, 160, CHANNELS, SAKURA_AUDIO_SAMPLE_FLOAT32, 4, 0, 2);
+    wasapi_fake.endResult = 0x102u;
+    output = sakura_audio_wasapi_create(engine, &config);
+    wasapi_fake.output = output;
+    CHECK(sakura_audio_wasapi_run(output) == SAKURA_AUDIO_TIMEOUT);
+    CHECK(wasapi_fake.stops == 1);
+    sakura_audio_wasapi_destroy(output);
+
+    config = fake_wasapi(480, 160, CHANNELS, SAKURA_AUDIO_SAMPLE_FLOAT32, 4, 0, 0);
+    wasapi_fake.endResult = 0xFFFFFFFFu;
+    output = sakura_audio_wasapi_create(engine, &config);
+    wasapi_fake.output = output;
+    CHECK(sakura_audio_wasapi_run(output) == SAKURA_AUDIO_ERROR);
+    CHECK(wasapi_fake.stops == 1);
+    sakura_audio_wasapi_destroy(output);
+
+    // Stopped before it ran: returns at once and touches nothing.
+    config = fake_wasapi(480, 160, CHANNELS, SAKURA_AUDIO_SAMPLE_FLOAT32, 4, 0, 5);
+    output = sakura_audio_wasapi_create(engine, &config);
+    sakura_audio_wasapi_stop(output);
+    CHECK(sakura_audio_wasapi_run(output) == SAKURA_AUDIO_OK);
+    CHECK(wasapi_fake.starts == 0 && wasapi_fake.getBufferCalls == 0);
+    sakura_audio_wasapi_destroy(output);
+
+    // Without a clock nothing is published, and the rest plays the same. On an engine of its own, since the runs above
+    // published.
+    SakuraAudioEngine *unclocked = make_engine(128);
+    config = fake_wasapi(480, 160, CHANNELS, SAKURA_AUDIO_SAMPLE_FLOAT32, 4, 0, 2);
+    config.audioClock = NULL;
+    output = sakura_audio_wasapi_create(unclocked, &config);
+    wasapi_fake.output = output;
+    CHECK(sakura_audio_wasapi_run(output) == SAKURA_AUDIO_OK);
+    CHECK(wasapi_fake.getBufferCalls == 3);
+
+    SakuraAudioDeviceTime time;
+    CHECK(sakura_audio_engine_get_device_time(unclocked, &time) == SAKURA_AUDIO_ERROR);
+    sakura_audio_wasapi_destroy(output);
+    sakura_audio_engine_destroy(unclocked);
+
+    // Configs it can't play.
+    config = fake_wasapi(480, 160, CHANNELS, SAKURA_AUDIO_SAMPLE_FLOAT32, 4, 0, 0);
+    CHECK(sakura_audio_wasapi_create(NULL, &config) == NULL);
+    CHECK(sakura_audio_wasapi_create(engine, NULL) == NULL);
+
+    SakuraAudioWasapiConfig bad = config;
+    bad.wait = NULL;
+    CHECK(sakura_audio_wasapi_create(engine, &bad) == NULL);
+    bad = config;
+    bad.event = NULL;
+    CHECK(sakura_audio_wasapi_create(engine, &bad) == NULL);
+    bad = config;
+    bad.bufferFrames = 0;
+    CHECK(sakura_audio_wasapi_create(engine, &bad) == NULL);
+    bad = config;
+    bad.channels = SAKURA_AUDIO_MAX_CHANNELS + 1;
+    CHECK(sakura_audio_wasapi_create(engine, &bad) == NULL);
+    bad = config;
+    bad.sampleFormat = 7;
+    CHECK(sakura_audio_wasapi_create(engine, &bad) == NULL);
+
+    CHECK(sakura_audio_wasapi_run(NULL) == SAKURA_AUDIO_INVALID);
+    sakura_audio_wasapi_stop(NULL);
+    sakura_audio_wasapi_destroy(NULL);
+
+    sakura_audio_engine_destroy(engine);
+}
+
+// ---------------------------------------------------------------------------------------------
+// PipeWire, against a fake stream: pw_buffer and SPA's buffer, data and chunk as their headers lay them out.
+
+typedef struct
+{
+    uint32_t offset;
+    uint32_t size;
+    int32_t stride;
+    int32_t flags;
+} test_spa_chunk;
+
+typedef struct
+{
+    uint32_t type;
+    uint32_t flags;
+    int64_t fd;
+    uint32_t mapOffset;
+    uint32_t maxSize;
+    void *data;
+    test_spa_chunk *chunk;
+} test_spa_data;
+
+typedef struct
+{
+    uint32_t metaCount;
+    uint32_t dataCount;
+    void *metas;
+    test_spa_data *datas;
+} test_spa_buffer;
+
+typedef struct
+{
+    test_spa_buffer *buffer;
+    void *userData;
+    uint64_t size;
+    uint64_t requested;
+    uint64_t time;
+} test_pw_buffer;
+
+static struct
+{
+    test_pw_buffer *next; // what the next dequeue hands over
+    int dequeues;
+    int queues;
+    void *queuedStream;
+    void *queuedBuffer;
+} pipewire_fake;
+
+static void *fake_dequeue(void *stream)
+{
+    (void)stream;
+    pipewire_fake.dequeues++;
+    return pipewire_fake.next;
+}
+
+static int fake_queue(void *stream, void *buffer)
+{
+    pipewire_fake.queues++;
+    pipewire_fake.queuedStream = stream;
+    pipewire_fake.queuedBuffer = buffer;
+    return 0;
+}
+
+// The process callback mixes what the stream asked for straight into its buffer, or the configured quantum where it
+// doesn't say, never more than the buffer holds, and hands it back with its chunk and its size in frames.
+static void test_pipewire_process(void)
+{
+    // libpipewire's offsets on 64-bit targets, which the library's own declarations have to match.
+    if (sizeof(void *) == 8)
+    {
+        CHECK(offsetof(test_spa_data, maxSize) == 20);
+        CHECK(offsetof(test_spa_data, data) == 24);
+        CHECK(offsetof(test_spa_data, chunk) == 32);
+        CHECK(offsetof(test_spa_buffer, datas) == 16);
+        CHECK(offsetof(test_pw_buffer, size) == 16);
+        CHECK(offsetof(test_pw_buffer, requested) == 24);
+    }
+
+    SakuraAudioEngine *engine = make_engine(128);
+    SakuraAudioEngine *reference = make_engine(128);
+
+    static float pcm[2048 * CHANNELS];
+    fill_test_signal(pcm, 2048);
+    attach_static_voice(engine, pcm, 2048, NULL);
+    attach_static_voice(reference, pcm, 2048, NULL);
+
+    int stream = 0;
+    SakuraAudioPipeWireConfig config;
+    memset(&config, 0, sizeof(config));
+    config.stream = &stream;
+    config.dequeue = fake_dequeue;
+    config.queue = fake_queue;
+    config.framesPerCycle = 128;
+    config.hasRequested = 1;
+
+    SakuraAudioPipeWireOutput *output = sakura_audio_pipewire_create(engine, &config);
+    CHECK(output != NULL);
+
+    void (*process)(void *) = (void (*)(void *))sakura_audio_get_pipewire_process_callback();
+    CHECK(process != NULL);
+
+    static float data[1024 * CHANNELS];
+    test_spa_chunk chunk = { 99, 99, 99, 0 };
+    test_spa_data plane = { 0, 0, -1, 0, (uint32_t)sizeof(data), data, &chunk };
+    test_spa_buffer spa = { 0, 1, NULL, &plane };
+    test_pw_buffer buffer = { &spa, NULL, 0, 300, 0 };
+
+    memset(&pipewire_fake, 0, sizeof(pipewire_fake));
+    pipewire_fake.next = &buffer;
+
+    // What the stream asked for, which isn't a whole number of mix blocks.
+    static float expected[1024 * CHANNELS];
+    process(output);
+    sakura_audio_engine_mix(reference, expected, 300);
+
+    CHECK(memcmp(data, expected, 300 * CHANNELS * sizeof(float)) == 0);
+    CHECK(pipewire_fake.dequeues == 1 && pipewire_fake.queues == 1);
+    CHECK(pipewire_fake.queuedStream == &stream && pipewire_fake.queuedBuffer == &buffer);
+    CHECK(chunk.offset == 0);
+    CHECK(chunk.stride == CHANNELS * (int32_t)sizeof(float));
+    CHECK(chunk.size == 300 * CHANNELS * sizeof(float));
+    CHECK(buffer.size == 300);
+
+    SakuraAudioStats stats;
+    sakura_audio_engine_get_stats(engine, &stats);
+    CHECK(stats.callbacks == 1);
+    CHECK(stats.framesMixed == 300);
+
+    // Nothing asked for: the quantum.
+    buffer.requested = 0;
+    process(output);
+    sakura_audio_engine_mix(reference, expected, 128);
+    CHECK(memcmp(data, expected, 128 * CHANNELS * sizeof(float)) == 0);
+    CHECK(buffer.size == 128);
+
+    // More asked for than the buffer holds: what it holds.
+    buffer.requested = 5000;
+    process(output);
+    CHECK(buffer.size == 1024);
+    CHECK(chunk.size == sizeof(data));
+    sakura_audio_engine_mix(reference, expected, 1024);
+
+    // A libpipewire from before `requested`, where that field is something else: the quantum.
+    SakuraAudioPipeWireConfig old = config;
+    old.hasRequested = 0;
+    SakuraAudioPipeWireOutput *oldOutput = sakura_audio_pipewire_create(engine, &old);
+    buffer.requested = 300;
+    process(oldOutput);
+    sakura_audio_engine_mix(reference, expected, 128);
+    CHECK(memcmp(data, expected, 128 * CHANNELS * sizeof(float)) == 0);
+    CHECK(buffer.size == 128);
+    sakura_audio_pipewire_destroy(oldOutput);
+
+    sakura_audio_engine_get_stats(engine, &stats);
+    CHECK(stats.callbacks == 4);
+    CHECK(stats.framesMixed == 300 + 128 + 1024 + 128);
+
+    // No buffer free: nothing mixed and nothing queued.
+    pipewire_fake.next = NULL;
+    pipewire_fake.queues = 0;
+    process(output);
+    CHECK(pipewire_fake.queues == 0);
+
+    // A buffer with nowhere to write goes back empty.
+    plane.data = NULL;
+    pipewire_fake.next = &buffer;
+    process(output);
+    CHECK(pipewire_fake.queues == 1);
+    CHECK(buffer.size == 0 && chunk.size == 0);
+
+    process(NULL);
+
+    sakura_audio_engine_get_stats(engine, &stats);
+    CHECK(stats.callbacks == 4);
+
+    // Configs it can't play.
+    CHECK(sakura_audio_pipewire_create(NULL, &config) == NULL);
+    CHECK(sakura_audio_pipewire_create(engine, NULL) == NULL);
+
+    SakuraAudioPipeWireConfig bad = config;
+    bad.stream = NULL;
+    CHECK(sakura_audio_pipewire_create(engine, &bad) == NULL);
+    bad = config;
+    bad.dequeue = NULL;
+    CHECK(sakura_audio_pipewire_create(engine, &bad) == NULL);
+    bad = config;
+    bad.framesPerCycle = 0;
+    CHECK(sakura_audio_pipewire_create(engine, &bad) == NULL);
+    sakura_audio_pipewire_destroy(NULL);
+
+    sakura_audio_pipewire_destroy(output);
+    sakura_audio_engine_destroy(reference);
+    sakura_audio_engine_destroy(engine);
+}
+
 // The unity path copies whole runs instead of interpolating each frame. It has to be a copy of exactly
 // the right frames, across block boundaries, and it has to leave the interpolation window where the
 // per-frame path would have, so that a rate change mid-stream carries straight on.
@@ -1755,6 +2472,12 @@ int main(void)
     RUN(test_aaudio_callback);
     RUN(test_audio_unit_callback);
     RUN(test_audio_unit_device_time);
+    RUN(test_wasapi_shared_render_loop);
+    RUN(test_wasapi_shared_fill);
+    RUN(test_wasapi_exclusive_to_int16);
+    RUN(test_wasapi_formats_and_widths);
+    RUN(test_wasapi_failures);
+    RUN(test_pipewire_process);
     RUN(test_unity_runs_and_rate_handover);
     RUN(test_resampler_paths_match_the_per_frame_algorithm);
     RUN(test_stream_runs_across_the_wrap);

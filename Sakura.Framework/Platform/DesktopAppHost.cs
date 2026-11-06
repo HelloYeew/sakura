@@ -6,6 +6,8 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using Sakura.Framework.Audio;
+using Sakura.Framework.Audio.SdlEngine;
 using Sakura.Framework.Extensions;
 using Sakura.Framework.Logging;
 
@@ -31,6 +33,12 @@ public class DesktopAppHost : SDLAppHost
     public override Storage GetStorage(string path) => new DesktopStorage(path, this);
 
     protected override IWindow CreateWindow() => new DesktopWindow();
+
+    /// <summary>
+    /// What comes after SDL's own buffers: on macOS the Core Audio device SDL plays on, and on Windows the shared audio
+    /// engine's period on its endpoint. Nothing on Linux.
+    /// </summary>
+    public override ISystemAudioRoute SystemAudioRoute { get; } = RuntimeInfo.IsMacOS ? new MacOSAudioRoute() : RuntimeInfo.IsWindows ? new WindowsAudioRoute() : null;
 
     public override bool OpenFileExternally(string filename)
     {

@@ -7,7 +7,7 @@ using System.Runtime.InteropServices;
 namespace Sakura.Framework.Audio.SdlEngine;
 
 /// <summary>
-/// The parts of Apple's AudioToolbox (its C audio unit API) that <see cref="RemoteIOOutput"/> uses. Every call is made
+/// The parts of Apple's AudioToolbox (its C audio unit API) that <see cref="AudioUnitOutput"/> uses. Every call is made
 /// off the audio callback.
 /// </summary>
 [SuppressMessage("ReSharper", "InconsistentNaming")]
@@ -19,11 +19,15 @@ internal static unsafe class AudioToolboxNative
 
     public const uint TYPE_OUTPUT = 0x61756f75; // 'auou'
     public const uint SUBTYPE_REMOTE_IO = 0x72696f63; // 'rioc'
+    public const uint SUBTYPE_HAL_OUTPUT = 0x6168616c; // 'ahal'
     public const uint MANUFACTURER_APPLE = 0x6170706c; // 'appl'
 
     public const uint PROPERTY_STREAM_FORMAT = 8;
     public const uint PROPERTY_MAXIMUM_FRAMES_PER_SLICE = 14;
     public const uint PROPERTY_SET_RENDER_CALLBACK = 23;
+
+    // The HAL output's device, an AudioDeviceID (macOS only).
+    public const uint PROPERTY_CURRENT_DEVICE = 2000;
 
     public const uint SCOPE_GLOBAL = 0;
     public const uint SCOPE_INPUT = 1;

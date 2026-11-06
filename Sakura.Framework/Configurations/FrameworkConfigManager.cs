@@ -57,5 +57,8 @@ public class FrameworkConfigManager : ConfigManager<FrameworkSetting>
         Get(FrameworkSetting.ShowLogOverlay, false);
         // Empty for the system's default output, which follows the system as it changes.
         Get(FrameworkSetting.AudioDevice, string.Empty);
+        // WASAPI's exclusive mode on Windows: the lowest delay, but every other app goes silent while it plays (voice chat
+        // too) and the system's effects are skipped, so it's for the player to turn on.
+        Get(FrameworkSetting.AudioExclusiveMode, false);
     }
 }

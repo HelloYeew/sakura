@@ -180,6 +180,9 @@ public sealed class MetalRenderer : IMetalRenderer
         WhitePixel = new Texture(whiteTex, TextureOwnership.Shared);
 
         logDeviceInfo();
+
+        // VSync may have been set before the device was there.
+        applyDrawables();
     }
 
     /// <summary>
@@ -296,6 +299,64 @@ public sealed class MetalRenderer : IMetalRenderer
 
     private double blockedMilliseconds;
 
+    // Two drawables under VSync where asked for: the CPU is held back to the display, and frames reach the screen up to
+    // a refresh sooner, at the risk of one running late missing its refresh. Asked for with SAKURA_METAL_DRAWABLES=2
+    // while it's measured against three, today's. Without VSync it stays three, so the CPU can run ahead.
+    private const string drawables_variable = "SAKURA_METAL_DRAWABLES";
+
+    private static readonly int vsync_drawables_asked = Environment.GetEnvironmentVariable(drawables_variable) == "2" ? 2 : 3;
+
+    private int vsyncDrawables = vsync_drawables_asked;
+    private bool vsyncOn;
+
+    // The layer's own count, three, until set otherwise, so a renderer that never asks for two never calls the library.
+    private int appliedDrawables = 3;
+
+    public void SetVSync(bool enabled)
+    {
+        vsyncOn = enabled;
+        applyDrawables();
+    }
+
+    /// <inheritdoc/>
+    public bool SupportsLateLatch => true;
+
+    /// <inheritdoc/>
+    public bool QueueMoreFrames()
+    {
+        if (vsyncDrawables >= 3)
+            return false;
+
+        vsyncDrawables = 3;
+        Logger.Verbose("Frames kept missing their refresh with two drawables, so Metal keeps three again.");
+        applyDrawables();
+        return true;
+    }
+
+    /// <summary>
+    /// Has the layer keep two drawables or three, as VSync and <see cref="QueueMoreFrames"/> have it, from the next frame.
+    /// </summary>
+    private void applyDrawables()
+    {
+        int count = vsyncOn ? vsyncDrawables : 3;
+
+        if (device == nint.Zero || count == appliedDrawables)
+            return;
+
+        try
+        {
+            // Frames in flight stay the library's three.
+            SakuraMetalNative.sakura_metal_set_frame_latency(device, 0, count);
+            appliedDrawables = count;
+            Logger.Verbose($"Metal keeps {count} drawables{(vsyncOn ? " under VSync" : string.Empty)}.");
+        }
+        catch (EntryPointNotFoundException)
+        {
+            // A library from before the control: the layer's own three.
+            appliedDrawables = count;
+        }
+    }
+
     // When the update the frame being drawn shows was made, which the native side tags the frame with, and whether
     // it can: a library from before frame timing can't.
     private long frameContentTicks;
@@ -306,6 +367,8 @@ public sealed class MetalRenderer : IMetalRenderer
     public void SetFrameContentTime(long timestamp) => frameContentTicks = timestamp;
 
     public double DisplayLatencyMilliseconds => displayLatency.Milliseconds ?? double.NaN;
+
+    public bool TryTakeShownFrame(out ShownFrame frame) => displayLatency.TryTakeShown(out frame);
 
     /// <summary>
     /// 16384 on every GPU Metal runs on here: iOS 15 needs an A9 or later (Apple3 and up) and every Mac family has it.
@@ -380,19 +443,44 @@ public sealed class MetalRenderer : IMetalRenderer
 
         try
         {
-            if (SakuraMetalNative.sakura_metal_take_presented(device, out long contentTicks, out double presentedTime) == 0)
+            if (takePresented(out long contentTicks, out double gpuEndTime, out double presentedTime) == 0)
                 return;
 
             double hostNow = SakuraMetalNative.sakura_metal_host_time();
             long now = Stopwatch.GetTimestamp();
             long shown = now - (long)((hostNow - presentedTime) * Stopwatch.Frequency);
+            long gpuDone = gpuEndTime > 0 ? now - (long)((hostNow - gpuEndTime) * Stopwatch.Frequency) : 0;
 
-            displayLatency.Add(DisplayLatency.Between(contentTicks, shown));
+            displayLatency.AddFrame(contentTicks, shown, gpuDone);
         }
         catch (EntryPointNotFoundException)
         {
             framesTimed = false;
         }
+    }
+
+    // Cleared where the library predates handing back the GPU's end time with each frame shown.
+    private bool gpuEndTimed = true;
+
+    /// <summary>
+    /// The latest frame Metal has reported on screen, with when the GPU finished it where the library says (else 0).
+    /// </summary>
+    private int takePresented(out long contentTicks, out double gpuEndTime, out double presentedTime)
+    {
+        if (gpuEndTimed)
+        {
+            try
+            {
+                return SakuraMetalNative.sakura_metal_take_presented_frame(device, out contentTicks, out gpuEndTime, out presentedTime);
+            }
+            catch (EntryPointNotFoundException)
+            {
+                gpuEndTimed = false;
+            }
+        }
+
+        gpuEndTime = 0;
+        return SakuraMetalNative.sakura_metal_take_presented(device, out contentTicks, out presentedTime);
     }
 
     public void StartFrame()

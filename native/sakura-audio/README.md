@@ -64,6 +64,46 @@ at against the frames mixed before it, a pair under a sequence number that
 as it does from AAudio's timestamps. A sample time that doesn't carry on from the last callback counts as a
 discontinuity: a cycle the output missed, or a stop and start. `AudioTimeStamp` is declared the same way.
 
+## The WASAPI boundary
+
+On Windows the engine plays through its own WASAPI render loop, `sakura_audio_wasapi_run`. The managed
+side creates and initializes the `IAudioClient`, its `IAudioRenderClient` and `IAudioClock`, and the event. This
+library calls them through their vtables, in `audioclient.h`'s slot order. It waits on the event through an injected
+`WaitForSingleObject`. So there's still no Windows header, nothing new linked, and no code that builds only for
+Windows: the tests drive the loop against fake COM objects on every leg. COM and Win32 calls are `__stdcall` on 32-bit
+x86, which `SAKURA_AUDIO_STDCALL` spells out.
+
+The loop runs on the thread that calls it, and doesn't return until it's stopped. The managed side gives it a thread of
+its own and sets MMCSS ("Pro Audio") on it first. A thread inside a P/Invoke is in preemptive mode, so a garbage
+collection doesn't stop it, and no managed code runs until it returns. It must never be bound with
+`SuppressGCTransition`, which would hold every collection up instead.
+
+- It puts silence in first, starts the client, and then at each event mixes straight into the endpoint buffer.
+  - **Shared mode:** it tops the buffer up to the config's `fillFrames`, which the managed side sets to two periods,
+    the most SDL keeps queued. A shared buffer can be several periods long, and all of it would be delay. 0 means the
+    whole buffer.
+  - **Exclusive mode:** it takes the whole buffer at each event.
+- A device format other than float at the engine's width is mixed into a scratch buffer and converted:
+  16, packed 24 or 32 bits, a mono device getting the average, a wider one silence in the extra channels.
+- Each cycle reads `IAudioClock::GetPosition` and publishes when its first frame is heard, in QPC's 100 ns units, for
+  `sakura_audio_engine_get_device_time`.
+- It ends with the failing HRESULT where a WASAPI call failed, such as `AUDCLNT_E_DEVICE_INVALIDATED` when the device
+  goes away, so the managed side can tell that apart and open the next device.
+
+## The PipeWire boundary
+
+On Linux the engine plays through a `pw_stream`. `sakura_audio_get_pipewire_process_callback` returns a function for
+the stream's `process` event, with the output from `sakura_audio_pipewire_create` as its data. It dequeues a buffer,
+mixes what the stream asked for straight into it, and queues it back. `pw_stream_dequeue_buffer` and
+`pw_stream_queue_buffer` are injected. `pw_buffer` and SPA's buffer types are declared with libpipewire's layout. So
+the managed side loads `libpipewire-0.3.so.0` itself and this library still links nothing new.
+
+- `pw_buffer`'s `requested` only exists from libpipewire 0.3.49. Below that the managed side says so, and each cycle
+  writes the quantum it asked for in `node.latency`.
+- Each buffer goes back with its size in frames, so `pw_stream_get_time_n`'s `queued` counts frames. That's where the
+  managed side reads the delay from, off the audio thread.
+- The stream wants `PW_STREAM_FLAG_RT_PROCESS`, so the callback runs on PipeWire's real-time data thread.
+
 ## Real-time discipline
 
 Non-negotiable for anything reachable from the audio callback. Every one of these is a latency or
@@ -99,7 +139,7 @@ gets `callbackMicroseconds` reading zero and nothing else changes.
 |---|---|---|
 | control | create/destroy, parameters, transport | non-blocking; graph and transport changes post a command |
 | writer | `sakura_audio_stream_*` | one per voice, wait-free against the audio thread |
-| audio | the callback from `sakura_audio_get_stream_callback`, or on Android `sakura_audio_get_aaudio_callback`, or on iOS `sakura_audio_get_audio_unit_callback` | SDL's, AAudio's or RemoteIO's, and never anything else |
+| audio | the callback from `sakura_audio_get_stream_callback`, or on Android `sakura_audio_get_aaudio_callback`, on iOS `sakura_audio_get_audio_unit_callback`, on Windows `sakura_audio_wasapi_run`, on Linux `sakura_audio_get_pipewire_process_callback` | SDL's, AAudio's, RemoteIO's, the managed side's WASAPI thread (in native code throughout) or PipeWire's data thread, and never anything else |
 | readers | `..._get_state`, `..._read_spectrum`, `..._get_stats` | any thread, never blocks the audio thread |
 
 The seek path is the only part that needs the three of them to cooperate. A discard cannot be done by

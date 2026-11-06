@@ -127,6 +127,63 @@ internal sealed class SakuraAudioEngine : IDisposable
         }
     }
 
+    private static bool? hasWasapiOutput;
+
+    /// <summary>
+    /// Whether the library has the WASAPI render loop. Found out with a call that does nothing (destroying no output),
+    /// which a library from before it can't make.
+    /// </summary>
+    public static bool HasWasapiOutput
+    {
+        get
+        {
+            if (hasWasapiOutput.HasValue)
+                return hasWasapiOutput.Value;
+
+            try
+            {
+                if (IsAvailable)
+                    SakuraAudioNative.sakura_audio_wasapi_destroy(0);
+
+                hasWasapiOutput = IsAvailable;
+            }
+            catch (EntryPointNotFoundException)
+            {
+                Logger.Verbose("This libsakura-audio predates its WASAPI output, so it plays through SDL.");
+                hasWasapiOutput = false;
+            }
+
+            return hasWasapiOutput.Value;
+        }
+    }
+
+    private static nint? pipeWireCallback;
+
+    /// <summary>
+    /// The pw_stream_events process function to add as a stream's listener, with a PipeWire output as its data, or zero
+    /// where the library predates it.
+    /// </summary>
+    public static nint PipeWireCallback
+    {
+        get
+        {
+            if (pipeWireCallback.HasValue)
+                return pipeWireCallback.Value;
+
+            try
+            {
+                pipeWireCallback = IsAvailable ? SakuraAudioNative.sakura_audio_get_pipewire_process_callback() : 0;
+            }
+            catch (EntryPointNotFoundException)
+            {
+                Logger.Verbose("This libsakura-audio predates its PipeWire output, so it plays through SDL.");
+                pipeWireCallback = 0;
+            }
+
+            return pipeWireCallback.Value;
+        }
+    }
+
     private static nint? audioUnitCallback;
 
     /// <summary>
@@ -146,7 +203,7 @@ internal sealed class SakuraAudioEngine : IDisposable
             }
             catch (EntryPointNotFoundException)
             {
-                Logger.Verbose("This libsakura-audio predates its RemoteIO output, so it plays through SDL.");
+                Logger.Verbose("This libsakura-audio predates its audio unit output, so it plays through SDL.");
                 audioUnitCallback = 0;
             }
 

@@ -279,6 +279,27 @@ public abstract class AppHost : IDisposable
     // When the update each of rootDrawNodes came from began, for the renderer to measure how long its frames take to
     // reach the screen from (IRenderer.SetFrameContentTime).
     private readonly long[] rootDrawNodeTimes = new long[3];
+
+    // When that update finished, for splitting the latency into where it went (DisplayLatencySplit).
+    private readonly long[] rootDrawNodeUpdatedTimes = new long[3];
+
+    private readonly DisplayLatencySplit displayLatencySplit = new DisplayLatencySplit();
+
+    // When frames reach the screen under VSync, refresh by refresh, for the late latch and for missed refreshes. And the
+    // late latch, made on the draw thread at its first frame. Both are the draw thread's alone.
+    private readonly RefreshCadence refreshCadence = new RefreshCadence();
+    private LateLatch lateLatch;
+    private bool cadenceUnderVSync;
+
+    // Turns the late latch on (1) or off (0) whatever HostOptions.UseLateLatch says, for comparing.
+    private const string late_latch_variable = "SAKURA_LATE_LATCH";
+
+    private static readonly bool? late_latch_asked = Environment.GetEnvironmentVariable(late_latch_variable) switch
+    {
+        "1" => true,
+        "0" => false,
+        _ => null
+    };
     private DrawNode currentFrameDrawNode;
 
     private ThreadRunner threadRunner;
@@ -324,6 +345,17 @@ public abstract class AppHost : IDisposable
     /// says: the SDL audio backend adds its delay to the sound's and names the output by it. Null elsewhere.
     /// </summary>
     public virtual ISystemAudioRoute? SystemAudioRoute => null;
+
+    /// <summary>
+    /// What <see cref="IRenderer.DisplayLatencyMilliseconds"/> is made of, in the order a frame goes through them, adding
+    /// up to it: the update, its wait for the draw, the draw, the GPU (where the renderer can tell when it finished) and
+    /// presenting. Each says how it's known, and the panel's own delay, which no software can measure, comes last. Empty
+    /// until frames have been seen on screen, and for good where the renderer can't tell when they are.
+    /// </summary>
+    /// <remarks>
+    /// Made at each call from the figures as they are then, so for a settings screen or a report rather than each frame.
+    /// </remarks>
+    public IReadOnlyList<DisplayLatencyPart> GetDisplayLatencyParts() => displayLatencySplit.GetParts(Renderer?.DisplayLatencyMilliseconds ?? double.NaN);
 
     /// <summary>
     /// The platform's performance services: the frame threads report their work through it, and an app can read how
@@ -1484,6 +1516,7 @@ public abstract class AppHost : IDisposable
         int updateIndex = frameBufferManager.GetUpdateIndex();
         rootDrawNodes[updateIndex] = app?.GenerateDrawNodeSubtree(updateIndex);
         rootDrawNodeTimes[updateIndex] = updateTime;
+        rootDrawNodeUpdatedTimes[updateIndex] = Stopwatch.GetTimestamp();
         frameBufferManager.FinishUpdate();
     }
 
@@ -1497,7 +1530,28 @@ public abstract class AppHost : IDisposable
         Renderer?.Clear();
         Renderer?.StartFrame();
 
+        // Frames come one a refresh only under VSync, focused: anything else paces them otherwise, and their cadence says
+        // nothing about refreshes missed.
+        bool cadence = FrameLimiter?.Value == FrameSync.VSync && Window?.IsActive == true;
+        double refreshTicks = Stopwatch.Frequency / getDisplayHz();
+
+        if (cadence != cadenceUnderVSync)
+        {
+            refreshCadence.Reset();
+            cadenceUnderVSync = cadence;
+        }
+
+        // With the drawable in hand, as late as the frame can still make the next refresh: the update it takes is fresher.
+        if (cadence && (late_latch_asked ?? Options.UseLateLatch) && Renderer?.SupportsLateLatch == true)
+        {
+            lateLatch ??= new LateLatch(Options.AllowThreadSpinning);
+
+            var split = displayLatencySplit.Milliseconds;
+            lateLatch.Wait(refreshCadence, refreshTicks, split.Draw, split.Gpu, threadActivity.For(ThreadRole.Draw) == ThreadActivity.Tight);
+        }
+
         int drawIndex = frameBufferManager.GetDrawIndex();
+        long takenTime = Stopwatch.GetTimestamp();
         var currentFrameNode = rootDrawNodes[drawIndex];
 
         if (currentFrameNode != null)
@@ -1516,6 +1570,30 @@ public abstract class AppHost : IDisposable
         // renderer and report their own wait. Only one of the two is ever non-zero.
         lastPresentMilliseconds = (Stopwatch.GetTimestamp() - swapStart) * ms_per_tick
                                   + (Renderer?.LastBlockedMilliseconds ?? 0);
+
+        // Handed over at the swap: the other backends have presented by then, and OpenGL presents in it.
+        if (currentFrameNode != null)
+            displayLatencySplit.AddDrawn(rootDrawNodeTimes[drawIndex], rootDrawNodeUpdatedTimes[drawIndex], takenTime, swapStart);
+
+        while (Renderer != null && Renderer.TryTakeShownFrame(out var shownFrame))
+        {
+            displayLatencySplit.AddShown(shownFrame);
+
+            if (!cadence)
+                continue;
+
+            bool missed = refreshCadence.Add(shownFrame.Shown, refreshTicks);
+
+            if (lateLatch is { Waited: true })
+                lateLatch.FrameShown(missed);
+        }
+
+        // More than 1% of a few seconds' frames late: a renderer queuing fewer frames for a fresher picture queues more.
+        if (cadence && refreshCadence.TryEndWindow(out int misses) && Renderer?.QueueMoreFrames() == true)
+        {
+            Logger.Verbose($"{misses} frames missed their refresh in the last few seconds, so the renderer queues more frames.");
+            refreshCadence.Reset();
+        }
     }
 
     /// <summary>
@@ -1646,6 +1724,9 @@ public abstract class AppHost : IDisposable
 
         linuxGameMode?.Dispose();
         linuxGameMode = null;
+
+        lateLatch?.Dispose();
+        lateLatch = null;
 
         Logger.Shutdown();
 

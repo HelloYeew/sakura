@@ -308,10 +308,11 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
         // Opened on the device picked from the start, rather than on the default and then moved.
         string outputDevice = Host.FrameworkConfigManager.Get<string>(FrameworkSetting.AudioDevice).Value;
         var deviceBufferFrames = Host.FrameworkConfigManager.Get<int>(FrameworkSetting.AudioDeviceBufferFrames);
+        bool exclusive = Host.FrameworkConfigManager.Get<bool>(FrameworkSetting.AudioExclusiveMode).Value;
 
         return AudioBackends.Create(backend,
             () => new SDLAudioManager(backend != AudioBackend.SDLManaged, deviceBufferFrames.Value,
-                next => deviceBufferFrames.Value = next, Host.NativeAudioOutput, outputDevice, Host.SystemAudioRoute),
+                next => deviceBufferFrames.Value = next, Host.NativeAudioOutput, outputDevice, Host.SystemAudioRoute, exclusive),
             () => new BassAudioManager(outputDevice: outputDevice),
             AudioBackends.BassAvailable);
     }

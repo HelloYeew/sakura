@@ -88,6 +88,9 @@ void sakura_metal_trim(SakuraMetalDevice* device);
 // 10.15.4 or iOS 10.3, on a device: earlier, or in the iOS simulator, nothing is ever taken.
 void sakura_metal_set_frame_tag(SakuraMetalDevice* device, int64_t tag);
 int sakura_metal_take_presented(SakuraMetalDevice* device, int64_t* tag, double* presentedTime);
+// take_presented, also handing back when the GPU finished drawing that frame, in the same clock: 0 where its completion
+// wasn't in by the time it was shown.
+int sakura_metal_take_presented_frame(SakuraMetalDevice* device, int64_t* tag, double* gpuEndTime, double* presentedTime);
 double sakura_metal_host_time(void);
 
 // handles a backbuffer resize, width/height are in physical pixels. contentsScale is the backing

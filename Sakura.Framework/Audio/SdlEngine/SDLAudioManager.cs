@@ -198,7 +198,7 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
     // Made once and kept for the life of the manager: playing on another device binds it to that device instead of
     // making a new one, so the mix thread and the native engine's callback never see it change. Null on Android and
-    // iOS, where the native engine plays through aaudioOutput or remoteIOOutput instead.
+    // iOS, where the native engine plays through aaudioOutput or audioUnitOutput instead.
     private SDL_AudioStream* deviceStream;
 
     /// <summary>
@@ -242,31 +242,49 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     private double unplayedFrames;
 
     /// <summary>
-    /// The native engine's output on iOS, straight into RemoteIO with nothing of SDL's in between, or null where it plays
-    /// through SDL's stream.
+    /// The native engine's output on iOS and macOS, straight into RemoteIO or the HAL output with nothing of SDL's in
+    /// between, or null where it plays through SDL's stream.
     /// </summary>
-    private readonly RemoteIOOutput? remoteIOOutput;
+    private readonly AudioUnitOutput? audioUnitOutput;
 
-    // The engine's callbacks and frames as of the last RemoteIO check, whose difference is the I/O buffer.
-    private long remoteIOCallbacks;
-    private long remoteIOFramesMixed;
+    // The engine's callbacks and frames as of the last check of the unit, whose difference is the I/O buffer.
+    private long audioUnitCallbacks;
+    private long audioUnitFramesMixed;
 
     // The route after the device as last read, once a second, and the system's buffer within it, which the measured
     // latency covers itself.
-    private double remoteIORouteMs;
-    private double remoteIORouteBufferMs;
+    private double audioUnitRouteMs;
+    private double audioUnitRouteBufferMs;
 
-    private readonly MeasuredLatency remoteIOLatency = new MeasuredLatency();
-    private int remoteIOLatencyReadings;
+    private readonly MeasuredLatency audioUnitLatency = new MeasuredLatency();
+    private int audioUnitLatencyReadings;
 
     // Starting (and starting again) shows in the unit's timestamps as a jump, which isn't a missed cycle: the jumps
     // counted while settling are left out of the xruns.
-    private double remoteIOSettlingMs = aaudio_settle_ms;
+    private double audioUnitSettlingMs = aaudio_settle_ms;
 
     // The engine's callbacks as of the last latency sample, to tell a unit that's rendering from one that's stopped.
-    private long remoteIOSampledCallbacks;
-    private long remoteIODiscontinuitiesWhileSettling;
-    private long remoteIOXruns;
+    private long audioUnitSampledCallbacks;
+    private long audioUnitDiscontinuitiesWhileSettling;
+    private long audioUnitXruns;
+
+    /// <summary>
+    /// The native engine's output on Windows, straight into WASAPI with nothing of SDL's in between, or null where it plays
+    /// through SDL's stream.
+    /// </summary>
+    private readonly WasapiOutput? wasapiOutput;
+
+    private readonly MeasuredLatency wasapiLatency = new MeasuredLatency();
+    private int wasapiLatencyReadings;
+
+    /// <summary>
+    /// The native engine's output on Linux, straight into a PipeWire stream with nothing of SDL's in between, or null where
+    /// it plays through SDL's stream. Not readonly: a device picked by name moves the sound to SDL for good.
+    /// </summary>
+    private PipeWireOutput? pipeWireOutput;
+
+    private readonly MeasuredLatency pipeWireLatency = new MeasuredLatency();
+    private int pipeWireLatencyReadings;
 
     /// <summary>
     /// The push-model mix thread, or null when the native engine owns the device callback.
@@ -328,8 +346,11 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     /// </summary>
     private volatile int deviceQueueMicroseconds;
 
-    // Whether SDL plays through Core Audio (macOS and iOS), whose output keeps several buffers queued.
+    // Whether SDL plays through Core Audio (macOS and iOS), whose output keeps several buffers queued, or WASAPI (Windows),
+    // whose endpoint holds one and a half on average.
     private bool coreAudio;
+    private bool wasapi;
+    private bool pipeWire;
 
     private double sinceDeviceCheckMs;
 
@@ -432,10 +453,14 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     /// whose delay <see cref="OutputLatencyMs"/> counts too and whose name <see cref="PlayingDevice"/> takes. Null where
     /// the platform doesn't say.
     /// </param>
+    /// <param name="exclusiveOutput">
+    /// On Windows, whether to play in WASAPI's exclusive mode where the device takes it: the lowest delay, but other apps
+    /// go silent while it plays, and the system's effects are skipped.
+    /// </param>
     /// <exception cref="InvalidOperationException">SDL audio could not be started.</exception>
     public SDLAudioManager(bool useNativeMixEngine = true, int requestedDeviceBufferFrames = DEFAULT_DEVICE_BUFFER_FRAMES,
                            Action<int>? persistDeviceBufferFrames = null, NativeAudioOutput? nativeOutput = null, string outputDevice = "",
-                           ISystemAudioRoute? systemRoute = null)
+                           ISystemAudioRoute? systemRoute = null, bool exclusiveOutput = false)
     {
         this.systemRoute = systemRoute;
 
@@ -458,6 +483,8 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
         ownsAudioSubsystem = true;
         coreAudio = SDL_GetCurrentAudioDriver() == "coreaudio";
+        wasapi = SDL_GetCurrentAudioDriver() == "wasapi";
+        pipeWire = SDL_GetCurrentAudioDriver() == "pipewire";
 
         preferredDevice = outputDevice;
         OutputDevice.Value = outputDevice;
@@ -478,21 +505,55 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             aaudioBufferAuto = aaudioBufferFrames <= 0;
         }
 
-        // On iOS it plays straight into RemoteIO, on the system's I/O thread. Through SDL there'd be an Audio Queue in
-        // between, six buffers deep at a phone's buffer size.
-        if (nativeEngine != null && RemoteIOOutput.IsAvailable)
+        // On iOS and macOS it plays straight into the system's output unit, RemoteIO and the HAL output, on the system's
+        // I/O thread. Through SDL there'd be an Audio Queue in between: six buffers deep at a phone's buffer size, and
+        // 32 ms at the desktop's 128 frames. Only in place of SDL's Core Audio: an SDL driver asked for by name (the
+        // dummy one the tests play on, or the disk writer) is kept.
+        if (nativeEngine != null && AudioUnitOutput.IsAvailable && coreAudio)
         {
-            remoteIOOutput = RemoteIOOutput.TryOpen(nativeEngine);
+            bool onDefault = true;
+            uint device = OperatingSystem.IsMacOS() ? findAudioUnitDevice(out onDefault) : 0;
+            audioUnitOutput = AudioUnitOutput.TryOpen(nativeEngine, device, requestedDeviceBufferFrames);
 
-            // The I/O buffer the session gave, until the engine's callbacks show it.
-            if (remoteIOOutput != null && nativeOutput?.FramesPerBurst > 0)
+            if (audioUnitOutput is { PlaysOnADevice: true })
             {
+                systemRoute?.SetPlayingDevice(onDefault ? string.Empty : preferredDevice);
+
+                // The I/O buffer the device gave, until the engine's callbacks show it.
+                deviceBufferFrames = audioUnitOutput.BufferFrames;
+                updateAudioUnitBufferDuration();
+            }
+            else if (audioUnitOutput != null && nativeOutput?.FramesPerBurst > 0)
+            {
+                // The I/O buffer the session gave, until the engine's callbacks show it.
                 deviceBufferFrames = nativeOutput.Value.FramesPerBurst;
-                updateRemoteIOBufferDuration();
+                updateAudioUnitBufferDuration();
             }
         }
 
-        if (aaudioOutput == null && remoteIOOutput == null)
+        // On Windows it plays straight into WASAPI, on a render thread of its own. Through SDL there'd be SDL's thread and
+        // its writes of a period at a time in between, and SDL keeps the stream's clock to itself. Only in place of SDL's
+        // WASAPI, as for Core Audio.
+        if (nativeEngine != null && WasapiOutput.IsAvailable && wasapi)
+        {
+            wasapiOutput = WasapiOutput.TryOpen(nativeEngine, preferredDevice, exclusiveOutput, requestedDeviceBufferFrames);
+
+            if (wasapiOutput != null)
+                updateWasapiBufferDuration(wasapiOutput);
+        }
+
+        // On Linux it plays straight into a PipeWire stream, on PipeWire's real-time thread, with the stream's time to say how
+        // late it is. Only on the default output and in place of SDL's PipeWire: SDL knows PipeWire's node for a device
+        // picked by name.
+        if (nativeEngine != null && PipeWireOutput.IsAvailable && pipeWire && string.IsNullOrEmpty(preferredDevice))
+        {
+            pipeWireOutput = PipeWireOutput.TryOpen(nativeEngine, requestedDeviceBufferFrames, SDL_GetAppMetadataProperty(SDL_PROP_APP_METADATA_NAME_STRING) ?? "Sakura");
+
+            if (pipeWireOutput != null)
+                updatePipeWireBufferDuration(pipeWireOutput);
+        }
+
+        if (aaudioOutput == null && audioUnitOutput == null && wasapiOutput == null && pipeWireOutput == null)
         {
             applyDeviceBufferHint(requestedDeviceBufferFrames);
 
@@ -570,8 +631,12 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
         if (aaudioOutput != null)
             aaudioOutput.Start();
-        else if (remoteIOOutput != null)
-            remoteIOOutput.Start();
+        else if (audioUnitOutput != null)
+            audioUnitOutput.Start();
+        else if (wasapiOutput != null)
+            wasapiOutput.Start();
+        else if (pipeWireOutput != null)
+            pipeWireOutput.Start();
         else if (!SDL_ResumeAudioStreamDevice(deviceStream))
             Logger.Error($"Failed to start the SDL audio device: {SDL_GetError()}");
 
@@ -590,15 +655,16 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             mixThread.Start();
         }
 
-        // The device is open, so the system's route is the one it plays on.
-        if (systemRoute != null)
+        // The device is open, so the system's route is the one it plays on. WASAPI's own clock measures the engine the
+        // route stands for, so it isn't counted there.
+        if (systemRoute != null && wasapiOutput == null)
         {
             systemRouteLatencyMs = systemRoute.LatencyMilliseconds;
 
-            if (remoteIOOutput != null)
+            if (audioUnitOutput != null)
             {
-                remoteIORouteMs = systemRouteLatencyMs;
-                remoteIORouteBufferMs = systemRoute.BufferMilliseconds;
+                audioUnitRouteMs = systemRouteLatencyMs;
+                audioUnitRouteBufferMs = systemRoute.BufferMilliseconds;
             }
         }
 
@@ -631,8 +697,8 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
         // iOS stopped the unit for the interruption, and leaves starting it again to the app. On the audio thread, which
         // controls it.
-        if (!interrupted && remoteIOOutput is RemoteIOOutput output)
-            EnqueueAction(() => restartRemoteIO(output, onlyIfPlaying: true));
+        if (!interrupted && audioUnitOutput is AudioUnitOutput output)
+            EnqueueAction(() => restartAudioUnit(output, onlyIfPlaying: true));
 
         Logger.Verbose(interrupted
             ? "The system has the audio output for something else: tracks wait and samples are silent until it's back."
@@ -713,10 +779,133 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     /// </remarks>
     public double OutputLatencyMs => outputLatencyFrames / (double)SampleRate * 1000.0 + deviceQueueMicroseconds / 1000.0 + systemRouteLatencyMs;
 
+    /// <summary>
+    /// The terms of <see cref="OutputLatencyMs"/>, split where the app's own buffers end. Through SDL: the stream's queue,
+    /// SDL's device buffers, then the system's route where the platform has one (nothing reports it elsewhere). Through
+    /// AAudio: its buffer, then the rest of what its timestamps measure. Through an audio unit (RemoteIO, the HAL output)
+    /// all of it is the system's, since the engine renders straight into the system's I/O buffer.
+    /// </summary>
+    public IReadOnlyList<AudioLatencyPart> GetOutputLatencyParts()
+    {
+        // Each read once, so the parts add up to what OutputLatencyMs makes of the same figures.
+        double deviceMs = deviceQueueMicroseconds / 1000.0;
+        double? routeMs = systemRoute != null ? systemRouteLatencyMs : null;
+
+        if (aaudioOutput != null)
+            return AAudioLatencyParts(deviceMs, appBufferMicroseconds / 1000.0, outputLatencyMeasured);
+
+        if (audioUnitOutput != null)
+            return AudioUnitLatencyParts(deviceMs, routeMs, outputLatencyMeasured);
+
+        if (wasapiOutput != null)
+            return WasapiLatencyParts(deviceMs, appBufferMicroseconds / 1000.0, outputLatencyMeasured);
+
+        // The stream's time measures the graph's delay to the device, the hardware's included, as AAudio's timestamps do:
+        // split the same way, at the quantum the app writes each cycle.
+        if (pipeWireOutput != null)
+            return AAudioLatencyParts(deviceMs, appBufferMicroseconds / 1000.0, outputLatencyMeasured);
+
+        return SDLLatencyParts(outputLatencyFrames / (double)SampleRate * 1000.0, deviceMs, routeMs, systemRoute?.ReachesListener ?? true);
+    }
+
+    /// <summary>
+    /// Through SDL's device: the stream's queue, counted, then SDL's device buffers, worked out from their size, then the
+    /// system's route, where the platform reports one. A route that stops at the device leaves the rest unreported.
+    /// </summary>
+    /// <param name="queueMs">What waits in the stream.</param>
+    /// <param name="deviceMs">What waits in SDL's device buffers.</param>
+    /// <param name="routeMs">The system's route after them, or null where the platform has none.</param>
+    /// <param name="routeReachesListener">Whether the route goes all the way to the listener.</param>
+    internal static AudioLatencyPart[] SDLLatencyParts(double queueMs, double deviceMs, double? routeMs, bool routeReachesListener)
+    {
+        var queue = new AudioLatencyPart(AudioLatencyPartKind.Queue, queueMs, LatencySource.Counted);
+        var buffers = new AudioLatencyPart(AudioLatencyPartKind.AppBuffer, deviceMs, LatencySource.FromBufferSizes);
+
+        if (routeMs is not double route)
+            return new[] { queue, buffers, AudioLatencyPart.NotReported(AudioLatencyPartKind.System) };
+
+        var system = new AudioLatencyPart(AudioLatencyPartKind.System, route, LatencySource.ReportedBySystem);
+
+        return routeReachesListener
+            ? new[] { queue, buffers, system }
+            : new[] { queue, buffers, system, AudioLatencyPart.NotReported(AudioLatencyPartKind.AfterDevice) };
+    }
+
+    /// <summary>
+    /// Through AAudio: its buffer, then the rest of the way to the listener, once AAudio's timestamps have measured it.
+    /// </summary>
+    /// <param name="deviceMs">What the timestamps measured, the buffer included, or the buffer alone before they have.</param>
+    /// <param name="bufferMs">AAudio's buffer, the app's own.</param>
+    /// <param name="measured">Whether the timestamps have measured it yet.</param>
+    internal static AudioLatencyPart[] AAudioLatencyParts(double deviceMs, double bufferMs, bool measured)
+    {
+        if (!measured)
+        {
+            return new[]
+            {
+                new AudioLatencyPart(AudioLatencyPartKind.AppBuffer, deviceMs, LatencySource.FromBufferSizes),
+                AudioLatencyPart.NotReported(AudioLatencyPartKind.System)
+            };
+        }
+
+        // Never more than was measured, so the system's part can't go below 0.
+        double appMs = Math.Min(bufferMs, deviceMs);
+
+        return new[]
+        {
+            new AudioLatencyPart(AudioLatencyPartKind.AppBuffer, appMs, LatencySource.FromBufferSizes),
+            new AudioLatencyPart(AudioLatencyPartKind.System, deviceMs - appMs, LatencySource.Measured)
+        };
+    }
+
+    /// <summary>
+    /// Through our own WASAPI stream: the endpoint buffer the engine keeps filled, then the rest of what the stream's
+    /// clock measures, as AAudio's are split. The clock's position is the device's, so what the driver, the hardware and
+    /// a Bluetooth link hold after it goes unreported.
+    /// </summary>
+    /// <param name="deviceMs">What the clock measured, the buffer included, or the buffer alone before it has.</param>
+    /// <param name="bufferMs">The endpoint buffer.</param>
+    /// <param name="measured">Whether the clock has measured it yet.</param>
+    internal static AudioLatencyPart[] WasapiLatencyParts(double deviceMs, double bufferMs, bool measured)
+    {
+        var parts = AAudioLatencyParts(deviceMs, bufferMs, measured);
+        return measured ? new[] { parts[0], parts[1], AudioLatencyPart.NotReported(AudioLatencyPartKind.AfterDevice) } : parts;
+    }
+
+    /// <summary>
+    /// Through an audio unit (RemoteIO, the HAL output), all of it is the system's: the engine renders straight into the
+    /// system's I/O buffer. Measured from the unit's timestamps up to the device's output once they've settled, and the
+    /// system's route after that: the audio session's on iOS, the device's own latencies on macOS.
+    /// </summary>
+    /// <param name="deviceMs">What the timestamps measured; before they have, the I/O buffer without a route, else 0.</param>
+    /// <param name="routeMs">
+    /// The system's route: after the device's output once measured, the I/O buffer too before then. Null where there's none.
+    /// </param>
+    /// <param name="measured">Whether the timestamps have measured it yet.</param>
+    internal static AudioLatencyPart[] AudioUnitLatencyParts(double deviceMs, double? routeMs, bool measured)
+    {
+        var source = measured ? LatencySource.Measured : routeMs == null ? LatencySource.FromBufferSizes : LatencySource.NotReported;
+
+        if (routeMs != null)
+            source |= LatencySource.ReportedBySystem;
+
+        var system = new AudioLatencyPart(AudioLatencyPartKind.System, deviceMs + (routeMs ?? 0), source);
+
+        // Without the session's route, nothing says how long the way past the device's output takes.
+        return routeMs != null ? new[] { system } : new[] { system, AudioLatencyPart.NotReported(AudioLatencyPartKind.AfterDevice) };
+    }
+
     private readonly ISystemAudioRoute? systemRoute;
 
     // The system route's delay as last read, by the device check, as a route change moves it.
     private double systemRouteLatencyMs;
+
+    // Whether the output's own timestamps have measured its latency yet (AAudio and the audio units): until they have, the
+    // device half of OutputLatencyMs is worked out from the buffers.
+    private volatile bool outputLatencyMeasured;
+
+    // AAudio's buffer, the part of what its timestamps measure that's the app's own.
+    private volatile int appBufferMicroseconds;
 
     // The native engine's channels call into it directly, from whichever thread plays them. The managed mixer's
     // queue their changes for the audio thread.
@@ -747,21 +936,36 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     private void updateDeviceBufferDuration(int frames, int rate)
     {
         deviceBufferMicroseconds = rate > 0 ? (int)Math.Round(frames / (double)rate * 1_000_000.0) : 0;
-        deviceQueueMicroseconds = deviceBufferMicroseconds * queuedDeviceBuffers(frames, rate);
+        deviceQueueMicroseconds = (int)Math.Round(deviceBufferMicroseconds * queuedDeviceBuffers(frames, rate));
     }
 
     // What SDL's Core Audio output keeps queued at the least, in milliseconds (MINIMUM_AUDIO_BUFFER_TIME_MS).
     private const double core_audio_minimum_queue_ms = 15;
 
     /// <summary>
-    /// How many device buffers the sound waits behind. One, except on Core Audio: SDL keeps several Audio Queue
-    /// buffers in flight there, three, or twice as many as make 15 ms when a buffer is shorter than that
-    /// (<c>SDL_coreaudio.m</c>). Counting one undercounted the delay by tens of milliseconds: about 30 at the desktop's
-    /// 128 frames, and 46 at iOS's old 1024.
+    /// How many device buffers the sound waits behind, on average. One, except on Core Audio and WASAPI.
     /// </summary>
-    private int queuedDeviceBuffers(int frames, int rate)
+    /// <remarks>
+    /// <para>
+    /// SDL keeps several Audio Queue buffers in flight on Core Audio: three, or twice as many as make 15 ms when a buffer
+    /// is shorter than that (<c>SDL_coreaudio.m</c>). Counting one undercounted the delay by tens of milliseconds: about
+    /// 30 at the desktop's 128 frames, and 46 at iOS's old 1024.
+    /// </para>
+    /// <para>
+    /// On WASAPI, SDL writes a period into the endpoint's buffer each time the engine has left a period or less in it
+    /// (<c>SDL_wasapi.c</c>), so what it writes waits behind up to a period, and is itself a period long: one and a half
+    /// periods on average.
+    /// </para>
+    /// </remarks>
+    private double queuedDeviceBuffers(int frames, int rate)
     {
-        if (!coreAudio || frames <= 0 || rate <= 0)
+        if (frames <= 0 || rate <= 0)
+            return 1;
+
+        if (wasapi)
+            return 1.5;
+
+        if (!coreAudio)
             return 1;
 
         double bufferMs = frames * 1000.0 / rate;
@@ -1034,11 +1238,13 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         }
 
         deviceBufferFrames = output.BufferFrames;
+        appBufferMicroseconds = (int)Math.Round(deviceBufferFrames / (double)output.SampleRate * 1_000_000.0);
 
         // What's buffered is all that's known until AAudio's timestamps say how long the rest of the way takes.
         double latencyMs = aaudioLatency.Milliseconds ?? deviceBufferFrames / (double)output.SampleRate * 1000.0;
         deviceBufferMicroseconds = (int)Math.Round(latencyMs * 1000.0);
         deviceQueueMicroseconds = deviceBufferMicroseconds;
+        outputLatencyMeasured = aaudioLatency.Milliseconds.HasValue;
     }
 
     /// <summary>
@@ -1139,18 +1345,18 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     }
 
     /// <summary>
-    /// Keeps the RemoteIO output's figures current: how late its renders go out and the cycles it missed, from the unit's
-    /// timestamps, and once a second the I/O buffer (as the engine's callbacks show it) and the system's route. The unit
-    /// follows a route change by itself, so there's nothing to reopen.
+    /// Keeps the audio unit's figures current: how late its renders go out and the cycles it missed, from the unit's
+    /// timestamps, and once a second the I/O buffer (as the engine's callbacks show it) and the system's route. RemoteIO
+    /// follows a route change by itself. The HAL output is moved here, onto the device it should play on now.
     /// </summary>
-    private void pollRemoteIO(RemoteIOOutput output, double frameTime)
+    private void pollAudioUnit(AudioUnitOutput output, double frameTime)
     {
         sinceLatencySampleMs += frameTime;
 
         if (sinceLatencySampleMs >= native_latency_sample_interval_ms)
         {
             sinceLatencySampleMs = 0;
-            sampleRemoteIO(output);
+            sampleAudioUnit(output);
         }
 
         sinceDeviceCheckMs += frameTime;
@@ -1160,21 +1366,29 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
         sinceDeviceCheckMs = 0;
 
+        if (output.PlaysOnADevice)
+        {
+            if (refreshOutputDevices())
+                RaiseEvent(() => OutputDevicesChanged?.Invoke());
+
+            followAudioUnitDevice(output);
+        }
+
         refreshPlayingDevice();
 
         if (systemRoute != null)
         {
-            remoteIORouteMs = systemRoute.LatencyMilliseconds;
-            remoteIORouteBufferMs = systemRoute.BufferMilliseconds;
-            updateRemoteIOBufferDuration();
+            audioUnitRouteMs = systemRoute.LatencyMilliseconds;
+            audioUnitRouteBufferMs = systemRoute.BufferMilliseconds;
+            updateAudioUnitBufferDuration();
         }
 
         var stats = nativeEngine!.GetStats();
-        long callbacks = stats.Callbacks - remoteIOCallbacks;
-        long frames = stats.FramesMixed - remoteIOFramesMixed;
+        long callbacks = stats.Callbacks - audioUnitCallbacks;
+        long frames = stats.FramesMixed - audioUnitFramesMixed;
 
-        remoteIOCallbacks = stats.Callbacks;
-        remoteIOFramesMixed = stats.FramesMixed;
+        audioUnitCallbacks = stats.Callbacks;
+        audioUnitFramesMixed = stats.FramesMixed;
 
         // Stopped (for the background, or by an interruption): the buffer is what it was.
         if (callbacks <= 0)
@@ -1190,76 +1404,265 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             Logger.Verbose($"The audio I/O buffer is now {bufferFrames} frames ({bufferFrames / (double)SampleRate * 1000.0:F1} ms).");
 
         deviceBufferFrames = bufferFrames;
-        updateRemoteIOBufferDuration();
+        updateAudioUnitBufferDuration();
+    }
+
+    /// <summary>
+    /// Keeps the WASAPI output's figures current: how late its cycles are heard, from the stream's clock, and once a second
+    /// the endpoint it should play on. A stream whose device went away, or that stopped asking for audio, is opened again
+    /// then.
+    /// </summary>
+    private void pollWasapi(WasapiOutput output, double frameTime)
+    {
+        sinceLatencySampleMs += frameTime;
+
+        if (sinceLatencySampleMs >= native_latency_sample_interval_ms)
+        {
+            sinceLatencySampleMs = 0;
+
+            if (output.TrySampleLatency(out double latency))
+            {
+                wasapiLatency.Add(latency);
+
+                if (++wasapiLatencyReadings == aaudio_latency_readings_to_log && wasapiLatency.Milliseconds is double settled)
+                {
+                    Logger.Verbose($"Output latency, measured: {settled:F1} ms from the mix to the device, "
+                                   + $"{output.BufferFrames / (double)SampleRate * 1000.0:F1} ms of it in the endpoint buffer.");
+                }
+
+                updateWasapiBufferDuration(output);
+            }
+        }
+
+        sinceDeviceCheckMs += frameTime;
+
+        if (sinceDeviceCheckMs < device_check_interval_ms)
+            return;
+
+        sinceDeviceCheckMs = 0;
+
+        if (refreshOutputDevices())
+            RaiseEvent(() => OutputDevicesChanged?.Invoke());
+
+        followWasapiDevice(output);
+        refreshPlayingDevice();
+    }
+
+    /// <summary>
+    /// The device half of <see cref="OutputLatencyMs"/> for WASAPI: what the stream's clock measured once it has, the
+    /// endpoint buffer until then.
+    /// </summary>
+    private void updateWasapiBufferDuration(WasapiOutput output)
+    {
+        deviceBufferFrames = output.BufferFrames;
+        appBufferMicroseconds = (int)Math.Round(output.BufferFrames / (double)SampleRate * 1_000_000.0);
+
+        double latencyMs = wasapiLatency.Milliseconds ?? output.BufferFrames / (double)SampleRate * 1000.0;
+        deviceBufferMicroseconds = (int)Math.Round(latencyMs * 1000.0);
+        deviceQueueMicroseconds = deviceBufferMicroseconds;
+        outputLatencyMeasured = wasapiLatency.Milliseconds.HasValue;
+    }
+
+    /// <summary>
+    /// Opens the WASAPI stream again on the endpoint it should play on now, where that's another one (the device picked
+    /// was plugged in or out, or the system's default moved), or where the stream stopped. Its delay is measured afresh.
+    /// </summary>
+    private void followWasapiDevice(WasapiOutput output)
+    {
+        string? target = WasapiOutput.FindEndpoint(preferredDevice);
+
+        // No output at all: nothing to open until one's plugged in.
+        if (target == null || (!output.Stopped && target == output.EndpointId))
+            return;
+
+        if (!output.Reopen(preferredDevice))
+            return;
+
+        wasapiLatency.Reset();
+        wasapiLatencyReadings = 0;
+        updateWasapiBufferDuration(output);
+
+        Logger.Verbose($"Playing on {output.Describe()}");
+        refreshPlayingDevice();
+    }
+
+    /// <summary>
+    /// Keeps the PipeWire output's figures current: how late its frames are heard, from the stream's time, and once a second
+    /// whether the stream is still connected. One that went into error is opened again, and played through SDL where it
+    /// won't open.
+    /// </summary>
+    private void pollPipeWire(PipeWireOutput output, double frameTime)
+    {
+        sinceLatencySampleMs += frameTime;
+
+        if (sinceLatencySampleMs >= native_latency_sample_interval_ms)
+        {
+            sinceLatencySampleMs = 0;
+
+            if (output.TrySampleLatency(out double latency))
+            {
+                pipeWireLatency.Add(latency);
+
+                if (++pipeWireLatencyReadings == aaudio_latency_readings_to_log && pipeWireLatency.Milliseconds is double settled)
+                {
+                    Logger.Verbose($"Output latency, measured: {settled:F1} ms from the mix to the device, "
+                                   + $"{output.FramesPerCycle / (double)SampleRate * 1000.0:F1} ms of it the quantum the app writes.");
+                }
+
+                updatePipeWireBufferDuration(output);
+            }
+        }
+
+        sinceDeviceCheckMs += frameTime;
+
+        if (sinceDeviceCheckMs < device_check_interval_ms)
+            return;
+
+        sinceDeviceCheckMs = 0;
+
+        if (refreshOutputDevices())
+            RaiseEvent(() => OutputDevicesChanged?.Invoke());
+
+        if (output.Failed)
+        {
+            output.Dispose();
+            pipeWireOutput = PipeWireOutput.TryOpen(nativeEngine!, requestedDeviceBufferFrames,
+                SDL_GetAppMetadataProperty(SDL_PROP_APP_METADATA_NAME_STRING) ?? "Sakura");
+
+            pipeWireLatency.Reset();
+            pipeWireLatencyReadings = 0;
+
+            if (pipeWireOutput == null)
+            {
+                moveFromPipeWireToSDL("the PipeWire stream failed and wouldn't open again");
+                return;
+            }
+
+            Logger.Verbose($"The PipeWire stream failed, so it was opened again: {pipeWireOutput.Describe()}");
+            pipeWireOutput.Start();
+            updatePipeWireBufferDuration(pipeWireOutput);
+        }
+
+        refreshPlayingDevice();
+    }
+
+    /// <summary>
+    /// The device half of <see cref="OutputLatencyMs"/> for PipeWire: what the stream's time measured once it has, the
+    /// quantum until then.
+    /// </summary>
+    private void updatePipeWireBufferDuration(PipeWireOutput output)
+    {
+        deviceBufferFrames = output.FramesPerCycle;
+        appBufferMicroseconds = (int)Math.Round(output.FramesPerCycle / (double)SampleRate * 1_000_000.0);
+
+        double latencyMs = pipeWireLatency.Milliseconds ?? output.FramesPerCycle / (double)SampleRate * 1000.0;
+        deviceBufferMicroseconds = (int)Math.Round(latencyMs * 1000.0);
+        deviceQueueMicroseconds = deviceBufferMicroseconds;
+        outputLatencyMeasured = pipeWireLatency.Milliseconds.HasValue;
+    }
+
+    /// <summary>
+    /// Plays through SDL's stream instead of PipeWire's from now on: for a device picked by name, which SDL finds, or a
+    /// stream that won't open again.
+    /// </summary>
+    private void moveFromPipeWireToSDL(string why)
+    {
+        pipeWireOutput?.Dispose();
+        pipeWireOutput = null;
+        outputLatencyMeasured = false;
+
+        Logger.Verbose($"Playing through SDL from now on: {why}.");
+
+        applyDeviceBufferHint(requestedDeviceBufferFrames);
+        deviceStream = createDeviceStream(SampleRate, nativeEngine);
+
+        var target = resolvePreferredDevice();
+
+        if (deviceStream == null
+            || (!bindTo(target, start: true) && (target == SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK || !bindTo(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, start: true))))
+        {
+            Logger.Error("No audio device would open through SDL either. Audio has stopped until one is plugged in.");
+            return;
+        }
+
+        // Read for the new device by the next check, which logs it.
+        lastSeenDeviceRate = 0;
+        lastSeenDeviceBufferFrames = 0;
+        sinceDeviceCheckMs = device_check_interval_ms;
+
+        Logger.Verbose($"Playing on {describeBoundDevice()}");
+        refreshPlayingDevice();
     }
 
     /// <summary>
     /// Reads the unit's timestamps: one more reading of how late the renders go out, and the cycles missed since it
     /// started, leaving out the jumps its starting makes.
     /// </summary>
-    private void sampleRemoteIO(RemoteIOOutput output)
+    private void sampleAudioUnit(AudioUnitOutput output)
     {
         long discontinuities = output.Discontinuities;
 
-        if (remoteIOSettlingMs > 0)
+        if (audioUnitSettlingMs > 0)
         {
-            remoteIOSettlingMs -= native_latency_sample_interval_ms;
-            remoteIODiscontinuitiesWhileSettling = discontinuities - remoteIOXruns;
+            audioUnitSettlingMs -= native_latency_sample_interval_ms;
+            audioUnitDiscontinuitiesWhileSettling = discontinuities - audioUnitXruns;
         }
-        else if (discontinuities - remoteIODiscontinuitiesWhileSettling > remoteIOXruns)
+        else if (discontinuities - audioUnitDiscontinuitiesWhileSettling > audioUnitXruns)
         {
-            remoteIOXruns = discontinuities - remoteIODiscontinuitiesWhileSettling;
-            Logger.Verbose($"The audio output missed a cycle ({remoteIOXruns} times so far), with a {deviceBufferFrames}-frame I/O buffer.");
+            audioUnitXruns = discontinuities - audioUnitDiscontinuitiesWhileSettling;
+            Logger.Verbose($"The audio output missed a cycle ({audioUnitXruns} times so far), with a {deviceBufferFrames}-frame I/O buffer.");
         }
 
         // Stopped (an interruption, the background), the unit's last timestamp only grows staler: no reading.
         long callbacks = nativeEngine!.GetStats().Callbacks;
-        bool rendering = callbacks != remoteIOSampledCallbacks;
-        remoteIOSampledCallbacks = callbacks;
+        bool rendering = callbacks != audioUnitSampledCallbacks;
+        audioUnitSampledCallbacks = callbacks;
 
         if (!rendering || !output.TrySampleLatency(out double latency))
             return;
 
-        remoteIOLatency.Add(latency);
+        audioUnitLatency.Add(latency);
 
-        if (++remoteIOLatencyReadings == aaudio_latency_readings_to_log && remoteIOLatency.Milliseconds is double settled)
+        if (++audioUnitLatencyReadings == aaudio_latency_readings_to_log && audioUnitLatency.Milliseconds is double settled)
         {
             Logger.Verbose($"Output latency, measured: {settled:F1} ms from the mix to the device's output, "
-                           + $"{remoteIORouteMs - remoteIORouteBufferMs:F1} ms more on the route after it.");
+                           + $"{audioUnitRouteMs - audioUnitRouteBufferMs:F1} ms more on the route after it.");
         }
 
-        updateRemoteIOBufferDuration();
+        updateAudioUnitBufferDuration();
     }
 
     /// <summary>
-    /// The device half of <see cref="OutputLatencyMs"/> for RemoteIO, where the device buffer is the system's I/O buffer.
+    /// The device half of <see cref="OutputLatencyMs"/> for an audio unit, where the device buffer is the system's I/O buffer.
     /// Once the unit's timestamps have measured how late the renders go out, that's it, and the route counts only what
     /// comes after its buffer. Until then, the system's route counts that buffer already and nothing waits in front of it,
     /// so only without a route is it counted here.
     /// </summary>
-    private void updateRemoteIOBufferDuration()
+    private void updateAudioUnitBufferDuration()
     {
         deviceBufferMicroseconds = (int)Math.Round(deviceBufferFrames / (double)SampleRate * 1_000_000.0);
 
-        if (remoteIOLatency.Milliseconds is double measured)
+        if (audioUnitLatency.Milliseconds is double measured)
         {
             deviceQueueMicroseconds = (int)Math.Round(measured * 1000.0);
-            systemRouteLatencyMs = remoteIORouteMs - remoteIORouteBufferMs;
+            systemRouteLatencyMs = audioUnitRouteMs - audioUnitRouteBufferMs;
+            outputLatencyMeasured = true;
         }
         else
         {
             deviceQueueMicroseconds = systemRoute == null ? deviceBufferMicroseconds : 0;
-            systemRouteLatencyMs = remoteIORouteMs;
+            systemRouteLatencyMs = audioUnitRouteMs;
+            outputLatencyMeasured = false;
         }
     }
 
     /// <summary>
-    /// Starts the RemoteIO unit again, after an interruption stopped it or for the foreground, giving its timestamps time
+    /// Starts the audio unit again, after an interruption stopped it or for the foreground, giving its timestamps time
     /// to settle.
     /// </summary>
-    private void restartRemoteIO(RemoteIOOutput output, bool onlyIfPlaying)
+    private void restartAudioUnit(AudioUnitOutput output, bool onlyIfPlaying)
     {
-        remoteIOSettlingMs = aaudio_settle_ms;
+        audioUnitSettlingMs = aaudio_settle_ms;
 
         if (onlyIfPlaying)
             output.Restart();
@@ -1323,11 +1726,85 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     }
 
     /// <summary>
+    /// The Core Audio device the HAL output should play on: the one the player picked while it's plugged in, else the
+    /// system's default.
+    /// </summary>
+    /// <param name="onDefault">Whether it's the system's default.</param>
+    /// <returns>The device, or 0 where there's no output at all.</returns>
+    private uint findAudioUnitDevice(out bool onDefault)
+    {
+        uint picked = string.IsNullOrEmpty(preferredDevice) ? 0 : CoreAudioNative.FindOutputDevice(preferredDevice);
+        onDefault = picked == 0;
+        return onDefault ? CoreAudioNative.DefaultOutputDevice() : picked;
+    }
+
+    /// <summary>
+    /// Moves the HAL output onto the device it should play on now, where that's another one: the device picked was
+    /// plugged in or out, or the system's default moved. The new device's delay is measured afresh.
+    /// </summary>
+    private void followAudioUnitDevice(AudioUnitOutput output)
+    {
+        uint device = findAudioUnitDevice(out bool onDefault);
+
+        if (device == 0 || device == output.Device)
+            return;
+
+        if (!output.PlayOn(device))
+            return;
+
+        systemRoute?.SetPlayingDevice(onDefault ? string.Empty : preferredDevice);
+
+        // Starting on the new device jumps in the timestamps, which isn't a missed cycle, and the old device's latency
+        // stands for nothing here.
+        audioUnitSettlingMs = aaudio_settle_ms;
+        audioUnitLatency.Reset();
+        audioUnitLatencyReadings = 0;
+
+        if (output.BufferFrames > 0)
+            deviceBufferFrames = output.BufferFrames;
+
+        if (systemRoute != null)
+        {
+            audioUnitRouteMs = systemRoute.LatencyMilliseconds;
+            audioUnitRouteBufferMs = systemRoute.BufferMilliseconds;
+        }
+
+        updateAudioUnitBufferDuration();
+
+        Logger.Verbose(onDefault && !string.IsNullOrEmpty(preferredDevice)
+            ? $"Playing on {output.Describe()} until {preferredDevice} is plugged in"
+            : $"Playing on {output.Describe()}");
+
+        refreshPlayingDevice();
+    }
+
+    /// <summary>
     /// Moves the stream onto the device the player picked, or onto the default while that isn't there. Voices carry
     /// on where they were, and what's queued plays out on the new device.
     /// </summary>
     private void followPreferredDevice()
     {
+        if (audioUnitOutput is { PlaysOnADevice: true } unitOutput)
+        {
+            followAudioUnitDevice(unitOutput);
+            return;
+        }
+
+        if (wasapiOutput != null)
+        {
+            followWasapiDevice(wasapiOutput);
+            return;
+        }
+
+        // PipeWire's stream follows the default by itself. A device picked by name is SDL's to find.
+        if (pipeWireOutput != null)
+        {
+            if (!string.IsNullOrEmpty(preferredDevice))
+                moveFromPipeWireToSDL("the device picked plays through SDL, which finds it by name");
+
+            return;
+        }
+
         // AAudio and RemoteIO play on wherever the system sends the sound; there's nothing to pick there.
         if (deviceStream == null)
             return;
@@ -1374,6 +1851,21 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             playingAAudioDeviceId = id;
             name = id > 0 ? describeAAudioDevice?.Invoke(id) ?? string.Empty : string.Empty;
         }
+        else if (pipeWireOutput != null)
+        {
+            // The stream plays on the default output, which SDL names.
+            name = deviceName(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK);
+        }
+        else if (wasapiOutput?.DeviceName is string endpoint)
+        {
+            // The endpoint's friendly name, as SDL lists it.
+            name = endpoint;
+        }
+        else if (audioUnitOutput?.DeviceName is string unitDevice)
+        {
+            // The HAL output's device, by the name SDL lists it under, as it was known through SDL.
+            name = unitDevice;
+        }
         else if (systemRoute?.Name is { Length: > 0 } routeName)
         {
             // The system's own route says more than SDL, which only has a stand-in name for the output there.
@@ -1397,8 +1889,14 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         if (aaudioOutput != null)
             return aaudioDescription;
 
-        if (remoteIOOutput != null)
-            return remoteIOOutput.Describe();
+        if (audioUnitOutput != null)
+            return audioUnitOutput.Describe();
+
+        if (wasapiOutput != null)
+            return wasapiOutput.Describe();
+
+        if (pipeWireOutput != null)
+            return pipeWireOutput.Describe();
 
         return boundTarget == SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK
             ? $"the system's default output ({deviceName(logicalDevice)})"
@@ -1506,23 +2004,30 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
         if (aaudioOutput != null)
             logAAudioDetails(aaudioOutput);
-        else if (remoteIOOutput != null)
-            logRemoteIODetails(remoteIOOutput, localRequestedDeviceBufferFrames);
+        else if (audioUnitOutput != null)
+            logAudioUnitDetails(audioUnitOutput, localRequestedDeviceBufferFrames);
+        else if (wasapiOutput != null)
+            Logger.Verbose($"Output: {wasapiOutput.Describe()}, with nothing of SDL's in between");
+        else if (pipeWireOutput != null)
+            Logger.Verbose($"Output: {pipeWireOutput.Describe()}, with nothing of SDL's in between");
         else
             logDeviceDetails(localRequestedDeviceBufferFrames);
 
-        if (systemRoute != null)
+        if (systemRoute != null && wasapiOutput == null)
         {
-            Logger.Verbose(remoteIOOutput != null
-                ? $"System route: {systemRoute.Name}, {systemRouteLatencyMs:F1} ms, the I/O buffer included"
-                : $"System route: {systemRoute.Name}, {systemRouteLatencyMs:F1} ms after the device buffer");
+            // Where the route has no name of its own, the output keeps SDL's, logged with the device.
+            string routeName = systemRoute.Name.Length > 0 ? $"{systemRoute.Name}, " : string.Empty;
+
+            Logger.Verbose(audioUnitOutput != null
+                ? $"System route: {routeName}{systemRouteLatencyMs:F1} ms, the I/O buffer included"
+                : $"System route: {routeName}{systemRouteLatencyMs:F1} ms after the device buffer");
         }
 
         Logger.Verbose($"Mix format: {SampleRate} Hz, {output_channels} ch, {formatName(SDLAudioConverter.SAMPLE_FORMAT)}");
 
         if (nativeEngine != null)
         {
-            string callback = aaudioOutput != null ? "AAudio" : remoteIOOutput != null ? "RemoteIO" : "device";
+            string callback = aaudioOutput != null ? "AAudio" : audioUnitOutput != null ? audioUnitOutput.Kind : wasapiOutput != null ? "WASAPI render" : pipeWireOutput != null ? "PipeWire process" : "device";
             Logger.Verbose($"Mix engine: libsakura-audio (native, ABI {SakuraAudioNative.ABI_VERSION}), on the {callback} callback");
             Logger.Verbose($"Mix block: {native_mix_block_frames} frames ({native_mix_block_frames / (double)SampleRate * 1000.0:F1} ms)");
         }
@@ -1569,7 +2074,11 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             Logger.Verbose($"Device buffer: {deviceFrames} frames ({deviceBufferMs:F1} ms{granted})");
 
             if (queuedDeviceBuffers(deviceFrames, deviceSpec.freq) is var queued and > 1)
-                Logger.Verbose($"Device queue: {queued} buffers ({deviceQueueMicroseconds / 1000.0:F1} ms), as Core Audio keeps them");
+            {
+                Logger.Verbose(wasapi
+                    ? $"Device queue: {queued:0.#} buffers ({deviceQueueMicroseconds / 1000.0:F1} ms), as WASAPI's endpoint holds them on average"
+                    : $"Device queue: {queued:0.#} buffers ({deviceQueueMicroseconds / 1000.0:F1} ms), as Core Audio keeps them");
+            }
         }
         else
         {
@@ -1589,7 +2098,7 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
                        + "growing a burst at a time if the output runs dry");
     }
 
-    private void logRemoteIODetails(RemoteIOOutput output, int localRequestedDeviceBufferFrames)
+    private void logAudioUnitDetails(AudioUnitOutput output, int localRequestedDeviceBufferFrames)
     {
         lastSeenDeviceRate = output.SampleRate;
 
@@ -1720,6 +2229,9 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
         logicalDevice = device;
         boundTarget = target;
+
+        // So the route reads this device from now on.
+        systemRoute?.SetPlayingDevice(PlayingOn);
         return true;
     }
 
@@ -2039,9 +2551,17 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         {
             pollAAudio(aaudioOutput, frameTime);
         }
-        else if (remoteIOOutput != null)
+        else if (audioUnitOutput != null)
         {
-            pollRemoteIO(remoteIOOutput, frameTime);
+            pollAudioUnit(audioUnitOutput, frameTime);
+        }
+        else if (wasapiOutput != null)
+        {
+            pollWasapi(wasapiOutput, frameTime);
+        }
+        else if (pipeWireOutput != null)
+        {
+            pollPipeWire(pipeWireOutput, frameTime);
         }
         else
         {
@@ -2074,16 +2594,17 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
             Interlocked.Exchange(ref lastPublishedUnderruns, stats.Starvations);
 
-            // AAudio counts the output running dry itself, and its buffer grows on that instead. RemoteIO's timestamps
-            // count the cycles it missed, but its buffer is the session's, which only the next launch asks for again.
+            // AAudio counts the output running dry itself, and its buffer grows on that instead. An audio unit's timestamps
+            // count the cycles it missed, but its I/O buffer is only asked for as it starts (the session's, on iOS), so
+            // the watchdog raises it for the next launch.
             if (aaudioOutput != null)
             {
                 (statXruns ??= GlobalStatistics.Get<long>("Audio", "SDL Output Xruns")).Value = aaudioXruns;
             }
             else
             {
-                if (remoteIOOutput != null)
-                    (statXruns ??= GlobalStatistics.Get<long>("Audio", "SDL Output Xruns")).Value = remoteIOXruns;
+                if (audioUnitOutput != null)
+                    (statXruns ??= GlobalStatistics.Get<long>("Audio", "SDL Output Xruns")).Value = audioUnitXruns;
 
                 handleSustainedUnderruns(observeNativeCallback(stats), frameTime);
             }
@@ -2121,8 +2642,8 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     {
         if (aaudioOutput != null)
             aaudioOutput.Pause();
-        else if (remoteIOOutput != null)
-            remoteIOOutput.Pause();
+        else if (audioUnitOutput != null)
+            audioUnitOutput.Pause();
         else if (OperatingSystem.IsIOS() && !SDL_PauseAudioStreamDevice(deviceStream))
             Logger.Error($"Failed to stop the SDL audio device for the background: {SDL_GetError()}");
     }
@@ -2135,8 +2656,8 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             resetAAudioWatchdog();
             aaudioOutput.Start();
         }
-        else if (remoteIOOutput != null)
-            restartRemoteIO(remoteIOOutput, onlyIfPlaying: false);
+        else if (audioUnitOutput != null)
+            restartAudioUnit(audioUnitOutput, onlyIfPlaying: false);
         else if (OperatingSystem.IsIOS() && !SDL_ResumeAudioStreamDevice(deviceStream))
             Logger.Error($"Failed to start the SDL audio device again: {SDL_GetError()}");
     }
@@ -2167,7 +2688,9 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             SDL_PauseAudioStreamDevice(deviceStream);
 
         aaudioOutput?.Dispose();
-        remoteIOOutput?.Dispose();
+        audioUnitOutput?.Dispose();
+        wasapiOutput?.Dispose();
+        pipeWireOutput?.Dispose();
 
         ISDLChannel[] toDispose;
 

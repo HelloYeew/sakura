@@ -26,8 +26,8 @@ public class GameplayClock : IFrameBasedClock, IAdjustableClock
     private readonly IClock reference;
 
     /// <summary>
-    /// A constant offset in milliseconds added to the reported time, used for user audio
-    /// calibration (positive values make events register as earlier relative to the music).
+    /// A constant offset in milliseconds added to the reported time, for the player's calibration. A positive one puts
+    /// the clock ahead of the music: a tap registers later against it, and anything drawn from it comes sooner.
     /// </summary>
     public double Offset { get; set; }
 
