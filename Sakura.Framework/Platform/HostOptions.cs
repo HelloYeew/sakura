@@ -76,9 +76,10 @@ public class HostOptions
 
     /// <summary>
     /// macOS and iOS only. Whether the update and draw threads tell the system's performance controller when each frame
-    /// is due, so it picks the cores and the clock speed to match: fast cores at full speed for a game in play, and
-    /// efficient cores that still finish in time for menus and applications. Without it, an idle Mac runs short frames
-    /// on slow clocks and efficient cores, and they take about twice as long, unevenly.
+    /// is due, while the app is focused, so it keeps the clocks just high enough for every frame to finish in time.
+    /// Without it, an idle Mac runs short frames on slow clocks and efficient cores, unevenly, and some run into the
+    /// next frame. It costs some power: measured in yuuki, about 0.3 W of CPU for update work at p99 0.8 ms instead of
+    /// 2.5 ms.
     /// </summary>
     /// <remarks>
     /// Apple documents work intervals for real-time audio threads. They're measured to work the same for frame threads,

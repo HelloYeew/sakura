@@ -75,11 +75,11 @@ public class DarwinThreadPolicyTest
 
         Assert.That(withoutNice(applied), Is.EqualTo(new[]
         {
-            "priority 47, tight work interval",
-            "priority 38, relaxed work interval",
+            "priority 47, work interval",
+            "priority 38, work interval",
             "priority 37",
             "priority 31",
-            "priority 47, tight work interval"
+            "priority 47, work interval"
         }));
     }
 

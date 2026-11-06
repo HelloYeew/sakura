@@ -378,7 +378,7 @@ public abstract class AppHost : IDisposable
 
     /// <summary>
     /// Tells the framework and the system what the game is doing. In play, the update and draw threads ask for the most
-    /// the system gives: a priority above other apps' work, precise waits, and fast cores. Anywhere else they ask for
+    /// the system gives: a priority above other apps' work, and precise waits. Anywhere else they ask for
     /// less, which saves power, and keeps the computer responsive for whatever else runs. Until a game first calls this,
     /// it's taken to be in play whenever it's focused. Android also hears of it, and raises the CPU while the game loads.
     /// Safe to call from any thread.

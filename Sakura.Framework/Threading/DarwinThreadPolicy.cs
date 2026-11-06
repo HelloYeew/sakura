@@ -19,9 +19,11 @@ namespace Sakura.Framework.Threading;
 /// tens of milliseconds under load.
 /// </para>
 /// <para>
-/// The work interval decides the cores and the clock speed. Without one, an idle Mac runs a 1 ms frame in about 2 ms on
-/// efficient cores and slow clocks, unevenly. A deadline a quarter of a frame after the start gets the fast cores at
-/// full speed; a deadline of the next frame lets the efficient cores take it, as long as they finish in time.
+/// The work interval decides the cores and the clock speed. Without one, an idle Mac runs short frames on efficient
+/// cores and slow clocks, unevenly, and some overrun their period. With a deadline of the next frame, the controller
+/// keeps the clocks just high enough to finish in time. Measured in yuuki at 480 Hz: work at p99 0.8 ms instead of
+/// 2.5 ms, frames starting on time again, for about 0.3 W more CPU power. A deadline a quarter of a frame away gave
+/// 0.6 ms for another 0.25 W and starts no more on time, so it isn't used.
 /// </para>
 /// </remarks>
 internal sealed class DarwinThreadPolicy : IThreadPolicy
@@ -49,11 +51,6 @@ internal sealed class DarwinThreadPolicy : IThreadPolicy
     /// </summary>
     private const int hidden_priority = 31;
 
-    /// <summary>
-    /// How much of the frame period a tight work interval gives the frame's work.
-    /// </summary>
-    private const double tight_deadline_fraction = 0.25;
-
     private const int sched_other = 1;
     private const int thread_extended_info = 5;
     private const int thread_extended_info_count = 28;
@@ -74,7 +71,6 @@ internal sealed class DarwinThreadPolicy : IThreadPolicy
     private readonly string threadName;
     private bool useWorkInterval;
 
-    private ThreadActivity activity;
     private IntPtr workInterval;
     private IntPtr joinToken;
     private bool intervalStarted;
@@ -104,8 +100,6 @@ internal sealed class DarwinThreadPolicy : IThreadPolicy
 
     public string Apply(ThreadActivity activity)
     {
-        this.activity = activity;
-
         int requested = PriorityFor(role, activity);
         int error = SetOwnPriority(requested);
         string applied = error == 0 ? $"priority {readBasePriority()}" : $"priority unchanged (error {error} asking for {requested})";
@@ -123,7 +117,7 @@ internal sealed class DarwinThreadPolicy : IThreadPolicy
         if (joinToken == IntPtr.Zero)
             return applied;
 
-        return activity == ThreadActivity.Tight ? $"{applied}, tight work interval" : $"{applied}, relaxed work interval";
+        return $"{applied}, work interval";
     }
 
     public void BeginFrame(double frameMilliseconds)
@@ -131,9 +125,9 @@ internal sealed class DarwinThreadPolicy : IThreadPolicy
         if (joinToken == IntPtr.Zero || frameMilliseconds <= 0)
             return;
 
-        double fraction = activity == ThreadActivity.Tight ? tight_deadline_fraction : 1;
+        // Due when the next frame starts.
         ulong start = mach_absolute_time();
-        ulong deadline = start + (ulong)(frameMilliseconds * fraction * mach_units_per_millisecond);
+        ulong deadline = start + (ulong)(frameMilliseconds * mach_units_per_millisecond);
 
         intervalStarted = os_workgroup_interval_start(workInterval, start, deadline, IntPtr.Zero) == 0;
     }

@@ -11,8 +11,8 @@ namespace Sakura.Framework.Threading;
 public enum ThreadActivity
 {
     /// <summary>
-    /// A focused game in play: on time and at full speed. The frame threads go ahead of other apps' work, wait with the
-    /// most precise timer there is, may spin onto their deadlines, and ask for fast cores.
+    /// A focused game in play: on time. The frame threads go ahead of other apps' work, wait with the most precise timer
+    /// there is, may spin onto their deadlines, and tell the system when each frame is due so it runs them fast enough.
     /// </summary>
     Tight,
 
