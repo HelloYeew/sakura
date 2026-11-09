@@ -35,6 +35,11 @@ internal sealed class MacOSAudioRoute : ISystemAudioRoute
     /// </summary>
     public double BufferMilliseconds => tryRead(out var latency) ? latency.BufferMilliseconds : 0;
 
+    /// <summary>
+    /// Both delays from one read of the device: each read is about eight round trips to the audio server.
+    /// </summary>
+    public (double Latency, double Buffer) ReadDelays() => tryRead(out var latency) ? (latency.TotalMilliseconds, latency.BufferMilliseconds) : (0, 0);
+
     public void SetPlayingDevice(string name)
     {
         if (name == playingDevice)

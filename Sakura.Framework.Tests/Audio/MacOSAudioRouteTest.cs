@@ -55,6 +55,22 @@ public class MacOSAudioRouteTest
     }
 
     [Test]
+    public void OneReadGivesBothDelays()
+    {
+        var route = new MacOSAudioRoute();
+        var (latency, buffer) = route.ReadDelays();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(latency, Is.EqualTo(route.LatencyMilliseconds).Within(0.001));
+            Assert.That(buffer, Is.EqualTo(route.BufferMilliseconds).Within(0.001));
+        });
+
+        route.SetPlayingDevice("Not a device on any Mac");
+        Assert.That(route.ReadDelays(), Is.EqualTo((0.0, 0.0)), "nothing to count for a device that isn't there");
+    }
+
+    [Test]
     public void ADeviceThatIsNotThereCountsNothing()
     {
         var route = new MacOSAudioRoute();

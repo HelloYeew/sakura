@@ -28,6 +28,12 @@ public interface ISystemAudioRoute
     double BufferMilliseconds => 0;
 
     /// <summary>
+    /// <see cref="LatencyMilliseconds"/> and <see cref="BufferMilliseconds"/> from one read of the route. Where each is
+    /// read from the same device, as on macOS, asking for both apart reads the device twice.
+    /// </summary>
+    (double Latency, double Buffer) ReadDelays() => (LatencyMilliseconds, BufferMilliseconds);
+
+    /// <summary>
     /// Whether <see cref="LatencyMilliseconds"/> goes all the way to the listener. False where it stops at the device and
     /// nothing says how long the driver, the hardware and the way past them take, as on Windows.
     /// </summary>

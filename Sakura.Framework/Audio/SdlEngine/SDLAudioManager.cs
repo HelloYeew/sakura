@@ -659,12 +659,14 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         // route stands for, so it isn't counted there.
         if (systemRoute != null && wasapiOutput == null)
         {
-            systemRouteLatencyMs = systemRoute.LatencyMilliseconds;
-
             if (audioUnitOutput != null)
             {
-                audioUnitRouteMs = systemRouteLatencyMs;
-                audioUnitRouteBufferMs = systemRoute.BufferMilliseconds;
+                (audioUnitRouteMs, audioUnitRouteBufferMs) = systemRoute.ReadDelays();
+                systemRouteLatencyMs = audioUnitRouteMs;
+            }
+            else
+            {
+                systemRouteLatencyMs = systemRoute.LatencyMilliseconds;
             }
         }
 
@@ -1378,8 +1380,7 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
 
         if (systemRoute != null)
         {
-            audioUnitRouteMs = systemRoute.LatencyMilliseconds;
-            audioUnitRouteBufferMs = systemRoute.BufferMilliseconds;
+            (audioUnitRouteMs, audioUnitRouteBufferMs) = systemRoute.ReadDelays();
             updateAudioUnitBufferDuration();
         }
 
@@ -1764,10 +1765,7 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             deviceBufferFrames = output.BufferFrames;
 
         if (systemRoute != null)
-        {
-            audioUnitRouteMs = systemRoute.LatencyMilliseconds;
-            audioUnitRouteBufferMs = systemRoute.BufferMilliseconds;
-        }
+            (audioUnitRouteMs, audioUnitRouteBufferMs) = systemRoute.ReadDelays();
 
         updateAudioUnitBufferDuration();
 
