@@ -22,6 +22,7 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Sakura.Framework.Tests" />
+    <InternalsVisibleTo Include="Sakura.Framework.Benchmarks" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="FFmpeg.AutoGen" Version="8.1.0" />
