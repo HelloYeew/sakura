@@ -805,20 +805,25 @@ public partial class Container : Drawable
         if (!AlwaysPresent && Precision.AlmostEqualZero(Alpha))
             return;
 
+        // Read once for every child: nearly all share this clock, which they inherit, and IsAlive reads it twice through
+        // the interface. A child on a clock of its own asks its own.
+        var containerClock = Clock;
+        double now = containerClock.CurrentTime;
+
         for (int i = children.Count - 1; i >= 0; i--)
         {
             var child = children[i];
 
             // Lifetime crossings change draw-tree membership without any invalidation,
             // so the cached draw-node subtree must be refreshed when one occurs.
-            bool alive = child.IsAlive;
+            bool alive = ReferenceEquals(child.Clock, containerClock) ? now >= child.LifetimeStart && now < child.LifetimeEnd : child.IsAlive;
             if (alive != child.WasAlive)
             {
                 child.WasAlive = alive;
                 MarkSubtreeDrawStateDirty();
             }
 
-            if (Clock.CurrentTime >= child.LifetimeEnd && child.RemoveWhenNotAlive)
+            if (now >= child.LifetimeEnd && child.RemoveWhenNotAlive)
             {
                 Remove(child);
             }

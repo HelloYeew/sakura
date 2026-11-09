@@ -148,6 +148,36 @@ public class DrawNodeCachingTest
         });
     }
 
+    /// <summary>
+    /// A child on a clock of its own lives by that clock, not its container's. Here it ends 500 ms in by its own clock,
+    /// which starts at 0, while the container is already 1000 ms in: it's drawn until its own clock passes 500, and then
+    /// leaves the draw tree, which only its container noticing the end refreshes (an ending child invalidates nothing).
+    /// </summary>
+    [Test]
+    public void TestLifetimeOnAClockOfItsOwnFollowsThatClock()
+    {
+        var own = new ManualClock();
+        var box = new Box
+        {
+            Position = new Vector2(10, 10),
+            Size = new Vector2(50),
+            Clock = new FramedClock(own),
+            LifetimeEnd = 500,
+            RemoveWhenNotAlive = false
+        };
+
+        root.Add(box);
+        settle();
+
+        Assert.That(generate().Children, Has.Count.EqualTo(1), "alive by its own clock, though the container's is past its end");
+
+        own.CurrentTime = 600;
+        frame();
+        frame();
+
+        Assert.That(generate().Children, Is.Empty, "gone once its own clock passes its end");
+    }
+
     [Test]
     public void TestMaskingTransitionRefreshesDrawTree()
     {
