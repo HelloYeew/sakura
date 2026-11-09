@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using NUnit.Framework;
 using Sakura.Framework.Extensions.ColorExtensions;
 using Sakura.Framework.Graphics.Colors;
@@ -94,5 +95,26 @@ public class ColorExtensionsTest
         var surface = ColorExtensions.FromHex("#B4B4C4");
 
         Assert.That(ink.WithAlpha(0.5f).GetContrastRatio(surface), Is.EqualTo(ink.GetContrastRatio(surface)));
+    }
+
+    /// <summary>
+    /// The table gives every channel's linear value with the same bits as the sRGB formula, worked out here directly.
+    /// </summary>
+    [Test]
+    public void SrgbToLinearMatchesTheFormulaForEveryChannelValue()
+    {
+        for (int i = 0; i < 256; i++)
+        {
+            float srgb = i / 255.0f;
+            float expected = srgb <= 0.04045f ? srgb / 12.92f : MathF.Pow((srgb + 0.055f) / 1.055f, 2.4f);
+
+            Assert.That(BitConverter.SingleToInt32Bits(ColorExtensions.SrgbToLinear((byte)i)), Is.EqualTo(BitConverter.SingleToInt32Bits(expected)), $"channel value {i}");
+        }
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(ColorExtensions.SrgbToLinear(0), Is.Zero);
+            Assert.That(ColorExtensions.SrgbToLinear(255), Is.EqualTo(1f).Within(1e-6f));
+        }
     }
 }

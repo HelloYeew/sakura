@@ -503,10 +503,22 @@ public static class ColorExtensions
             (byte)(a.B + (b.B - a.B) * t));
     }
 
+    // Every 8-bit channel's linear value, worked out once by srgbToLinear, so a lookup gives the bits the formula does.
+    private static readonly float[] srgb_to_linear = buildSrgbToLinearTable();
+
     /// <summary>
     /// Converts an 8-bit sRGB color channel value (0-255) to a linear float value (0.0-1.0).
     /// </summary>
-    public static float SrgbToLinear(byte srgbValue)
+    /// <remarks>
+    /// A lookup in a table of all 256, built once by the formula. A drawable converts its four corners each time it
+    /// moves, and the formula is a <see cref="MathF.Pow(float, float)"/> per channel.
+    /// </remarks>
+    public static float SrgbToLinear(byte srgbValue) => srgb_to_linear[srgbValue];
+
+    /// <summary>
+    /// The sRGB transfer function for one 8-bit channel: what the table holds.
+    /// </summary>
+    private static float srgbToLinear(byte srgbValue)
     {
         float srgb = srgbValue / 255.0f;
 
@@ -514,6 +526,21 @@ public static class ColorExtensions
             return srgb / 12.92f;
         else
             return MathF.Pow((srgb + 0.055f) / 1.055f, 2.4f);
+    }
+
+    /// <summary>
+    /// Works out <see cref="srgbToLinear"/> for every channel value.
+    /// </summary>
+    private static float[] buildSrgbToLinearTable()
+    {
+        float[] table = new float[256];
+
+        for (int i = 0; i < table.Length; i++)
+        {
+            table[i] = srgbToLinear((byte)i);
+        }
+
+        return table;
     }
 
     /// <summary>
