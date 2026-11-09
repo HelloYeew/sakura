@@ -3,7 +3,6 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
-using System.Threading;
 
 namespace Sakura.Framework.Statistic;
 
@@ -94,35 +93,18 @@ public sealed class ThreadFrameStatistics
     /// </remarks>
     public const int CAPACITY = 512;
 
-    private readonly ThreadFrameSample[] samples = new ThreadFrameSample[CAPACITY];
-
-    private long writeCount;
-
-    // Frames the producer has started writing: one ahead of writeCount while a write is in progress.
-    private long startedCount;
+    private readonly FrameRing<ThreadFrameSample> ring = new FrameRing<ThreadFrameSample>(CAPACITY);
 
     /// <summary>
     /// Total frames recorded since startup. Also, the cursor value a consumer should start from
     /// if it wants only frames from this point on, rather than replaying the retained history.
     /// </summary>
-    public long TotalFrames => Volatile.Read(ref writeCount);
+    public long TotalFrames => ring.TotalFrames;
 
     /// <summary>
     /// Records one frame. Must only be called by the thread that owns this instance.
     /// </summary>
-    public void Record(in ThreadFrameSample sample)
-    {
-        long index = writeCount;
-
-        // Announced first, with a full fence so the slot can't be seen changing before it, for Drain to know which
-        // slot the producer may be in the middle of.
-        Interlocked.Exchange(ref startedCount, index + 1);
-
-        samples[index & (CAPACITY - 1)] = sample;
-
-        // Published last, so a consumer never sees a count covering a slot that is still being written.
-        Volatile.Write(ref writeCount, index + 1);
-    }
+    public void Record(in ThreadFrameSample sample) => ring.Record(sample);
 
     /// <summary>
     /// Copies every frame recorded since <paramref name="cursor"/> into <paramref name="destination"/>,
@@ -143,54 +125,5 @@ public sealed class ThreadFrameStatistics
     /// was in progress are dropped and counted in <paramref name="skipped"/> rather than handed back
     /// half-written, so a caller can trust the sequence it gets.
     /// </remarks>
-    public int Drain(Span<ThreadFrameSample> destination, ref long cursor, out long skipped)
-    {
-        long write = Volatile.Read(ref writeCount);
-
-        // A cursor ahead of the producer can only come from a caller that never seeded it; treat it
-        // as a request for everything from here on.
-        if (cursor < 0 || cursor > write)
-            cursor = write;
-
-        long oldest = Math.Max(cursor, write - CAPACITY);
-        skipped = oldest - cursor;
-
-        long available = write - oldest;
-
-        if (available > destination.Length)
-        {
-            skipped += available - destination.Length;
-            oldest = write - destination.Length;
-            available = destination.Length;
-        }
-
-        int count = (int)available;
-
-        for (int i = 0; i < count; i++)
-            destination[i] = samples[(oldest + i) & (CAPACITY - 1)];
-
-        cursor = write;
-
-        // The producer may have wrapped past slots we were still reading, in which case those entries
-        // are a mix of the frames we asked for and much newer ones - handing them back would put the
-        // sequence out of order. A slot is only known intact if the producer could not have reached it
-        // at any point during the copy: every frame from (started - CAPACITY) on, where started counts
-        // the frame being written too, if there is one. The fence keeps the copy's reads from moving
-        // past the count's.
-        Interlocked.MemoryBarrier();
-        long safeOldest = Volatile.Read(ref startedCount) - CAPACITY;
-
-        if (safeOldest > oldest)
-        {
-            int discarded = (int)Math.Min(safeOldest - oldest, count);
-
-            skipped += discarded;
-            count -= discarded;
-
-            if (count > 0)
-                destination.Slice(discarded, count).CopyTo(destination);
-        }
-
-        return count;
-    }
+    public int Drain(Span<ThreadFrameSample> destination, ref long cursor, out long skipped) => ring.Drain(destination, ref cursor, out skipped);
 }

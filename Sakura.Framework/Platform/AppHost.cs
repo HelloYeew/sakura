@@ -48,6 +48,9 @@ public abstract class AppHost : IDisposable
     private static readonly GlobalStatistic<double> stat_target_update_hz = GlobalStatistics.Get<double>("Host", "Target Update Rate", StatisticKind.Gauge, StatisticUnit.Hertz);
     private static readonly GlobalStatistic<int> stat_drawn_last_frame = GlobalStatistics.Get<int>("Drawables", "Drawn Last Frame", StatisticKind.PerFrame);
 
+    // Frames shown a refresh or more late, under VSync with the window focused, where the renderer says when it showed them.
+    private static readonly GlobalStatistic<long> stat_missed_refreshes = GlobalStatistics.Get<long>("Renderer", "Missed Refreshes", StatisticKind.Cumulative);
+
     public IWindow Window { get; private set; }
     public IRenderer Renderer { get; private set; }
 
@@ -106,6 +109,12 @@ public abstract class AppHost : IDisposable
     /// Per-frame timings for the audio thread, or null before the host has started
     /// </summary>
     public ThreadFrameStatistics AudioFrameStatistics => audioThread?.FrameStatistics;
+
+    /// <summary>
+    /// Every frame the renderer saw on screen, where it can tell: when the screen changed, rather than when a thread
+    /// started a frame.
+    /// </summary>
+    public ShownFrameStatistics ShownFrameStatistics { get; } = new ShownFrameStatistics();
 
     private readonly Stopwatch appLoopStopwatch = new Stopwatch();
     private readonly ConcurrentQueue<PendingInput> inputQueue = new ConcurrentQueue<PendingInput>();
@@ -1578,11 +1587,15 @@ public abstract class AppHost : IDisposable
         while (Renderer != null && Renderer.TryTakeShownFrame(out var shownFrame))
         {
             displayLatencySplit.AddShown(shownFrame);
+            ShownFrameStatistics.Record(shownFrame);
 
             if (!cadence)
                 continue;
 
             bool missed = refreshCadence.Add(shownFrame.Shown, refreshTicks);
+
+            if (missed)
+                stat_missed_refreshes.Value++;
 
             if (lateLatch is { Waited: true })
                 lateLatch.FrameShown(missed);
