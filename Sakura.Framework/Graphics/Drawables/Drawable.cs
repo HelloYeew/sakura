@@ -850,7 +850,10 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
                 m *= shearMatrix;
             }
 
-            m *= Matrix3x2.CreateRotation((float)(Rotation * Math.PI / 180.0f)); // Rotate around (0,0)
+            // At 0 the rotation is the identity, which CreateRotation still works a float remainder out to build.
+            if (Rotation != 0)
+                m *= Matrix3x2.CreateRotation((float)(Rotation * Math.PI / 180.0f)); // Rotate around (0,0)
+
             m *= Matrix3x2.CreateTranslation(Position.X, Position.Y); // Translate to final position
 
             ModelMatrix = m;
@@ -889,8 +892,10 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
             pixelPosition.Y += anchorOffset.Y * parentChildSize.Y;
 
             // Apply margin based on the anchor offset
-            pixelPosition.X += Margin.Left - anchorOffset.X * Margin.Total.X;
-            pixelPosition.Y += Margin.Top - anchorOffset.Y * Margin.Total.Y;
+            var margin = Margin;
+            var marginTotal = margin.Total;
+            pixelPosition.X += margin.Left - anchorOffset.X * marginTotal.X;
+            pixelPosition.Y += margin.Top - anchorOffset.Y * marginTotal.Y;
 
             // Shift by Parent's Padding to get position relative to Parent's Top-Left (DrawSize space)
             pixelPosition.X += Parent.Padding.Left;
@@ -915,7 +920,9 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
                 m *= shearMatrix;
             }
 
-            m *= Matrix3x2.CreateRotation((float)(Rotation * Math.PI / 180.0f));
+            if (Rotation != 0)
+                m *= Matrix3x2.CreateRotation((float)(Rotation * Math.PI / 180.0f));
+
             m *= Matrix3x2.CreateTranslation(pixelPosition.X, pixelPosition.Y);
 
             // Normalize to Parent's 0..1 space so Parent.ModelMatrix applies correctly
