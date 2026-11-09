@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using BenchmarkDotNet.Attributes;
+using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Maths;
@@ -30,6 +31,7 @@ public class VertexGenerationBenchmarks
     private ManualClock clock = null!;
     private ExposedBox plainBox = null!;
     private ExposedBox rotatedBox = null!;
+    private ExposedBox tintedBox = null!;
     private DrawNode node = null!;
 
     [GlobalSetup]
@@ -52,8 +54,16 @@ public class VertexGenerationBenchmarks
             Shear = new Vector2(0.2f, 0),
         };
 
+        tintedBox = new ExposedBox
+        {
+            Position = new Vector2(100, 100),
+            Size = new Vector2(64, 64),
+            Color = Color.FromArgb(255, 200, 120, 60)
+        };
+
         root.Add(plainBox);
         root.Add(rotatedBox);
+        root.Add(tintedBox);
         BenchmarkTree.LoadAndSettle(root, clock);
 
         node = plainBox.GenerateDrawNode(0);
@@ -71,6 +81,13 @@ public class VertexGenerationBenchmarks
     /// </summary>
     [Benchmark]
     public void UpdateTransforms_RotatedShearedBox() => rotatedBox.RunUpdateTransforms();
+
+    /// <summary>
+    /// The plain box in a color other than white, so its four corners convert from sRGB to linear for real: white's
+    /// channels convert at once, which the cases above stand on.
+    /// </summary>
+    [Benchmark]
+    public void UpdateTransforms_TintedBox() => tintedBox.RunUpdateTransforms();
 
     /// <summary>
     /// The draw-node snapshot for one drawable: state copy + vertex array copy.

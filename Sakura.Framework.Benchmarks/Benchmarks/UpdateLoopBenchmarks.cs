@@ -3,6 +3,7 @@
 
 using System.Collections.Generic;
 using BenchmarkDotNet.Attributes;
+using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Timing;
@@ -64,6 +65,23 @@ public class UpdateLoopBenchmarks
         BenchmarkTree.LoadAndSettle(root, clock);
     }
 
+    /// <summary>
+    /// The same tree as <see cref="Setup"/>, with each box tinted a color of its own.
+    /// </summary>
+    [GlobalSetup(Target = nameof(UpdateSubTree_AllTintedChildrenMove))]
+    public void SetupTinted()
+    {
+        Setup();
+
+        for (int i = 0; i < boxes.Count; i++)
+        {
+            boxes[i].Color = Color.FromArgb(255, 128 + i % 128, 255 - i % 96, 160 + i % 64);
+        }
+
+        clock.CurrentTime += BenchmarkTree.FRAME_STEP_MS;
+        root.UpdateSubTree();
+    }
+
     private void collectBoxes(Container container)
     {
         foreach (var child in container.Children)
@@ -118,6 +136,13 @@ public class UpdateLoopBenchmarks
         clock.CurrentTime += BenchmarkTree.FRAME_STEP_MS;
         root.UpdateSubTree();
     }
+
+    /// <summary>
+    /// <see cref="UpdateSubTree_AllChildrenMove"/> with every box tinted a color of its own, as a sprite field is: each
+    /// box that moves converts its four corners from sRGB to linear, which white's channels skip.
+    /// </summary>
+    [Benchmark]
+    public void UpdateSubTree_AllTintedChildrenMove() => UpdateSubTree_AllChildrenMove();
 
     /// <summary>
     /// Every box fades (alpha-only change) every frame. Quantifies how expensive a
