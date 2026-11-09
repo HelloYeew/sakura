@@ -425,6 +425,49 @@ public class SdlAudioEngineTest
     }
 
     /// <summary>
+    /// The statistics say what the sound plays on as soon as the device is open, before the audio thread's first tick.
+    /// </summary>
+    [TestCase(true)]
+    [TestCase(false)]
+    public void Manager_SaysWhatItPlaysOnFromTheStart(bool native)
+    {
+        var device = GlobalStatistics.Get<string>("Audio", "SDL Device");
+        device.Value = string.Empty;
+
+        using var manager = createManager(native);
+
+        Assert.That(device.Value, Is.Not.Empty);
+    }
+
+    /// <summary>
+    /// An audio tick allocates nothing between the once-a-second device checks: a desktop game's audio thread ticks a
+    /// thousand times a second.
+    /// </summary>
+    [TestCase(true)]
+    [TestCase(false)]
+    public void Manager_AudioTicksBetweenDeviceChecksAllocateNothing(bool native)
+    {
+        using var manager = createManager(native);
+
+        // A device check, so the next is a second away, and a few ticks for the first calls of everything.
+        manager.Update(2000);
+
+        for (int i = 0; i < 20; i++)
+        {
+            manager.Update(1);
+        }
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+
+        for (int i = 0; i < 500; i++)
+        {
+            manager.Update(1);
+        }
+
+        Assert.That(GC.GetAllocatedBytesForCurrentThread() - before, Is.Zero, "bytes allocated over 500 ticks");
+    }
+
+    /// <summary>
     /// The parts add up to the figure positions are moved by. With no route from the platform, nothing reports the
     /// system's part.
     /// </summary>
