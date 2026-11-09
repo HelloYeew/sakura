@@ -22,12 +22,13 @@ public class WindowsAudioRouteTest
             Assert.Ignore("Windows only.");
 
         nint enumerator = WasapiNative.CreateEnumerator();
-        Assert.That(enumerator, Is.Not.Zero, "every Windows has the endpoint enumerator");
+        // Against nint.Zero: NUnit's Is.Zero is an int, which a nint never equals, so Is.Zero always fails here and Is.Not.Zero always passes.
+        Assert.That(enumerator, Is.Not.EqualTo(nint.Zero), "every Windows has the endpoint enumerator");
 
         try
         {
             // Lists the endpoints whatever there is, so the method tables are called even with no output.
-            Assert.That(WasapiNative.FindOutput(enumerator, "Not an endpoint on any machine"), Is.Zero);
+            Assert.That(WasapiNative.FindOutput(enumerator, "Not an endpoint on any machine"), Is.EqualTo(nint.Zero));
 
             nint device = WasapiNative.GetDefaultOutput(enumerator);
 
