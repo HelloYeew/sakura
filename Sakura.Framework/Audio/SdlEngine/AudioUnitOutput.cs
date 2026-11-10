@@ -68,9 +68,10 @@ internal sealed unsafe class AudioUnitOutput : IDisposable
     public uint Device { get; private set; }
 
     /// <summary>
-    /// The name SDL lists <see cref="Device"/> under, or null for RemoteIO and where the device can't say.
+    /// The name SDL lists <see cref="Device"/> under, or null for RemoteIO and where the device can't say. Read from Core
+    /// Audio once, as the unit moves onto the device: each read is a round trip to the audio server.
     /// </summary>
-    public string? DeviceName => Device != 0 ? CoreAudioNative.GetDeviceName(Device) : null;
+    public string? DeviceName { get; private set; }
 
     /// <summary>
     /// The I/O buffer <see cref="Device"/> gave, in the engine's frames, or 0 for RemoteIO and where the device won't say.
@@ -297,6 +298,7 @@ internal sealed unsafe class AudioUnitOutput : IDisposable
             return false;
 
         Device = device;
+        DeviceName = CoreAudioNative.GetDeviceName(device);
         askForBuffer(device);
         return true;
     }

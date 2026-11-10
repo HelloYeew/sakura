@@ -1835,10 +1835,13 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
     }
 
     /// <summary>
-    /// Reads which device the sound plays on now for <see cref="PlayingDevice"/>, and says so where it changed.
+    /// Reads which device the sound plays on now for <see cref="PlayingDevice"/> and the statistics, and says so where it
+    /// changed. Called once a second and as the output opens or moves.
     /// </summary>
     private void refreshPlayingDevice()
     {
+        publishBoundDevice();
+
         string name;
 
         if (aaudioOutput != null)
@@ -1884,6 +1887,15 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
         RaiseEvent(() => PlayingDeviceChanged?.Invoke());
     }
 
+    /// <summary>
+    /// Shows what the sound plays on now in the "SDL Device" statistic. Never every tick: each description is a new
+    /// string, and the SDL path's asks SDL for the device's name.
+    /// </summary>
+    private void publishBoundDevice() => (statDevice ??= GlobalStatistics.Get<string>("Audio", "SDL Device")).Value = describeBoundDevice();
+
+    /// <summary>
+    /// What the sound plays on now, for the log and the statistics.
+    /// </summary>
     private string describeBoundDevice()
     {
         if (aaudioOutput != null)
@@ -2568,8 +2580,6 @@ internal sealed unsafe class SDLAudioManager : IAudioManager, ISDLAudioContext, 
             sampleOutputLatency(frameTime);
             checkForDeviceChange(frameTime);
         }
-
-        (statDevice ??= GlobalStatistics.Get<string>("Audio", "SDL Device")).Value = describeBoundDevice();
 
         if (nativeEngine != null)
         {

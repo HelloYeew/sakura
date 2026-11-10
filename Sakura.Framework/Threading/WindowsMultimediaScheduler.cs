@@ -46,17 +46,17 @@ internal sealed class WindowsMultimediaScheduler : IDisposable
         }
         catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException)
         {
-            Logger.Debug($"'{threadName}' not registered with MMCSS: {e.Message}");
+            Logger.Verbose($"'{threadName}' not registered with MMCSS: {e.Message}");
             return null;
         }
 
         if (handle == IntPtr.Zero)
         {
-            Logger.Debug($"'{threadName}' not registered with MMCSS (error {Marshal.GetLastPInvokeError()})");
+            Logger.Verbose($"'{threadName}' not registered with MMCSS (error {Marshal.GetLastPInvokeError()})");
             return null;
         }
 
-        Logger.Debug($"'{threadName}' registered with MMCSS as a '{taskName}' task");
+        Logger.Verbose($"'{threadName}' registered with MMCSS as a '{taskName}' task");
         return new WindowsMultimediaScheduler(handle);
     }
 

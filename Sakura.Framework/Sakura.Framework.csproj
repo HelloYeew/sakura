@@ -1,6 +1,6 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup Label="Project">
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <ImplicitUsings>disable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <NoWarn>$(NoWarn);CS1591;NU5104</NoWarn>
@@ -53,7 +53,7 @@
     <None Include="..\icon.png" Pack="true" PackagePath="/" />
     <None Remove="SourceGenerated\**" />
     <!-- Bundle the source generator and code fix DLLs so consumers get them automatically -->
-    <!-- Source generators must target netstandard2.0, so the path is fixed, not $(OutputPath) which would resolve to net10.0 -->
+    <!-- Source generators must target netstandard2.0, so the path is fixed, not $(OutputPath) which would resolve to net11.0 -->
     <None Include="..\Sakura.Framework.SourceGenerators\bin\$(Configuration)\netstandard2.0\Sakura.Framework.SourceGenerators.dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
     <None Include="..\Sakura.Framework.CodeFixes\bin\$(Configuration)\netstandard2.0\Sakura.Framework.CodeFixes.dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
     <!-- Wire up the analyzer via buildtransitive (applies to all consumers transitively) -->
