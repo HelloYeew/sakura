@@ -120,7 +120,7 @@ jobs:
       - name: APK size
         run: |
           set -euo pipefail
-          apk=$(ls SampleApp.Android/bin/Release/net10.0-android/*-Signed.apk)
+          apk=$(ls SampleApp.Android/bin/Release/net11.0-android/*-Signed.apk)
           size=$(stat -c %s "$apk")
           echo "APK: $(( size / 1048576 )) MiB"
           unzip -lv "$apk" | awk 'NR > 3 && $8 ~ /\// { printf "%8.1f MiB  %s\n", $3 / 1048576, $8 }' | sort -rn | head -15
@@ -134,7 +134,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: sample-android-apk
-          path: SampleApp.Android/bin/Release/net10.0-android/*-Signed.apk
+          path: SampleApp.Android/bin/Release/net11.0-android/*-Signed.apk
           if-no-files-found: error
 
   # Builds Sakura.Framework.iOS and the sample app for an iPhone, unsigned: the release build a phone would get, trimmed

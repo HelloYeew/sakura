@@ -1,7 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <!-- .NET 11: iOS has CoreCLR, the runtime the framework is tuned for, from 11 on. The app's own project stays on 10. -->
     <TargetFramework>net11.0-ios</TargetFramework>
     <SupportedOSPlatformVersion>15.0</SupportedOSPlatformVersion>
     <ImplicitUsings>disable</ImplicitUsings>

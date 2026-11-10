@@ -85,8 +85,8 @@ jobs:
           name: nupkg-framework
           path: ./nupkg/*.nupkg
 
-  # Sakura.Framework.iOS ships with the framework too. iOS builds need a Mac, and the iOS workload of the .NET 11 SDK
-  # global.json pins: iOS has CoreCLR from 11 on, so it alone targets net11.0-ios.
+  # Sakura.Framework.iOS ships with the framework too. iOS builds need a Mac, and the iOS workload of the SDK global.json
+  # pins.
   pack-ios:
     name: Pack Sakura.Framework.iOS
     needs: version
