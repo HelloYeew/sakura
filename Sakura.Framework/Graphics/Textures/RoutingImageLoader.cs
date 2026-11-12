@@ -72,8 +72,7 @@ public class RoutingImageLoader : IImageLoader
     /// Three bytes, where stb itself looks for <c>GIF87a</c> or <c>GIF89a</c>: everything stb would take as a GIF matches,
     /// and a file that only starts like one goes to ImageSharp to be rejected there.
     /// </remarks>
-    private static bool isGif(ReadOnlySpan<byte> encoded)
-        => encoded.Length >= 3 && encoded[0] == (byte)'G' && encoded[1] == (byte)'I' && encoded[2] == (byte)'F';
+    private static bool isGif(ReadOnlySpan<byte> encoded) => encoded.Length >= 3 && encoded[0] == (byte)'G' && encoded[1] == (byte)'I' && encoded[2] == (byte)'F';
 
     /// <summary>
     /// How many pixels a JPEG has to have before it's decoded reduced rather than whole: ImageSharp decodes a JPEG wanted
