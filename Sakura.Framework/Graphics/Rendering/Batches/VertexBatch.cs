@@ -17,10 +17,12 @@ namespace Sakura.Framework.Graphics.Rendering.Batches;
 /// <remarks>
 /// Two shapes, chosen at construction:
 /// <list type="bullet">
-/// <item><description><b>Indexed</b> (OpenGL, Direct3D11): a quad contributes 4 vertices + 6
-/// indices, a 33% vertex-bandwidth saving over raw triangle pairs. Triangle lists contribute
+/// <item><description><b>Indexed</b> (OpenGL, Direct3D11, Vulkan): a quad contributes 4 vertices and
+/// counts 6 indices, a 33% vertex-bandwidth saving over raw triangle pairs. Triangle lists contribute
 /// sequential indices and set <see cref="HasNonQuad"/>, which tells the backend it cannot use a
-/// static quad index buffer for this flush.</description></item>
+/// static quad index buffer for this flush. Quads write their indices only from then on, with the
+/// quads already in the batch filled in as the first list arrives: until then the backend draws
+/// them from its static buffer, and nothing reads <see cref="Indices"/>.</description></item>
 /// <item><description><b>Non-indexed</b> (Metal): a quad is expanded to 6 vertices on the way in,
 /// and no index array exists at all, because the native bridge draws triangle lists.</description></item>
 /// </list>
@@ -78,7 +80,12 @@ public sealed class VertexBatch
 
     public ReadOnlySpan<SakuraVertex> Vertices => vertices.AsSpan(0, vertexCount);
 
-    public ReadOnlySpan<uint> Indices => Indexed ? indices.AsSpan(0, indexCount) : ReadOnlySpan<uint>.Empty;
+    /// <summary>
+    /// The indices to draw this flush with, written only while <see cref="HasNonQuad"/> is true. A batch of quads alone
+    /// counts its indices in <see cref="IndexCount"/> without writing them, and the backend draws those from its static
+    /// quad index buffer.
+    /// </summary>
+    public ReadOnlySpan<uint> Indices => Indexed && HasNonQuad ? indices.AsSpan(0, indexCount) : ReadOnlySpan<uint>.Empty;
 
     /// <param name="maxVertices">Vertex capacity before an add forces a flush.</param>
     /// <param name="flush">Uploads + draws the accumulated batch and calls <see cref="Reset"/>.</param>
@@ -145,12 +152,37 @@ public sealed class VertexBatch
         for (int i = 0; i < 4; i++)
             add(quad[i], textureIndex, clip);
 
+        // Quads alone are drawn from the backend's fixed pattern, so only the count is needed until a list arrives.
+        if (HasNonQuad)
+            writeQuadIndices(baseIndex);
+        else
+            indexCount += 6;
+    }
+
+    /// <summary>
+    /// Writes one quad's six indices, in the pattern the backends' fixed quad buffers hold.
+    /// </summary>
+    private void writeQuadIndices(uint baseIndex)
+    {
         indices[indexCount++] = baseIndex;
         indices[indexCount++] = baseIndex + 1;
         indices[indexCount++] = baseIndex + 2;
         indices[indexCount++] = baseIndex + 2;
         indices[indexCount++] = baseIndex + 3;
         indices[indexCount++] = baseIndex;
+    }
+
+    /// <summary>
+    /// Writes the indices of the quads added before the first list in this flush, which only counted theirs. Up to then
+    /// the batch is quads alone, four vertices and six indices each, from the first vertex.
+    /// </summary>
+    private void writeIndicesOfQuadsSoFar()
+    {
+        int quads = indexCount / 6;
+        indexCount = 0;
+
+        for (int i = 0; i < quads; i++)
+            writeQuadIndices((uint)(i * 4));
     }
 
     /// <summary>
@@ -176,6 +208,9 @@ public sealed class VertexBatch
             // Triangle-list vertices break the quad alignment, so this flush must use the dynamic index
             // buffer rather than a static quad pattern. Said after making room, as a flush starts over
             // and forgets: the rest of a long list, read as quads, would join its triangles up.
+            if (Indexed && !HasNonQuad)
+                writeIndicesOfQuadsSoFar();
+
             HasNonQuad = true;
 
             for (int j = 0; j < group; j++)
@@ -188,11 +223,17 @@ public sealed class VertexBatch
         }
     }
 
+    /// <summary>
+    /// Writes one vertex, each field once: its own three from the node, and the texture slot and clip from the batch. The
+    /// node's slot and clip are never filled in, so copying the whole vertex first wrote 60 of its 92 bytes twice.
+    /// </summary>
     private void add(in SakuraVertex vertex, float textureIndex, in ClipState clip)
     {
         ref var v = ref vertices[vertexCount++];
 
-        v = vertex;
+        v.Position = vertex.Position;
+        v.Color = vertex.Color;
+        v.TexCoords = vertex.TexCoords;
         v.TexIndex = textureIndex;
         clip.ApplyTo(ref v);
     }
