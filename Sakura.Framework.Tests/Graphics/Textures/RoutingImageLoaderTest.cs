@@ -51,7 +51,7 @@ public class RoutingImageLoaderTest : ImageLoaderTest
     }
 
     /// <summary>
-    /// A GIF of the given size in one colour.
+    /// A GIF of the given size in one color.
     /// </summary>
     private static byte[] gif(int width, int height, Rgba32 color)
     {
