@@ -31,8 +31,7 @@ public class PerVertexMathTest
         yield return new TestCaseData(typeof(Vector2).GetMethod(nameof(Vector2.TransformNormal), new[] { typeof(Vector2), typeof(Matrix3x2) })).SetArgDisplayNames("Vector2.TransformNormal");
         yield return new TestCaseData(typeof(Vector2).GetMethod(nameof(Vector2.Lerp), new[] { typeof(Vector2), typeof(Vector2), typeof(float) })).SetArgDisplayNames("Vector2.Lerp");
 
-        // .NET 10's own product is plain multiplies and adds, so these two only catch a forward on .NET 11 or later,
-        // which iOS runs.
+        // These two only catch a forward on .NET 11 or later: .NET 10's own product was plain multiplies and adds.
         yield return new TestCaseData(typeof(Matrix3x2).GetMethod("op_Multiply", new[] { typeof(Matrix3x2), typeof(Matrix3x2) })).SetArgDisplayNames("Matrix3x2 * Matrix3x2");
         yield return new TestCaseData(typeof(Matrix3x2).GetMethod(nameof(Matrix3x2.Multiply), new[] { typeof(Matrix3x2), typeof(Matrix3x2) })).SetArgDisplayNames("Matrix3x2.Multiply");
     }

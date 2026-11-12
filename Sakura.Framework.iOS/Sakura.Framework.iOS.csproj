@@ -1,6 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <!-- .NET 11, where iOS runs on CoreCLR: .NET 10 has only Mono for iOS. The framework itself stays on net10.0. -->
     <TargetFramework>net11.0-ios</TargetFramework>
     <SupportedOSPlatformVersion>15.0</SupportedOSPlatformVersion>
     <ImplicitUsings>disable</ImplicitUsings>
