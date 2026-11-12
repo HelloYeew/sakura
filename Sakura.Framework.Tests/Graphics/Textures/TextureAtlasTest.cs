@@ -1,6 +1,7 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
 using NUnit.Framework;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Textures;
@@ -43,6 +44,26 @@ public class TextureAtlasTest
             Assert.That(region!.Width, Is.EqualTo(8));
             Assert.That(region.Height, Is.EqualTo(4));
         });
+    }
+
+    /// <summary>
+    /// A new page is cleared without a managed array its size. One was 4 MB on the large object heap for each page, and
+    /// on a phone whose managed heap had run out it was the allocation that ended the app.
+    /// </summary>
+    [Test]
+    public void ANewPageAllocatesNoArrayItsSize()
+    {
+        var renderer = new HeadlessRenderer(textureManager);
+
+        // The first one loads the types and fills their statics, which aren't the page's.
+        new TextureAtlas(renderer, 1024, 1024).Dispose();
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        var pageOfItsOwn = new TextureAtlas(renderer, 1024, 1024);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        pageOfItsOwn.Dispose();
+
+        Assert.That(allocated, Is.LessThan(64 * 1024), $"{allocated} bytes for a page of {1024 * 1024 * 4}");
     }
 
     /// <summary>

@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Statistic;
 
@@ -246,8 +247,29 @@ public class TextureAtlas : IDisposable
                 Name = name
             };
 
-            byte[] emptyData = new byte[width * height * 4];
-            renderer.ScheduleToDrawThread(() => nativeTexture.Upload(emptyData));
+            renderer.ScheduleToDrawThread(() => clear(nativeTexture, width, height));
+        }
+
+        /// <summary>
+        /// Fills a new page with transparent black, so the padding between regions samples as nothing. The zeros are
+        /// native memory, freed as soon as the upload has copied them: a managed array the size of a page (4 MB at 1024
+        /// square) was a large-object allocation for every new page, which only a full collection gives back, and where
+        /// the managed heap had run out it threw on the update thread and ended the app. A full upload rather than one
+        /// a region at a time, as GL only creates a texture's storage on its first full upload.
+        /// </summary>
+        private static unsafe void clear(INativeTexture texture, int width, int height)
+        {
+            int length = checked(width * height * 4);
+            void* zeros = NativeMemory.AllocZeroed((nuint)length);
+
+            try
+            {
+                texture.Upload(new ReadOnlySpan<byte>(zeros, length));
+            }
+            finally
+            {
+                NativeMemory.Free(zeros);
+            }
         }
 
         public void Dispose()
