@@ -43,6 +43,11 @@ float sdRoundParallelogram(in vec2 p, in vec2 b, in float sk, in float r) {
 // edges   : the edges the fade is measured from (Left, Top, Right, Bottom)
 // lengths : how far in from each edge the fade reaches; 0 on a side is no fade there
 float clipFade(in vec2 fragPos, in vec4 edges, in vec4 lengths) {
+    // No side fades, as for nearly every quad: the arithmetic below would give exactly 1, so skip it. A quad's four
+    // vertices carry the same lengths, so the fragments of one quad all take the same side of this branch.
+    if (all(lessThan(lengths, vec4(0.0001))))
+        return 1.0;
+
     vec4 inward = vec4(fragPos.x - edges.x, fragPos.y - edges.y, edges.z - fragPos.x, edges.w - fragPos.y);
     vec4 t = clamp(inward / max(lengths, vec4(0.0001)), 0.0, 1.0);
 
