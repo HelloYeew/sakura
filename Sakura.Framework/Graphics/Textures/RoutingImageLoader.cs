@@ -40,6 +40,11 @@ public class RoutingImageLoader : IImageLoader
     /// </summary>
     private static readonly GlobalStatistic<long> stat_scaled = GlobalStatistics.Get<long>("Textures", "ImageSharp Scaled JPEG Routes", StatisticKind.Cumulative);
 
+    /// <summary>
+    /// GIFs routed to ImageSharp up front, so stb's GIF loader never sees one (see <see cref="isGif"/>).
+    /// </summary>
+    private static readonly GlobalStatistic<long> stat_gif = GlobalStatistics.Get<long>("Textures", "ImageSharp GIF Routes", StatisticKind.Cumulative);
+
     private readonly StbImageLoader stb = new StbImageLoader();
 
     private readonly Lazy<ImageSharpImageLoader> imageSharp =
@@ -56,7 +61,19 @@ public class RoutingImageLoader : IImageLoader
     /// and tests.
     /// </summary>
     public bool WouldUseStb(ReadOnlySpan<byte> encoded, ImageLoadOptions options)
-        => StbImageLoader.IsAvailable && !ExifOrientation.RequiresTransform(encoded) && !decodesReduced(encoded, options);
+        => StbImageLoader.IsAvailable && !isGif(encoded) && !ExifOrientation.RequiresTransform(encoded) && !decodesReduced(encoded, options);
+
+    /// <summary>
+    /// Whether this starts with GIF's signature. stb_image 2.30, the newest release, has a published heap overflow in its
+    /// GIF loader (CVE-2026-5185, in <c>stbi__gif_load_next</c>), and a game decodes images it didn't make, such as
+    /// downloaded ones. ImageSharp's decoder is managed code, so a malformed GIF there fails as an exception.
+    /// </summary>
+    /// <remarks>
+    /// Three bytes, where stb itself looks for <c>GIF87a</c> or <c>GIF89a</c>: everything stb would take as a GIF matches,
+    /// and a file that only starts like one goes to ImageSharp to be rejected there.
+    /// </remarks>
+    private static bool isGif(ReadOnlySpan<byte> encoded)
+        => encoded.Length >= 3 && encoded[0] == (byte)'G' && encoded[1] == (byte)'I' && encoded[2] == (byte)'F';
 
     /// <summary>
     /// How many pixels a JPEG has to have before it's decoded reduced rather than whole: ImageSharp decodes a JPEG wanted
@@ -96,7 +113,7 @@ public class RoutingImageLoader : IImageLoader
         Logger.Verbose("🖼️ Routing image loader initialized");
         Logger.Verbose($"Routing Primary: {nameof(StbImageLoader)}{(StbImageLoader.IsAvailable ? "" : " (unavailable — everything falls back)")}");
         Logger.Verbose($"Routing Fallback: {nameof(ImageSharpImageLoader)} (loaded on first use)");
-        Logger.Verbose($"Routing Rule: EXIF-oriented images, and JPEGs of {scaled_decode_min_pixels / 1_000_000} MP or more wanted at half size or less, go to the fallback up front; anything stb rejects falls back on error");
+        Logger.Verbose($"Routing Rule: GIFs, EXIF-oriented images, and JPEGs of {scaled_decode_min_pixels / 1_000_000} MP or more wanted at half size or less, go to the fallback up front; anything stb rejects falls back on error");
 
         stb.LogInfo();
 
@@ -117,6 +134,12 @@ public class RoutingImageLoader : IImageLoader
 
         if (!StbImageLoader.IsAvailable)
             return imageSharp.Value.Load(encoded.AsStream(), options);
+
+        if (isGif(encoded.Span))
+        {
+            stat_gif.Value++;
+            return imageSharp.Value.Load(encoded.AsStream(), options);
+        }
 
         if (ExifOrientation.RequiresTransform(encoded.Span))
         {

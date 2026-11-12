@@ -6,6 +6,7 @@ using NUnit.Framework;
 using Sakura.Framework.Graphics.Textures;
 using Sakura.Framework.Graphics.Textures.Stb;
 using Sakura.Framework.Maths;
+using Sakura.Framework.Statistic;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 
@@ -46,6 +47,44 @@ public class RoutingImageLoaderTest : ImageLoaderTest
             Assert.That(raw.Width, Is.EqualTo(320));
             Assert.That(raw.Height, Is.EqualTo(240));
             Assert.That(raw.Data.Length, Is.EqualTo(320 * 240 * 4));
+        }
+    }
+
+    /// <summary>
+    /// A GIF of the given size in one colour.
+    /// </summary>
+    private static byte[] gif(int width, int height, Rgba32 color)
+    {
+        using var stream = new MemoryStream();
+
+        using (var image = new Image<Rgba32>(width, height, color))
+            image.SaveAsGif(stream);
+
+        return stream.ToArray();
+    }
+
+    /// <summary>
+    /// stb's GIF loader has a published overflow, so a GIF goes to the fallback before stb sees it, and still loads.
+    /// </summary>
+    /// <remarks>
+    /// stb would decode this GIF without complaint, so only the up-front route's count shows which decoder ran.
+    /// </remarks>
+    [Test]
+    public void GifIsRoutedAwayFromStb()
+    {
+        byte[] encoded = gif(320, 240, new Rgba32(255, 0, 0, 255));
+        var routed = GlobalStatistics.Get<long>("Textures", "ImageSharp GIF Routes", StatisticKind.Cumulative);
+        long routedBefore = routed.Value;
+
+        using var raw = loader.Load(new MemoryStream(encoded));
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(loader.WouldUseStb(encoded), Is.False);
+            Assert.That(routed.Value, Is.EqualTo(routedBefore + 1));
+            Assert.That(raw.Width, Is.EqualTo(320));
+            Assert.That(raw.Height, Is.EqualTo(240));
+            Assert.That(raw.Data[..4].ToArray(), Is.EqualTo(new byte[] { 255, 0, 0, 255 }));
         }
     }
 
