@@ -2,6 +2,7 @@
 // See the LICENSE file for full license text.
 
 using NUnit.Framework;
+using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Input;
@@ -514,6 +515,40 @@ public class InputManagerPositionalDispatchTest
             Assert.That(front.IsDragged, Is.False);
             Assert.That(front.DragCount, Is.Zero, "a later plain move isn't a drag");
         });
+    }
+
+    /// <summary>
+    /// A clickable takes a press only while it is enabled. With no action, or disabled, the press reaches the drawable
+    /// behind it, which a drag to scroll needs.
+    /// </summary>
+    [Test]
+    public void TestClickableTakesPressOnlyWhileEnabled()
+    {
+        var back = new RecordingBox { Position = new Vector2(100, 100), Size = new Vector2(100), HandleMouseDown = true };
+        var clickable = new ClickableContainer { Position = new Vector2(100, 100), Size = new Vector2(100) };
+        root.Add(back);
+        root.Add(clickable);
+        settle();
+
+        Assert.That(pressAndRelease(), Is.SameAs(back), "no action: the press goes through");
+
+        clickable.Action = () => { };
+        Assert.That(pressAndRelease(), Is.SameAs(clickable), "enabled: the clickable takes it");
+
+        clickable.Enabled.Value = false;
+        Assert.That(pressAndRelease(), Is.SameAs(back), "disabled: the press goes through again");
+
+        Drawable? pressAndRelease()
+        {
+            var point = new Vector2(150, 150);
+
+            manager.BuildQueues(root, point);
+            manager.DispatchMouseDown(mouseDown(point));
+
+            var handler = manager.LastPositionalHandler;
+            manager.DispatchMouseUp(mouseUp(point));
+            return handler;
+        }
     }
 
     /// <summary>

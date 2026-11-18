@@ -27,6 +27,10 @@ public partial class ClickableContainer : Container
         }
     }
 
+    /// <summary>
+    /// Whether clicking does anything. Setting <see cref="Action"/> sets it. While it is false, a press is not taken
+    /// and reaches whatever is behind, so a drag that starts on a disabled control still scrolls the list it sits in.
+    /// </summary>
     public readonly ReactiveBool Enabled = new ReactiveBool();
 
     public override bool OnClick(MouseButtonEvent e) => TriggerClick();
@@ -37,12 +41,6 @@ public partial class ClickableContainer : Container
             return false;
 
         Action?.Invoke();
-        return true;
-    }
-
-    public override bool OnMouseDown(MouseButtonEvent e)
-    {
-        base.OnMouseDown(e);
         return true;
     }
 
