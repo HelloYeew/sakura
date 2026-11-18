@@ -33,6 +33,38 @@ public class SchedulerTest
         scheduler.Update();
     }
 
+    /// <summary>
+    /// An update with nothing waiting returns early, so a task added once the scheduler has emptied has to bring it back.
+    /// </summary>
+    [Test]
+    public void TestTaskAddedAfterTheSchedulerEmptiedRuns()
+    {
+        int runs = 0;
+
+        scheduler.Add(() => runs++);
+        advanceTo(1);
+        advanceTo(2);
+
+        scheduler.Add(() => runs += 10);
+        advanceTo(3);
+
+        Assert.That(runs, Is.EqualTo(11));
+    }
+
+    [Test]
+    public void TestTaskAddedAfterACancelledOneRuns()
+    {
+        bool ran = false;
+
+        scheduler.Cancel(scheduler.Add(() => Assert.Fail("cancelled")));
+        advanceTo(1);
+
+        scheduler.AddDelayed(() => ran = true, 5);
+        advanceTo(6);
+
+        Assert.That(ran, Is.True);
+    }
+
     [Test]
     public void TestTasksRunInExecutionTimeOrder()
     {

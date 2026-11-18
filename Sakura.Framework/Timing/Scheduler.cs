@@ -20,8 +20,12 @@ public class Scheduler
     private IClock? clock;
 
     private readonly Lock locker = new Lock();
-    
+
     private readonly List<ScheduledTask> dueBuffer = new List<ScheduledTask>();
+
+    // How many tasks are waiting, set under the lock at the end of every change, so an Update with none can return
+    // without taking it. One added on another thread as an Update reads 0 runs at the next.
+    private int pending;
 
     public Scheduler(IClock? clock = null)
     {
@@ -60,8 +64,7 @@ public class Scheduler
     {
         // Due whatever the clock reads, so it needs none yet.
         var task = new ScheduledTask(action, clock?.CurrentTime ?? double.NegativeInfinity);
-        lock (locker)
-            tasksToAdd.Add(task);
+        addTask(task);
         return task;
     }
 
@@ -77,8 +80,7 @@ public class Scheduler
             throw new InvalidOperationException("Scheduler requires a clock to be set before adding delayed tasks.");
 
         var task = new ScheduledTask(action, clock.CurrentTime + delay);
-        lock (locker)
-            tasksToAdd.Add(task);
+        addTask(task);
         return task;
     }
 
@@ -97,10 +99,26 @@ public class Scheduler
             throw new ArgumentException("Repeat interval must be greater than zero.", nameof(repeatInterval));
 
         var task = new ScheduledTask(action, clock.CurrentTime + delay, repeatInterval);
-        lock (locker)
-            tasksToAdd.Add(task);
+        addTask(task);
         return task;
     }
+
+    /// <summary>
+    /// Queues <paramref name="task"/> for the next <see cref="Update"/>.
+    /// </summary>
+    private void addTask(ScheduledTask task)
+    {
+        lock (locker)
+        {
+            tasksToAdd.Add(task);
+            publishPending();
+        }
+    }
+
+    /// <summary>
+    /// Records how many tasks are waiting, for <see cref="Update"/> to read without the lock. Under the lock only.
+    /// </summary>
+    private void publishPending() => Volatile.Write(ref pending, tasks.Count + tasksToAdd.Count);
 
     /// <summary>
     /// Cancels a previously scheduled task.
@@ -119,6 +137,7 @@ public class Scheduler
             if (tasks.Remove(task))
                 removed = true;
 
+            publishPending();
             return removed;
         }
     }
@@ -132,9 +151,9 @@ public class Scheduler
         {
             tasks.Clear();
             tasksToAdd.Clear();
+            publishPending();
         }
     }
-
 
     private void insertSorted(ScheduledTask task)
     {
@@ -155,19 +174,18 @@ public class Scheduler
     }
 
     /// <summary>
-    /// Updates the scheduler, running all actions that are due.
+    /// Updates the scheduler, running all actions that are due. With no task waiting it returns without taking the lock.
     /// </summary>
     public void Update()
     {
-        if (clock == null) return;
+        if (clock == null || Volatile.Read(ref pending) == 0)
+            return;
 
         double currentTime = clock.CurrentTime;
         bool anyDue;
 
         lock (locker)
         {
-            stat_pending_tasks.Value = tasks.Count + tasksToAdd.Count;
-
             if (tasksToAdd.Count > 0)
             {
                 for (int i = 0; i < tasksToAdd.Count; i++)
@@ -199,6 +217,12 @@ public class Scheduler
                     }
                 }
             }
+
+            publishPending();
+
+            // What's left after this update, so the last scheduler to run leaves the figure true once it's emptied: one with
+            // nothing waiting no longer writes it.
+            stat_pending_tasks.Value = pending;
         }
 
         if (!anyDue)
