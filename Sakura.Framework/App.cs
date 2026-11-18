@@ -217,7 +217,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
                 break;
 
             case HeadlessRenderer:
-                TextureManager = new HeadlessTextureManager();
+                TextureManager = new HeadlessTextureManager(embeddedResourceStorage.GetStorageForDirectory("Textures"));
                 FontStore = new HeadlessFontStore((HeadlessTextureManager)TextureManager);
                 VideoStore = new VideoStore(embeddedResourceStorage.GetStorageForDirectory("Videos"), Host.Renderer, TextureManager);
                 break;

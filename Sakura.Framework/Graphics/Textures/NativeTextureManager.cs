@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using Sakura.Framework.Graphics.Rendering;
@@ -51,17 +52,41 @@ public class NativeTextureManager : ITextureManager
 
     public Texture Get(string path) => Get(path, ImageLoadOptions.FullSize);
 
-    public Texture Get(string path, ImageLoadOptions decode)
-    {
-        if (string.IsNullOrEmpty(path))
-            return WhitePixel;
+    public Texture Get(string path, ImageLoadOptions decode) => string.IsNullOrEmpty(path) ? WhitePixel : load(path, decode, true) ?? missingTexture;
 
+    public bool TryGet(string path, [NotNullWhen(true)] out Texture? texture) => TryGet(path, ImageLoadOptions.FullSize, out texture);
+
+    public bool TryGet(string path, ImageLoadOptions decode, [NotNullWhen(true)] out Texture? texture)
+    {
+        texture = string.IsNullOrEmpty(path) ? null : load(path, decode, false);
+        return texture != null;
+    }
+
+    /// <summary>
+    /// Returns the texture cached for <paramref name="path"/> at this decode size, loading it from storage first if it is
+    /// not cached yet.
+    /// </summary>
+    /// <param name="path">The path to the texture in storage.</param>
+    /// <param name="decode">How far to reduce the image while decoding it.</param>
+    /// <param name="reportMissing">Whether a file that is not in storage is logged as an error. A file that fails to decode always is.</param>
+    /// <returns>The texture, or null if the file is not in storage or could not be decoded.</returns>
+    private Texture? load(string path, ImageLoadOptions decode, bool reportMissing)
+    {
         string cacheKey = decode.HasTarget
             ? TextureCreationOptions.ShareKeyFor(path, decode.TargetSize, decode.FillMode)
             : path;
 
         if (textureCache.TryGetValue(cacheKey, out var cachedTexture))
             return cachedTexture;
+
+        // Asked first rather than left to the open, which embedded storage answers by throwing and native storage with null.
+        if (!storage.Exists(path))
+        {
+            if (reportMissing)
+                Logger.Error($"Texture '{path}' was not found.");
+
+            return null;
+        }
 
         try
         {
@@ -100,8 +125,8 @@ public class NativeTextureManager : ITextureManager
         }
         catch (Exception ex)
         {
-            Logger.Error($"Failed to load texture '{path}': {ex.Message}");
-            return missingTexture;
+            Logger.Error($"Failed to load texture '{path}'", ex);
+            return null;
         }
     }
 

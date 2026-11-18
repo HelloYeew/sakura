@@ -3,8 +3,10 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
+using Sakura.Framework.Platform;
 
 namespace Sakura.Framework.Graphics.Textures;
 
@@ -15,15 +17,30 @@ public class HeadlessTextureManager : ITextureManager
     public TextureAtlas? Atlas => null;
 
     private readonly SharedTextureStore sharedTextures = new SharedTextureStore();
+    private readonly Storage? storage;
 
-    public HeadlessTextureManager()
+    /// <summary>
+    /// Creates a texture manager that decodes nothing and hands out placeholder textures.
+    /// </summary>
+    /// <param name="storage">Where <see cref="TryGet(string, out Texture?)"/> looks for a file. Without one, no file is found.</param>
+    public HeadlessTextureManager(Storage? storage = null)
     {
+        this.storage = storage;
         WhitePixel = new Texture(new HeadlessNativeTexture(1, 1), TextureOwnership.Shared);
     }
 
     public Texture Get(string path) => WhitePixel;
 
     public Texture Get(string path, ImageLoadOptions decode) => WhitePixel;
+
+    public bool TryGet(string path, [NotNullWhen(true)] out Texture? texture) => TryGet(path, ImageLoadOptions.FullSize, out texture);
+
+    public bool TryGet(string path, ImageLoadOptions decode, [NotNullWhen(true)] out Texture? texture)
+    {
+        // Nothing is decoded without a GPU, so a file that is there answers with the white pixel, as Get does.
+        texture = !string.IsNullOrEmpty(path) && storage?.Exists(path) == true ? WhitePixel : null;
+        return texture != null;
+    }
 
     public Texture FromPixelData(int width, int height, ReadOnlySpan<byte> pixelData, string cacheKey = null) => createDummyTexture(width, height);
 

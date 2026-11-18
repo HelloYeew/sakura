@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 
 namespace Sakura.Framework.Graphics.Textures;
@@ -37,6 +38,34 @@ public interface ITextureManager : IDisposable
     /// <param name="decode">How far to reduce the image while decoding it.</param>
     /// <returns>A <see cref="Texture"/> object. Returns <see cref="WhitePixel"/> if the path is null or empty, or a fallback texture on load failure.</returns>
     Texture Get(string path, ImageLoadOptions decode);
+
+    /// <summary>
+    /// Retrieves a texture from the specified path if the file is in storage, without the error and the placeholder that
+    /// <see cref="Get(string)"/> gives for a missing file. Loads it from storage if not already cached.
+    /// </summary>
+    /// <remarks>
+    /// For a file that may or may not be there, such as an optional picture. A file that is there but cannot be decoded is
+    /// still logged as an error.
+    /// </remarks>
+    /// <param name="path">The path to the texture in storage.</param>
+    /// <param name="texture">The texture, or null when this returns false.</param>
+    /// <returns>True if the file is in storage and was decoded; false if the path is null or empty, the file is not there, or it could not be decoded.</returns>
+    bool TryGet(string path, [NotNullWhen(true)] out Texture? texture);
+
+    /// <summary>
+    /// Retrieves a texture from the specified path if the file is in storage, decoded at (at most) the size in
+    /// <paramref name="decode"/>, without the error and the placeholder that <see cref="Get(string, ImageLoadOptions)"/>
+    /// gives for a missing file. Loads it from storage if not already cached.
+    /// </summary>
+    /// <remarks>
+    /// For a file that may or may not be there, such as an optional picture. A file that is there but cannot be decoded is
+    /// still logged as an error.
+    /// </remarks>
+    /// <param name="path">The path to the texture in storage.</param>
+    /// <param name="decode">How far to reduce the image while decoding it.</param>
+    /// <param name="texture">The texture, or null when this returns false.</param>
+    /// <returns>True if the file is in storage and was decoded; false if the path is null or empty, the file is not there, or it could not be decoded.</returns>
+    bool TryGet(string path, ImageLoadOptions decode, [NotNullWhen(true)] out Texture? texture);
 
     /// <summary>
     /// Creates a texture from raw pixel data.

@@ -264,7 +264,7 @@ internal static class TextureUploads
         }
         catch (Exception ex)
         {
-            Logger.Error($"Pixel inspector for texture '{options.Name ?? "(unnamed)"}' failed: {ex.Message}");
+            Logger.Error($"Pixel inspector for texture '{options.Name ?? "(unnamed)"}' failed", ex);
         }
     }
 
@@ -330,7 +330,7 @@ internal static class TextureUploads
             // Idempotent, and a no-op if the decode itself was what failed.
             raw.Dispose();
 
-            Logger.Error($"Failed to create texture '{options.Name ?? "(unnamed)"}' from stream: {ex.Message}");
+            Logger.Error($"Failed to create texture '{options.Name ?? "(unnamed)"}' from stream", ex);
             return null;
         }
 
