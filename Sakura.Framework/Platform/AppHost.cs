@@ -1336,20 +1336,43 @@ public abstract class AppHost : IDisposable
     /// </summary>
     protected virtual void InitializeGraphicsContext(IWindow window, IRenderer renderer) { }
 
-    private void onFrameLimiterChanged(ValueChangedEvent<FrameSync> e)
+    private void onFrameLimiterChanged(ValueChangedEvent<FrameSync> e) => applyFrameLimiter();
+
+    /// <summary>
+    /// The limiter the loops follow: <see cref="FrameLimiter"/>'s, except that <see cref="FrameSync.VariableRefresh"/> follows
+    /// <see cref="FrameSync.VSync"/> where the window says its display won't vary its refresh for it.
+    /// </summary>
+    private FrameSync effectiveFrameLimiter => FramePacing.EffectiveFrameLimiter(FrameLimiter?.Value ?? FrameSync.VSync, Window?.VariableRefresh ?? VariableRefreshSupport.Unavailable);
+
+    // The limiter the window and the renderer were last set to present for. PerformDraw sets them again when the window's
+    // display starts or stops varying its refresh for it.
+    private volatile FrameSync appliedFrameLimiter;
+
+    /// <summary>
+    /// Sets how the window and the renderer present for <see cref="effectiveFrameLimiter"/>: when the frame limiter changes,
+    /// and when the display starts or stops varying its refresh for the window.
+    /// </summary>
+    private void applyFrameLimiter()
     {
-        bool vsync = e.NewValue == FrameSync.VSync;
+        var limiter = effectiveFrameLimiter;
+        appliedFrameLimiter = limiter;
+
+        bool vsync = limiter == FrameSync.VSync;
 
         // VSync need to be set on window, other frame limiters are handled in the clock.
         // OpenGL syncs at the window layer (SDL swap interval), Direct3D11 has no window-layer VSync,
         // so the renderer maps this to its swapchain present interval. Both are notified, each backend
-        // acts on the one that applies to it.
+        // acts on the one that applies to it. VariableRefresh presents without waiting too: a display
+        // that varies its refresh starts one as each frame arrives.
         Window?.SetVSync(vsync);
         Renderer?.SetVSync(vsync);
 
         // Only Unlimited stops presents waiting for the display everywhere: the capped limiters keep Metal's display sync,
         // which they draw under today.
-        Renderer?.SetDisplaySync(e.NewValue != FrameSync.Unlimited);
+        Renderer?.SetDisplaySync(limiter != FrameSync.Unlimited);
+
+        if (FrameLimiter != null && limiter != FrameLimiter.Value)
+            Logger.Verbose($"{FrameLimiter.Value} follows {limiter}: the display won't vary its refresh for this window.");
     }
 
     /// <summary>
@@ -1544,12 +1567,28 @@ public abstract class AppHost : IDisposable
     protected virtual void PerformDraw()
     {
         stat_drawn_last_frame.Value = 0;
+
+        // The window's display can start or stop varying its refresh for it (a macOS window entering fullscreen), which
+        // changes what VariableRefresh follows. Set here, on the draw thread, so it's in place for this frame's StartFrame.
+        var limiter = effectiveFrameLimiter;
+
+        if (limiter != appliedFrameLimiter)
+        {
+            applyFrameLimiter();
+            updateTargetUpdateHz();
+        }
+
+        // A frame that comes sooner than the display can refresh again is held until it can, so frames are shown evenly.
+        // It's the display's shortest interval, not the limiter's slightly longer period: presents held for as long as
+        // frames take to draw would fall behind with every late one, and queue.
+        Renderer?.SetMinimumPresentInterval(limiter == FrameSync.VariableRefresh ? 1 / getDisplayHz() : 0);
+
         Renderer?.Clear();
         Renderer?.StartFrame();
 
         // Frames come one a refresh only under VSync, focused: anything else paces them otherwise, and their cadence says
         // nothing about refreshes missed.
-        bool cadence = FrameLimiter?.Value == FrameSync.VSync && Window?.IsActive == true;
+        bool cadence = limiter == FrameSync.VSync && Window?.IsActive == true;
         double refreshTicks = Stopwatch.Frequency / getDisplayHz();
 
         if (cadence != cadenceUnderVSync)
@@ -1686,10 +1725,12 @@ public abstract class AppHost : IDisposable
         if (Window != null && !Window.IsActive)
             return 60;
 
-        switch (FrameLimiter.Value)
+        switch (effectiveFrameLimiter)
         {
             case FrameSync.VSync:
                 return refreshRate;
+            case FrameSync.VariableRefresh:
+                return FramePacing.VariableRefreshHz(refreshRate);
             case FrameSync.Limit2x:
                 return refreshRate * 2;
             case FrameSync.Limit4x:

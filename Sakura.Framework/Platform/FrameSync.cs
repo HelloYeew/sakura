@@ -14,6 +14,15 @@ public enum FrameSync
     VSync,
 
     /// <summary>
+    /// For a variable refresh rate display (G-SYNC, FreeSync, Adaptive-Sync, ProMotion): draw just under the display's top
+    /// rate and present without waiting for a refresh, so the display starts one as each frame arrives. That's the latency
+    /// of presenting without VSync, with no tearing and no frames queued. On a display whose rate is fixed it tears.
+    /// Where the platform can tell the display won't vary its refresh for the window it follows <see cref="VSync"/>: on
+    /// macOS anywhere but a fullscreen window on a screen whose rate varies, and always on a phone.
+    /// </summary>
+    VariableRefresh,
+
+    /// <summary>
     /// Run the update loop at 2x the display's refresh rate. Drawing remains at display speed.
     /// </summary>
     Limit2x,

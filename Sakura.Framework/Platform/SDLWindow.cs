@@ -493,6 +493,13 @@ public class SDLWindow : IWindow
     public double DisplayRefreshRate { get; private set; } = 60;
     public Reactive<string> DisplayName { get; } = new Reactive<string>(string.Empty);
 
+    // Only macOS can tell, and it's worked out there on the main thread (updateVariableRefresh). Windows and Linux leave it to
+    // the driver and the compositor, and a phone paces its window its own way.
+    private volatile VariableRefreshSupport variableRefresh = RuntimeInfo.IsDesktop && !RuntimeInfo.IsMacOS ? VariableRefreshSupport.Unknown : VariableRefreshSupport.Unavailable;
+
+    /// <inheritdoc/>
+    public VariableRefreshSupport VariableRefresh => variableRefresh;
+
     // TODO: This update action also no longer needed since it's handled in host's main loop
     public event Action Update = delegate { };
     public event Action FocusLost = delegate { };
@@ -691,6 +698,7 @@ public class SDLWindow : IWindow
         DisplayRefreshRate = getDisplayRefreshRate();
         Logger.Verbose($"Display refresh rate: {DisplayRefreshRate:0.###} Hz");
         updateDisplayName();
+        updateVariableRefresh();
 
         int w, h;
         SDL_GetWindowSize(window, &w, &h);
@@ -1298,6 +1306,7 @@ public class SDLWindow : IWindow
                 // own costs little, and only a real change is reported.
                 case SDL_EventType.SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED:
                     updateDisplayHz();
+                    updateVariableRefresh();
                     break;
 
                 case SDL_EventType.SDL_EVENT_GAMEPAD_ADDED:
@@ -1383,9 +1392,17 @@ public class SDLWindow : IWindow
 
                 break;
 
+            // macOS paces a variable refresh rate only for a fullscreen window, and a Spaces fullscreen is entered after an
+            // animation, so the window's own word is waited for rather than the mode it was asked for.
+            case SDL_EventType.SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
+            case SDL_EventType.SDL_EVENT_WINDOW_LEAVE_FULLSCREEN:
+                updateVariableRefresh();
+                break;
+
             case SDL_EventType.SDL_EVENT_WINDOW_DISPLAY_CHANGED:
                 updateDisplayHz();
                 updateDisplayName();
+                updateVariableRefresh();
 
                 // When the window moves to a display with a different pixel density (e.g. from
                 // a non-HiDPI external monitor to the HiDPI MacBook screen), SDL may or may not
@@ -1880,6 +1897,41 @@ public class SDLWindow : IWindow
 
         Logger.Debug($"Display refresh rate changed from {oldRate:0.###} Hz to {DisplayRefreshRate:0.###} Hz");
         DisplayChanged.Invoke(DisplayHz);
+    }
+
+    /// <summary>
+    /// Works out <see cref="VariableRefresh"/> again on macOS, on the main thread: when the window is made, enters or leaves
+    /// fullscreen, or moves to another display, and when a display's mode changes (a fixed rate picked in place of
+    /// ProMotion). It's available for a fullscreen window on a screen whose refresh varies, as Apple's own check has it.
+    /// </summary>
+    private unsafe void updateVariableRefresh()
+    {
+        if (!RuntimeInfo.IsMacOS || window == null)
+            return;
+
+        bool fullscreen = (SDL_GetWindowFlags(window) & SDL_WindowFlags.SDL_WINDOW_FULLSCREEN) != 0;
+        bool varies = false;
+
+        if (fullscreen)
+        {
+            IntPtr nsWindow;
+            fixed (byte* namePtr = SDL_PROP_WINDOW_COCOA_WINDOW_POINTER)
+                nsWindow = SDL_GetPointerProperty(SDL_GetWindowProperties(window), namePtr, IntPtr.Zero);
+
+            varies = MacOSNative.ScreenRefreshVaries(MacOSNative.ScreenOf(nsWindow));
+        }
+
+        var support = varies ? VariableRefreshSupport.Available : VariableRefreshSupport.Unavailable;
+
+        if (support == variableRefresh)
+            return;
+
+        variableRefresh = support;
+
+        if (varies)
+            Logger.Verbose("Variable refresh rate is available: the window is fullscreen on a screen whose refresh varies.");
+        else
+            Logger.Verbose(fullscreen ? "Variable refresh rate is unavailable: the screen's refresh is fixed." : "Variable refresh rate is unavailable outside fullscreen.");
     }
 
     private unsafe void updateDisplayName()

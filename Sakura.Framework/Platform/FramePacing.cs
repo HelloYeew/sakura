@@ -39,6 +39,30 @@ internal readonly record struct FramePacing(AppType AppType, bool Mobile)
     public FrameSync DefaultFrameLimiter => AppType == AppType.Game && !Mobile ? FrameSync.Limit2x : FrameSync.VSync;
 
     /// <summary>
+    /// How much longer than the display's shortest refresh a frame takes under <see cref="FrameSync.VariableRefresh"/>, in
+    /// seconds: 1/3600 s, which caps 144 Hz at 138.5 fps and 240 Hz at 225. A frame that arrives sooner than the display can
+    /// refresh again waits or tears, and a timer's wake-up varies by tens of microseconds, so the margin is a time, the same
+    /// at every rate, rather than a few frames a second, which is 0.05 ms at 240 Hz.
+    /// </summary>
+    public const double VARIABLE_REFRESH_MARGIN_SECONDS = 1.0 / 3600;
+
+    /// <summary>
+    /// The limiter the loops follow for the one chosen. <see cref="FrameSync.VariableRefresh"/> follows
+    /// <see cref="FrameSync.VSync"/> where the display won't vary its refresh for the window, since drawing just under its
+    /// fixed rate would only repeat a frame now and then.
+    /// </summary>
+    /// <param name="chosen">The frame limiter the app or the player chose.</param>
+    /// <param name="variableRefresh">What the window says of its display.</param>
+    public static FrameSync EffectiveFrameLimiter(FrameSync chosen, VariableRefreshSupport variableRefresh) => chosen == FrameSync.VariableRefresh && variableRefresh == VariableRefreshSupport.Unavailable ? FrameSync.VSync : chosen;
+
+    /// <summary>
+    /// The draw rate under <see cref="FrameSync.VariableRefresh"/>: the display's top rate with
+    /// <see cref="VARIABLE_REFRESH_MARGIN_SECONDS"/> added to each frame.
+    /// </summary>
+    /// <param name="displayHz">The display's top refresh rate, in Hz.</param>
+    public static double VariableRefreshHz(double displayHz) => 1 / (1 / displayHz + VARIABLE_REFRESH_MARGIN_SECONDS);
+
+    /// <summary>
     /// How fast the update thread runs for a draw rate.
     /// </summary>
     /// <param name="drawHz">The draw rate, or 0 for unlimited.</param>

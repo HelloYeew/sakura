@@ -1,6 +1,8 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System;
+using System.Linq;
 using NUnit.Framework;
 using Sakura.Framework.Platform;
 
@@ -19,6 +21,34 @@ public class FramePacingTest
     [TestCase(AppType.Application, true, FrameSync.VSync)]
     public void DefaultFrameLimiter(AppType appType, bool mobile, FrameSync expected)
         => Assert.That(new FramePacing(appType, mobile).DefaultFrameLimiter, Is.EqualTo(expected));
+
+    [TestCase(144, 138.4615)]
+    [TestCase(240, 225)]
+    [TestCase(120, 116.1290)]
+    [TestCase(60, 59.0164)]
+    public void VariableRefreshDrawsJustUnderTheTopRate(double displayHz, double expected)
+        => Assert.That(FramePacing.VariableRefreshHz(displayHz), Is.EqualTo(expected).Within(1e-4));
+
+    [TestCase(60)]
+    [TestCase(144)]
+    [TestCase(360)]
+    public void VariableRefreshKeepsTheSameMarginAtEveryRate(double displayHz)
+        => Assert.That(1 / FramePacing.VariableRefreshHz(displayHz) - 1 / displayHz, Is.EqualTo(FramePacing.VARIABLE_REFRESH_MARGIN_SECONDS).Within(1e-12));
+
+    [TestCase(VariableRefreshSupport.Available, FrameSync.VariableRefresh)]
+    [TestCase(VariableRefreshSupport.Unknown, FrameSync.VariableRefresh)]
+    [TestCase(VariableRefreshSupport.Unavailable, FrameSync.VSync)]
+    public void VariableRefreshFollowsVSyncWhereTheDisplayWontVary(VariableRefreshSupport support, FrameSync expected)
+        => Assert.That(FramePacing.EffectiveFrameLimiter(FrameSync.VariableRefresh, support), Is.EqualTo(expected));
+
+    private static readonly FrameSync[] other_limiters = Enum.GetValues<FrameSync>().Where(limiter => limiter != FrameSync.VariableRefresh).ToArray();
+
+    [Test]
+    public void OtherLimitersAreFollowedAsChosen([ValueSource(nameof(other_limiters))] FrameSync chosen, [Values] VariableRefreshSupport support)
+        => Assert.That(FramePacing.EffectiveFrameLimiter(chosen, support), Is.EqualTo(chosen));
+
+    [Test]
+    public void AHeadlessWindowsDisplayNeverVaries() => Assert.That(((IWindow)new HeadlessWindow()).VariableRefresh, Is.EqualTo(VariableRefreshSupport.Unavailable));
 
     [TestCase(AppType.Game, 120, 240)]
     [TestCase(AppType.Game, 600, 1000)]

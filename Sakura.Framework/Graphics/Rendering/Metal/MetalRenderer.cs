@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using Sakura.Framework.Graphics.Colors;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering.Batches;
@@ -18,6 +19,7 @@ using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Statistic;
 using Sakura.Framework.Timing;
+using Sakura.Framework.Utilities;
 using SakuraVertex = Sakura.Framework.Graphics.Rendering.Vertex.Vertex;
 
 namespace Sakura.Framework.Graphics.Rendering.Metal;
@@ -348,6 +350,27 @@ public sealed class MetalRenderer : IMetalRenderer
             Logger.Verbose($"Metal presents {(requested ? "wait for the display's refresh" : "without waiting for the display's refresh")}.");
     }
 
+    // Asked for by the frame limiter from its own thread, and handed to the library by StartFrame on the draw thread, once
+    // there's a device to hand it to. 0, a plain present, is the library's own default.
+    private double minimumPresentIntervalRequested;
+    private double minimumPresentIntervalApplied;
+
+    /// <inheritdoc/>
+    public void SetMinimumPresentInterval(double seconds) => Volatile.Write(ref minimumPresentIntervalRequested, Math.Max(seconds, 0));
+
+    /// <summary>
+    /// Has each present wait until the frame before it has been on screen for the interval last asked for, through
+    /// <c>presentDrawable:afterMinimumDuration:</c>, or present plainly for 0.
+    /// </summary>
+    private void applyMinimumPresentInterval()
+    {
+        double requested = Volatile.Read(ref minimumPresentIntervalRequested);
+        minimumPresentIntervalApplied = requested;
+
+        SakuraMetalNative.sakura_metal_set_min_present_interval(device, requested);
+        Logger.Verbose(requested > 0 ? $"Metal keeps each frame on screen for at least {requested * 1000:0.###} ms." : "Metal presents each frame as soon as the display can show it.");
+    }
+
     /// <inheritdoc/>
     public bool SupportsLateLatch => true;
 
@@ -536,6 +559,9 @@ public sealed class MetalRenderer : IMetalRenderer
 
         if (displaySyncRequested != displaySyncApplied)
             applyDisplaySync();
+
+        if (!Precision.AlmostEquals(Volatile.Read(ref minimumPresentIntervalRequested), minimumPresentIntervalApplied))
+            applyMinimumPresentInterval();
 
         // Timed because this acquires the layer's next drawable, and the layer hands one back only
         // when the display has released it, so a frame waiting here is waiting on the display, not

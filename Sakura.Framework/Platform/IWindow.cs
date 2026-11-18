@@ -51,6 +51,14 @@ public interface IWindow : IDisposable
     double DisplayRefreshRate => DisplayHz;
 
     /// <summary>
+    /// Whether the display under the window would vary its refresh to meet each frame, as far as the platform can tell.
+    /// <see cref="FrameSync.VariableRefresh"/> follows <see cref="FrameSync.VSync"/> where it's
+    /// <see cref="VariableRefreshSupport.Unavailable"/>. Changes on the main thread as the window enters or leaves fullscreen
+    /// or moves to another display, so read it each frame rather than subscribe.
+    /// </summary>
+    VariableRefreshSupport VariableRefresh => VariableRefreshSupport.Unavailable;
+
+    /// <summary>
     /// The name of the display the window is on, as the system calls it ("Built-in Retina Display"), or empty where it
     /// gives none. Two displays of one model can share a name. Changes on the main thread as the window moves to another
     /// display, so poll it from the update thread rather than subscribe, as with <see cref="SafeAreaPadding"/>.

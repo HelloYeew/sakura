@@ -5,6 +5,7 @@ using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using Sakura.Framework.Logging;
+using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Platform;
 
@@ -36,6 +37,57 @@ internal static class MacOSNative
 
     [DllImport(libobjc, EntryPoint = "objc_msgSend")]
     private static extern void objc_msgSend_void_bool(IntPtr receiver, IntPtr selector, [MarshalAs(UnmanagedType.I1)] bool arg);
+
+    // A double comes back in a floating-point register through the plain objc_msgSend on arm64 and x86-64 alike: only a long
+    // double needs objc_msgSend_fpret.
+    [DllImport(libobjc, EntryPoint = "objc_msgSend")]
+    private static extern double objc_msgSend_double(IntPtr receiver, IntPtr selector);
+
+    /// <summary>
+    /// How much two refresh intervals may differ, in seconds, and still be one fixed rate.
+    /// </summary>
+    private const double fixed_refresh_tolerance = 1e-6;
+
+    /// <summary>
+    /// The <c>NSScreen</c> an <c>NSWindow</c> is mostly on. Call it on the main thread.
+    /// </summary>
+    /// <returns>The screen, or zero off macOS, for no window, or for a window on no screen.</returns>
+    public static IntPtr ScreenOf(IntPtr nsWindow) => RuntimeInfo.IsMacOS && nsWindow != IntPtr.Zero ? objc_msgSend(nsWindow, sel_registerName("screen")) : IntPtr.Zero;
+
+    /// <summary>
+    /// Reads a screen's <c>minimumRefreshInterval</c> and <c>maximumRefreshInterval</c>: the shortest and longest a frame
+    /// may stay on it, in seconds. They differ for a screen whose refresh varies (ProMotion, Adaptive-Sync). Call it on the
+    /// main thread.
+    /// </summary>
+    /// <param name="screen">An <c>NSScreen</c>.</param>
+    /// <param name="shortest">The shortest interval, the inverse of the top rate.</param>
+    /// <param name="longest">The longest interval, the inverse of the lowest rate.</param>
+    /// <returns>Whether both were read. False off macOS, for no screen, and before macOS 12, whose screens have neither.</returns>
+    public static bool TryGetRefreshIntervals(IntPtr screen, out double shortest, out double longest)
+    {
+        shortest = 0;
+        longest = 0;
+
+        if (!RuntimeInfo.IsMacOS || screen == IntPtr.Zero)
+            return false;
+
+        IntPtr minimum = sel_registerName("minimumRefreshInterval");
+
+        // An unknown selector would raise an Objective-C exception, which ends the process.
+        if (!objc_msgSend_bool_id(screen, sel_registerName("respondsToSelector:"), minimum))
+            return false;
+
+        shortest = objc_msgSend_double(screen, minimum);
+        longest = objc_msgSend_double(screen, sel_registerName("maximumRefreshInterval"));
+        return shortest > 0 && longest > 0;
+    }
+
+    /// <summary>
+    /// Whether a screen's refresh varies to meet each frame: its shortest and longest refresh intervals differ. It's
+    /// Apple's own test for whether a fullscreen game can pace itself for a variable refresh rate. Call it on the main thread.
+    /// </summary>
+    /// <param name="screen">An <c>NSScreen</c>.</param>
+    public static bool ScreenRefreshVaries(IntPtr screen) => TryGetRefreshIntervals(screen, out double shortest, out double longest) && !Precision.AlmostEquals(shortest, longest, fixed_refresh_tolerance);
 
     /// <summary>
     /// Sets <c>displaySyncEnabled</c> on a <c>CAMetalLayer</c>: whether its presents wait for the display's refresh. With it
