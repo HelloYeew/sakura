@@ -8,6 +8,7 @@ using Sakura.Framework.Graphics.Cursor;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Text;
+using Sakura.Framework.Graphics.UserInterface;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Testing;
 
@@ -243,6 +244,62 @@ public partial class TestTooltip : ManualInputManagerTestScene
             InputManager.MoveMouseTo(outer!.Children[0]);
         });
         AddWaitStep("Wait for inner tooltip", 400);
+    }
+
+    /// <summary>
+    /// A button blocks hover, which leaves the panel around it un-hovered. Its tooltip still has to show, whether the
+    /// tooltip container sits beside the content or wraps it.
+    /// </summary>
+    [TestCase(false)]
+    [TestCase(true)]
+    public void TestTooltipOnButtonInsidePanel(bool wrapped)
+    {
+        ProbeTooltipContainer container = null!;
+        TooltipButton button = null!;
+
+        AddStep("Clear the default container", () => TestContent.Clear());
+        AddStep("Add a panel holding a button", () =>
+        {
+            var panel = new Container
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                Size = new Vector2(300, 200),
+                Child = button = new TooltipButton
+                {
+                    Anchor = Anchor.Centre,
+                    Origin = Anchor.Centre,
+                    Size = new Vector2(120, 40),
+                    Text = "Save",
+                    TooltipText = "Saves the file.",
+                    Action = () => { }
+                }
+            };
+
+            if (wrapped)
+            {
+                TestContent.Add(container = new ProbeTooltipContainer
+                {
+                    Child = panel
+                });
+            }
+            else
+            {
+                InputManager.Add(container = new ProbeTooltipContainer());
+                TestContent.Add(panel);
+            }
+        });
+
+        AddStep("Hover the button", () => InputManager.MoveMouseTo(button));
+        AddUntilStep("The button's tooltip appears", () => container.Tooltip.Alpha > 0);
+    }
+
+    /// <summary>
+    /// A button with a tooltip. An enabled button blocks hover, which is what un-hovers the panel around it.
+    /// </summary>
+    private partial class TooltipButton : BasicButton, IHasTooltip
+    {
+        public string? TooltipText { get; set; }
     }
 
     private partial class TooltipBox : Container, IHasTooltip

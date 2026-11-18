@@ -103,7 +103,7 @@ public partial class TooltipContainer : Container, IRemoveFromDrawVisualiser
         }
 
         // A finger leaves no pointer resting anywhere, so nothing dwells long enough to want a tooltip.
-        var candidate = manager?.CurrentState.LastPointerWasTouch == true ? null : findTooltipTarget();
+        var candidate = manager?.CurrentState.LastPointerWasTouch == true ? null : findTooltipTarget(manager);
 
         if (candidate != lastCandidate)
         {
@@ -192,56 +192,61 @@ public partial class TooltipContainer : Container, IRemoveFromDrawVisualiser
     }
 
     /// <summary>
-    /// Finds the deepest hovered drawable implementing <see cref="IHasTooltip"/> with non-empty text.
+    /// Finds the front-most hovered drawable implementing <see cref="IHasTooltip"/> with non-empty text.
     /// When the container has user children (wrapping mode), searches only within them.
     /// When used as a full-screen overlay with no user children, searches the parent tree instead.
     /// </summary>
-    private IHasTooltip? findTooltipTarget()
+    /// <remarks>
+    /// Read from the input manager's positional queue, which lists what is under the cursor nearest first, rather than
+    /// by walking down through hovered children. A control that blocks hover (a button) leaves its own parents
+    /// un-hovered, so a walk from the top stopped at the first of them and never reached the control.
+    /// </remarks>
+    private IHasTooltip? findTooltipTarget(InputManager? manager)
     {
-        // If we have a content layer with children, search only within that subtree.
-        if (contentLayer != null && contentLayer.Children.Count > 0)
-            return searchDescendants(contentLayer);
+        if (manager == null)
+            return null;
 
-        // Overlay mode: search siblings via our parent.
-        if (Parent != null)
-            return searchDescendants(Parent, skipDrawable: this);
+        var scope = contentLayer != null && contentLayer.Children.Count > 0 ? contentLayer : Parent;
 
-        return null;
-    }
+        if (scope == null)
+            return null;
 
-    private IHasTooltip? searchDescendants(Container container, Drawable? skipDrawable = null)
-    {
-        // SortedChildren, not Children: "front-most first" is only true of insertion order when no
-        // child has been given a Depth, and a tooltip on a raised control would otherwise lose to one
-        // on a sibling that merely happens to have been added later. This mirrors what
-        // InputManager.buildPositional walks.
-        var sorted = container.SortedChildren;
+        var queue = manager.PositionalInputQueue;
 
-        for (int i = sorted.Count - 1; i >= 0; i--)
+        for (int i = 0; i < queue.Count; i++)
         {
-            var child = sorted[i];
+            var drawable = queue[i];
 
-            // Skip ourselves and our internal tooltip.
-            if (child == skipDrawable) continue;
-            if (child is ITooltip) continue;
-
-            if (!child.IsLoaded || !child.IsAlive || child.IsHidden)
+            // Not hovered means it is behind something that blocks hover, such as a shown overlay.
+            if (!drawable.IsHovered || drawable is not IHasTooltip hasTooltip || string.IsNullOrEmpty(hasTooltip.TooltipText))
                 continue;
 
-            if (!child.IsHovered)
+            if (!drawable.IsLoaded || !drawable.IsAlive || drawable.IsEffectivelyHidden)
                 continue;
 
-            // Recurse into containers — prefer the deepest match.
-            if (child is Container childContainer)
-            {
-                var deep = searchDescendants(childContainer);
-                if (deep != null) return deep;
-            }
-
-            if (child is IHasTooltip hasTooltip && !string.IsNullOrEmpty(hasTooltip.TooltipText))
+            if (isWithinScope(drawable, scope))
                 return hasTooltip;
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="drawable"/> sits below <paramref name="scope"/>, and not inside this container's own
+    /// internals.
+    /// </summary>
+    private bool isWithinScope(Drawable drawable, Drawable scope)
+    {
+        for (var current = drawable.Parent; current != null; current = current.Parent)
+        {
+            if (ReferenceEquals(current, scope))
+                return true;
+
+            // Inside this container without passing through the scope first: part of the tooltip itself.
+            if (ReferenceEquals(current, this))
+                return false;
+        }
+
+        return false;
     }
 }

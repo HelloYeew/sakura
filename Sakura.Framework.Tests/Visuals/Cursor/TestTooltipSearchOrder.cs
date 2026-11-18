@@ -18,8 +18,8 @@ namespace Sakura.Framework.Tests.Visuals.Cursor;
 /// <remarks>
 /// The search walked <c>Children</c>, whose reverse order is only "front-most first" while no child
 /// has been given a <c>Depth</c> — so a raised control lost its tooltip to whichever sibling merely
-/// happened to be added later. It now walks <c>SortedChildren</c>, the same ordering
-/// <c>InputManager.buildPositional</c> uses.
+/// happened to be added later. It now reads the input manager's positional queue, which
+/// <c>InputManager.buildPositional</c> builds from <c>SortedChildren</c>.
 /// </remarks>
 public partial class TestTooltipSearchOrder : ManualInputManagerTestScene
 {
