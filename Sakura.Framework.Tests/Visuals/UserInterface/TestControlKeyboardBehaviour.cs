@@ -199,6 +199,62 @@ public partial class TestControlKeyboardBehaviour : ManualInputManagerTestScene
         AddAssert("Still visible", () => overlay.State == Visibility.Visible);
     }
 
+    [Test]
+    public void TestTabMovesFocusInsideOverlay()
+    {
+        BasicButton first = null!;
+        BasicButton second = null!;
+
+        AddStep("Show an overlay with two buttons over a third", () =>
+        {
+            TestContent.Clear();
+            TestContent.Add(outsideButton = new BasicButton
+            {
+                Size = new Vector2(120, 30),
+                Text = "Outside",
+                Action = () => { }
+            });
+            TestContent.Add(overlay = new TestOverlay());
+            overlay.Add(new FlowContainer
+            {
+                Anchor = Anchor.Centre,
+                Origin = Anchor.Centre,
+                AutoSizeAxes = Axes.Both,
+                Direction = FlowDirection.Vertical,
+                Spacing = new Vector2(0, 10),
+                Children = new Drawable[]
+                {
+                    first = new BasicButton
+                    {
+                        Size = new Vector2(120, 30),
+                        Text = "First",
+                        Action = () => { }
+                    },
+                    second = new BasicButton
+                    {
+                        Size = new Vector2(120, 30),
+                        Text = "Second",
+                        Action = () => { }
+                    }
+                }
+            });
+            overlay.Show();
+        });
+
+        press(Key.Tab);
+        AddAssert("Tab focused the first button", () => first.HasFocus);
+
+        press(Key.Tab);
+        AddAssert("Tab moved on to the second", () => second.HasFocus);
+
+        press(Key.Tab);
+        AddAssert("Tab wrapped to the first, not out to the button behind", () => first.HasFocus);
+
+        press(Key.Tab, KeyModifiers.Shift);
+        AddAssert("Shift+Tab wrapped back to the second", () => second.HasFocus);
+        AddAssert("Outside button never took focus", () => !outsideButton.HasFocus);
+    }
+
     #endregion
 
     #region Scroll to focus

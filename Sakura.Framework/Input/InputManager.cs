@@ -183,13 +183,7 @@ public class InputManager : IFocusManager
         // Tab is global navigation, but it is only claimed here once nothing in the queue wanted it.
         // That ordering lets a control that needs literal tabs (a code editor, say) keep them simply
         // by returning true from its own OnKeyDown.
-        //
-        // Shift is taken from the event OR the authoritative state: SDL populates KeyEvent.Modifiers
-        // in production, but synthesized input (ManualInputManager.PressKey without an explicit
-        // modifier argument) leaves it empty while the held Shift still shows up in CurrentState.
-        bool shiftHeld = (e.Modifiers & KeyModifiers.Shift) > 0 || (CurrentState.Modifiers & KeyModifiers.Shift) > 0;
-
-        if (e.Key == Key.Tab && MoveFocusToNextTabStop(shiftHeld))
+        if (MoveFocusForTab(e))
         {
             LastNonPositionalHandler = null;
             return true;
@@ -1059,6 +1053,28 @@ public class InputManager : IFocusManager
     {
         if (triggerSource != null && triggerSource.RequestsFocus)
             ChangeFocus(triggerSource);
+    }
+
+    /// <summary>
+    /// Moves focus as Tab and Shift+Tab do, if <paramref name="e"/> is a Tab press.
+    /// </summary>
+    /// <remarks>
+    /// Also for a drawable that takes every key so nothing behind it sees them, such as a modal overlay. Tab only
+    /// moves focus when no drawable takes it, so a drawable like that has to move focus itself.
+    /// </remarks>
+    /// <param name="e">The key press.</param>
+    /// <returns>True if <paramref name="e"/> was Tab and focus moved.</returns>
+    internal bool MoveFocusForTab(KeyEvent e)
+    {
+        if (e.Key != Key.Tab)
+            return false;
+
+        // Shift is taken from the event OR the authoritative state: SDL populates KeyEvent.Modifiers
+        // in production, but synthesized input (ManualInputManager.PressKey without an explicit
+        // modifier argument) leaves it empty while the held Shift still shows up in CurrentState.
+        bool shiftHeld = (e.Modifiers & KeyModifiers.Shift) > 0 || (CurrentState.Modifiers & KeyModifiers.Shift) > 0;
+
+        return MoveFocusToNextTabStop(shiftHeld);
     }
 
     public bool MoveFocusToNextTabStop(bool reverse = false)

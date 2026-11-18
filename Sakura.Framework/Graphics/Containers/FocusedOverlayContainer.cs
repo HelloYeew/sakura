@@ -7,6 +7,7 @@ namespace Sakura.Framework.Graphics.Containers;
 
 /// <summary>
 /// An overlay container that eagerly holds keyboard focus and blocks key events from passing through.
+/// Tab and Shift+Tab still move focus between the controls inside it.
 /// </summary>
 public abstract partial class FocusedOverlayContainer : OverlayContainer, ITabStopScope
 {
@@ -47,6 +48,10 @@ public abstract partial class FocusedOverlayContainer : OverlayContainer, ITabSt
     /// </summary>
     public virtual bool CloseOnEscape => true;
 
+    /// <summary>
+    /// While shown, takes every key so none reach the drawables behind it, and moves focus on a Tab that nothing
+    /// inside took.
+    /// </summary>
     public override bool OnKeyDown(KeyEvent e)
     {
         if (State == Visibility.Visible && CloseOnEscape && e.Key == Key.Escape)
@@ -57,7 +62,10 @@ public abstract partial class FocusedOverlayContainer : OverlayContainer, ITabSt
 
         if (State == Visibility.Visible && BlockNonPositionalInput)
         {
-            base.OnKeyDown(e);
+            // Tab only moves focus when no drawable takes it, so taking it here would leave focus stuck where it is.
+            if (!base.OnKeyDown(e))
+                GetContainingInputManager()?.MoveFocusForTab(e);
+
             return true;
         }
         return base.OnKeyDown(e);
