@@ -49,11 +49,30 @@ internal readonly record struct FramePacing(AppType AppType, bool Mobile)
     /// <summary>
     /// The limiter the loops follow for the one chosen. <see cref="FrameSync.VariableRefresh"/> follows
     /// <see cref="FrameSync.VSync"/> where the display won't vary its refresh for the window, since drawing just under its
-    /// fixed rate would only repeat a frame now and then.
+    /// fixed rate would only repeat a frame now and then, and where it varies it only in steps, which the frames would drift
+    /// against (<see cref="VariableRefreshSupport.Stepped"/>).
     /// </summary>
     /// <param name="chosen">The frame limiter the app or the player chose.</param>
     /// <param name="variableRefresh">What the window says of its display.</param>
-    public static FrameSync EffectiveFrameLimiter(FrameSync chosen, VariableRefreshSupport variableRefresh) => chosen == FrameSync.VariableRefresh && variableRefresh == VariableRefreshSupport.Unavailable ? FrameSync.VSync : chosen;
+    public static FrameSync EffectiveFrameLimiter(FrameSync chosen, VariableRefreshSupport variableRefresh) => chosen == FrameSync.VariableRefresh && variableRefresh is VariableRefreshSupport.Unavailable or VariableRefreshSupport.Stepped ? FrameSync.VSync : chosen;
+
+    /// <summary>
+    /// Whether the late latch runs whatever <see cref="HostOptions.UseLateLatch"/> says: under
+    /// <see cref="FrameSync.VariableRefresh"/> on a display whose refresh varies in steps, where it's what times each frame
+    /// to make the next refresh instead of drifting against the steps.
+    /// </summary>
+    /// <param name="chosen">The frame limiter the app or the player chose.</param>
+    /// <param name="variableRefresh">What the window says of its display.</param>
+    public static bool LatchesLate(FrameSync chosen, VariableRefreshSupport variableRefresh) => chosen == FrameSync.VariableRefresh && variableRefresh == VariableRefreshSupport.Stepped;
+
+    /// <summary>
+    /// Whether a display whose refresh varies in steps of <paramref name="stepSeconds"/> can't show
+    /// <see cref="FrameSync.VariableRefresh"/>'s frames at their own pace: the step is coarser than
+    /// <see cref="VARIABLE_REFRESH_MARGIN_SECONDS"/>, so the limiter's period falls between two of the display's intervals.
+    /// 0, a display that refreshes at any moment inside its range, isn't stepped.
+    /// </summary>
+    /// <param name="stepSeconds">The step between the display's refresh intervals, in seconds.</param>
+    public static bool RefreshStepped(double stepSeconds) => stepSeconds > VARIABLE_REFRESH_MARGIN_SECONDS;
 
     /// <summary>
     /// The draw rate under <see cref="FrameSync.VariableRefresh"/>: the display's top rate with

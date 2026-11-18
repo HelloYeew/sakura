@@ -1371,7 +1371,12 @@ public abstract class AppHost : IDisposable
         // which they draw under today.
         Renderer?.SetDisplaySync(limiter != FrameSync.Unlimited);
 
-        if (FrameLimiter != null && limiter != FrameLimiter.Value)
+        if (FrameLimiter == null || limiter == FrameLimiter.Value)
+            return;
+
+        if (Window?.VariableRefresh == VariableRefreshSupport.Stepped)
+            Logger.Verbose($"{FrameLimiter.Value} follows {limiter} with the late latch: the display varies its refresh only in steps, so frames are timed to its refreshes.");
+        else
             Logger.Verbose($"{FrameLimiter.Value} follows {limiter}: the display won't vary its refresh for this window.");
     }
 
@@ -1590,6 +1595,7 @@ public abstract class AppHost : IDisposable
         // nothing about refreshes missed.
         bool cadence = limiter == FrameSync.VSync && Window?.IsActive == true;
         double refreshTicks = Stopwatch.Frequency / getDisplayHz();
+        double refreshStepTicks = Stopwatch.Frequency * (Window?.DisplayRefreshStep ?? 0);
 
         if (cadence != cadenceUnderVSync)
         {
@@ -1598,7 +1604,11 @@ public abstract class AppHost : IDisposable
         }
 
         // With the drawable in hand, as late as the frame can still make the next refresh: the update it takes is fresher.
-        if (cadence && (late_latch_asked ?? Options.UseLateLatch) && Renderer?.SupportsLateLatch == true)
+        // VariableRefresh on a display whose refresh varies in steps follows VSync with it on, since it's what keeps frames
+        // on the steps there.
+        bool latch = late_latch_asked ?? (Options.UseLateLatch || FramePacing.LatchesLate(FrameLimiter?.Value ?? FrameSync.VSync, Window?.VariableRefresh ?? VariableRefreshSupport.Unavailable));
+
+        if (cadence && latch && Renderer?.SupportsLateLatch == true)
         {
             lateLatch ??= new LateLatch(Options.AllowThreadSpinning);
 
@@ -1639,7 +1649,7 @@ public abstract class AppHost : IDisposable
             if (!cadence)
                 continue;
 
-            bool missed = refreshCadence.Add(shownFrame.Shown, refreshTicks);
+            bool missed = refreshCadence.Add(shownFrame.Shown, refreshTicks, refreshStepTicks);
 
             if (missed)
                 stat_missed_refreshes.Value++;

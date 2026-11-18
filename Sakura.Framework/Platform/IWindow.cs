@@ -53,10 +53,20 @@ public interface IWindow : IDisposable
     /// <summary>
     /// Whether the display under the window would vary its refresh to meet each frame, as far as the platform can tell.
     /// <see cref="FrameSync.VariableRefresh"/> follows <see cref="FrameSync.VSync"/> where it's
-    /// <see cref="VariableRefreshSupport.Unavailable"/>. Changes on the main thread as the window enters or leaves fullscreen
-    /// or moves to another display, so read it each frame rather than subscribe.
+    /// <see cref="VariableRefreshSupport.Unavailable"/> or <see cref="VariableRefreshSupport.Stepped"/>. Changes on the main
+    /// thread as the window enters or leaves fullscreen or moves to another display, so read it each frame rather than
+    /// subscribe.
     /// </summary>
     VariableRefreshSupport VariableRefresh => VariableRefreshSupport.Unavailable;
+
+    /// <summary>
+    /// The step between the refresh intervals the display under the window can show a frame for, in seconds: a frame stays
+    /// on screen for its shortest interval or a whole number of steps longer. A fixed rate's step is its period; ProMotion's
+    /// is 4.17 ms, half its shortest interval. 0 where the platform can't tell, or where the display refreshes at any moment
+    /// inside its range. A late frame waits for the next step, so a missed refresh is told by it. Changes on the main thread
+    /// as the window moves to another display or the display's mode changes.
+    /// </summary>
+    double DisplayRefreshStep => 0;
 
     /// <summary>
     /// The name of the display the window is on, as the system calls it ("Built-in Retina Display"), or empty where it

@@ -18,7 +18,9 @@ public enum FrameSync
     /// rate and present without waiting for a refresh, so the display starts one as each frame arrives. That's the latency
     /// of presenting without VSync, with no tearing and no frames queued. On a display whose rate is fixed it tears.
     /// Where the platform can tell the display won't vary its refresh for the window it follows <see cref="VSync"/>: on
-    /// macOS anywhere but a fullscreen window on a screen whose rate varies, and always on a phone.
+    /// macOS anywhere but a fullscreen window on a screen whose rate varies, and always on a phone. On a screen whose rate
+    /// varies only in steps (ProMotion's 4.17 ms) it follows <see cref="VSync"/> with the late latch on, which times each
+    /// frame to make the next refresh: a rate just under the top one would drift against the steps.
     /// </summary>
     VariableRefresh,
 
