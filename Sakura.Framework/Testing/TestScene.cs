@@ -19,6 +19,7 @@ using Vector2 = Sakura.Framework.Maths.Vector2;
 namespace Sakura.Framework.Testing;
 
 [TestFixture]
+[RunStepsAfterTestMethod]
 public abstract partial class TestScene : Container
 {
     [Resolved]
@@ -49,6 +50,11 @@ public abstract partial class TestScene : Container
     public IReadOnlyList<TestStep> Steps => steps;
     private readonly List<TestStep> steps = new List<TestStep>();
     public StepContext CurrentStepContext { get; set; } = StepContext.Test;
+
+    /// <summary>
+    /// How many of <see cref="Steps"/> a headless run has already been through, so a later run starts after them.
+    /// </summary>
+    private int stepsRun;
 
     public TestScene()
     {
@@ -155,6 +161,7 @@ public abstract partial class TestScene : Container
             }
 
             steps.Clear();
+            stepsRun = 0;
             Clear();
         }
         else
@@ -163,14 +170,27 @@ public abstract partial class TestScene : Container
         }
     }
 
+    /// <summary>
+    /// Runs the steps a [TearDown] queued. The test's own steps have already run, straight after the test method, so
+    /// they ran before any [TearDown] code did.
+    /// </summary>
     [TearDown]
-    public virtual void TeardownNUnit()
+    public virtual void TeardownNUnit() => RunQueuedSteps();
+
+    /// <summary>
+    /// Runs the steps queued since the last run in a headless host, and rethrows the first one that failed.
+    /// </summary>
+    /// <remarks>
+    /// A failed run still counts every queued step as run, so the steps after the failure are skipped rather than run
+    /// later by <see cref="TeardownNUnit"/>.
+    /// </remarks>
+    internal void RunQueuedSteps()
     {
-        if (IsVisualRunner || steps.Count == 0)
+        if (IsVisualRunner || stepsRun >= steps.Count)
             return;
 
         using var host = new HeadlessAppHost($"HeadlessTest-{TestContext.CurrentContext.Test.Name}");
-        var runnerApp = new HeadlessTestRunnerApp(this, host);
+        var runnerApp = new HeadlessTestRunnerApp(this, host, stepsRun);
 
         try
         {
@@ -182,6 +202,7 @@ public abstract partial class TestScene : Container
             // reuses it for every test method in it, so this scene is about to be re-added to the next
             // test's runner app.
             runnerApp.Remove(this, false);
+            stepsRun = steps.Count;
         }
 
         if (runnerApp.TestException != null)
@@ -287,10 +308,11 @@ public abstract partial class TestScene : Container
 
         protected override string ResourceRootNamespace => $"{testScene.GetType().Assembly.GetName().Name}.Resources";
 
-        public HeadlessTestRunnerApp(TestScene testScene, AppHost host)
+        public HeadlessTestRunnerApp(TestScene testScene, AppHost host, int firstStep)
         {
             this.testScene = testScene;
             this.host = host;
+            currentStepIndex = firstStep;
         }
 
         public override void Load()
