@@ -8,9 +8,11 @@ using Sakura.Framework.Graphics.Containers;
 using Sakura.Framework.Graphics.Drawables;
 using Sakura.Framework.Graphics.Primitives;
 using Sakura.Framework.Graphics.Rendering;
+using Sakura.Framework.Graphics.Rendering.Vulkan;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 using Sakura.Framework.Platform;
+using Sakura.Framework.Statistic;
 
 namespace Sakura.Framework.Tests.Graphics;
 
@@ -243,6 +245,30 @@ public class CustomShaderPixelTest
             Assert.That(added.X, Is.EqualTo(background.X + 0.25f).Within(pixels.Tolerance), "added to the red that's there");
             Assert.That(added.Y, Is.EqualTo(0.25f).Within(pixels.Tolerance), "its green over none");
         });
+    }
+
+    /// <summary>
+    /// Once a shader is made, its pipeline for every blend mode is compiled off the frame, so the first draw in each mode compiles
+    /// nothing in the middle of its frame.
+    /// </summary>
+    [Test]
+    public void ItsFirstDrawInEachBlendModeCompilesNothing()
+    {
+        var compiles = GlobalStatistics.Get<int>("Vulkan", "Pipeline Compiles", StatisticKind.Cumulative);
+        var solid = new Solid(teal) { Size = new Vector2(surface) };
+        pixels.Root.Add(solid);
+        pixels.Render();
+
+        ((VulkanRenderer)pixels.Renderer).FinishPreparingPipelines();
+        int before = compiles.Value;
+
+        foreach (var blend in Enum.GetValues<BlendingMode>())
+        {
+            solid.Blending = blend;
+            pixels.Render();
+        }
+
+        Assert.That(compiles.Value, Is.EqualTo(before), "pipelines compiled while drawing");
     }
 
     /// <summary>

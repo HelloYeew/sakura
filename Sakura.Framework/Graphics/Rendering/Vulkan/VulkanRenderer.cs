@@ -158,6 +158,13 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     private VulkanRenderPasses? renderPasses;
     private VulkanDescriptors? descriptors;
     private VulkanPipelines? pipelines;
+
+    /// <summary>
+    /// The shaders made before the first frame was drawn, whose pipelines are compiled ahead of use once it has been (with
+    /// a swapchain, where there's a window), so compiling them doesn't slow the frames that start the app. Null from then
+    /// on: a shader made later starts at once.
+    /// </summary>
+    private List<VulkanShader>? shadersAwaitingFirstFrame = new List<VulkanShader>();
     private VulkanSwapchain? swapchain;
     private VulkanStagingPool? stagingPool;
     private VulkanHardwareFrames? hardwareFrames;
@@ -479,6 +486,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
         mainShader = new VulkanShader(this, device, ShaderCompiler.GetOrCompileSpirv(ShaderStorage, "shader.vert", "shader.frag", ShaderCache, DebugUtils.IsDebugBuild), "shader.vert+shader.frag", descriptors);
         currentShader = mainShader;
+        prepareVariants(mainShader);
 
         batch = new VertexBatch(max_batch_vertices, FlushBatch);
 
@@ -720,7 +728,59 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         stat_latency_wait.Value = latencyWaitMilliseconds;
         stat_present.Value = presentMilliseconds;
 
+        // Once a swapchain is there, since the offscreen format follows its format.
+        if (shadersAwaitingFirstFrame != null && (swapchain == null || swapchain.Handle.IsNotNull))
+            prepareAwaitingVariants();
+
         pipelines!.SaveIfChanged();
+    }
+
+    /// <summary>
+    /// Waits for the pipelines being compiled ahead of use, and takes them in. For tests.
+    /// </summary>
+    internal void FinishPreparingPipelines() => pipelines?.FinishPreparing();
+
+    /// <summary>
+    /// Has <paramref name="shader"/>'s pipelines compiled ahead of use, for every blend mode and both attachment formats:
+    /// at once if the first frame has been drawn, else when it has.
+    /// </summary>
+    private void prepareVariants(VulkanShader shader)
+    {
+        if (shadersAwaitingFirstFrame != null)
+            shadersAwaitingFirstFrame.Add(shader);
+        else
+            pipelines!.Prepare(shader, attachmentFormats());
+    }
+
+    /// <summary>
+    /// Starts the pipelines of every shader made before the first frame, and every shader's from here on.
+    /// </summary>
+    private void prepareAwaitingVariants()
+    {
+        var formats = attachmentFormats();
+
+        foreach (var shader in shadersAwaitingFirstFrame!)
+            pipelines!.Prepare(shader, formats);
+
+        shadersAwaitingFirstFrame = null;
+    }
+
+    /// <summary>
+    /// The formats a pass can draw into: the swapchain's, if there's a swapchain, and the offscreen framebuffers'.
+    /// </summary>
+    private List<VkFormat> attachmentFormats()
+    {
+        var formats = new List<VkFormat>(2);
+
+        if (swapchain != null && swapchain.Format != VkFormat.Undefined)
+            formats.Add(swapchain.Format);
+
+        var offscreen = chooseOffscreenFormat();
+
+        if (!formats.Contains(offscreen))
+            formats.Add(offscreen);
+
+        return formats;
     }
 
     #region Frame
@@ -2479,13 +2539,17 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
     /// <summary>
     /// Compiles a shader pair to SPIR-V (cached in <see cref="ShaderCache"/>) and checks it against the
-    /// renderer's resource layout. Pipelines for it are compiled the first time it draws with each blend
-    /// mode.
+    /// renderer's resource layout. Its pipelines are compiled on a pool thread once the first frame has
+    /// been drawn, and any not ready by its first draw in a blend mode is compiled then.
     /// </summary>
     /// <exception cref="InvalidOperationException">The shader doesn't fit the resource layout; the
     /// message lists every problem.</exception>
     public IShader CreateShader(Storage storage, string vertexPath, string fragmentPath)
-        => new VulkanShader(this, device!, ShaderCompiler.GetOrCompileSpirv(storage, vertexPath, fragmentPath, ShaderCache, DebugUtils.IsDebugBuild), $"{vertexPath}+{fragmentPath}", descriptors!);
+    {
+        var shader = new VulkanShader(this, device!, ShaderCompiler.GetOrCompileSpirv(storage, vertexPath, fragmentPath, ShaderCache, DebugUtils.IsDebugBuild), $"{vertexPath}+{fragmentPath}", descriptors!);
+        prepareVariants(shader);
+        return shader;
+    }
 
     /// <summary>
     /// Releases every pipeline built from <paramref name="shader"/> along with its modules, once the GPU
@@ -2493,6 +2557,8 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     /// </summary>
     internal void ReleaseShader(VulkanShader shader, Action destroyModules)
     {
+        shadersAwaitingFirstFrame?.Remove(shader);
+
         if (currentShader == shader)
         {
             FlushBatch();

@@ -26,6 +26,11 @@ public sealed class DrawablePixels : IDisposable
     public Container Root { get; private set; } = null!;
 
     /// <summary>
+    /// What draws the tree.
+    /// </summary>
+    public IRenderer Renderer => capture.Renderer;
+
+    /// <summary>
     /// How far a channel may stray from the exact value on this renderer.
     /// </summary>
     public float Tolerance => 1e-3f + capture.Quantization;

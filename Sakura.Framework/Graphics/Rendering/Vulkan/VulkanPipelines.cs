@@ -2,8 +2,10 @@
 // See the LICENSE file for full license text.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using Sakura.Framework.IO;
 using Sakura.Framework.Logging;
 using Sakura.Framework.Statistic;
@@ -13,13 +15,15 @@ using SakuraVertex = Sakura.Framework.Graphics.Rendering.Vertex.Vertex;
 namespace Sakura.Framework.Graphics.Rendering.Vulkan;
 
 /// <summary>
-/// Graphics pipelines, one per shader, blend mode and attachment format, created on first use. Every
-/// render pass of a format is compatible with every other (see <see cref="VulkanRenderPasses"/>), so a
-/// pipeline draws into the swapchain and offscreen framebuffers alike.
+/// Graphics pipelines, one per shader, blend mode and attachment format, created on first use or ahead
+/// of it by <see cref="Prepare"/>. Every render pass of a format is compatible with every other (see
+/// <see cref="VulkanRenderPasses"/>), so a pipeline draws into the swapchain and offscreen framebuffers alike.
 /// </summary>
 /// <remarks>
 /// Compiling a pipeline is the slowest thing a Vulkan driver does, and a compile during a frame is a
-/// visible hitch, so the driver's own cache of compiled pipelines is kept on disk between runs.
+/// visible hitch, so the driver's own cache of compiled pipelines is kept on disk between runs, and
+/// <see cref="Prepare"/> compiles a shader's pipelines on a pool thread before they're drawn with.
+/// The pipeline cache is internally synchronized, so both threads compile through it.
 /// </remarks>
 internal sealed unsafe class VulkanPipelines : IDisposable
 {
@@ -37,6 +41,17 @@ internal sealed unsafe class VulkanPipelines : IDisposable
     private readonly string diskCacheKey;
     private readonly VkPipelineCache cache;
     private readonly Dictionary<(VulkanShader Shader, BlendingMode Blend, VkFormat Format), VkPipeline> pipelines = new Dictionary<(VulkanShader, BlendingMode, VkFormat), VkPipeline>();
+
+    /// <summary>
+    /// Pipelines <see cref="Prepare"/> compiled, waiting for the draw thread to take them in.
+    /// </summary>
+    private readonly ConcurrentQueue<((VulkanShader Shader, BlendingMode Blend, VkFormat Format) Key, VkPipeline Pipeline)> prepared = new ConcurrentQueue<((VulkanShader, BlendingMode, VkFormat), VkPipeline)>();
+
+    /// <summary>
+    /// The compile <see cref="Prepare"/> started for each shader, which releasing the shader waits for, since it reads
+    /// the shader's modules.
+    /// </summary>
+    private readonly Dictionary<VulkanShader, Task> preparing = new Dictionary<VulkanShader, Task>();
 
     private bool cacheChanged;
 
@@ -71,12 +86,133 @@ internal sealed unsafe class VulkanPipelines : IDisposable
     /// </summary>
     public VkPipeline Get(VulkanShader shader, BlendingMode blend, VkFormat format)
     {
+        if (!prepared.IsEmpty)
+            takePrepared();
+
         if (pipelines.TryGetValue((shader, blend, format), out var pipeline))
             return pipeline;
 
-        pipeline = create(shader, blend, renderPasses.Get(format, VulkanPassKind.OffscreenClear));
+        pipeline = create(shader, shader.VertexModule, shader.FragmentModule, blend, renderPasses.Get(format, VulkanPassKind.OffscreenClear));
+        counted();
         pipelines[(shader, blend, format)] = pipeline;
         return pipeline;
+    }
+
+    /// <summary>
+    /// Starts compiling, on a pool thread, every pipeline of <paramref name="shader"/> for the given attachment formats
+    /// that isn't compiled yet, so its first draw in each blend mode doesn't wait for one. Does nothing for a shader
+    /// already started.
+    /// </summary>
+    /// <remarks>
+    /// A pipeline that fails here is left for its first use, which throws as it always has. One the draw thread needs
+    /// before it's ready is compiled there as well, and the spare is destroyed.
+    /// </remarks>
+    public void Prepare(VulkanShader shader, IReadOnlyList<VkFormat> formats)
+    {
+        if (preparing.ContainsKey(shader))
+            return;
+
+        var work = new List<(BlendingMode Blend, VkFormat Format, VkRenderPass RenderPass)>();
+
+        foreach (var format in formats)
+        {
+            // Render passes are cached unguarded, so they're looked up here on the draw thread.
+            var renderPass = renderPasses.Get(format, VulkanPassKind.OffscreenClear);
+
+            foreach (var blend in Enum.GetValues<BlendingMode>())
+            {
+                if (!pipelines.ContainsKey((shader, blend, format)))
+                    work.Add((blend, format, renderPass));
+            }
+        }
+
+        // Read here, since disposing the shader clears them before it waits for this compile.
+        var vertex = shader.VertexModule;
+        var fragment = shader.FragmentModule;
+
+        if (work.Count > 0)
+            preparing[shader] = Task.Run(() => prepare(shader, vertex, fragment, work));
+    }
+
+    /// <summary>
+    /// Compiles <paramref name="work"/> on a pool thread, queueing each pipeline for the draw thread.
+    /// </summary>
+    private void prepare(VulkanShader shader, VkShaderModule vertex, VkShaderModule fragment, List<(BlendingMode Blend, VkFormat Format, VkRenderPass RenderPass)> work)
+    {
+        foreach (var (blend, format, renderPass) in work)
+        {
+            try
+            {
+                prepared.Enqueue(((shader, blend, format), create(shader, vertex, fragment, blend, renderPass)));
+            }
+            catch (InvalidOperationException e)
+            {
+                Logger.Verbose($"Vulkan: couldn't compile {shader.Name} ({blend}) ahead of use ({e.Message}); it will be tried again when it's first drawn.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Keeps each pipeline <see cref="Prepare"/> has finished, or destroys it if the draw thread compiled the same one
+    /// first (nothing has drawn with a spare).
+    /// </summary>
+    private void takePrepared()
+    {
+        while (prepared.TryDequeue(out var item))
+        {
+            counted();
+
+            if (!pipelines.TryAdd(item.Key, item.Pipeline))
+                device.Api.vkDestroyPipeline(item.Pipeline, null);
+        }
+    }
+
+    /// <summary>
+    /// Waits for every compile <see cref="Prepare"/> started, and takes in what they made.
+    /// </summary>
+    public void FinishPreparing()
+    {
+        foreach (var task in preparing.Values)
+            wait(task);
+
+        preparing.Clear();
+        takePrepared();
+    }
+
+    /// <summary>
+    /// Waits for the compile <see cref="Prepare"/> started for <paramref name="shader"/>, if one is still running, and
+    /// takes in what it made.
+    /// </summary>
+    private void finishPreparing(VulkanShader shader)
+    {
+        if (preparing.Remove(shader, out var task))
+            wait(task);
+
+        takePrepared();
+    }
+
+    /// <summary>
+    /// Waits for a compile <see cref="Prepare"/> started, whatever became of it.
+    /// </summary>
+    private static void wait(Task task)
+    {
+        try
+        {
+            task.Wait();
+        }
+        catch (AggregateException)
+        {
+            // Only a driver's own failures reach here; each pipeline is compiled again at its first use.
+        }
+    }
+
+    /// <summary>
+    /// Counts a pipeline compiled, and marks the cache as having something new to save.
+    /// </summary>
+    private void counted()
+    {
+        stat_pipeline_compiles.Value++;
+        cacheChanged = true;
     }
 
     /// <summary>
@@ -85,6 +221,8 @@ internal sealed unsafe class VulkanPipelines : IDisposable
     /// </summary>
     public void Release(VulkanShader shader, Action<VkPipeline> retire)
     {
+        finishPreparing(shader);
+
         var keys = new List<(VulkanShader, BlendingMode, VkFormat)>();
 
         foreach (var key in pipelines.Keys)
@@ -133,6 +271,7 @@ internal sealed unsafe class VulkanPipelines : IDisposable
     /// </summary>
     public void Dispose()
     {
+        FinishPreparing();
         SaveIfChanged();
 
         foreach (var pipeline in pipelines.Values)
@@ -168,13 +307,18 @@ internal sealed unsafe class VulkanPipelines : IDisposable
         return data;
     }
 
-    private VkPipeline create(VulkanShader shader, BlendingMode blend, VkRenderPass renderPass)
+    /// <summary>
+    /// Compiles one pipeline from <paramref name="shader"/>'s modules. Safe on any thread, given modules and a render
+    /// pass read on the draw thread.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The driver couldn't compile it.</exception>
+    private VkPipeline create(VulkanShader shader, VkShaderModule vertex, VkShaderModule fragment, BlendingMode blend, VkRenderPass renderPass)
     {
         byte* entryPoint = stackalloc byte[] { (byte)'m', (byte)'a', (byte)'i', (byte)'n', 0 };
 
         var stages = stackalloc VkPipelineShaderStageCreateInfo[2];
-        stages[0] = new VkPipelineShaderStageCreateInfo { stage = VkShaderStageFlags.Vertex, module = shader.VertexModule, pName = entryPoint };
-        stages[1] = new VkPipelineShaderStageCreateInfo { stage = VkShaderStageFlags.Fragment, module = shader.FragmentModule, pName = entryPoint };
+        stages[0] = new VkPipelineShaderStageCreateInfo { stage = VkShaderStageFlags.Vertex, module = vertex, pName = entryPoint };
+        stages[1] = new VkPipelineShaderStageCreateInfo { stage = VkShaderStageFlags.Fragment, module = fragment, pName = entryPoint };
 
         var binding = new VkVertexInputBindingDescription((uint)SakuraVertex.Size, VkVertexInputRate.Vertex, 0);
 
@@ -243,9 +387,6 @@ internal sealed unsafe class VulkanPipelines : IDisposable
         VkPipeline pipeline;
         VulkanDevice.Check(device.Api.vkCreateGraphicsPipelines(cache, 1, &createInfo, null, &pipeline), "vkCreateGraphicsPipelines");
         device.SetName(VkObjectType.Pipeline, pipeline.Handle, $"{shader.Name} ({blend})");
-
-        stat_pipeline_compiles.Value++;
-        cacheChanged = true;
         return pipeline;
     }
 

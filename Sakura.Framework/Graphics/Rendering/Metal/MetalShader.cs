@@ -3,7 +3,10 @@
 
 using System;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using Sakura.Framework.Graphics.Colors;
+using Sakura.Framework.Logging;
 using Sakura.Framework.Maths;
 
 namespace Sakura.Framework.Graphics.Rendering.Metal;
@@ -46,8 +49,12 @@ public sealed class MetalShader : IShader
     // the main shader, which the renderer binds directly.
     private readonly MetalRenderer owner;
 
-    // Pipeline state per blend mode, created lazily (Metal bakes blend into the pipeline).
+    // Pipeline state per blend mode (Metal bakes blend into the pipeline): built at first use, or ahead of it by
+    // PrepareVariants on a pool thread. Either side publishes with a compare-exchange, so a variant both build is kept once.
     private readonly nint[] pipelines = new nint[6];
+
+    private Task preparing;
+    private volatile bool disposed;
 
     private readonly Dictionary<string, UniformBinding> uniformBlockBindings;
 
@@ -79,22 +86,82 @@ public sealed class MetalShader : IShader
     /// <summary>
     /// Returns the pipeline state for the given blend mode, creating it on first use.
     /// </summary>
-    public unsafe nint GetPipeline(BlendingMode blendMode)
+    /// <exception cref="InvalidOperationException">Metal couldn't build the pipeline.</exception>
+    public nint GetPipeline(BlendingMode blendMode)
     {
         int i = (int)blendMode;
-        if (pipelines[i] != nint.Zero)
-            return pipelines[i];
+        nint pipeline = Volatile.Read(ref pipelines[i]);
+
+        return pipeline != nint.Zero ? pipeline : publish(i, createPipeline(i));
+    }
+
+    /// <summary>
+    /// Builds every blend variant not built yet on a pool thread, so the first draw in a mode doesn't wait for Metal to
+    /// compile it. Does nothing once started, or after <see cref="Dispose"/>.
+    /// </summary>
+    /// <remarks>
+    /// Draw thread only. A variant that fails here is left for its first use, which throws as it always has.
+    /// </remarks>
+    public void PrepareVariants()
+    {
+        if (disposed || preparing != null)
+            return;
+
+        preparing = Task.Run(prepareVariants);
+    }
+
+    /// <summary>
+    /// Builds the variants still missing, on the pool thread <see cref="PrepareVariants"/> started, until disposed.
+    /// </summary>
+    private void prepareVariants()
+    {
+        for (int i = 0; i < pipelines.Length && !disposed; i++)
+        {
+            if (Volatile.Read(ref pipelines[i]) != nint.Zero)
+                continue;
+
+            try
+            {
+                publish(i, createPipeline(i));
+            }
+            catch (InvalidOperationException e)
+            {
+                Logger.Verbose($"Metal: {e.Message} It will be tried again when it's first drawn.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Keeps <paramref name="pipeline"/> as variant <paramref name="index"/> unless another thread got there first, in
+    /// which case it's destroyed (nothing has drawn with it) and the other one is returned.
+    /// </summary>
+    private nint publish(int index, nint pipeline)
+    {
+        nint existing = Interlocked.CompareExchange(ref pipelines[index], pipeline, nint.Zero);
+
+        if (existing == nint.Zero)
+            return pipeline;
+
+        SakuraMetalNative.sakura_metal_destroy_pipeline(pipeline);
+        return existing;
+    }
+
+    /// <summary>
+    /// Builds the pipeline for blend mode <paramref name="index"/>. Safe on any thread: the native side guards its
+    /// compiled-function cache, and a Metal device builds pipelines from any thread.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Metal couldn't build the pipeline.</exception>
+    private unsafe nint createPipeline(int index)
+    {
+        nint pipeline;
 
         fixed (MetalVertexAttribute* attrPtr = attributes)
-        {
-            pipelines[i] = SakuraMetalNative.sakura_metal_create_pipeline(
-                device, vertexMsl, fragmentMsl, attrPtr, attributes.Length, vertexStride, i);
-        }
+            pipeline = SakuraMetalNative.sakura_metal_create_pipeline(device, vertexMsl, fragmentMsl, attrPtr, attributes.Length, vertexStride, index);
 
-        if (pipelines[i] == nint.Zero)
-            throw new InvalidOperationException($"Failed to create Metal pipeline state from MSL (blend {blendMode}).");
+        if (pipeline == nint.Zero)
+            throw new InvalidOperationException($"Failed to create Metal pipeline state from MSL (blend {(BlendingMode)index}).");
 
-        return pipelines[i];
+        return pipeline;
     }
 
     /// <summary>
@@ -136,15 +203,28 @@ public sealed class MetalShader : IShader
         }
     }
 
+    /// <summary>
+    /// Destroys every variant, after waiting for any still being built ahead of use.
+    /// </summary>
     public void Dispose()
     {
+        disposed = true;
+
+        try
+        {
+            preparing?.Wait();
+        }
+        catch (AggregateException)
+        {
+            // Only Metal's own failures reach here, and those are logged where they happen.
+        }
+
         for (int i = 0; i < pipelines.Length; i++)
         {
-            if (pipelines[i] != nint.Zero)
-            {
-                SakuraMetalNative.sakura_metal_destroy_pipeline(pipelines[i]);
-                pipelines[i] = nint.Zero;
-            }
+            nint pipeline = Interlocked.Exchange(ref pipelines[i], nint.Zero);
+
+            if (pipeline != nint.Zero)
+                SakuraMetalNative.sakura_metal_destroy_pipeline(pipeline);
         }
     }
 }

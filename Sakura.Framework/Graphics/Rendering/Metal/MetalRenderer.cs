@@ -65,6 +65,12 @@ public sealed class MetalRenderer : IMetalRenderer
     private BlendingMode currentBlendMode = BlendingMode.Alpha;
 
     /// <summary>
+    /// The shaders made before the first frame was drawn, whose other blend variants are built once it has been, so that
+    /// building them doesn't slow the frames that start the app. Null from then on: a shader made later starts at once.
+    /// </summary>
+    private List<MetalShader> shadersAwaitingFirstFrame = new List<MetalShader>();
+
+    /// <summary>
     /// Vertex capacity of <see cref="batch"/>. Matches the GL batch's 12000, which at 6 vertices per
     /// quad (Metal is non-indexed, see <see cref="FlushBatch"/>) is 2000 quads before a capacity flush.
     /// </summary>
@@ -169,6 +175,7 @@ public sealed class MetalRenderer : IMetalRenderer
         var attributes = buildVertexAttributes();
         mainShader = new MetalShader(device, vertMsl, fragMsl, attributes, SakuraVertex.Size, mainShaderUniformBindings());
         currentShader = mainShader;
+        prepareVariants(mainShader);
 
         batch = new VertexBatch(max_batch_vertices, FlushBatch, indexed: false);
 
@@ -644,6 +651,33 @@ public sealed class MetalRenderer : IMetalRenderer
         long blockStart = Stopwatch.GetTimestamp();
         SakuraMetalNative.sakura_metal_end_frame(device);
         blockedMilliseconds += Stopwatch.GetElapsedTime(blockStart).TotalMilliseconds;
+
+        if (shadersAwaitingFirstFrame != null)
+            prepareAwaitingVariants();
+    }
+
+    /// <summary>
+    /// Has <paramref name="shader"/> build its other blend variants ahead of use: at once if the first frame has been
+    /// drawn, else when it has. Metal bakes the blend mode into the pipeline, so without this the first draw in each
+    /// mode (the first additive glow, say) waits for a pipeline to compile in the middle of its frame.
+    /// </summary>
+    private void prepareVariants(MetalShader shader)
+    {
+        if (shadersAwaitingFirstFrame != null)
+            shadersAwaitingFirstFrame.Add(shader);
+        else
+            shader.PrepareVariants();
+    }
+
+    /// <summary>
+    /// Starts the variants of every shader made before the first frame, and every shader's from here on.
+    /// </summary>
+    private void prepareAwaitingVariants()
+    {
+        foreach (var shader in shadersAwaitingFirstFrame)
+            shader.PrepareVariants();
+
+        shadersAwaitingFirstFrame = null;
     }
 
     /// <summary>
@@ -938,14 +972,17 @@ public sealed class MetalRenderer : IMetalRenderer
     /// <summary>
     /// Compiles a custom shader pair to MSL and builds a <see cref="MetalShader"/>. Used for the
     /// buffered-container blur/grayscale effect shaders, video, and a game's own shaders. The vertex layout
-    /// matches the standard Vertex struct.
+    /// matches the standard Vertex struct. Its blend variants other than alpha are built on a pool thread
+    /// once the first frame has been drawn.
     /// </summary>
     public IShader CreateShader(Storage storage, string vertexPath, string fragmentPath)
     {
         var (vertMsl, fragMsl, blocks) = ShaderCompiler.GetOrCompileWithBlocks(
             storage, vertexPath, fragmentPath, SPIRV.CrossCompileTarget.MSL, ShaderCache);
 
-        return new MetalShader(device, vertMsl, fragMsl, buildVertexAttributes(), SakuraVertex.Size, customShaderUniformBindings(blocks), owner: this);
+        var shader = new MetalShader(device, vertMsl, fragMsl, buildVertexAttributes(), SakuraVertex.Size, customShaderUniformBindings(blocks), owner: this);
+        prepareVariants(shader);
+        return shader;
     }
 
     /// <summary>

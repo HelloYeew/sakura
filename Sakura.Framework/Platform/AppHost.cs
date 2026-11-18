@@ -300,6 +300,10 @@ public abstract class AppHost : IDisposable
     private LateLatch lateLatch;
     private bool cadenceUnderVSync;
 
+    // Whether the shaders a buffered container's effects need have been made, once the first frame was drawn. The draw
+    // thread's alone.
+    private bool effectShadersPrepared;
+
     // Turns the late latch on (1) or off (0) whatever HostOptions.UseLateLatch says, for comparing.
     private const string late_latch_variable = "SAKURA_LATE_LATCH";
 
@@ -1606,6 +1610,30 @@ public abstract class AppHost : IDisposable
         {
             Logger.Verbose($"{misses} frames missed their refresh in the last few seconds, so the renderer queues more frames.");
             refreshCadence.Reset();
+        }
+
+        if (!effectShadersPrepared && currentFrameNode != null)
+            prepareEffectShaders();
+    }
+
+    /// <summary>
+    /// Makes the blur and grayscale shaders after the first frame, so the first blur in a session doesn't compile them in
+    /// the middle of its frame. A shader that can't be made now is tried again at the first blur, which reports it.
+    /// </summary>
+    private void prepareEffectShaders()
+    {
+        effectShadersPrepared = true;
+
+        if (Renderer is not ICustomShaderRenderer renderer)
+            return;
+
+        try
+        {
+            BufferedContainerDrawNode.PrepareEffectShaders(renderer);
+        }
+        catch (Exception e)
+        {
+            Logger.Verbose($"The effect shaders couldn't be made ahead of use ({e.Message}); they'll be made at the first blur.");
         }
     }
 

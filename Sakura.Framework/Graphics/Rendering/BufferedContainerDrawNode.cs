@@ -187,6 +187,23 @@ public class BufferedContainerDrawNode : ContainerDrawNode
     }
 
     /// <summary>
+    /// Makes the blur and grayscale shaders for <paramref name="renderer"/>, unless they're made already. The host calls
+    /// this once the first frame has been drawn, so the first blur doesn't compile them in the middle of its frame.
+    /// </summary>
+    /// <remarks>
+    /// Draw thread only.
+    /// </remarks>
+    internal static void PrepareEffectShaders(ICustomShaderRenderer renderer)
+    {
+        if (blurShader != null && ReferenceEquals(shaderRenderer, renderer))
+            return;
+
+        blurShader = renderer.CreateShader(renderer.ShaderStorage, "shader.vert", "blur.frag");
+        grayscaleShader = renderer.CreateShader(renderer.ShaderStorage, "shader.vert", "grayscale.frag");
+        shaderRenderer = renderer;
+    }
+
+    /// <summary>
     /// Runs the active effect passes, ping-ponging between the effect buffers.
     /// The original content in <see cref="BufferedContainer.BufferedContainerSharedData.FrameBuffer"/>
     /// is left untouched (needed when <see cref="BufferedContainer.DrawOriginal"/> is set).
@@ -194,12 +211,7 @@ public class BufferedContainerDrawNode : ContainerDrawNode
     /// <returns>The buffer holding the final effect result.</returns>
     private IFrameBuffer runEffectPasses(ICustomShaderRenderer renderer, RectangleF rect, int targetWidth, int targetHeight, Vector2 renderScale)
     {
-        if (blurShader == null || !ReferenceEquals(shaderRenderer, renderer))
-        {
-            blurShader = renderer.CreateShader(renderer.ShaderStorage, "shader.vert", "blur.frag");
-            grayscaleShader = renderer.CreateShader(renderer.ShaderStorage, "shader.vert", "grayscale.frag");
-            shaderRenderer = renderer;
-        }
+        PrepareEffectShaders(renderer);
 
         for (int i = 0; i < shared!.EffectBuffers.Length; i++)
         {
