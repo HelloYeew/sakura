@@ -466,6 +466,40 @@ public class ClipStackNestingTest
         Assert.That(clips.Current.ClipData, Is.EqualTo(ClipState.Nothing.ClipData));
     }
 
+    /// <summary>
+    /// A mask with no width or no height shows nothing, on its own or inside another, and nor does anything inside it. The shader reads a clip of
+    /// no width as no clip at all, so a panel sliding shut drew its whole content, outside itself, on the frame its width reached 0.
+    /// </summary>
+    [TestCase(50, 0, 50, 100, false, TestName = "No width, on its own")]
+    [TestCase(0, 50, 100, 50, false, TestName = "No height, on its own")]
+    [TestCase(50, 0, 50, 100, true, TestName = "No width, inside another")]
+    [TestCase(0, 50, 100, 50, true, TestName = "No height, inside another")]
+    public void AMaskWithNoAreaShowsNothing(float left, float top, float right, float bottom, bool inside)
+    {
+        if (inside)
+            push(0, 0, 200, 200);
+
+        push(left, top, right, bottom, 8);
+
+        Assert.That(clips.Current.ClipData, Is.EqualTo(ClipState.Nothing.ClipData));
+        Assert.That(clips.Current.ClipData.Z, Is.GreaterThan(0), "a mask the shader applies, not the absence of one");
+
+        push(left - 10, top - 10, right + 10, bottom + 10);
+
+        Assert.That(clips.Current.ClipData, Is.EqualTo(ClipState.Nothing.ClipData), "and nor does what's inside it");
+    }
+
+    [Test]
+    public void PoppingAMaskWithNoAreaRestoresTheOneAroundIt()
+    {
+        push(0, 0, 100, 100);
+        push(50, 0, 50, 100);
+        clips.Pop();
+
+        assertShape(0, 0, 100, 100, 0);
+        assertNoCuts();
+    }
+
     [Test]
     public void PoppingRestoresWhatWasCut()
     {

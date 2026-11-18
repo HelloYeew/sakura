@@ -103,6 +103,12 @@ internal sealed class ClipStack
     public void Push(Vector2 maskCenter, Vector2 maskHalfSize, float shearX, float cornerRadius, MarginPadding fade = default)
     {
         stack.Push(Current);
+        
+        if (maskHalfSize.X <= 0 || maskHalfSize.Y <= 0)
+        {
+            Current = ClipState.Nothing;
+            return;
+        }
 
         // True AABB of this new mask, taking horizontal shear into account.
         float skew = Math.Abs(shearX * maskHalfSize.Y);
