@@ -1346,6 +1346,10 @@ public abstract class AppHost : IDisposable
         // acts on the one that applies to it.
         Window?.SetVSync(vsync);
         Renderer?.SetVSync(vsync);
+
+        // Only Unlimited stops presents waiting for the display everywhere: the capped limiters keep Metal's display sync,
+        // which they draw under today.
+        Renderer?.SetDisplaySync(e.NewValue != FrameSync.Unlimited);
     }
 
     /// <summary>

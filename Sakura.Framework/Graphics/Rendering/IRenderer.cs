@@ -48,11 +48,19 @@ public interface IRenderer
 
     /// <summary>
     /// Sets whether presentation is synced to the display refresh. Called by the host when the frame
-    /// limiter changes (VSync vs any capped/unlimited mode). Backends that present at the window layer
-    /// (OpenGL, via the SDL swap interval) or rely on a compositor/layer default (Metal) handle VSync
-    /// elsewhere and leave this a no-op; Direct3D11 maps it to the swapchain present interval.
+    /// limiter changes (VSync vs any capped/unlimited mode). OpenGL presents at the window layer (the SDL
+    /// swap interval) and leaves this a no-op; Direct3D11 and Vulkan map it to the swapchain's present
+    /// interval or mode, and Metal to how many drawables its layer queues.
     /// </summary>
     void SetVSync(bool enabled) { }
+
+    /// <summary>
+    /// Sets whether presents wait for the display's refresh at all. The host turns it off only for
+    /// <see cref="FrameSync.Unlimited"/>, which asks for frames as fast as they can be drawn, and leaves it on for every
+    /// other limiter. Metal maps it to the layer's display sync on macOS. The other backends leave this a no-op: their
+    /// presents stop waiting through <see cref="SetVSync"/> already.
+    /// </summary>
+    void SetDisplaySync(bool enabled) { }
 
     /// <summary>
     /// Whether the host may wait after <see cref="StartFrame"/> before taking the update to draw (late latch): true for a

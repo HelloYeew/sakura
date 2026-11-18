@@ -59,6 +59,7 @@ public sealed class MetalRenderer : IMetalRenderer
     }
 
     private nint device; // SakuraMetalDevice*
+    private nint layer; // CAMetalLayer*
     private MetalShader mainShader;
 
     private MetalShader currentShader;
@@ -166,6 +167,8 @@ public sealed class MetalRenderer : IMetalRenderer
         device = SakuraMetalNative.sakura_metal_create(metalSurface.MetalLayer);
         if (device == nint.Zero)
             throw new InvalidOperationException("Failed to create Metal device from the CAMetalLayer.");
+
+        layer = metalSurface.MetalLayer;
 
         // Cross-compile the main shader to MSL (cached) and build the pipeline with a vertex layout
         // matching the Vertex struct (attribute index = GLSL location, offset = struct field offset).
@@ -323,6 +326,26 @@ public sealed class MetalRenderer : IMetalRenderer
     {
         vsyncOn = enabled;
         applyDrawables();
+    }
+
+    // Asked for by the frame limiter from its own thread, and set on the layer by StartFrame on the draw thread, before the
+    // frame takes its drawable. On is the layer's own default.
+    private volatile bool displaySyncRequested = true;
+    private bool displaySyncApplied = true;
+
+    /// <inheritdoc/>
+    public void SetDisplaySync(bool enabled) => displaySyncRequested = enabled;
+
+    /// <summary>
+    /// Sets the layer's display sync as last asked for. On iOS the layer has none, so it stays as it is.
+    /// </summary>
+    private void applyDisplaySync()
+    {
+        bool requested = displaySyncRequested;
+        displaySyncApplied = requested;
+
+        if (MacOSNative.SetDisplaySyncEnabled(layer, requested))
+            Logger.Verbose($"Metal presents {(requested ? "wait for the display's refresh" : "without waiting for the display's refresh")}.");
     }
 
     /// <inheritdoc/>
@@ -510,6 +533,9 @@ public sealed class MetalRenderer : IMetalRenderer
 
         measurePresented();
         measureGpu();
+
+        if (displaySyncRequested != displaySyncApplied)
+            applyDisplaySync();
 
         // Timed because this acquires the layer's next drawable, and the layer hands one back only
         // when the display has released it, so a frame waiting here is waiting on the display, not

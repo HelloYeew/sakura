@@ -2056,8 +2056,9 @@ public class SDLWindow : IWindow
     /// </summary>
     public void SetVSync(bool enabled)
     {
-        // OpenGL only. Metal VSync is controlled via CAMetalLayer.displaySyncEnabled; Direct3D11
-        // via the swapchain Present interval — both handled inside their renderers.
+        // OpenGL only. Metal sets how many drawables its layer queues, and turns the layer's display sync
+        // off under Unlimited alone; Direct3D11 uses the swapchain Present interval. Both are handled
+        // inside their renderers.
         if (graphicsApi == RendererType.OpenGL)
             SDL_GL_SetSwapInterval(enabled ? 1 : 0);
     }
