@@ -207,33 +207,28 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
         {
             case GLRenderer:
                 TextureManager = new GLTextureManager(Host.Renderer, GLRenderer.GL, embeddedResourceStorage.GetStorageForDirectory("Textures"), imageLoader);
-                VideoStore = new VideoStore(embeddedResourceStorage.GetStorageForDirectory("Videos"), Host.Renderer, TextureManager);
-                FontStore = new RendererFontStore(Host.Renderer);
-                // TODO: This will exposed all framework file resource out, maybe find better way?
-                var frameworkFontStorage = Host.FrameworkStorage.GetStorageForDirectory("Fonts");
-                var fontStorage = embeddedResourceStorage.GetStorageForDirectory("Fonts");
-                fontStorage = new CompositeStorage(frameworkFontStorage, fontStorage);
-                FontStore.LoadDefaultFont(fontStorage);
                 break;
 
             case HeadlessRenderer:
                 TextureManager = new HeadlessTextureManager(embeddedResourceStorage.GetStorageForDirectory("Textures"));
-                FontStore = new HeadlessFontStore((HeadlessTextureManager)TextureManager);
-                VideoStore = new VideoStore(embeddedResourceStorage.GetStorageForDirectory("Videos"), Host.Renderer, TextureManager);
                 break;
 
             case MetalRenderer or D3D11Renderer or VulkanRenderer:
                 TextureManager = new NativeTextureManager(Host.Renderer, embeddedResourceStorage.GetStorageForDirectory("Textures"), imageLoader);
-                FontStore = new RendererFontStore(Host.Renderer);
-                var nativeFrameworkFontStorage = Host.FrameworkStorage.GetStorageForDirectory("Fonts");
-                var nativeFontStorage = new CompositeStorage(nativeFrameworkFontStorage, embeddedResourceStorage.GetStorageForDirectory("Fonts"));
-                FontStore.LoadDefaultFont(nativeFontStorage);
-                VideoStore = new VideoStore(embeddedResourceStorage.GetStorageForDirectory("Videos"), Host.Renderer, TextureManager);
                 break;
 
             default:
                 throw new NotSupportedException($"Renderer type {Host.Renderer.GetType().FullName} is not supported.");
         }
+
+        VideoStore = new VideoStore(embeddedResourceStorage.GetStorageForDirectory("Videos"), Host.Renderer, TextureManager);
+
+        // The real store on every renderer, headless included, so text in a headless run is shaped and measured as it is on
+        // screen and a test can check a layout that depends on it. Only the drawing is skipped.
+        FontStore = new RendererFontStore(Host.Renderer);
+        // TODO: This will exposed all framework file resource out, maybe find better way?
+        var frameworkFontStorage = Host.FrameworkStorage.GetStorageForDirectory("Fonts");
+        FontStore.LoadDefaultFont(new CompositeStorage(frameworkFontStorage, embeddedResourceStorage.GetStorageForDirectory("Fonts")));
 
         Host.Window.GetPhysicalSize(out int physicalWidth, out _);
         FontStore.SetDpiScale(Host.Window.Width > 0 ? (float)physicalWidth / Host.Window.Width : 1.0f);

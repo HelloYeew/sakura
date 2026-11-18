@@ -150,9 +150,7 @@ public partial class TestSpriteText : TestScene
         AddAssert("NotoColorEmoji resolves to its own font (bundled)", () =>
         {
             var noto = fontStore.Get("NotoColorEmoji");
-
-            // The headless font store returns null and has no fonts
-            return noto == null || noto.Name == "NotoColorEmoji";
+            return noto?.Name == "NotoColorEmoji";
         });
     }
 
@@ -175,9 +173,8 @@ public partial class TestSpriteText : TestScene
             var glyphs = getShapedGlyphs(tintedEmojiText);
             var vertices = getTextVertices(tintedEmojiText);
 
-            // The headless font store produces no glyphs at all - nothing to assert against.
-            if (glyphs == null || glyphs.Count == 0)
-                return true;
+            if (glyphs == null)
+                return false;
 
             bool sawColorGlyph = false;
             bool sawTextGlyph = false;
@@ -211,6 +208,34 @@ public partial class TestSpriteText : TestScene
             // Both kinds of glyphs must actually have been exercised for this assertion to be meaningful.
             return sawColorGlyph && sawTextGlyph;
         });
+    }
+
+    /// <summary>
+    /// Text is shaped and measured without a window too, so a test run headless can check a layout that depends on it.
+    /// </summary>
+    [Test]
+    public void TestTextIsMeasured()
+    {
+        SpriteText shortText = null!;
+        SpriteText longText = null!;
+
+        AddStep("Add a short and a long text", () =>
+        {
+            Add(shortText = new SpriteText
+            {
+                Text = "Sakura",
+                Font = FontUsage.Default.With(size: 24)
+            });
+            Add(longText = new SpriteText
+            {
+                Y = 40,
+                Text = "Sakura framework",
+                Font = FontUsage.Default.With(size: 24)
+            });
+        });
+
+        AddAssert("The text has a size", () => shortText.DrawSize.X > 0 && shortText.DrawSize.Y > 0);
+        AddAssert("Longer text is wider", () => longText.DrawSize.X > shortText.DrawSize.X);
     }
 
     private static IReadOnlyList<TextGlyph>? getShapedGlyphs(SpriteText spriteText)

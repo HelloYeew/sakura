@@ -115,8 +115,11 @@ public partial class TestStaticFont : TestScene
 
             var font = fontStore.Get(new FontUsage(test_family, weight: FontWeights.Regular));
 
-            // Headless store returns null, or a missing font resolves to the default (different name).
-            if (font == null || font.Name != $"{test_family}-Regular")
+            if (font == null)
+                return false;
+
+            // A weight with no file of its own resolves to the default font, under a different name.
+            if (font.Name != $"{test_family}-Regular")
                 return true;
 
             // The whole point: a plain TTF must NOT be flagged variable, and must expose no axes.
@@ -134,7 +137,10 @@ public partial class TestStaticFont : TestScene
             var first = fontStore.Get(new FontUsage(test_family, weight: weights[0]));
             var second = fontStore.Get(new FontUsage(test_family, weight: weights[1]));
 
-            if (first == null || second == null || first.Name != $"{test_family}-{weights[0]}")
+            if (first == null || second == null)
+                return false;
+
+            if (first.Name != $"{test_family}-{weights[0]}")
                 return true;
 
             // Static per-weight files are separate Font instances (contrast with a variable font,
@@ -214,9 +220,8 @@ public partial class TestStaticFont : TestScene
                 ? fontStore.Get(new FontUsage(test_family, weight: FontWeights.Regular))
                 : null;
 
-            // Headless store returns null throughout — skip.
             if (variable == null)
-                return true;
+                return false;
 
             // NotoSans must be variable.
             if (!variable.IsVariable)

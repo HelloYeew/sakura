@@ -215,11 +215,6 @@ public partial class TestIconSprite : TestScene
     private bool iconFontIsFallbackFor(FontUsage usage)
     {
         var materialFont = fontStore.Get("MaterialSymbolsOutlined");
-
-        // headless font stores return null and have no fallbacks, this work only on real renderer
-        if (materialFont == null)
-            return true;
-
-        return fontStore.GetFallbacks(usage).Contains(materialFont);
+        return materialFont != null && fontStore.GetFallbacks(usage).Contains(materialFont);
     }
 }

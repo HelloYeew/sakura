@@ -9,6 +9,13 @@ using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Graphics.Text;
 
+/// <summary>
+/// A font store with no fonts, which shapes every text to nothing.
+/// </summary>
+/// <remarks>
+/// For a test of code that has to cope with a store that cannot measure. A headless app uses <see cref="RendererFontStore"/>, which
+/// needs no GPU, so its text is measured as it is on screen.
+/// </remarks>
 public class HeadlessFontStore : IFontStore
 {
     private readonly Font dummyFont;

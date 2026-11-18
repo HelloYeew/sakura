@@ -126,9 +126,8 @@ public partial class TestVariableFont : TestScene
         {
             var italic = fontStore.Get(new FontUsage("NotoSans", weight: FontWeights.Bold, italics: true));
 
-            // Headless store returns null; only assert on a real renderer.
             if (italic == null)
-                return true;
+                return false;
 
             return italic.IsVariable;
         });
@@ -139,7 +138,7 @@ public partial class TestVariableFont : TestScene
             var italic = fontStore.Get(new FontUsage("NotoSans", weight: FontWeights.Regular, italics: true));
 
             if (upright == null || italic == null)
-                return true;
+                return false;
 
             // The italic comes from a separate variable file (Noto ships no ital axis), so the two
             // must be different Font instances.
@@ -152,7 +151,7 @@ public partial class TestVariableFont : TestScene
             var thin = fontStore.Get(new FontUsage("NotoSans", weight: FontWeights.Thin, italics: true));
 
             if (bold == null || thin == null)
-                return true;
+                return false;
 
             // All italic weights are driven from the single italic variable file.
             return ReferenceEquals(bold, thin);
@@ -204,9 +203,8 @@ public partial class TestVariableFont : TestScene
         {
             var font = fontStore.Get("MaterialSymbolsOutlined");
 
-            // Headless store returns null and has no real fonts; only assert on a real renderer.
             if (font == null)
-                return true;
+                return false;
 
             return font.IsVariable;
         });
@@ -215,7 +213,7 @@ public partial class TestVariableFont : TestScene
         {
             var font = fontStore.Get("MaterialSymbolsOutlined");
             if (font == null)
-                return true;
+                return false;
 
             bool hasWeight = font.Axes.Any(a => a.Tag == FontVariation.WEIGHT_AXIS);
             bool hasFill = font.Axes.Any(a => a.Tag == FontVariation.FILL_AXIS);
@@ -226,7 +224,7 @@ public partial class TestVariableFont : TestScene
         {
             var font = fontStore.Get("MaterialSymbolsOutlined");
             if (font == null)
-                return true;
+                return false;
 
             string glyph = IconUsage.Favorite.ToGlyph();
 
