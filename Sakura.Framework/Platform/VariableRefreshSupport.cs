@@ -25,4 +25,14 @@ public enum VariableRefreshSupport
     /// It would. macOS says so for a fullscreen window on a screen whose shortest and longest refresh intervals differ.
     /// </summary>
     Available,
+
+    /// <summary>
+    /// It would, but only in steps: a frame stays on screen for the shortest interval or a whole number of steps longer
+    /// (4.17 ms on a ProMotion display: 8.33, 12.5, 16.67 ms). Frames drawn just under the top rate drift against the steps,
+    /// and one in fifteen stays a whole step longer, so <see cref="FrameSync.VariableRefresh"/> follows
+    /// <see cref="FrameSync.VSync"/> here with the late latch, which times each frame to make the next refresh. macOS says so
+    /// for a fullscreen window on a screen whose refresh varies, in steps coarser than
+    /// <see cref="FramePacing.VARIABLE_REFRESH_MARGIN_SECONDS"/>.
+    /// </summary>
+    Stepped,
 }

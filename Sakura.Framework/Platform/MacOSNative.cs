@@ -90,6 +90,32 @@ internal static class MacOSNative
     public static bool ScreenRefreshVaries(IntPtr screen) => TryGetRefreshIntervals(screen, out double shortest, out double longest) && !Precision.AlmostEquals(shortest, longest, fixed_refresh_tolerance);
 
     /// <summary>
+    /// Reads a screen's <c>displayUpdateGranularity</c>: the step between the refresh intervals it can show a frame for, in
+    /// seconds. A screen whose refresh varies in steps shows a frame for <c>minimumRefreshInterval</c> or a whole number of
+    /// steps longer (4.17 ms on ProMotion); 0 is a screen that can refresh at any moment inside its range. Call it on the
+    /// main thread.
+    /// </summary>
+    /// <param name="screen">An <c>NSScreen</c>.</param>
+    /// <param name="step">The step, or 0 where it wasn't read.</param>
+    /// <returns>Whether it was read. False off macOS, for no screen, and before macOS 12, whose screens don't have it.</returns>
+    public static bool TryGetRefreshStep(IntPtr screen, out double step)
+    {
+        step = 0;
+
+        if (!RuntimeInfo.IsMacOS || screen == IntPtr.Zero)
+            return false;
+
+        IntPtr granularity = sel_registerName("displayUpdateGranularity");
+
+        // An unknown selector would raise an Objective-C exception, which ends the process.
+        if (!objc_msgSend_bool_id(screen, sel_registerName("respondsToSelector:"), granularity))
+            return false;
+
+        step = Math.Max(objc_msgSend_double(screen, granularity), 0);
+        return true;
+    }
+
+    /// <summary>
     /// Sets <c>displaySyncEnabled</c> on a <c>CAMetalLayer</c>: whether its presents wait for the display's refresh. With it
     /// off a frame is shown as soon as it's presented, which can tear in fullscreen. Call it on the thread that draws into the
     /// layer, between frames, as the layer's other drawing settings are.

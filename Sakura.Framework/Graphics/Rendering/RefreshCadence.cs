@@ -8,8 +8,10 @@ namespace Sakura.Framework.Graphics.Rendering;
 
 /// <summary>
 /// Follows when frames reach the screen under VSync, refresh by refresh: when the latest was shown, which the next
-/// refreshes are predicted from, and which frames missed their refresh, shown more than one and a half refreshes after
-/// the frame before.
+/// refreshes are predicted from, and which frames missed their refresh, shown more than half a step later than a refresh
+/// after the frame before. A late frame waits for the display's next step: a whole refresh at a fixed rate, so a miss is
+/// over one and a half refreshes, but on a display whose refresh varies in steps only the step (4.17 ms on ProMotion,
+/// where a late frame shows 12.5 ms after the one before, exactly one and a half of its 8.33 ms refreshes).
 /// </summary>
 /// <remarks>
 /// Counted in windows of <see cref="window_frames"/> frames, a few seconds' worth, so a single hitch reads as noise and
@@ -41,8 +43,12 @@ internal sealed class RefreshCadence
     /// </summary>
     /// <param name="shown">When it was shown, as a <see cref="Stopwatch"/> timestamp.</param>
     /// <param name="periodTicks">The display's refresh period, in <see cref="Stopwatch"/> ticks.</param>
+    /// <param name="stepTicks">
+    /// The step between the display's refresh intervals, in <see cref="Stopwatch"/> ticks, or 0 for a whole refresh, as at a
+    /// fixed rate. A step longer than the period counts as the period.
+    /// </param>
     /// <returns>Whether it missed its refresh.</returns>
-    public bool Add(long shown, double periodTicks)
+    public bool Add(long shown, double periodTicks, double stepTicks = 0)
     {
         bool missed = false;
 
@@ -52,7 +58,7 @@ internal sealed class RefreshCadence
 
             if (interval < periodTicks * pause_refreshes)
             {
-                missed = interval > periodTicks * 1.5;
+                missed = interval > MissedAfter(periodTicks, stepTicks);
                 windowFrames++;
 
                 if (missed)
@@ -92,6 +98,14 @@ internal sealed class RefreshCadence
         windowFrames = 0;
         windowMisses = 0;
     }
+
+    /// <summary>
+    /// How long after the frame before a frame shown missed its refresh: half a step past the refresh, where a frame that
+    /// made it can't be and a late one, a step later, is.
+    /// </summary>
+    /// <param name="periodTicks">The display's refresh period.</param>
+    /// <param name="stepTicks">The step between its refresh intervals, or 0 for a whole refresh.</param>
+    internal static double MissedAfter(double periodTicks, double stepTicks) => periodTicks + (stepTicks > 0 ? Math.Min(stepTicks, periodTicks) : periodTicks) / 2;
 
     /// <summary>
     /// The first refresh at or after <paramref name="after"/>, on the refreshes through <paramref name="lastShown"/>.

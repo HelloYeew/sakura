@@ -37,6 +37,26 @@ public class LateLatchTest
         });
     }
 
+    [Test]
+    public void TestAFrameOneStepLateMissedItsRefreshOnADisplayThatRefreshesInSteps()
+    {
+        var cadence = new RefreshCadence();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(cadence.Add(1000, 100, 50), Is.False, "the first frame has nothing to go by");
+            Assert.That(cadence.Add(1100, 100, 50), Is.False);
+            Assert.That(cadence.Add(1250, 100, 50), Is.True, "a step after its refresh: one and a half refreshes after the one before");
+            Assert.That(cadence.Add(1350, 100, 50), Is.False, "on time, on the steps the late frame moved to");
+        });
+    }
+
+    [TestCase(0, ExpectedResult = 150)]
+    [TestCase(50, ExpectedResult = 125)]
+    [TestCase(100, ExpectedResult = 150)]
+    [TestCase(400, ExpectedResult = 150)]
+    public double TestAMissIsHalfAStepPastTheRefresh(double stepTicks) => RefreshCadence.MissedAfter(100, stepTicks);
+
     [TestCase(6, ExpectedResult = false)]
     [TestCase(7, ExpectedResult = true)]
     public bool TestAWindowMissingMoreThanOnePercentOfItsRefreshesSaysSo(int misses)

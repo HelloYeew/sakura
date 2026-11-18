@@ -38,8 +38,22 @@ public class FramePacingTest
     [TestCase(VariableRefreshSupport.Available, FrameSync.VariableRefresh)]
     [TestCase(VariableRefreshSupport.Unknown, FrameSync.VariableRefresh)]
     [TestCase(VariableRefreshSupport.Unavailable, FrameSync.VSync)]
-    public void VariableRefreshFollowsVSyncWhereTheDisplayWontVary(VariableRefreshSupport support, FrameSync expected)
+    [TestCase(VariableRefreshSupport.Stepped, FrameSync.VSync)]
+    public void VariableRefreshFollowsVSyncWhereTheDisplayWontVaryOrVariesInSteps(VariableRefreshSupport support, FrameSync expected)
         => Assert.That(FramePacing.EffectiveFrameLimiter(FrameSync.VariableRefresh, support), Is.EqualTo(expected));
+
+    [Test]
+    public void OnlyVariableRefreshOnASteppedDisplayTurnsTheLateLatchOn([Values] FrameSync chosen, [Values] VariableRefreshSupport support)
+        => Assert.That(FramePacing.LatchesLate(chosen, support), Is.EqualTo(chosen == FrameSync.VariableRefresh && support == VariableRefreshSupport.Stepped));
+
+    [TestCase(1.0 / 240, ExpectedResult = true)]
+    [TestCase(0.005, ExpectedResult = true)]
+    [TestCase(0.0001, ExpectedResult = false)]
+    [TestCase(0, ExpectedResult = false)]
+    public bool ARefreshIsSteppedWhereTheLimitersPeriodFallsBetweenTwoIntervals(double stepSeconds) => FramePacing.RefreshStepped(stepSeconds);
+
+    [Test]
+    public void AHeadlessWindowsDisplayHasNoRefreshStep() => Assert.That(((IWindow)new HeadlessWindow()).DisplayRefreshStep, Is.Zero);
 
     private static readonly FrameSync[] other_limiters = Enum.GetValues<FrameSync>().Where(limiter => limiter != FrameSync.VariableRefresh).ToArray();
 
