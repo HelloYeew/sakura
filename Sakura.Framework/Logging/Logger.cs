@@ -40,6 +40,10 @@ public class Logger
     // Entries queued and not written yet, so Flush knows when they're all out.
     private static int unwritten;
 
+    /// <summary>
+    /// Where the log files are written, set by the host as an app starts. Null before then and after <see cref="Shutdown"/>,
+    /// when nothing is written to a file.
+    /// </summary>
     public static Storage Storage
     {
         get => storage;
@@ -89,6 +93,10 @@ public class Logger
     /// been written. For something that shows the log, such as an overlay: a handler should hand the entry on rather
     /// than work here, and anything it logs comes back to it.
     /// </summary>
+    /// <remarks>
+    /// <see cref="Shutdown"/> removes every handler once the queue has been written, so a handler doesn't keep what it belongs
+    /// to alive after its app has gone.
+    /// </remarks>
     public static event Action<LogEntry> NewEntry;
 
     #endregion
@@ -262,6 +270,7 @@ public class Logger
     /// <summary>
     /// Signals the logger to shut down gracefully.
     /// Before completing, it will wait for all queued messages to be processed before stopping and closing all file writers.
+    /// It then lets go of the <see cref="Storage"/> and every <see cref="NewEntry"/> handler, which the next app sets up again.
     /// </summary>
     public static void Shutdown()
     {
@@ -301,6 +310,11 @@ public class Logger
         }
 
         file_writers.Clear();
+
+        // Both belong to the app that started this session. Kept past it, the static event and field keep that app alive,
+        // and a process that runs one app after another, as a test run does, would keep every one of them.
+        NewEntry = null;
+        storage = null;
     }
 
     private static void log(string message, LogLevel level, LoggingTarget target)
