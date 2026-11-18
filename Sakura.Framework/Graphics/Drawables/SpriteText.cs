@@ -33,6 +33,18 @@ public partial class SpriteText : Drawable
     private int shadowVertexCount;
 
     private ShapedText? shapedText;
+
+    /// <summary>
+    /// The shaping <see cref="textVertices"/> were last built from, for the draw node to batch.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="shapedText"/> can be replaced after the vertices were built in a frame: text set later in the frame
+    /// (by an event from a drawable further down the tree, say) is shaped at once by the next size read. Batching
+    /// those glyphs over the old vertices sliced past their end and crashed the draw thread. The draw node batches
+    /// this snapshot instead, so it always matches the vertices; the new text, already invalidated, draws next frame.
+    /// </remarks>
+    private ShapedText? vertexShapedText;
+
     private int lastCacheVersion = -1;
 
     /// <summary>
@@ -406,6 +418,8 @@ public partial class SpriteText : Drawable
 
     protected override void GenerateVertices()
     {
+        vertexShapedText = shapedText;
+
         if (shapedText == null || shapedText.Glyphs.Count == 0)
         {
             currentVertexCount = 0;
@@ -572,7 +586,10 @@ public partial class SpriteText : Drawable
     {
         var drawColor = vertexColor(Color);
 
-        if (shapedText == null || shapedText.Glyphs.Count == 0)
+        // The vertices' own shaping: a color change alone does not rebuild them, so the live one may be newer.
+        var shaped = vertexShapedText;
+
+        if (shaped == null || shaped.Glyphs.Count == 0)
         {
             for (int i = 0; i < currentVertexCount; i++)
                 textVertices[i].Color = drawColor;
@@ -613,7 +630,7 @@ public partial class SpriteText : Drawable
             return Vector4.Lerp(Vector4.Lerp(topLeft, topRight, across), Vector4.Lerp(bottomLeft, bottomRight, across), down);
         }
 
-        var glyphs = shapedText.Glyphs;
+        var glyphs = shaped.Glyphs;
         int vIndex = shadowVertexCount;
 
         for (int glyphIndex = 0; glyphIndex < glyphs.Count && vIndex < currentVertexCount; glyphIndex++)
@@ -722,10 +739,13 @@ public partial class SpriteText : Drawable
 
             batchCount = 0;
 
-            if (text.shapedText == null || text.shapedText.Glyphs.Count == 0)
+            // The shaping the vertices were built from, never the live one: see vertexShapedText.
+            var shaped = text.vertexShapedText;
+
+            if (shaped == null || shaped.Glyphs.Count == 0)
                 return;
 
-            int glyphCount = text.shapedText.Glyphs.Count;
+            int glyphCount = shaped.Glyphs.Count;
             int mostBatches = text.shadowVertexCount > 0 ? glyphCount * 2 : glyphCount;
 
             if (batches.Length < mostBatches)
@@ -733,9 +753,9 @@ public partial class SpriteText : Drawable
 
             // The shadow's first, so it's drawn behind: the same glyphs, in the vertices before the text's.
             if (text.shadowVertexCount > 0)
-                addBatches(text.shapedText, 0);
+                addBatches(shaped, 0);
 
-            addBatches(text.shapedText, text.shadowVertexCount);
+            addBatches(shaped, text.shadowVertexCount);
         }
 
         private void addBatches(ShapedText shaped, int firstVertex)
