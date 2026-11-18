@@ -11,7 +11,8 @@ namespace Sakura.Framework.Tests.Platform;
 
 /// <summary>
 /// Reads the main screen's shortest and longest refresh intervals through <see cref="MacOSNative.TryGetRefreshIntervals"/>,
-/// the figures macOS says whether a screen's refresh varies by, with no window.
+/// the figures macOS says whether a screen's refresh varies by, and the step between them through
+/// <see cref="MacOSNative.TryGetRefreshStep"/>, with no window.
 /// </summary>
 [TestFixture]
 [SuppressMessage("ReSharper", "InconsistentNaming")]
@@ -69,11 +70,22 @@ public class MacOSScreenRefreshTest
     }
 
     [Test]
+    public void TheMainScreensStepFitsInsideItsIntervals()
+    {
+        MacOSNative.TryGetRefreshIntervals(screen, out _, out double longest);
+
+        Assert.That(MacOSNative.TryGetRefreshStep(screen, out double step), Is.True, "read");
+        Assert.That(step, Is.InRange(0, longest), "0 for a screen that refreshes at any moment, else a step no longer than its longest interval");
+    }
+
+    [Test]
     public void NoScreenIsLeftAlone()
     {
         Assert.Multiple(() =>
         {
             Assert.That(MacOSNative.TryGetRefreshIntervals(IntPtr.Zero, out _, out _), Is.False);
+            Assert.That(MacOSNative.TryGetRefreshStep(IntPtr.Zero, out double step), Is.False);
+            Assert.That(step, Is.Zero, "nothing read");
             Assert.That(MacOSNative.ScreenRefreshVaries(IntPtr.Zero), Is.False);
             Assert.That(MacOSNative.ScreenOf(IntPtr.Zero), Is.EqualTo(IntPtr.Zero));
         });

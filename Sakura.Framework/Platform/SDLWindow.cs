@@ -500,6 +500,15 @@ public class SDLWindow : IWindow
     /// <inheritdoc/>
     public VariableRefreshSupport VariableRefresh => variableRefresh;
 
+    /// <inheritdoc/>
+    public double DisplayRefreshStep { get; private set; }
+
+    // Turns off (0) telling a screen whose refresh varies in steps from one that varies freely, so VariableRefresh draws just
+    // under the top rate on it too, for comparing.
+    private const string refresh_steps_variable = "SAKURA_REFRESH_STEPS";
+
+    private static readonly bool refresh_steps_ignored = Environment.GetEnvironmentVariable(refresh_steps_variable) == "0";
+
     // TODO: This update action also no longer needed since it's handled in host's main loop
     public event Action Update = delegate { };
     public event Action FocusLost = delegate { };
@@ -1900,35 +1909,37 @@ public class SDLWindow : IWindow
     }
 
     /// <summary>
-    /// Works out <see cref="VariableRefresh"/> again on macOS, on the main thread: when the window is made, enters or leaves
-    /// fullscreen, or moves to another display, and when a display's mode changes (a fixed rate picked in place of
-    /// ProMotion). It's available for a fullscreen window on a screen whose refresh varies, as Apple's own check has it.
+    /// Works out <see cref="VariableRefresh"/> and <see cref="DisplayRefreshStep"/> again on macOS, on the main thread: when
+    /// the window is made, enters or leaves fullscreen, or moves to another display, and when a display's mode changes (a
+    /// fixed rate picked in place of ProMotion). It's available for a fullscreen window on a screen whose refresh varies, as
+    /// Apple's own check has it, and stepped where it varies only in steps coarser than the limiter's margin.
     /// </summary>
     private unsafe void updateVariableRefresh()
     {
         if (!RuntimeInfo.IsMacOS || window == null)
             return;
 
+        IntPtr nsWindow;
+        fixed (byte* namePtr = SDL_PROP_WINDOW_COCOA_WINDOW_POINTER)
+            nsWindow = SDL_GetPointerProperty(SDL_GetWindowProperties(window), namePtr, IntPtr.Zero);
+
+        IntPtr screen = MacOSNative.ScreenOf(nsWindow);
+        MacOSNative.TryGetRefreshStep(screen, out double step);
+        DisplayRefreshStep = step;
+
         bool fullscreen = (SDL_GetWindowFlags(window) & SDL_WindowFlags.SDL_WINDOW_FULLSCREEN) != 0;
-        bool varies = false;
-
-        if (fullscreen)
-        {
-            IntPtr nsWindow;
-            fixed (byte* namePtr = SDL_PROP_WINDOW_COCOA_WINDOW_POINTER)
-                nsWindow = SDL_GetPointerProperty(SDL_GetWindowProperties(window), namePtr, IntPtr.Zero);
-
-            varies = MacOSNative.ScreenRefreshVaries(MacOSNative.ScreenOf(nsWindow));
-        }
-
-        var support = varies ? VariableRefreshSupport.Available : VariableRefreshSupport.Unavailable;
+        bool varies = fullscreen && MacOSNative.ScreenRefreshVaries(screen);
+        bool stepped = varies && !refresh_steps_ignored && FramePacing.RefreshStepped(step);
+        var support = stepped ? VariableRefreshSupport.Stepped : varies ? VariableRefreshSupport.Available : VariableRefreshSupport.Unavailable;
 
         if (support == variableRefresh)
             return;
 
         variableRefresh = support;
 
-        if (varies)
+        if (stepped)
+            Logger.Verbose($"Variable refresh rate comes in {step * 1000:0.##} ms steps: the window is fullscreen on a screen whose refresh varies only in steps.");
+        else if (varies)
             Logger.Verbose("Variable refresh rate is available: the window is fullscreen on a screen whose refresh varies.");
         else
             Logger.Verbose(fullscreen ? "Variable refresh rate is unavailable: the screen's refresh is fixed." : "Variable refresh rate is unavailable outside fullscreen.");
