@@ -183,4 +183,117 @@ public partial class TestScrollableContainer : ManualInputManagerTestScene
         });
         AddAssert("Last button received the click", () => lastClickedIndex == buttons.Count - 1);
     }
+
+    #region Scrolling straight after the content changes
+
+    /// <summary>
+    /// Replaces the list with <paramref name="count"/> rows that only take their height once they have updated, so the
+    /// scrollable extent is out of date for a call made straight after this one.
+    /// </summary>
+    private void replaceWithRowsSizedOnUpdate(int count)
+    {
+        flowContent.Clear();
+
+        for (int i = 0; i < count; i++)
+            flowContent.Add(new SizedOnUpdateBox(50));
+    }
+
+    [Test]
+    public void TestScrollToStraightAfterReplacingContent()
+    {
+        AddStep("Replace the list and scroll into it", () =>
+        {
+            replaceWithRowsSizedOnUpdate(20);
+            scrollContainer.ScrollTo(new Vector2(0, 300), false);
+        });
+        AddWaitStep("Let layout settle", 100);
+        AddAssert("Landed where it was asked to", () => Precision.AlmostEquals(scrollContainer.CurrentScroll.Y, 300f, 0.5f));
+    }
+
+    [Test]
+    public void TestScrollToEndStraightAfterReplacingContent()
+    {
+        AddStep("Replace the list and scroll to its end", () =>
+        {
+            replaceWithRowsSizedOnUpdate(20);
+            scrollContainer.ScrollToEnd(false);
+        });
+        AddWaitStep("Let layout settle", 100);
+        AddAssert("At the end of the new list", () =>
+            scrollContainer.ScrollableExtent.Y > 0 && Precision.AlmostEquals(scrollContainer.CurrentScroll.Y, scrollContainer.ScrollableExtent.Y, 0.5f));
+    }
+
+    [Test]
+    public void TestScrollIntoViewStraightAfterReplacingContent()
+    {
+        AddStep("Replace the list and bring its last row into view", () =>
+        {
+            replaceWithRowsSizedOnUpdate(20);
+            scrollContainer.ScrollIntoView(flowContent.Children[^1], false);
+        });
+        AddWaitStep("Let layout settle", 100);
+        AddAssert("Scrolled to the last row", () =>
+            scrollContainer.ScrollableExtent.Y > 0 && Precision.AlmostEquals(scrollContainer.CurrentScroll.Y, scrollContainer.ScrollableExtent.Y, 0.5f));
+    }
+
+    [Test]
+    public void TestScrollRequestedWhileHiddenLandsOnceShown()
+    {
+        AddStep("Hide, replace the list and scroll into it", () =>
+        {
+            scrollContainer.Alpha = 0;
+            replaceWithRowsSizedOnUpdate(20);
+            scrollContainer.ScrollTo(new Vector2(0, 300), false);
+        });
+        AddWaitStep("Stay hidden for a while", 200);
+        AddStep("Show", () => scrollContainer.Alpha = 1);
+        AddWaitStep("Let layout settle", 100);
+        AddAssert("Landed where it was asked to", () => Precision.AlmostEquals(scrollContainer.CurrentScroll.Y, 300f, 0.5f));
+    }
+
+    [Test]
+    public void TestContentAddedLaterDoesNotMoveTheView()
+    {
+        float settled = 0;
+
+        AddStep("Replace the list and scroll to its end", () =>
+        {
+            replaceWithRowsSizedOnUpdate(20);
+            scrollContainer.ScrollToEnd(false);
+        });
+        AddWaitStep("Let layout settle", 100);
+        AddStep("Record where it settled", () => settled = scrollContainer.CurrentScroll.Y);
+
+        AddStep("Add rows below", () =>
+        {
+            for (int i = 0; i < 10; i++)
+                flowContent.Add(new SizedOnUpdateBox(50));
+        });
+        AddWaitStep("Let layout settle", 100);
+        AddAssert("The view stayed where it was", () => Precision.AlmostEquals(scrollContainer.CurrentScroll.Y, settled, 0.5f));
+    }
+
+    /// <summary>
+    /// A row that only takes its height on its first update, as text only knows its size once it has been shaped.
+    /// </summary>
+    private partial class SizedOnUpdateBox : Box
+    {
+        private readonly float targetHeight;
+
+        public SizedOnUpdateBox(float rowHeight)
+        {
+            targetHeight = rowHeight;
+            Width = 280;
+        }
+
+        public override void Update()
+        {
+            base.Update();
+
+            if (!Precision.AlmostEquals(Height, targetHeight))
+                Height = targetHeight;
+        }
+    }
+
+    #endregion
 }

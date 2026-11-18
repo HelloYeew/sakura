@@ -72,6 +72,27 @@ public partial class ScrollableContainer : Container
     private Vector2 targetScroll;
     private Vector2 currentScroll;
 
+    /// <summary>
+    /// The offset the last <see cref="ScrollTo"/> asked for, unclamped, while it is still being re-applied after layout.
+    /// </summary>
+    private Vector2? requestedScroll;
+
+    /// <summary>
+    /// The drawable the last <see cref="ScrollIntoView"/> asked to show, while it is still being re-applied after layout.
+    /// </summary>
+    private Drawable? requestedIntoView;
+
+    /// <summary>
+    /// Whether the pending request glides there rather than jumping.
+    /// </summary>
+    private bool requestAnimated;
+
+    /// <summary>
+    /// The scrollable extent the pending request was last applied against, or null until it has been applied after a
+    /// layout.
+    /// </summary>
+    private Vector2? requestExtent;
+
     private bool isDraggingContent;
     private double lastActivityTime;
 
@@ -85,6 +106,7 @@ public partial class ScrollableContainer : Container
         get => currentScroll;
         set
         {
+            cancelRequest();
             targetScroll = value;
             currentScroll = value;
             notifyActivity();
@@ -236,15 +258,19 @@ public partial class ScrollableContainer : Container
     }
 
     /// <summary>
-    /// Scrolls precisely to the given coordinate target.
+    /// Scrolls precisely to the given coordinate target, clamped to the content.
     /// </summary>
+    /// <remarks>
+    /// The clamp waits for layout. The target applies at once, and is then applied again after each layout until the
+    /// content's size stops changing, so scrolling straight after replacing the content lands where it was asked to
+    /// rather than against the size the content had before. Scrolling by hand, or setting <see cref="CurrentScroll"/>,
+    /// ends that early.
+    /// </remarks>
     public void ScrollTo(Vector2 target, bool animated = true)
     {
-        notifyActivity();
-        targetScroll = getClampedScroll(target);
-
-        if (!animated)
-            currentScroll = targetScroll;
+        beginRequest(animated);
+        requestedScroll = target;
+        applyScrollTarget(getClampedScroll(target), animated);
     }
 
     /// <summary>
@@ -253,21 +279,69 @@ public partial class ScrollableContainer : Container
     public void ScrollToStart(bool animated = true) => ScrollTo(Vector2.Zero, animated);
 
     /// <summary>
-    /// Scrolls to the absolute bottom/right limits of the container.
+    /// Scrolls to the absolute bottom/right limits of the container, as far as the content reaches once it is laid out
+    /// (see <see cref="ScrollTo"/>).
     /// </summary>
-    public void ScrollToEnd(bool animated = true) => ScrollTo(ScrollableExtent, animated);
+    public void ScrollToEnd(bool animated = true) => ScrollTo(new Vector2(float.PositiveInfinity), animated);
 
     /// <summary>
     /// Shifts the scroll target just enough to ensure the specified drawable is fully visible within the viewport.
+    /// Like <see cref="ScrollTo"/>, this is applied again after each layout until the content's size stops changing, so
+    /// a drawable that was only just added still ends up in view.
     /// </summary>
     public void ScrollIntoView(Drawable d, bool animated = true)
     {
-        if (!tryGetOffsetWithinContent(d, out Vector2 childPos))
+        if (!tryGetIntoViewTarget(d, out Vector2 target))
             return;
 
-        Vector2 childSize = d.DrawSize * d.Scale;
+        beginRequest(animated);
+        requestedIntoView = d;
+        applyScrollTarget(getClampedScroll(target), animated);
+    }
 
-        Vector2 target = targetScroll;
+    /// <summary>
+    /// Starts a new scroll request, replacing any still pending.
+    /// </summary>
+    private void beginRequest(bool animated)
+    {
+        notifyActivity();
+        cancelRequest();
+        requestAnimated = animated;
+    }
+
+    /// <summary>
+    /// Drops the pending scroll request, if any.
+    /// </summary>
+    private void cancelRequest()
+    {
+        requestedScroll = null;
+        requestedIntoView = null;
+        requestExtent = null;
+    }
+
+    /// <summary>
+    /// Heads for <paramref name="target"/>, or jumps straight there when not <paramref name="animated"/>.
+    /// </summary>
+    private void applyScrollTarget(Vector2 target, bool animated)
+    {
+        targetScroll = target;
+
+        if (!animated)
+            currentScroll = targetScroll;
+    }
+
+    /// <summary>
+    /// The unclamped scroll offset that shows all of <paramref name="d"/>, moving the current target as little as
+    /// possible. False when <paramref name="d"/> is not inside this container's content.
+    /// </summary>
+    private bool tryGetIntoViewTarget(Drawable d, out Vector2 target)
+    {
+        target = targetScroll;
+
+        if (!tryGetOffsetWithinContent(d, out Vector2 childPos))
+            return false;
+
+        Vector2 childSize = d.DrawSize * d.Scale;
         Vector2 viewport = DrawSize;
 
         // Vertical Visibility
@@ -288,7 +362,7 @@ public partial class ScrollableContainer : Container
                 target.X = childPos.X + childSize.X - viewport.X; // Snap to right of item
         }
 
-        ScrollTo(target, animated);
+        return true;
     }
 
     /// <summary>
@@ -319,6 +393,46 @@ public partial class ScrollableContainer : Container
         updateScrollPosition();
         updateScrollbars();
         base.Update();
+    }
+
+    /// <summary>
+    /// Applies a pending <see cref="ScrollTo"/> or <see cref="ScrollIntoView"/> again now that this frame's layout is
+    /// done, so it is clamped against the content's current size.
+    /// </summary>
+    protected override void UpdateLayoutAfterChildren()
+    {
+        base.UpdateLayoutAfterChildren();
+
+        if (requestedScroll == null && requestedIntoView == null)
+            return;
+
+        Vector2 target;
+
+        if (requestedScroll is Vector2 offset)
+            target = offset;
+        else if (!tryGetIntoViewTarget(requestedIntoView!, out target))
+        {
+            cancelRequest();
+            return;
+        }
+
+        Vector2 extent = getMaxScroll();
+        Vector2 scrollBefore = currentScroll;
+
+        applyScrollTarget(getClampedScroll(target), requestAnimated);
+
+        if (currentScroll != scrollBefore)
+        {
+            ScrollContent.Position = -currentScroll;
+            refreshHoverAtCursor();
+        }
+
+        // Kept until the extent comes out the same two frames running: content that takes more than a frame to reach its
+        // size still ends up where it was asked to, and content that changes later on leaves the view alone.
+        if (requestExtent == extent)
+            cancelRequest();
+        else
+            requestExtent = extent;
     }
 
     private void updateScrollPosition()
@@ -459,6 +573,7 @@ public partial class ScrollableContainer : Container
     private void handleScrollbarDrag(float delta, bool isVertical)
     {
         notifyActivity();
+        cancelRequest();
 
         if (isVertical)
         {
@@ -501,6 +616,7 @@ public partial class ScrollableContainer : Container
     public override bool OnScroll(ScrollEvent e)
     {
         notifyActivity();
+        cancelRequest();
         Vector2 delta = Vector2.Zero;
 
         // A trackpad that says how far its fingers moved moves the content as far, on screen, as a drag would; a wheel
@@ -545,6 +661,7 @@ public partial class ScrollableContainer : Container
     public override bool OnDragStart(MouseButtonEvent e)
     {
         notifyActivity();
+        cancelRequest();
         isDraggingContent = true;
 
         lastDragTime = Clock.CurrentTime;
