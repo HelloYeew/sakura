@@ -78,7 +78,7 @@ public partial class ManualInputManager : Container, IInputManagerProvider, IFoc
         BeginMouseDownFocusTracking();
         bool handled = InputManager.DispatchMouseDown(e);
         if (!WasFocusClaimedByLastClick)
-            ChangeFocus(null);
+            clearFocusAfterPress();
         return handled;
     }
 
@@ -332,7 +332,17 @@ public partial class ManualInputManager : Container, IInputManagerProvider, IFoc
 
         // If nothing claimed focus during this click, clear focus — same logic as App.OnMouseDown.
         if (!WasFocusClaimedByLastClick)
-            ChangeFocus(null);
+            clearFocusAfterPress();
+    }
+
+    /// <summary>
+    /// Releases focus after a press that gave nothing focus, as <see cref="App"/> does, crediting focus that goes back to its
+    /// previous holder to the press.
+    /// </summary>
+    private void clearFocusAfterPress()
+    {
+        using var press = InputManager.BeginPress(FocusSource.Pointer);
+        ChangeFocus(null);
     }
 
     /// <summary>

@@ -2086,6 +2086,24 @@ public abstract partial class Drawable : IDependencyInjectionCandidate, IDisposa
     public bool HasFocus { get; internal set; }
 
     /// <summary>
+    /// Whether this drawable holds focus and should show it, such as with a focus ring: what a browser's <c>:focus-visible</c>
+    /// matches.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// True when a key or a gamepad button brought focus here, and false when a press of a mouse button, a finger or a pen did: a
+    /// keyboard user needs to see where focus is, and a mouse user is looking at what they pressed. Focus that code moves outside
+    /// any press follows the last press, so a dialog that opens after a click and focuses its first button draws no ring around
+    /// it. Before any press, it is shown.
+    /// </para>
+    /// <para>
+    /// A text box usually shows that it has focus however focus arrived, since there focus says where typing will go. That is the
+    /// control's choice, through <see cref="HasFocus"/>.
+    /// </para>
+    /// </remarks>
+    public bool IsFocusVisible { get; internal set; }
+
+    /// <summary>
     /// Walks up the parent hierarchy to find the nearest FocusManager.
     /// </summary>
     protected internal IFocusManager? GetContainingFocusManager()

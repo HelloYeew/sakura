@@ -167,6 +167,8 @@ public class InputManager : IFocusManager
 
     public bool DispatchKeyDown(KeyEvent e)
     {
+        using var press = BeginPress(FocusSource.Keyboard);
+
         for (int i = 0; i < nonPositionalQueue.Count; i++)
         {
             var drawable = nonPositionalQueue[i];
@@ -211,6 +213,8 @@ public class InputManager : IFocusManager
     /// </remarks>
     public bool DispatchKeyDownWithFocus(KeyEvent e)
     {
+        using var press = BeginPress(FocusSource.Keyboard);
+
         if (e.IsRepeat)
             return dispatchKeyRepeat(e);
 
@@ -316,6 +320,8 @@ public class InputManager : IFocusManager
 
     public bool DispatchGamepadButtonDown(GamepadButtonEvent e)
     {
+        using var press = BeginPress(FocusSource.Gamepad);
+
         for (int i = 0; i < nonPositionalQueue.Count; i++)
         {
             var drawable = nonPositionalQueue[i];
@@ -450,6 +456,8 @@ public class InputManager : IFocusManager
     /// </remarks>
     public bool DispatchMouseDown(MouseButtonEvent e)
     {
+        using var press = BeginPress(FocusSource.Pointer);
+
         int buttonIndex = (int)e.Button;
         var previousHandler = lastMouseDownHandlers[buttonIndex];
         var singleClick = e.Clicks > 1 ? new MouseButtonEvent(e.MouseState, e.Button, 1, e.Timestamp, e.Target) : e;
@@ -661,6 +669,8 @@ public class InputManager : IFocusManager
     /// <returns>Whether something took the finger.</returns>
     public bool DispatchTouchDown(TouchEvent e)
     {
+        using var press = BeginPress(FocusSource.Pointer);
+
         touchCaptures[(int)e.Source] = null;
 
         var watchers = touchWatchers[(int)e.Source];
@@ -882,9 +892,14 @@ public class InputManager : IFocusManager
         LastPositionalHandler = null;
 
         if (focusedDrawable != null)
+        {
             focusedDrawable.HasFocus = false;
+            focusedDrawable.IsFocusVisible = false;
+        }
+
         focusedDrawable = null;
         focusClaimedByClick = false;
+        lastPressWasPointer = false;
         focusStack.Clear();
     }
 
@@ -955,6 +970,16 @@ public class InputManager : IFocusManager
     private bool focusClaimedByClick;
 
     /// <summary>
+    /// What is moving focus right now: the kind of press being dispatched, or <see cref="FocusSource.Code"/> outside one.
+    /// </summary>
+    private FocusSource focusSource = FocusSource.Code;
+
+    /// <summary>
+    /// Whether the most recent press was a pointer's, which decides whether focus that code moves is shown.
+    /// </summary>
+    private bool lastPressWasPointer;
+
+    /// <summary>
     /// The drawable that currently holds focus, or null if nothing is focused.
     /// </summary>
     public Drawable? FocusedDrawable => focusedDrawable;
@@ -973,6 +998,75 @@ public class InputManager : IFocusManager
     /// Resets the "focus was claimed by this click" tracker. Called before a mouse-down dispatch.
     /// </summary>
     public void BeginMouseDownFocusTracking() => focusClaimedByClick = false;
+
+    /// <summary>
+    /// Credits focus that moves until the returned scope is disposed to a press of kind <paramref name="source"/>, for
+    /// <see cref="FocusEvent.Source"/> and <see cref="Drawable.IsFocusVisible"/>.
+    /// </summary>
+    /// <remarks>
+    /// Each dispatch of a press opens one itself. A caller opens its own only for focus it moves after the dispatch on the
+    /// press's account, as the app does when a press gave nothing focus.
+    /// </remarks>
+    /// <param name="source">The kind of press.</param>
+    /// <returns>A scope that, once disposed, restores what was moving focus before.</returns>
+    internal PressScope BeginPress(FocusSource source)
+    {
+        var scope = new PressScope(this, focusSource);
+        focusSource = source;
+        lastPressWasPointer = source == FocusSource.Pointer;
+        return scope;
+    }
+
+    /// <summary>
+    /// Gives <paramref name="drawable"/> focus and tells it what moved focus there.
+    /// </summary>
+    private void giveFocus(Drawable drawable)
+    {
+        // Focus from code follows the last press: a pointer user doesn't want a ring drawn around what a dialog focused for them.
+        bool visible = focusSource switch
+        {
+            FocusSource.Pointer => false,
+            FocusSource.Code => !lastPressWasPointer,
+            _ => true
+        };
+
+        drawable.HasFocus = true;
+        drawable.IsFocusVisible = visible;
+        drawable.OnFocus(new FocusEvent(focusSource, visible));
+    }
+
+    /// <summary>
+    /// Takes focus from <paramref name="drawable"/>.
+    /// </summary>
+    private static void takeFocus(Drawable drawable)
+    {
+        drawable.HasFocus = false;
+        drawable.IsFocusVisible = false;
+        drawable.OnFocusLost(new FocusLostEvent());
+    }
+
+    /// <summary>
+    /// Open while a press is being dispatched; see <see cref="BeginPress"/>.
+    /// </summary>
+    internal readonly struct PressScope : IDisposable
+    {
+        private readonly InputManager manager;
+        private readonly FocusSource sourceBefore;
+
+        /// <summary>
+        /// Creates a scope that restores <paramref name="sourceBefore"/> on <paramref name="manager"/> when disposed.
+        /// </summary>
+        public PressScope(InputManager manager, FocusSource sourceBefore)
+        {
+            this.manager = manager;
+            this.sourceBefore = sourceBefore;
+        }
+
+        /// <summary>
+        /// Restores what was moving focus before the press, since one press can be dispatched inside another's dispatch.
+        /// </summary>
+        public void Dispose() => manager.focusSource = sourceBefore;
+    }
 
     /// <summary>
     /// Changes the currently focused drawable, maintaining a stack so focus is restored to the
@@ -996,8 +1090,7 @@ public class InputManager : IFocusManager
         {
             if (focusedDrawable != null)
             {
-                focusedDrawable.HasFocus = false;
-                focusedDrawable.OnFocusLost(new FocusLostEvent());
+                takeFocus(focusedDrawable);
                 focusStack.Remove(focusedDrawable);
             }
 
@@ -1012,8 +1105,7 @@ public class InputManager : IFocusManager
                     focusedDrawable = previous;
                     focusStack.RemoveAt(focusStack.Count - 1);
 
-                    focusedDrawable.HasFocus = true;
-                    focusedDrawable.OnFocus(new FocusEvent());
+                    giveFocus(focusedDrawable);
                     break;
                 }
 
@@ -1026,8 +1118,7 @@ public class InputManager : IFocusManager
 
         if (focusedDrawable != null)
         {
-            focusedDrawable.HasFocus = false;
-            focusedDrawable.OnFocusLost(new FocusLostEvent());
+            takeFocus(focusedDrawable);
 
             if (focusedDrawable.RequestsFocus && !focusStack.Contains(focusedDrawable))
             {
@@ -1038,8 +1129,7 @@ public class InputManager : IFocusManager
         focusedDrawable = potentialFocusTarget;
         focusStack.Remove(focusedDrawable);
 
-        focusedDrawable.HasFocus = true;
-        focusedDrawable.OnFocus(new FocusEvent());
+        giveFocus(focusedDrawable);
         focusClaimedByClick = true;
 
         Logger.Verbose($"🐭 Focus changed from {focusedBefore?.ToString() ?? "null"} to {focusedDrawable?.ToString() ?? "null"}");

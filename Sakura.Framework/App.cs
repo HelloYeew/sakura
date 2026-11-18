@@ -467,7 +467,11 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
         // This correctly handles clicking non-focusable drawables that still consume
         // the event (labels, backgrounds, decorative containers, etc.).
         if (!WasFocusClaimedByLastClick)
+        {
+            // Focus that goes back to its previous holder this way is the press's doing.
+            using var press = InputManager.BeginPress(FocusSource.Pointer);
             ChangeFocus(null);
+        }
 
         return handled;
     }

@@ -76,6 +76,7 @@ public partial class TestFocusCharacterization : ManualInputManagerTestScene
             InputManager.Click(MouseButton.Left);
         });
         AddAssert("First box gained focus", () => first.HasFocus);
+        AddAssert("Focus from a click is not shown", () => first.LastFocus?.Source == FocusSource.Pointer && !first.IsFocusVisible);
         AddAssert("Second box not focused", () => !second.HasFocus);
     }
 
@@ -164,11 +165,43 @@ public partial class TestFocusCharacterization : ManualInputManagerTestScene
         AddAssert("Nothing focused after clicking away", () => !first.HasFocus && !second.HasFocus);
     }
 
+    /// <summary>
+    /// Focus that a click hands back to a suspended holder, because the click landed on nothing that takes focus, is the
+    /// click's doing, so it is not shown.
+    /// </summary>
+    [Test]
+    public void TestFocusHandedBackByAClickIsCreditedToIt()
+    {
+        AddStep("Focus the overlay from code", () => InputManager.ChangeFocus(overlay));
+        AddStep("Click the first box (the overlay goes on the stack)", () =>
+        {
+            InputManager.MoveMouseTo(first);
+            InputManager.Click(MouseButton.Left);
+        });
+        AddAssert("First focused", () => first.HasFocus);
+
+        // The corner of the scene is covered only by the non-focusable background.
+        AddStep("Click on the plain background", () =>
+        {
+            InputManager.MoveMouseTo(new Vector2(5, 5));
+            InputManager.Click(MouseButton.Left);
+        });
+        AddAssert("Focus is back on the overlay", () => overlay.HasFocus);
+        AddAssert("The click handed it back", () => overlay.LastFocus?.Source == FocusSource.Pointer && !overlay.IsFocusVisible);
+    }
+
     private partial class FocusableBox : Box
     {
         public override bool AcceptsFocus => true;
 
+        /// <summary>
+        /// The last focus event this box was sent.
+        /// </summary>
+        public FocusEvent? LastFocus { get; private set; }
+
         public void ReleaseFocus() => GetContainingFocusManager()?.ChangeFocus(null);
+
+        public override void OnFocus(FocusEvent e) => LastFocus = e;
     }
 
     /// <summary>
