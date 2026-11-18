@@ -1671,7 +1671,7 @@ public abstract class AppHost : IDisposable
 
     private FramePacing pacing => FramePacing.Current(Options.AppType);
 
-    private double getDisplayHz() => Window?.DisplayHz > 0 ? Window.DisplayHz : 60;
+    private double getDisplayHz() => Window?.DisplayRefreshRate > 0 ? Window.DisplayRefreshRate : 60;
 
     private bool windowInactive => Window != null && !Window.IsActive;
 

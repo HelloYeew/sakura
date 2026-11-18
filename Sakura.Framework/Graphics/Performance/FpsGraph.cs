@@ -472,7 +472,7 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
         /// <summary>
         /// Budget to measure against when the thread is unthrottled
         /// </summary>
-        private double fallbackBudgetMs => host.Window?.DisplayHz > 0 ? 1000.0 / host.Window.DisplayHz : 1000.0 / 60;
+        private double fallbackBudgetMs => host.Window?.DisplayRefreshRate > 0 ? 1000.0 / host.Window.DisplayRefreshRate : 1000.0 / 60;
 
         public ThreadStatisticsDisplay(string name, IFrameBasedClock clock, Color baseColor, AppHost host, Func<ThreadFrameStatistics> getStatistics)
         {

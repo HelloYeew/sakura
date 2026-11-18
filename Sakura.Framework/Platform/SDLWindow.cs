@@ -20,6 +20,7 @@ using Sakura.Framework.Platform.Dialogs;
 using Sakura.Framework.Reactive;
 using Sakura.Framework.Statistic;
 using Sakura.Framework.Timing;
+using Sakura.Framework.Utilities;
 using SDL;
 using static SDL.SDL3;
 using SakuraCursorState = Sakura.Framework.Input.CursorState;
@@ -488,7 +489,8 @@ public class SDLWindow : IWindow
     public bool IsExiting { get; private set; }
 
     private bool isOccluded;
-    public int DisplayHz { get; private set; } = 60;
+    public int DisplayHz => (int)Math.Round(DisplayRefreshRate);
+    public double DisplayRefreshRate { get; private set; } = 60;
     public Reactive<string> DisplayName { get; } = new Reactive<string>(string.Empty);
 
     // TODO: This update action also no longer needed since it's handled in host's main loop
@@ -686,8 +688,8 @@ public class SDLWindow : IWindow
 
         OnCreated(window);
 
-        DisplayHz = getDisplayRefreshRate();
-        Logger.Verbose($"Display refresh rate: {DisplayHz} Hz");
+        DisplayRefreshRate = getDisplayRefreshRate();
+        Logger.Verbose($"Display refresh rate: {DisplayRefreshRate:0.###} Hz");
         updateDisplayName();
 
         int w, h;
@@ -1133,7 +1135,7 @@ public class SDLWindow : IWindow
 
         // The active display mode and Retina backing scale can differ in fullscreen, so refresh the
         // cached refresh rate; size is refreshed by the caller via handleSizeChanged().
-        DisplayHz = getDisplayRefreshRate();
+        DisplayRefreshRate = getDisplayRefreshRate();
 
         return WindowMode.Fullscreen;
     }
@@ -1870,13 +1872,13 @@ public class SDLWindow : IWindow
 
     private void updateDisplayHz()
     {
-        int oldHz = DisplayHz;
-        DisplayHz = getDisplayRefreshRate();
+        double oldRate = DisplayRefreshRate;
+        DisplayRefreshRate = getDisplayRefreshRate();
 
-        if (oldHz == DisplayHz)
+        if (Precision.AlmostEquals(oldRate, DisplayRefreshRate))
             return;
 
-        Logger.Debug($"Display refresh rate changed from {oldHz} Hz to {DisplayHz} Hz");
+        Logger.Debug($"Display refresh rate changed from {oldRate:0.###} Hz to {DisplayRefreshRate:0.###} Hz");
         DisplayChanged.Invoke(DisplayHz);
     }
 
@@ -1891,18 +1893,27 @@ public class SDLWindow : IWindow
         DisplayName.Value = name;
     }
 
-    private unsafe int getDisplayRefreshRate()
+    /// <summary>
+    /// The display's refresh rate as exactly as the system gives it: the platform's own figure where there is one, else
+    /// SDL's display mode, else 60.
+    /// </summary>
+    private unsafe double getDisplayRefreshRate()
     {
         if (GetPlatformRefreshRate() is float platformRate && platformRate > 0)
-            return (int)Math.Round(platformRate);
+            return platformRate;
 
         var mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window));
+        double rate = mode != null ? RefreshRateOf(mode->refresh_rate_numerator, mode->refresh_rate_denominator, mode->refresh_rate) : 0;
 
-        if (mode != null && mode->refresh_rate > 0)
-            return (int)Math.Round(mode->refresh_rate);
-
-        return 60;
+        return rate > 0 ? rate : 60;
     }
+
+    /// <summary>
+    /// A display mode's refresh rate, from SDL's exact fraction where it gives one (60000/1001 for 59.94 Hz), else from
+    /// its float. 0 when the mode says neither.
+    /// </summary>
+    internal static double RefreshRateOf(int numerator, int denominator, float rate)
+        => numerator > 0 && denominator > 0 ? (double)numerator / denominator : Math.Max(rate, 0);
 
     /// <summary>
     /// Process all pending window events.

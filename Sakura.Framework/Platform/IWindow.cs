@@ -39,9 +39,16 @@ public interface IWindow : IDisposable
     bool IsExiting { get; }
 
     /// <summary>
-    /// The refresh rate of the display the window is on.
+    /// The refresh rate of the display the window is on, rounded to a whole number: 60 for a 59.94 Hz display. For
+    /// timing, use <see cref="DisplayRefreshRate"/>.
     /// </summary>
     int DisplayHz { get; }
+
+    /// <summary>
+    /// The exact refresh rate of the display the window is on, in Hz: 59.94 where <see cref="DisplayHz"/> says 60. A
+    /// frame timer run at the rounded rate drifts against the display, a refresh every 17 seconds at 59.94 Hz.
+    /// </summary>
+    double DisplayRefreshRate => DisplayHz;
 
     /// <summary>
     /// The name of the display the window is on, as the system calls it ("Built-in Retina Display"), or empty where it
