@@ -427,6 +427,9 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
     private void cycleFrameLimiter() =>
         Host.FrameLimiter.Value = (FrameSync)(((int)Host.FrameLimiter.Value + 1) % Enum.GetValues<FrameSync>().Length);
 
+    private void cycleLowLatencyMode() =>
+        Host.LowLatencyMode.Value = (LowLatencyMode)(((int)Host.LowLatencyMode.Value + 1) % Enum.GetValues<LowLatencyMode>().Length);
+
     private void toggleDebugTools() => debugWindows.Toggle(() => new DebugToolsWindow(new (string, Action)[]
     {
         ("Frame graph (Ctrl+F11)", cycleFpsGraph),
@@ -437,6 +440,7 @@ public partial class App : Container, IFocusManager, IInputManagerProvider
         ("Log (Ctrl+Shift+L)", toggleLogOverlay),
         ("Safe area preview (Ctrl+F6)", cycleSafeAreaPreview),
         ("Frame limiter (Ctrl+F10)", cycleFrameLimiter),
+        ("Low latency mode", cycleLowLatencyMode),
         ("Execution mode (Ctrl+F7)", toggleExecutionMode),
     }));
 

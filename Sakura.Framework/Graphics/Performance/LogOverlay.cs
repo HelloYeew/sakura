@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Concurrent;
+using System.Globalization;
 using Sakura.Framework.Allocation;
 using Sakura.Framework.Configurations;
 using Sakura.Framework.Extensions.DrawableExtensions;
@@ -144,7 +145,7 @@ public partial class LogOverlay : Container, IRemoveFromDrawVisualiser
                         {
                             Anchor = Anchor.CentreLeft,
                             Origin = Anchor.CentreLeft,
-                            Text = entry.Timestamp.ToLocalTime().ToString("HH:mm:ss"),
+                            Text = entry.Timestamp.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture),
                             Font = font,
                             Color = time_color
                         }),
@@ -195,6 +196,7 @@ public partial class LogOverlay : Container, IRemoveFromDrawVisualiser
         lines.Add(line);
         line.FadeInFromZero(fade_in_ms).Wait(style.Lifetime).FadeOut(fade_out_ms, Easing.InQuad);
         line.Expire();
+        return;
 
         // A fixed-width cell, so the columns line up from one line to the next.
         static Container cell(float width, Drawable content) => new Container

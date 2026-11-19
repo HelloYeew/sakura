@@ -295,14 +295,25 @@ public partial class FpsGraph : Container, IRemoveFromDrawVisualiser
     {
         if (backendText.IsNull())
             return;
-        
+
         double displayLatency = host.Renderer?.DisplayLatencyMilliseconds ?? double.NaN;
         string displayLatencyText = double.IsNaN(displayLatency) ? string.Empty : $" {displayLatency:F1}ms shown";
 
         double audioLatency = host.AudioManager?.OutputLatencyMs ?? 0;
         string audioLatencyText = audioLatency > 0 ? $" {audioLatency:F1}ms out" : string.Empty;
 
-        backendText.Text = $"{getRendererText()}{displayLatencyText} · {getAudioText()}{audioLatencyText}";
+        string lowLatencyText = host.Renderer?.LowLatencyProvider switch
+        {
+            LowLatencyProvider.NvidiaReflex => " Reflex",
+            LowLatencyProvider.AmdAntiLag => " Anti-Lag 2",
+            LowLatencyProvider.GpuWait => " GPU wait",
+            _ => string.Empty
+        };
+
+        if (host.LowLatencyMode?.Value == LowLatencyMode.Off)
+            lowLatencyText = string.Empty;
+
+        backendText.Text = $"{getRendererText()}{lowLatencyText}{displayLatencyText} · {getAudioText()}{audioLatencyText}";
     }
 
     private string getRendererText()

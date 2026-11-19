@@ -208,6 +208,13 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
             pPresentModes = modes,
         };
 
+        // Reflex paces only a swapchain made for it; whether it does is set per frame (vkSetLatencySleepModeNV).
+        var latency = new VkSwapchainLatencyCreateInfoNV
+        {
+            pNext = switching ? &presentModes : null,
+            latencyModeEnable = true,
+        };
+
         uint* families = stackalloc uint[] { device.GraphicsQueueFamily, device.PresentQueueFamily };
         bool shared = device.GraphicsQueueFamily != device.PresentQueueFamily;
 
@@ -232,7 +239,7 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
             presentMode = presentMode,
             clipped = true,
             oldSwapchain = oldSwapchain,
-            pNext = switching ? &presentModes : null,
+            pNext = device.SupportsLowLatency2 ? &latency : latency.pNext,
         };
 
         VkSwapchainKHR swapchain;

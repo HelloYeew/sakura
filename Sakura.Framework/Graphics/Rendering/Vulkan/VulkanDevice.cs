@@ -41,6 +41,11 @@ internal sealed unsafe class VulkanDevice : IDisposable
     private const string present_id_extension = "VK_KHR_present_id";
     private const string present_wait_extension = "VK_KHR_present_wait";
 
+    // The drivers' own ways to start each frame just in time for the GPU: NVIDIA Reflex, and AMD Anti-Lag 2 (which a layer
+    // such as low_latency_layer also provides on other cards on Linux).
+    private const string low_latency2_extension = "VK_NV_low_latency2";
+    private const string anti_lag_extension = "VK_AMD_anti_lag";
+
     // When each present actually reached the screen. Android's own swapchain offers it on every device.
     private const string display_timing_extension = "VK_GOOGLE_display_timing";
     private const string surface_capabilities2_extension = "VK_KHR_get_surface_capabilities2";
@@ -102,6 +107,8 @@ internal sealed unsafe class VulkanDevice : IDisposable
         "VK_KHR_swapchain_maintenance1",
         "VK_EXT_swapchain_maintenance1",
         "VK_EXT_memory_budget",
+        low_latency2_extension,
+        anti_lag_extension,
     ];
 
     private static readonly VkVersion version_1_0 = new VkVersion(1, 0, 0);
@@ -183,6 +190,23 @@ internal sealed unsafe class VulkanDevice : IDisposable
     /// (<c>VK_GOOGLE_display_timing</c>).
     /// </summary>
     public bool SupportsDisplayTiming { get; private set; }
+
+    /// <summary>
+    /// Whether NVIDIA Reflex is enabled on the device (<c>VK_NV_low_latency2</c>). Only where low latency was asked for
+    /// when the device was made, and the device takes present IDs and timeline semaphores, which it needs.
+    /// </summary>
+    public bool SupportsLowLatency2 { get; private set; }
+
+    /// <summary>
+    /// Whether AMD Anti-Lag 2 is enabled on the device (<c>VK_AMD_anti_lag</c>). Only where low latency was asked for when
+    /// the device was made, and Reflex isn't there.
+    /// </summary>
+    public bool SupportsAntiLag { get; private set; }
+
+    /// <summary>
+    /// Whether low latency was asked for when the device was made, which is when a driver's latency extension is enabled.
+    /// </summary>
+    private readonly bool lowLatencyAsked;
 
     /// <summary>
     /// Whether a swapchain can be created to switch between compatible present modes from one present to
@@ -268,8 +292,12 @@ internal sealed unsafe class VulkanDevice : IDisposable
     /// owns it from here.</param>
     /// <param name="allowSoftware">Whether a software device (<see cref="VkPhysicalDeviceType.Cpu"/>) may be
     /// chosen.</param>
-    public VulkanDevice(IVulkanGraphicsSurface? windowSurface, out VkSurfaceKHR surface, bool allowSoftware = true)
+    /// <param name="lowLatency">Whether to enable a driver's latency extension (<see cref="SupportsLowLatency2"/>,
+    /// <see cref="SupportsAntiLag"/>) where the device has one. Only when presenting.</param>
+    public VulkanDevice(IVulkanGraphicsSurface? windowSurface, out VkSurfaceKHR surface, bool allowSoftware = true, bool lowLatency = false)
     {
+        lowLatencyAsked = lowLatency;
+
         if (!loader_available.Value)
             throw new InvalidOperationException("The Vulkan loader could not be loaded.");
 
@@ -886,6 +914,11 @@ internal sealed unsafe class VulkanDevice : IDisposable
         var maintenance = new VkPhysicalDeviceSwapchainMaintenance1FeaturesKHR();
         void* chain = presents ? choosePresentFeatures(candidate, extensions, &presentId, &presentWait, &maintenance, features) : features;
 
+        var antiLag = new VkPhysicalDeviceAntiLagFeaturesAMD();
+
+        if (presents && lowLatencyAsked)
+            chain = chooseLowLatencyFeatures(candidate, extensions, &antiLag, chain, features != null);
+
         var families = new List<uint> { candidate.GraphicsFamily };
 
         if (!families.Contains(candidate.PresentFamily))
@@ -1045,6 +1078,39 @@ internal sealed unsafe class VulkanDevice : IDisposable
     }
 
     /// <summary>
+    /// Enables NVIDIA Reflex (<c>VK_NV_low_latency2</c>) where the device has it, present IDs are on and timeline semaphores
+    /// are too, which its sleep signals; else AMD Anti-Lag 2 (<c>VK_AMD_anti_lag</c>) where the device has it and its
+    /// feature, which is turned on. Adds the extension to <paramref name="extensions"/> and returns the head of the feature
+    /// chain, with Anti-Lag's feature linked in front of <paramref name="next"/> where it's enabled.
+    /// </summary>
+    private void* chooseLowLatencyFeatures(Candidate candidate, List<string> extensions, VkPhysicalDeviceAntiLagFeaturesAMD* antiLag, void* next, bool timelineSemaphores)
+    {
+        if (SupportsPresentWait && timelineSemaphores && candidate.Extensions.Contains(low_latency2_extension))
+        {
+            extensions.Add(low_latency2_extension);
+            SupportsLowLatency2 = true;
+            return next;
+        }
+
+        // Feature support is only known through the properties2 queries.
+        if (!candidate.Extensions.Contains(anti_lag_extension) || InstanceApiVersion.Minor < 1 || candidate.Properties.apiVersion.Minor < 1)
+            return next;
+
+        var supportedAntiLag = new VkPhysicalDeviceAntiLagFeaturesAMD();
+        var supported = new VkPhysicalDeviceFeatures2 { pNext = &supportedAntiLag };
+        InstanceApi.vkGetPhysicalDeviceFeatures2(candidate.Device, &supported);
+
+        if (!supportedAntiLag.antiLag)
+            return next;
+
+        extensions.Add(anti_lag_extension);
+        antiLag->antiLag = true;
+        antiLag->pNext = next;
+        SupportsAntiLag = true;
+        return antiLag;
+    }
+
+    /// <summary>
     /// The queue family to decode video on, adding the extensions that takes to
     /// <paramref name="extensions"/>: the video queue extensions, and the decode extension of every codec
     /// the family reports. Null when the device has no video decode queue, or decodes no codec it has an
@@ -1136,7 +1202,7 @@ internal sealed unsafe class VulkanDevice : IDisposable
             ? $"Vulkan video: decodes {DecodeOperations} on queue family {decodeFamily}, into frames the renderer samples in place"
             : $"Vulkan video: no decode queue{(SharesVideoFrames ? string.Empty : ", and decoded frames couldn't be shared (needs Vulkan 1.3 with timeline semaphores and synchronization2)")}");
         Logger.Verbose($"Vulkan optional extensions available: {(optional.Length > 0 ? optional : "none")}");
-        Logger.Verbose($"Vulkan presentation: present wait {(SupportsPresentWait ? "on" : "unavailable")}, display timing {(SupportsDisplayTiming ? "on" : "unavailable")}, present-mode switching {(SupportsPresentModeSwitching ? "on" : "unavailable")}, GPU timestamps {(GraphicsTimestampBits > 0 ? $"{GraphicsTimestampBits} bits" : "unavailable")}");
+        Logger.Verbose($"Vulkan presentation: present wait {(SupportsPresentWait ? "on" : "unavailable")}, display timing {(SupportsDisplayTiming ? "on" : "unavailable")}, present-mode switching {(SupportsPresentModeSwitching ? "on" : "unavailable")}, GPU timestamps {(GraphicsTimestampBits > 0 ? $"{GraphicsTimestampBits} bits" : "unavailable")}, low latency {(SupportsLowLatency2 ? low_latency2_extension : SupportsAntiLag ? anti_lag_extension : lowLatencyAsked ? "by waiting for the GPU (no driver extension)" : "off")}");
         Logger.Verbose($"Vulkan validation: {(ValidationEnabled ? syncValidation ? "on, with synchronization validation" : "on" : "off")}");
     }
 

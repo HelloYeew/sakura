@@ -194,6 +194,12 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     /// </summary>
     private volatile bool vsyncRequested = true;
 
+    // Requested by the host from any thread through SetLowLatencyMode; applied by SleepForLowLatency on the draw thread.
+    // The mode when the device is made also decides whether a driver's latency extension is enabled.
+    private volatile LowLatencyMode lowLatencyRequested;
+
+    private VulkanLowLatency? lowLatency;
+
     private bool vsyncApplied = true;
 
     private VulkanFrameContext? currentFrame;
@@ -453,7 +459,8 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
     private void createDevice(IVulkanGraphicsSurface? vulkanSurface)
     {
-        device = new VulkanDevice(vulkanSurface, out var surface, AllowSoftwareDevice);
+        device = new VulkanDevice(vulkanSurface, out var surface, AllowSoftwareDevice, lowLatencyRequested != LowLatencyMode.Off);
+        lowLatency = new VulkanLowLatency(device);
         memory = new VulkanMemory(device);
         renderPasses = new VulkanRenderPasses(device);
         descriptors = new VulkanDescriptors(device);
@@ -503,6 +510,21 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
     public double LastBlockedMilliseconds => latencyWaitMilliseconds + presentMilliseconds;
 
     public void SetVSync(bool enabled) => vsyncRequested = enabled;
+
+    /// <inheritdoc/>
+    public void SetLowLatencyMode(LowLatencyMode mode) => lowLatencyRequested = mode;
+
+    /// <inheritdoc/>
+    public void SleepForLowLatency()
+    {
+        if (device == null || lowLatency == null || (swapchain == null && offscreenScreen == null))
+            return;
+
+        lowLatency.Sleep(lowLatencyRequested, swapchain, frames[lastSubmittedSlot]!.Fence);
+    }
+
+    /// <inheritdoc/>
+    public LowLatencyProvider LowLatencyProvider => lowLatency?.Provider ?? LowLatencyProvider.None;
 
     public void StartFrame()
     {
@@ -668,6 +690,10 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
 
         var frame = currentFrame;
 
+        // The update to draw was taken just before this.
+        lowLatency?.Mark(VkLatencyMarkerNV.SimulationEnd);
+        lowLatency?.Mark(VkLatencyMarkerNV.RendersubmitStart);
+
         // A frame with no image (minimised, or the swapchain is being rebuilt) still submits its uploads,
         // but draws nothing.
         if (currentImage != null || offscreenScreen != null)
@@ -709,6 +735,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
             frame.Stream.FlushWrites();
             submit(frame);
             submitted = true;
+            lowLatency?.Mark(VkLatencyMarkerNV.RendersubmitEnd);
         }
         finally
         {
@@ -1224,9 +1251,16 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
             pSignalSemaphoreValues = signalValues,
         };
 
-        var submitInfo = new VkSubmitInfo
+        // Ties the submit to the frame Reflex was told about.
+        var latencySubmission = new VkLatencySubmissionPresentIdNV
         {
             pNext = timeline.Length > 0 ? &timelineInfo : null,
+            presentID = lowLatency?.MarkedPresentId ?? 0,
+        };
+
+        var submitInfo = new VkSubmitInfo
+        {
+            pNext = lowLatency?.MarkedPresentId != null ? &latencySubmission : latencySubmission.pNext,
             waitSemaphoreCount = count,
             pWaitSemaphores = waitSemaphores,
             pWaitDstStageMask = waitStages,
@@ -1253,8 +1287,12 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
         long start = Stopwatch.GetTimestamp();
         VkResult result;
 
+        lowLatency?.BeforePresent();
+
         using (device!.PresentQueueLock.EnterScope())
             result = swapchain!.Present(image);
+
+        lowLatency?.AfterPresent();
 
         presentMilliseconds += Stopwatch.GetElapsedTime(start).TotalMilliseconds;
 
@@ -2670,6 +2708,7 @@ public sealed unsafe class VulkanRenderer : ICustomShaderRenderer, IDisposable
             return;
 
         device.WaitIdle();
+        lowLatency?.Dispose();
 
         // Releasing retires each one into the last frame, which the frame disposal below then destroys.
         IDisposable[] remaining;

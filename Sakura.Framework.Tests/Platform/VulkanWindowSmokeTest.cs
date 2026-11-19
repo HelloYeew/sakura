@@ -26,7 +26,8 @@ namespace Sakura.Framework.Tests.Platform;
 /// The Vulkan renderer through a real window: the window system's surface, a swapchain, presentation, two
 /// resizes and two present mode changes (which also change the frames in flight), all under the validation
 /// layer. A resize has to rebuild the swapchain; a present mode change either rebuilds it or, where the
-/// driver can switch modes per present, switches without one.
+/// driver can switch modes per present, switches without one. Each frame waits for the GPU to finish the one
+/// before (the low latency mode).
 /// </summary>
 /// <remarks>
 /// Linux only. The window has to live on the thread the test runs on, which macOS forbids for anything but
@@ -74,6 +75,7 @@ public class VulkanWindowSmokeTest
                 Assert.That(app.Completed, Is.True, "the script ran to the end");
                 Assert.That(host.Renderer, Is.InstanceOf<VulkanRenderer>(), "the window rendered through Vulkan");
                 Assert.That(frames, Is.GreaterThan(30), "frames were drawn");
+                Assert.That(host.Renderer?.LowLatencyProvider, Is.EqualTo(LowLatencyProvider.GpuWait), "what carried the low latency mode");
                 Assert.That(app.StepsNotFollowed, Is.Empty, "steps the swapchain didn't follow (no rebuild, and no present mode switch for a mode change)");
                 Assert.That(stat_validation_messages.Value - validationBefore, Is.Zero, "validation messages (the log has them)");
             });
@@ -139,6 +141,10 @@ public class VulkanWindowSmokeTest
         public override void Load()
         {
             base.Load();
+
+            // The whole script runs with each frame waiting for the GPU to finish the one before, through the swapchain's
+            // rebuilds and present mode changes. Turned on after the device was made, so no driver's extension carries it.
+            host.LowLatencyMode.Value = LowLatencyMode.On;
 
             Add(box = new Box
             {

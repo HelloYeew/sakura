@@ -338,10 +338,9 @@ public partial class ScrollableContainer : Container
     {
         target = targetScroll;
 
-        if (!tryGetOffsetWithinContent(d, out Vector2 childPos))
+        if (!tryGetBoundsWithinContent(d, out Vector2 childPos, out Vector2 childSize))
             return false;
 
-        Vector2 childSize = d.DrawSize * d.Scale;
         Vector2 viewport = DrawSize;
 
         // Vertical Visibility
@@ -366,24 +365,65 @@ public partial class ScrollableContainer : Container
     }
 
     /// <summary>
-    /// Walks up from <paramref name="d"/> to <see cref="ScrollContent"/>, summing positions to get
-    /// its offset within the scrolled content. Returns false when <paramref name="d"/> is not
-    /// beneath this container at all, in which case there is nothing sensible to scroll to.
+    /// Walks up from <paramref name="d"/> to <see cref="ScrollContent"/>, placing it in each parent as
+    /// <see cref="Drawable.UpdateTransforms"/> does, to get where its top-left corner is within the scrolled content
+    /// and how large it is there. Returns false when <paramref name="d"/> is not beneath this container at all, in
+    /// which case there is nothing sensible to scroll to.
     /// </summary>
-    private bool tryGetOffsetWithinContent(Drawable d, out Vector2 offset)
+    /// <remarks>
+    /// Worked out from the layout rather than from the drawn matrices, which a drawable scrolled out of view (and so
+    /// not updated) or one added this frame doesn't have yet. Rotation and shear are left out.
+    /// </remarks>
+    private bool tryGetBoundsWithinContent(Drawable d, out Vector2 topLeft, out Vector2 size)
     {
-        offset = Vector2.Zero;
+        // The drawable's corners in its own units, carried up one parent at a time.
+        Vector2 start = Vector2.Zero;
+        Vector2 end = d.DrawSize;
 
         for (var current = d; current != null; current = current.Parent)
         {
             if (ReferenceEquals(current, ScrollContent))
+            {
+                topLeft = start;
+                size = end - start;
                 return true;
+            }
 
-            offset += current.Position;
+            if (current.Parent == null)
+                break;
+
+            Vector2 corner = topLeftInParent(current, current.Parent);
+            start = corner + start * current.Scale;
+            end = corner + end * current.Scale;
         }
 
-        offset = Vector2.Zero;
+        topLeft = Vector2.Zero;
+        size = Vector2.Zero;
         return false;
+    }
+
+    /// <summary>
+    /// Where <paramref name="d"/>'s top-left corner sits in <paramref name="parent"/>'s box, as
+    /// <see cref="Drawable.UpdateTransforms"/> places it: its position (relative axes resolved), anchor and margin,
+    /// less its origin, plus the parent's padding.
+    /// </summary>
+    private static Vector2 topLeftInParent(Drawable d, Container parent)
+    {
+        Vector2 position = d.Position;
+        Vector2 relativeToAbsolute = parent.RelativeToAbsoluteFactor;
+
+        if ((d.RelativePositionAxes & Axes.X) != 0)
+            position.X = (position.X - parent.RelativeChildOffset.X) * relativeToAbsolute.X;
+        if ((d.RelativePositionAxes & Axes.Y) != 0)
+            position.Y = (position.Y - parent.RelativeChildOffset.Y) * relativeToAbsolute.Y;
+
+        Vector2 anchor = Drawable.GetAnchorOriginVector(d.Anchor);
+        Vector2 room = parent.ChildSize - d.Margin.Total;
+        Vector2 drawn = d.DrawSize * d.Scale;
+
+        return new Vector2(
+            parent.Padding.Left + position.X + anchor.X * room.X + d.Margin.Left - d.OriginVector.X * drawn.X,
+            parent.Padding.Top + position.Y + anchor.Y * room.Y + d.Margin.Top - d.OriginVector.Y * drawn.Y);
     }
 
     #endregion

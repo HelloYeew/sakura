@@ -78,6 +78,31 @@ public interface IRenderer
     bool SupportsLateLatch => false;
 
     /// <summary>
+    /// Sets the low latency mode, from any thread. The host sets it once before <see cref="Initialize"/>, since a Vulkan
+    /// driver's latency extension has to be asked for when the device is made, and again whenever the setting changes;
+    /// the draw thread applies it at the next <see cref="SleepForLowLatency"/>. Renderers that can't carry it leave this
+    /// a no-op.
+    /// </summary>
+    void SetLowLatencyMode(LowLatencyMode mode) { }
+
+    /// <summary>
+    /// Called once a frame on the draw thread, first in the frame, before <see cref="Clear"/> and <see cref="StartFrame"/>
+    /// and so before the host takes the update to draw. Under <see cref="LowLatencyMode.On"/> or
+    /// <see cref="LowLatencyMode.Boost"/> it waits until the frame can start just in time for the GPU (NVIDIA Reflex's
+    /// sleep, AMD Anti-Lag 2's update, or the frame before finishing on the GPU). Under <see cref="LowLatencyMode.Off"/>
+    /// it returns at once. Renderers that can't carry the mode leave this a no-op.
+    /// </summary>
+    void SleepForLowLatency() { }
+
+    /// <summary>
+    /// What carries the low latency mode on this device, once a frame has been drawn with it on;
+    /// <see cref="Rendering.LowLatencyProvider.None"/> before that, and on renderers that can't carry it. It changes during
+    /// the run if what carried it stops working: the driver's own falls back to waiting for the GPU, and a wait that keeps
+    /// timing out to none.
+    /// </summary>
+    LowLatencyProvider LowLatencyProvider => LowLatencyProvider.None;
+
+    /// <summary>
     /// For a renderer that queues fewer frames under VSync than it could, for a fresher picture: the host saw frames keep
     /// missing their refresh, so it should queue more again.
     /// </summary>

@@ -39,6 +39,13 @@ internal readonly record struct FramePacing(AppType AppType, bool Mobile)
     public FrameSync DefaultFrameLimiter => AppType == AppType.Game && !Mobile ? FrameSync.Limit2x : FrameSync.VSync;
 
     /// <summary>
+    /// The low latency mode an install starts with. On for a game on desktop, where a frame queued behind the GPU is input
+    /// shown late, and whatever carries it falls back by itself where it can't. Off elsewhere: an application gains nothing
+    /// from it, and a phone's renderer has no driver to ask.
+    /// </summary>
+    public LowLatencyMode DefaultLowLatencyMode => AppType == AppType.Game && !Mobile ? LowLatencyMode.On : LowLatencyMode.Off;
+
+    /// <summary>
     /// How much longer than the display's shortest refresh a frame takes under <see cref="FrameSync.VariableRefresh"/>, in
     /// seconds: 1/3600 s, which caps 144 Hz at 138.5 fps and 240 Hz at 225. A frame that arrives sooner than the display can
     /// refresh again waits or tears, and a timer's wake-up varies by tens of microseconds, so the margin is a time, the same

@@ -60,5 +60,6 @@ public class FrameworkConfigManager : ConfigManager<FrameworkSetting>
         // WASAPI's exclusive mode on Windows: the lowest delay, but every other app goes silent while it plays (voice chat
         // too) and the system's effects are skipped, so it's for the player to turn on.
         Get(FrameworkSetting.AudioExclusiveMode, false);
+        Get(FrameworkSetting.LowLatencyMode, pacing.DefaultLowLatencyMode);
     }
 }
