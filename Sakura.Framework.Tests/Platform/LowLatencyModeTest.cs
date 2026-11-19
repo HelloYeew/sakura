@@ -8,7 +8,7 @@ using Sakura.Framework.Platform;
 namespace Sakura.Framework.Tests.Platform;
 
 /// <summary>
-/// Where the low latency mode comes from: the setting, its default from the host's options, and the environment variable
+/// Where the low latency mode comes from: the setting, which a desktop game starts with on, and the environment variable
 /// that overrides it for comparing.
 /// </summary>
 public class LowLatencyModeTest
@@ -26,23 +26,14 @@ public class LowLatencyModeTest
     [TestCase("reflex")]
     public void AnythingElseLeavesTheSettingInCharge(string? value) => Assert.That(AppHost.ParseLowLatencyMode(value!), Is.Null);
 
-    [TestCase(AppType.Game)]
-    [TestCase(AppType.Application)]
-    public void AnInstallStartsWithItOff(AppType appType)
+    [TestCase(AppType.Game, false, LowLatencyMode.On)]
+    [TestCase(AppType.Application, false, LowLatencyMode.Off)]
+    [TestCase(AppType.Game, true, LowLatencyMode.Off)]
+    [TestCase(AppType.Application, true, LowLatencyMode.Off)]
+    public void OnlyADesktopGameStartsWithItOn(AppType appType, bool mobile, LowLatencyMode expected)
     {
-        var config = new FrameworkConfigManager(null!, appType);
+        var config = new FrameworkConfigManager(null!, new FramePacing(appType, mobile));
 
-        Assert.That(config.Get<LowLatencyMode>(FrameworkSetting.LowLatencyMode).Value, Is.EqualTo(LowLatencyMode.Off));
+        Assert.That(config.Get<LowLatencyMode>(FrameworkSetting.LowLatencyMode).Value, Is.EqualTo(expected));
     }
-
-    [Test]
-    public void TheHostCanStartAnInstallWithItOn()
-    {
-        var config = new FrameworkConfigManager(null!, new FramePacing(AppType.Game, false), LowLatencyMode.On);
-
-        Assert.That(config.Get<LowLatencyMode>(FrameworkSetting.LowLatencyMode).Value, Is.EqualTo(LowLatencyMode.On));
-    }
-
-    [Test]
-    public void HostOptionsDefaultToOff() => Assert.That(new HostOptions().DefaultLowLatencyMode, Is.EqualTo(LowLatencyMode.Off));
 }

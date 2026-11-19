@@ -81,8 +81,9 @@ public abstract class AppHost : IDisposable
 
     /// <summary>
     /// Whether each frame starts just in time for the GPU, through NVIDIA Reflex or AMD Anti-Lag 2 where the device has
-    /// them. Saved as <see cref="FrameworkSetting.LowLatencyMode"/>; <see cref="HostOptions.DefaultLowLatencyMode"/> is
-    /// where an install starts. What carries it is <see cref="IRenderer.LowLatencyProvider"/>.
+    /// them. Saved as <see cref="FrameworkSetting.LowLatencyMode"/>: on for a desktop game from the start, off otherwise.
+    /// What carries it is <see cref="IRenderer.LowLatencyProvider"/>, which falls back by itself where that fails.
+    /// <c>SAKURA_LOW_LATENCY</c> overrides it for comparing: <c>off</c>, <c>on</c> or <c>boost</c>.
     /// </summary>
     public Reactive<LowLatencyMode> LowLatencyMode { get; private set; }
 
@@ -742,7 +743,7 @@ public abstract class AppHost : IDisposable
     {
         Logger.Storage = GetLogStorage();
 
-        FrameworkConfigManager = new FrameworkConfigManager(Storage, pacing, Options.DefaultLowLatencyMode);
+        FrameworkConfigManager = new FrameworkConfigManager(Storage, Options.AppType);
         FrameworkConfigManager.Load();
     }
 
