@@ -20,7 +20,7 @@ internal readonly record struct FramePacing(AppType AppType, bool Mobile)
     public const double MOBILE_MAX_UPDATE_HZ = 240;
 
     /// <summary>
-    /// The fastest anything updates or polls on desktop.
+    /// The fastest anything updates or ticks on desktop.
     /// </summary>
     public const double DESKTOP_MAX_HZ = 1000;
 
@@ -110,12 +110,6 @@ internal readonly record struct FramePacing(AppType AppType, bool Mobile)
     }
 
     /// <summary>
-    /// How often the input loop runs when it has the SDL thread to itself, or at most how long it waits for an
-    /// event when it <see cref="InputWaitsForEvents"/>.
-    /// </summary>
-    public double InputHz(double displayHz) => AppType == AppType.Game && !Mobile ? DESKTOP_MAX_HZ : displayHz;
-
-    /// <summary>
     /// How fast the audio thread advances audio state. An application polls no faster than it can show the
     /// result: nobody hears a click sound start a frame late.
     /// </summary>
@@ -134,11 +128,4 @@ internal readonly record struct FramePacing(AppType AppType, bool Mobile)
         // tidying up, which a frame's delay doesn't change.
         return playbackWaitsForUpdate ? MOBILE_GAME_AUDIO_HZ : displayHz;
     }
-
-    /// <summary>
-    /// Whether the input loop, on a thread of its own, sleeps until an event arrives rather than polling. An event
-    /// wakes it at once, so input is no later, and with nothing happening it wakes once a frame instead of a
-    /// thousand times a second.
-    /// </summary>
-    public bool InputWaitsForEvents => Mobile;
 }

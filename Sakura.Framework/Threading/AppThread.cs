@@ -86,8 +86,19 @@ public class AppThread
     /// </summary>
     public Func<string, double, IFrameWorkHint?>? CreateWorkHint { get; set; }
 
+    /// <summary>
+    /// Optional. Run on this thread when <see cref="Wake"/> cuts its wait for the next frame short, after which it waits out
+    /// the rest of that wait. For work that shouldn't wait for the next frame, such as input to dispatch.
+    /// </summary>
+    public Action? OnWake { get; set; }
+
     private Thread? internalThread;
     private volatile bool isRunning;
+
+    /// <summary>
+    /// The waiter of the run of the loop under way, for <see cref="Wake"/> to reach from another thread.
+    /// </summary>
+    private volatile FrameWaiter? activeWaiter;
 
     /// <summary>
     /// Guards <see cref="pauseRequested"/> and <see cref="parked"/>, and is what a paused thread waits on.
@@ -128,13 +139,22 @@ public class AppThread
         internalThread.Start();
     }
 
+    /// <summary>
+    /// Has the thread run <see cref="OnWake"/> now rather than at the end of its wait for the next frame. A wake while it's
+    /// running a frame, or while it's paused, runs <see cref="OnWake"/> as soon as that frame ends or the thread resumes.
+    /// Safe to call from any thread. Does nothing while the thread isn't running on its own.
+    /// </summary>
+    public void Wake() => activeWaiter?.Wake();
+
     public void StopMultiThreaded()
     {
         isRunning = false;
 
-        // Wake it if it's paused, so it can see it should stop.
+        // Wake it if it's paused or waiting for a frame, so it can see it should stop.
         lock (pauseLock)
             Monitor.PulseAll(pauseLock);
+
+        activeWaiter?.Wake();
 
         internalThread?.Join(2000);
         internalThread = null;
@@ -257,6 +277,7 @@ public class AppThread
         // stops and later restarts the loop. A waiter disposed by the previous run would keep a closed
         // timer handle on Windows, failing every sleep over to Thread.Sleep.
         using var waiter = new FrameWaiter(Name, AllowSpinning);
+        activeWaiter = waiter;
 
         // Registration applies to the calling thread, so it can only happen here, on the thread itself.
         using var multimediaScheduler = UseMultimediaClassScheduler && OperatingSystem.IsWindows()
@@ -329,8 +350,12 @@ public class AppThread
                     nextFrameTime = now;
 
                 // Precise only when it pays (a focused game in play). Otherwise sleep the entire
-                // remaining time and accept sub-ms pacing jitter.
-                waiter.WaitUntil(nextFrameTime, UsePreciseTiming());
+                // remaining time and accept sub-ms pacing jitter. Woken early, it does what it was woken for, then
+                // waits out the rest.
+                while (!waiter.WaitUntil(nextFrameTime, UsePreciseTiming()) && isRunning)
+                {
+                    runWakeAction();
+                }
             }
             else
             {
@@ -338,8 +363,20 @@ public class AppThread
             }
         }
 
+        activeWaiter = null;
+
         if (statActivity != null)
             statActivity.Value = "Stopped";
+    }
+
+    /// <summary>
+    /// Runs <see cref="OnWake"/>, draining what it leaves for Objective-C to free as a frame does.
+    /// </summary>
+    private void runWakeAction()
+    {
+        IntPtr pool = AutoreleasePool.Push();
+        OnWake?.Invoke();
+        AutoreleasePool.Pop(pool);
     }
 
     private GlobalStatistic<string>? statActivity;
