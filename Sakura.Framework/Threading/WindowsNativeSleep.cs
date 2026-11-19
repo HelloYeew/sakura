@@ -10,7 +10,8 @@ using Sakura.Framework.Logging;
 namespace Sakura.Framework.Threading;
 
 /// <summary>
-/// High-precision sleep on Windows.
+/// High-precision sleep on Windows: a waitable timer, waited on together with an event that <see cref="Wake"/> sets, so
+/// another thread can end the sleep early.
 /// </summary>
 [SupportedOSPlatform("windows")]
 internal class WindowsNativeSleep : INativeSleep
@@ -53,6 +54,18 @@ internal class WindowsNativeSleep : INativeSleep
     private static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
 
     [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern unsafe uint WaitForMultipleObjects(uint nCount, IntPtr* lpHandles, [MarshalAs(UnmanagedType.Bool)] bool bWaitAll, uint dwMilliseconds);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern IntPtr CreateEventW(IntPtr lpEventAttributes, [MarshalAs(UnmanagedType.Bool)] bool bManualReset, [MarshalAs(UnmanagedType.Bool)] bool bInitialState, string? lpName);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetEvent(IntPtr hEvent);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CancelWaitableTimer(IntPtr hTimer);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr hObject);
 
     // ntdll timer-resolution APIs. Values are in 100ns units. These let us request the
@@ -75,6 +88,7 @@ internal class WindowsNativeSleep : INativeSleep
     private const uint timer_all_access = 2031619U;
     private const uint infinite = 0xFFFFFFFF;
     private const uint wait_object_0 = 0x00000000;
+    private const uint wait_object_1 = 0x00000001;
     private const int status_success = 0;
 
     /// <summary>
@@ -83,6 +97,12 @@ internal class WindowsNativeSleep : INativeSleep
     private const uint fallback_period_ms = 1;
 
     private readonly IntPtr waitableTimer;
+
+    /// <summary>
+    /// Set by <see cref="Wake"/>, and reset by the wait it ends, so one wake ends one sleep however many times it was set.
+    /// Zero if the system wouldn't give one, and then nothing wakes a sleep.
+    /// </summary>
+    private readonly IntPtr wakeEvent;
 
     /// <summary>
     /// Whether the timer was created with the high-resolution flag. When false we are using a
@@ -120,35 +140,68 @@ internal class WindowsNativeSleep : INativeSleep
             IsHighResolution = false;
         }
 
+        wakeEvent = CreateEventW(IntPtr.Zero, false, false, null);
+
         acquireTimerResolution();
 
         Logger.Debug($"WindowsNativeSleep initialized (highResolution: {IsHighResolution}, timerResolution: {describeResolution()})");
     }
 
-    public bool Sleep(TimeSpan duration)
+    public unsafe SleepResult Sleep(TimeSpan duration)
     {
         if (waitableTimer == IntPtr.Zero)
-            return false;
+            return SleepResult.Failed;
 
         if (duration <= TimeSpan.Zero)
-            return true;
+            return SleepResult.Slept;
 
         // Negative relative due time (100ns units). SetWaitableTimerEx interprets a negative
         // FILETIME as "this many 100ns intervals from now".
         var dueTime = FileTime.FromTimeSpan(duration);
 
         if (!SetWaitableTimerEx(waitableTimer, in dueTime, 0, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, 0))
-            return false;
+            return SleepResult.Failed;
 
         // Only treat the call as a successful precise sleep when the timer actually signaled.
-        // If the wait fails for any reason, report false so the caller falls back to Thread.Sleep.
-        return WaitForSingleObject(waitableTimer, infinite) == wait_object_0;
+        // If the wait fails for any reason, report a failure so the caller falls back to Thread.Sleep.
+        if (wakeEvent == IntPtr.Zero)
+            return WaitForSingleObject(waitableTimer, infinite) == wait_object_0 ? SleepResult.Slept : SleepResult.Failed;
+
+        IntPtr* handles = stackalloc IntPtr[2];
+        handles[0] = waitableTimer;
+        handles[1] = wakeEvent;
+
+        // The timer comes first: when both are signaled the lowest index is reported, so a wake that came as the timer fired
+        // stays set for the next sleep rather than being lost.
+        switch (WaitForMultipleObjects(2, handles, false, infinite))
+        {
+            case wait_object_0:
+                return SleepResult.Slept;
+
+            case wait_object_1:
+                // The timer is still set; left, it would fire into the next sleep and end that one early.
+                _ = CancelWaitableTimer(waitableTimer);
+                _ = WaitForSingleObject(waitableTimer, 0);
+                return SleepResult.Woken;
+
+            default:
+                return SleepResult.Failed;
+        }
+    }
+
+    public void Wake()
+    {
+        if (wakeEvent != IntPtr.Zero)
+            _ = SetEvent(wakeEvent);
     }
 
     public void Dispose()
     {
         if (waitableTimer != IntPtr.Zero)
             _ = CloseHandle(waitableTimer);
+
+        if (wakeEvent != IntPtr.Zero)
+            _ = CloseHandle(wakeEvent);
 
         releaseTimerResolution();
     }

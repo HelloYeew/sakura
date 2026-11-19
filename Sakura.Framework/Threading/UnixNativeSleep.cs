@@ -8,7 +8,7 @@ using Sakura.Framework.Platform;
 namespace Sakura.Framework.Threading;
 
 /// <summary>
-/// High-precision sleep on Unix/macOS using nanosleep(2).
+/// High-precision sleep on Unix using nanosleep(2), where there's no sleep that can be woken early: nothing can end this one.
 /// Falls back gracefully if libc cannot be found.
 /// </summary>
 internal class UnixNativeSleep : INativeSleep
@@ -51,7 +51,7 @@ internal class UnixNativeSleep : INativeSleep
         }
     }
 
-    public bool Sleep(TimeSpan duration)
+    public SleepResult Sleep(TimeSpan duration)
     {
         const long ns_per_second = 1_000_000_000L;
         long totalNs = (long)duration.TotalNanoseconds;
@@ -69,8 +69,10 @@ internal class UnixNativeSleep : INativeSleep
             ts = rem;
         }
 
-        return ret == 0;
+        return ret == 0 ? SleepResult.Slept : SleepResult.Failed;
     }
+
+    public void Wake() { }
 
     public void Dispose() { }
 }

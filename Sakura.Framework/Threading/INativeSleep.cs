@@ -11,8 +11,14 @@ namespace Sakura.Framework.Threading;
 internal interface INativeSleep : IDisposable
 {
     /// <summary>
-    /// Sleep for the given duration.
+    /// Sleeps for the given duration, or until <see cref="Wake"/> ends the sleep.
     /// </summary>
-    /// <returns>True if sleep succeeded; false if it should fall back to <see cref="System.Threading.Thread.Sleep(int)"/>.</returns>
-    bool Sleep(TimeSpan duration);
+    /// <returns>How the sleep ended. <see cref="SleepResult.Failed"/> means it should fall back to <see cref="System.Threading.Thread.Sleep(int)"/>.</returns>
+    SleepResult Sleep(TimeSpan duration);
+
+    /// <summary>
+    /// Ends the sleep under way early, or the next one if none is, which then returns <see cref="SleepResult.Woken"/> at once.
+    /// Several wakes before a sleep end only that one. Safe to call from any thread. Does nothing where a sleep can't be woken.
+    /// </summary>
+    void Wake();
 }
