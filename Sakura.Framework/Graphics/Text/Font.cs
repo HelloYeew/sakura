@@ -98,6 +98,17 @@ public class Font : IDisposable
 
     private readonly Lock stateLock = new Lock();
 
+    /// <summary>
+    /// The longest text whose scripts array a thread keeps between shapings (<see cref="scriptsFor"/>).
+    /// </summary>
+    private const int max_kept_scripts = 4096;
+
+    /// <summary>
+    /// The scripts array this thread keeps for shaping (<see cref="scriptsFor"/>).
+    /// </summary>
+    [ThreadStatic]
+    private static FontScript[]? threadScripts;
+
     public string Name { get; }
     public float Size { get; private set; } = 24;
 
@@ -280,12 +291,32 @@ public class Font : IDisposable
     private readonly INativeBytes fontData;
 
     /// <summary>
-    /// The script of every code unit in <paramref name="text"/>, with both halves of a surrogate pair
-    /// carrying the same value so the array can be indexed by string position.
+    /// An array for the scripts of a text of <paramref name="length"/> code units: the thread's own, grown to fit, or a new
+    /// one for text longer than it's kept for.
     /// </summary>
-    private static FontScript[] classifyScripts(string text, FontScript? languageHint)
+    /// <remarks>
+    /// Kept per thread rather than rented, since a font may be shaped from more than one thread, and the shared pool
+    /// drops its arrays at a full collection: the next text shaped then allocates again.
+    /// </remarks>
+    private static FontScript[] scriptsFor(int length)
     {
-        var scripts = new FontScript[text.Length];
+        var scripts = threadScripts;
+
+        if (scripts != null && scripts.Length >= length)
+            return scripts;
+
+        if (length > max_kept_scripts)
+            return new FontScript[length];
+
+        return threadScripts = new FontScript[Math.Max(length, Math.Min(max_kept_scripts, (scripts?.Length ?? 16) * 2))];
+    }
+
+    /// <summary>
+    /// Writes the script of every code unit in <paramref name="text"/> to <paramref name="scripts"/>, with both halves of a
+    /// surrogate pair carrying the same value so it can be indexed by string position.
+    /// </summary>
+    private static void classifyScripts(string text, FontScript? languageHint, Span<FontScript> scripts)
+    {
         var current = FontScript.Any;
 
         int i = 0;
@@ -313,8 +344,6 @@ public class Font : IDisposable
 
             i += charLen;
         }
-
-        return scripts;
     }
 
     /// <summary>
@@ -402,6 +431,20 @@ public class Font : IDisposable
         if (string.IsNullOrEmpty(text))
             return ShapedText.Empty;
 
+        // Most text shapes to a glyph per code unit, so the list is made once at about the size it ends up.
+        var glyphs = new List<TextGlyph>(text.Length);
+        var bounds = shape(text, fontSize, dpiScale, fallbacks, variation, languageHint, glyphs);
+
+        return new ShapedText(glyphs, bounds);
+    }
+
+    /// <summary>
+    /// Shapes <paramref name="text"/> onto the end of <paramref name="glyphs"/>, as <see cref="ProcessText"/> describes.
+    /// </summary>
+    /// <returns>The text's bounds, in logical pixels.</returns>
+    private Vector2 shape(string text, float fontSize, float dpiScale, IFontFallbackSource? fallbacks, FontVariation variation, FontScript? languageHint,
+                          List<TextGlyph> glyphs)
+    {
         float renderFontSize = fontSize * dpiScale;
 
         // Determine base vertical metrics from the PRIMARY font so line height stays consistent
@@ -424,16 +467,43 @@ public class Font : IDisposable
 
         stat_text_shapes.Value++;
 
-        // Segment the text into runs based on font support
-        var glyphs = new List<TextGlyph>();
         float cursorX = 0;
 
+        // The script of each code unit, resolved up front so a stretch of ideographs can be looked at as
+        // a whole before a font is picked for it (see chooseIdeographFont). Past text.Length it holds
+        // whatever the thread's last text left there.
+        var scripts = scriptsFor(text.Length);
+
+        classifyScripts(text, languageHint, scripts);
+        shapeRuns(text, renderFontSize, dpiScale, ascenderPx, fallbacks, variation, scripts, glyphs, ref cursorX);
+
+        // If the font had 0 advance (common for icons), compute width from the actual glyph bounds
+        float finalWidth = cursorX;
+        if (finalWidth <= 0 && glyphs.Count > 0)
+        {
+            float maxRight = 0;
+            foreach (var g in glyphs)
+            {
+                // g.Position and g.Size are already divided by dpiScale, so we scale them back for this check
+                float right = (g.Position.X + g.Size.X) * dpiScale;
+                if (right > maxRight) maxRight = right;
+            }
+            finalWidth = maxRight;
+        }
+
+        return new Vector2(finalWidth / dpiScale, lineHeightPx / dpiScale);
+    }
+
+    /// <summary>
+    /// Splits <paramref name="text"/> into runs that one font and one set of shaping properties can take, and shapes each
+    /// onto the end of <paramref name="glyphs"/>.
+    /// </summary>
+    private void shapeRuns(string text, float renderFontSize, float dpiScale, float ascenderPx, IFontFallbackSource? fallbacks, FontVariation variation,
+                           FontScript[] scripts, List<TextGlyph> glyphs, ref float cursorX)
+    {
+        // Segment the text into runs based on font support
         int currentRunStart = 0;
         Font? currentFont = null;
-
-        // The script of each code unit, resolved up front so a stretch of ideographs can be looked at as
-        // a whole before a font is picked for it (see chooseIdeographFont).
-        var scripts = classifyScripts(text, languageHint);
 
         var currentRunScript = FontScript.Any;
 
@@ -496,9 +566,7 @@ public class Font : IDisposable
             {
                 if (currentFont != null && currentRunStart < i)
                 {
-                    string runText = text.Substring(currentRunStart, i - currentRunStart);
-                    var runGlyphs = currentFont.shapeRun(runText, renderFontSize, dpiScale, ascenderPx, variation, currentRunStart, ref cursorX);
-                    glyphs.AddRange(runGlyphs);
+                    currentFont.shapeRun(text, currentRunStart, i - currentRunStart, renderFontSize, dpiScale, ascenderPx, variation, glyphs, ref cursorX);
                     currentRunStart = i;
                 }
 
@@ -511,27 +579,7 @@ public class Font : IDisposable
 
         // Process the final remaining run
         if (currentFont != null && currentRunStart < text.Length)
-        {
-            string runText = text.Substring(currentRunStart);
-            var runGlyphs = currentFont.shapeRun(runText, renderFontSize, dpiScale, ascenderPx, variation, currentRunStart, ref cursorX);
-            glyphs.AddRange(runGlyphs);
-        }
-
-        // If the font had 0 advance (common for icons), compute width from the actual glyph bounds
-        float finalWidth = cursorX;
-        if (finalWidth <= 0 && glyphs.Count > 0)
-        {
-            float maxRight = 0;
-            foreach (var g in glyphs)
-            {
-                // g.Position and g.Size are already divided by dpiScale, so we scale them back for this check
-                float right = (g.Position.X + g.Size.X) * dpiScale;
-                if (right > maxRight) maxRight = right;
-            }
-            finalWidth = maxRight;
-        }
-
-        return new ShapedText(glyphs, new Vector2(finalWidth / dpiScale, lineHeightPx / dpiScale));
+            currentFont.shapeRun(text, currentRunStart, text.Length - currentRunStart, renderFontSize, dpiScale, ascenderPx, variation, glyphs, ref cursorX);
     }
 
     private void updateFontSize(float renderFontSize)
@@ -697,11 +745,18 @@ public class Font : IDisposable
         return true;
     }
 
-    private List<TextGlyph> shapeRun(string text, float renderFontSize, float dpiScale, float baselineY, FontVariation variation, int runOffset, ref float cursorX)
+    /// <summary>
+    /// Shapes the run of <paramref name="length"/> code units at <paramref name="start"/> in <paramref name="text"/> with
+    /// this font, onto the end of <paramref name="glyphs"/>, and moves <paramref name="cursorX"/> past it.
+    /// </summary>
+    /// <remarks>
+    /// HarfBuzz's results are read in place, as spans over its buffer. Its array properties copy them, two arrays for
+    /// every run shaped.
+    /// </remarks>
+    private void shapeRun(string text, int start, int length, float renderFontSize, float dpiScale, float baselineY, FontVariation variation, List<TextGlyph> glyphs,
+                          ref float cursorX)
     {
         stat_shaped_runs.Value++;
-
-        var glyphs = new List<TextGlyph>();
 
         lock (stateLock)
         {
@@ -709,15 +764,15 @@ public class Font : IDisposable
             updateVariation(variation);
 
             sharedBuffer.ClearContents();
-            sharedBuffer.AddUtf16(text);
+            sharedBuffer.AddUtf16(text.AsSpan(start, length));
             sharedBuffer.GuessSegmentProperties();
             hbFont.Shape(sharedBuffer);
 
-            int length = sharedBuffer.Length;
-            var info = sharedBuffer.GlyphInfos;
-            var pos = sharedBuffer.GlyphPositions;
+            int glyphCount = sharedBuffer.Length;
+            var info = sharedBuffer.GetGlyphInfoSpan();
+            var pos = sharedBuffer.GetGlyphPositionSpan();
 
-            for (int i = 0; i < length; i++)
+            for (int i = 0; i < glyphCount; i++)
             {
                 // HarfBuzz info[i].Codepoint is actually the specific glyph index for THIS font face.
                 uint glyphIndex = info[i].Codepoint;
@@ -726,7 +781,7 @@ public class Font : IDisposable
                 // offset to get the index into the full text. Consumers (e.g. caret positioning)
                 // map a string index to a glyph through this, so an emoji (2 UTF-16 units, 1 glyph)
                 // stays aligned.
-                int startIndex = runOffset + (int)info[i].Cluster;
+                int startIndex = start + (int)info[i].Cluster;
 
                 float xAdvance = pos[i].XAdvance / 64.0f;
 
@@ -786,8 +841,6 @@ public class Font : IDisposable
                 cursorX += xAdvance;
             }
         }
-
-        return glyphs;
     }
 
     private unsafe GlyphData? rasterizeGlyph(uint glyphIndex)

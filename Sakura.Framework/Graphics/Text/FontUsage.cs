@@ -100,7 +100,7 @@ public readonly struct FontUsage : IEquatable<FontUsage>
         // wght is quantized to the nearest 10; the discrete-stop axes to the nearest integer.
         float weightValue = MathF.Round(DefaultFontWeightsExtensions.ToWeightValue(Weight) / 10f) * 10f;
 
-        var variation = FontVariation.None.With(FontVariation.WEIGHT_AXIS, weightValue);
+        var variation = FontVariation.ForWeight(weightValue);
 
         if (Fill.HasValue)
             variation = variation.With(FontVariation.FILL_AXIS, MathF.Round(Fill.Value));
