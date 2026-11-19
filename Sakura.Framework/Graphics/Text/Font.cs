@@ -750,6 +750,10 @@ public class Font : IDisposable
     /// this font, onto the end of <paramref name="glyphs"/>, and moves <paramref name="cursorX"/> past it.
     /// </summary>
     /// <remarks>
+    /// The whole text goes to HarfBuzz with the run marked in it, so the shaper sees the text on either side as context: a
+    /// letter that joins across a font change (Arabic) keeps its joined form. Its clusters then come back as indices into
+    /// the whole text.
+    ///
     /// HarfBuzz's results are read in place, as spans over its buffer. Its array properties copy them, two arrays for
     /// every run shaped.
     /// </remarks>
@@ -764,7 +768,7 @@ public class Font : IDisposable
             updateVariation(variation);
 
             sharedBuffer.ClearContents();
-            sharedBuffer.AddUtf16(text.AsSpan(start, length));
+            sharedBuffer.AddUtf16(text, start, length);
             sharedBuffer.GuessSegmentProperties();
             hbFont.Shape(sharedBuffer);
 
@@ -777,11 +781,10 @@ public class Font : IDisposable
                 // HarfBuzz info[i].Codepoint is actually the specific glyph index for THIS font face.
                 uint glyphIndex = info[i].Codepoint;
 
-                // Cluster is the UTF-16 offset of this glyph within the run by add the run's start
-                // offset to get the index into the full text. Consumers (e.g. caret positioning)
-                // map a string index to a glyph through this, so an emoji (2 UTF-16 units, 1 glyph)
-                // stays aligned.
-                int startIndex = start + (int)info[i].Cluster;
+                // Cluster is the UTF-16 index of this glyph's cluster in the whole text. Consumers (e.g.
+                // caret positioning) map a string index to a glyph through this, so an emoji (2 UTF-16
+                // units, 1 glyph) stays aligned.
+                int startIndex = (int)info[i].Cluster;
 
                 float xAdvance = pos[i].XAdvance / 64.0f;
 
