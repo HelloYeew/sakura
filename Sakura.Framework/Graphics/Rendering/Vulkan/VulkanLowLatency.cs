@@ -21,6 +21,11 @@ namespace Sakura.Framework.Graphics.Rendering.Vulkan;
 /// in the run waits for the GPU instead, until the next launch.
 /// </para>
 /// <para>
+/// A provider that stops working gives way to the next (<see cref="LowLatencyFallback"/>), with a verbose log line and
+/// nothing for the player to see: Reflex refusing a call, or its sleep never signalling, falls back to the GPU wait, and a
+/// GPU wait that keeps running out its timeout stops waiting. Anti-Lag 2's call reports nothing, so it can't be seen to fail.
+/// </para>
+/// <para>
 /// Reflex's frames are marked by the ID their present will carry: the simulation starts after the sleep, the render
 /// submission runs from the frame's draw calls to its queue submit, and the present is wrapped. Sakura's draw takes an
 /// update the update thread made, so the "simulation" here is the frame's start up to that take.
@@ -33,10 +38,13 @@ internal sealed unsafe class VulkanLowLatency : IDisposable
 {
     private static readonly GlobalStatistic<double> stat_wait = GlobalStatistics.Get<double>("Renderer", "Low Latency Wait", StatisticKind.PerFrame, StatisticUnit.Milliseconds);
 
-    // Long enough for any frame the GPU could still finish; a lost device mustn't hang the draw thread.
-    private const ulong wait_timeout_nanoseconds = 250_000_000;
+    /// <summary>
+    /// Long enough for any frame the GPU could still finish; a lost device mustn't hang the draw thread.
+    /// </summary>
+    internal const ulong DEFAULT_WAIT_TIMEOUT_NANOSECONDS = 250_000_000;
 
     private readonly VulkanDevice device;
+    private readonly ulong waitTimeoutNanoseconds;
 
     private LowLatencyMode applied = LowLatencyMode.Off;
 
@@ -53,10 +61,10 @@ internal sealed unsafe class VulkanLowLatency : IDisposable
     private ulong antiLagFrame;
     private bool antiLagUpdated;
 
-    private bool warned;
+    private int timeoutsInARow;
 
     /// <summary>
-    /// What carries the mode, once it's been on.
+    /// What carries the mode, once it's been on. It changes if that stops working.
     /// </summary>
     public LowLatencyProvider Provider { get; private set; }
 
@@ -65,9 +73,12 @@ internal sealed unsafe class VulkanLowLatency : IDisposable
     /// </summary>
     public ulong? MarkedPresentId => markedSwapchain.IsNotNull ? markedPresentId : null;
 
-    public VulkanLowLatency(VulkanDevice device)
+    /// <param name="device">The device, which says which driver extension it was made with.</param>
+    /// <param name="waitTimeoutNanoseconds">How long a wait may take before it counts as one that never ends.</param>
+    public VulkanLowLatency(VulkanDevice device, ulong waitTimeoutNanoseconds = DEFAULT_WAIT_TIMEOUT_NANOSECONDS)
     {
         this.device = device;
+        this.waitTimeoutNanoseconds = waitTimeoutNanoseconds;
     }
 
     /// <summary>
@@ -85,17 +96,30 @@ internal sealed unsafe class VulkanLowLatency : IDisposable
         bool changed = mode != applied;
         applied = mode;
 
+        if (changed)
+            timeoutsInARow = 0;
+
         if (changed && mode != LowLatencyMode.Off && Provider == LowLatencyProvider.None)
             choose(mode);
 
         long start = Stopwatch.GetTimestamp();
 
-        if (device.SupportsLowLatency2)
-            sleepReflex(mode, changed, swapchain);
-        else if (device.SupportsAntiLag)
-            updateAntiLag(mode, changed);
-        else if (mode != LowLatencyMode.Off)
-            waitForGpu(previousFrame);
+        switch (Provider)
+        {
+            case LowLatencyProvider.NvidiaReflex:
+                sleepReflex(mode, changed, swapchain);
+                break;
+
+            case LowLatencyProvider.AmdAntiLag:
+                updateAntiLag(mode, changed);
+                break;
+
+            case LowLatencyProvider.GpuWait:
+                if (mode != LowLatencyMode.Off)
+                    waitForGpu(previousFrame);
+
+                break;
+        }
 
         stat_wait.Value = mode != LowLatencyMode.Off ? Stopwatch.GetElapsedTime(start).TotalMilliseconds : 0;
         Mark(VkLatencyMarkerNV.SimulationStart);
@@ -170,6 +194,35 @@ internal sealed unsafe class VulkanLowLatency : IDisposable
         }
     }
 
+    /// <summary>
+    /// Lets go of the provider that stopped working and takes the next (<see cref="LowLatencyFallback.After"/>), for the rest
+    /// of the run.
+    /// </summary>
+    private void fallBack(string why, VkSwapchainKHR swapchain)
+    {
+        var failed = Provider;
+
+        // Told to stop pacing first, as far as it still listens, so the driver doesn't keep pacing on top of the next one.
+        if (failed == LowLatencyProvider.NvidiaReflex && swapchain.IsNotNull)
+        {
+            var off = new VkLatencySleepModeInfoNV();
+            device.Api.vkSetLatencySleepModeNV(swapchain, &off);
+        }
+        else if (failed == LowLatencyProvider.AmdAntiLag)
+        {
+            var off = new VkAntiLagDataAMD { mode = VkAntiLagModeAMD.OffAMD };
+            device.Api.vkAntiLagUpdateAMD(&off);
+        }
+
+        Provider = LowLatencyFallback.After(failed);
+        markedSwapchain = VkSwapchainKHR.Null;
+        antiLagUpdated = false;
+        timeoutsInARow = 0;
+
+        string now = Provider == LowLatencyProvider.GpuWait ? "frames wait for the GPU to finish the frame before instead" : "frames no longer wait";
+        Logger.Verbose($"Vulkan: low latency through {LowLatencyFallback.Describe(failed)} stopped working ({why}), so {now}.");
+    }
+
     private void sleepReflex(LowLatencyMode mode, bool changed, VulkanSwapchain? swapchain)
     {
         // Before the first frame has built a swapchain there's nothing to pace yet.
@@ -191,14 +244,20 @@ internal sealed unsafe class VulkanLowLatency : IDisposable
             modeSwapchain = handle;
 
             if (result != VkResult.Success)
-                warnOnce($"vkSetLatencySleepModeNV returned {result}");
+            {
+                fallBack($"vkSetLatencySleepModeNV returned {result}", handle);
+                return;
+            }
         }
 
         if (mode == LowLatencyMode.Off)
             return;
 
-        if (sleepSemaphore.IsNull && !createSleepSemaphore())
+        if (sleepSemaphore.IsNull && !createSleepSemaphore(out var created))
+        {
+            fallBack($"vkCreateSemaphore for its sleep returned {created}", handle);
             return;
+        }
 
         ulong value = ++sleepValue;
         var semaphore = sleepSemaphore;
@@ -213,7 +272,7 @@ internal sealed unsafe class VulkanLowLatency : IDisposable
 
         if (slept != VkResult.Success)
         {
-            warnOnce($"vkLatencySleepNV returned {slept}");
+            fallBack($"vkLatencySleepNV returned {slept}", handle);
             return;
         }
 
@@ -224,10 +283,25 @@ internal sealed unsafe class VulkanLowLatency : IDisposable
             pValues = &value,
         };
 
-        var waited = device.Api.vkWaitSemaphores(&waitInfo, wait_timeout_nanoseconds);
+        var waited = device.Api.vkWaitSemaphores(&waitInfo, waitTimeoutNanoseconds);
 
-        if (waited != VkResult.Success)
-            warnOnce($"waiting for Reflex's sleep returned {waited}");
+        if (waited == VkResult.Timeout)
+        {
+            if (++timeoutsInARow >= LowLatencyFallback.TIMEOUTS_BEFORE_GIVING_UP)
+            {
+                fallBack($"its sleep didn't end within {waitTimeoutNanoseconds / 1_000_000} ms, {timeoutsInARow} times in a row", handle);
+                return;
+            }
+        }
+        else if (waited != VkResult.Success)
+        {
+            fallBack($"waiting for its sleep returned {waited}", handle);
+            return;
+        }
+        else
+        {
+            timeoutsInARow = 0;
+        }
 
         markedSwapchain = handle;
         markedPresentId = swapchain!.LastPresentId + 1;
@@ -266,13 +340,21 @@ internal sealed unsafe class VulkanLowLatency : IDisposable
         if (previousFrame.IsNull)
             return;
 
-        var result = device.Api.vkWaitForFences(1, &previousFrame, true, wait_timeout_nanoseconds);
+        var result = device.Api.vkWaitForFences(1, &previousFrame, true, waitTimeoutNanoseconds);
 
-        if (result == VkResult.Timeout)
-            warnOnce($"the GPU didn't finish a frame within {wait_timeout_nanoseconds / 1_000_000} ms");
+        if (result == VkResult.Success)
+        {
+            timeoutsInARow = 0;
+            return;
+        }
+
+        if (result != VkResult.Timeout)
+            fallBack($"waiting for the frame before returned {result}", VkSwapchainKHR.Null);
+        else if (++timeoutsInARow >= LowLatencyFallback.TIMEOUTS_BEFORE_GIVING_UP)
+            fallBack($"the GPU didn't finish a frame within {waitTimeoutNanoseconds / 1_000_000} ms, {timeoutsInARow} times in a row", VkSwapchainKHR.Null);
     }
 
-    private bool createSleepSemaphore()
+    private bool createSleepSemaphore(out VkResult result)
     {
         var type = new VkSemaphoreTypeCreateInfo
         {
@@ -282,26 +364,14 @@ internal sealed unsafe class VulkanLowLatency : IDisposable
 
         var info = new VkSemaphoreCreateInfo { pNext = &type };
         VkSemaphore semaphore;
-        var result = device.Api.vkCreateSemaphore(&info, null, &semaphore);
+        result = device.Api.vkCreateSemaphore(&info, null, &semaphore);
 
         if (result != VkResult.Success)
-        {
-            warnOnce($"vkCreateSemaphore for Reflex's sleep returned {result}");
             return false;
-        }
 
         sleepSemaphore = semaphore;
         device.SetName(VkObjectType.Semaphore, sleepSemaphore.Handle, "Reflex sleep");
         return true;
-    }
-
-    private void warnOnce(string message)
-    {
-        if (warned)
-            return;
-
-        warned = true;
-        Logger.Warning($"Vulkan low latency: {message}. Said once.");
     }
 
     /// <summary>

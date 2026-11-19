@@ -18,8 +18,13 @@ namespace Sakura.Framework.Graphics.Rendering.Direct3D11;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Chosen the first time the mode is on, so with it off no driver's latency library is ever loaded. Once chosen, the
-/// provider stays: turning the mode off tells it so, and stops the calls each frame.
+/// Chosen the first time the mode is on, so with it off no driver's latency library is ever loaded. Turning the mode off
+/// later tells the provider so, and stops the calls each frame.
+/// </para>
+/// <para>
+/// A provider that stops working gives way to the next (<see cref="LowLatencyFallback"/>), with a verbose log line and
+/// nothing for the player to see: a call into Reflex or Anti-Lag 2 that's refused falls back to the GPU wait, and a GPU wait
+/// that keeps running out its timeout stops waiting.
 /// </para>
 /// <para>
 /// Reflex's frames are marked as NVAPI asks: the simulation starts after the sleep, the render submission starts before
@@ -52,13 +57,13 @@ internal sealed class D3D11LowLatency : IDisposable
     private ID3D11DeviceContext4? context4;
     private nint fenceEvent;
     private ulong fenceValue;
+    private int timeoutsInARow;
 
     private ulong frameId;
     private bool marking;
-    private bool warned;
 
     /// <summary>
-    /// What carries the mode, once it's been on.
+    /// What carries the mode, once it's been on. It changes if that stops working.
     /// </summary>
     public LowLatencyProvider Provider { get; private set; }
 
@@ -92,16 +97,17 @@ internal sealed class D3D11LowLatency : IDisposable
         {
             case LowLatencyProvider.NvidiaReflex:
                 int status = reflex!.Sleep();
-                marking = status == NvapiReflex.STATUS_OK;
 
-                if (!marking)
-                    warnOnce($"NvAPI_D3D_Sleep returned {NvapiReflex.DescribeStatus(status)}");
+                if (status == NvapiReflex.STATUS_OK)
+                    marking = true;
+                else
+                    fallBack($"NvAPI_D3D_Sleep returned {NvapiReflex.DescribeStatus(status)}");
 
                 break;
 
             case LowLatencyProvider.AmdAntiLag:
                 if (!antiLag!.Update())
-                    warnOnce("Anti-Lag 2's update was refused");
+                    fallBack("its update was refused");
 
                 break;
 
@@ -125,7 +131,7 @@ internal sealed class D3D11LowLatency : IDisposable
         int status = reflex!.Mark(frameId, marker);
 
         if (status != NvapiReflex.STATUS_OK)
-            warnOnce($"NvAPI_D3D_SetLatencyMarker returned {NvapiReflex.DescribeStatus(status)}");
+            fallBack($"NvAPI_D3D_SetLatencyMarker returned {NvapiReflex.DescribeStatus(status)}");
     }
 
     /// <summary>
@@ -157,12 +163,16 @@ internal sealed class D3D11LowLatency : IDisposable
                     int status = reflex!.SetMode(mode);
 
                     if (status != NvapiReflex.STATUS_OK)
-                        warnOnce($"NvAPI_D3D_SetSleepMode returned {NvapiReflex.DescribeStatus(status)}");
+                        fallBack($"NvAPI_D3D_SetSleepMode returned {NvapiReflex.DescribeStatus(status)}");
 
                     break;
 
                 case LowLatencyProvider.AmdAntiLag:
-                    antiLag!.SetEnabled(mode != LowLatencyMode.Off);
+                    int result = antiLag!.SetEnabled(mode != LowLatencyMode.Off);
+
+                    if (result != 0)
+                        fallBack($"turning it {(mode != LowLatencyMode.Off ? "on" : "off")} returned 0x{result:X8}");
+
                     break;
             }
         }
@@ -171,6 +181,7 @@ internal sealed class D3D11LowLatency : IDisposable
 
         // A fence signalled before the mode went off would be waited on long after.
         fenceValue = fence?.CompletedValue ?? 0;
+        timeoutsInARow = 0;
     }
 
     private void choose(LowLatencyMode mode)
@@ -215,10 +226,50 @@ internal sealed class D3D11LowLatency : IDisposable
         Logger.Verbose($"Direct3D11: nothing here can carry the low latency mode (no Reflex: {reflexReason}; no Anti-Lag 2: {antiLagReason}; no fence: {fenceReason}).");
     }
 
+    /// <summary>
+    /// Lets go of the provider that stopped working and takes the next (<see cref="LowLatencyFallback.After"/>), for the rest
+    /// of the run.
+    /// </summary>
+    private void fallBack(string why)
+    {
+        var failed = Provider;
+        var next = LowLatencyFallback.After(failed);
+
+        // Told to stop pacing first, as far as it still listens, so the driver doesn't keep pacing on top of the next one.
+        if (reflex != null)
+        {
+            reflex.SetMode(LowLatencyMode.Off);
+            reflex = null;
+        }
+
+        if (antiLag != null)
+        {
+            antiLag.SetEnabled(false);
+            antiLag.Dispose();
+            antiLag = null;
+        }
+
+        string fenceReason = string.Empty;
+
+        if (next == LowLatencyProvider.GpuWait && fence == null && !createFence(out fenceReason))
+            next = LowLatencyProvider.None;
+
+        Provider = next;
+        marking = false;
+        fenceValue = fence?.CompletedValue ?? 0;
+        timeoutsInARow = 0;
+
+        string now = next == LowLatencyProvider.GpuWait
+            ? "frames wait for the GPU to finish the frame before instead"
+            : $"frames no longer wait{(fenceReason.Length > 0 ? $" (no fence: {fenceReason})" : string.Empty)}";
+
+        Logger.Verbose($"Direct3D11: low latency through {LowLatencyFallback.Describe(failed)} stopped working ({why}), so {now}.");
+    }
+
     private bool createFence(out string reason)
     {
         using var device5 = device.QueryInterfaceOrNull<ID3D11Device5>();
-        context4 = context.QueryInterfaceOrNull<ID3D11DeviceContext4>();
+        context4 ??= context.QueryInterfaceOrNull<ID3D11DeviceContext4>();
 
         if (device5 == null || context4 == null)
         {
@@ -240,6 +291,8 @@ internal sealed class D3D11LowLatency : IDisposable
 
         if (fenceEvent == 0)
         {
+            fence.Dispose();
+            fence = null;
             reason = "CreateEvent failed";
             return false;
         }
@@ -254,21 +307,21 @@ internal sealed class D3D11LowLatency : IDisposable
     private void waitForGpu()
     {
         if (fence == null || fenceValue == 0 || fence.CompletedValue >= fenceValue)
+        {
+            timeoutsInARow = 0;
             return;
+        }
 
         fence.SetEventOnCompletion(fenceValue, fenceEvent);
 
-        if (WaitForSingleObjectEx(fenceEvent, gpu_wait_timeout_ms, false) == wait_timeout)
-            warnOnce($"the GPU didn't finish a frame within {gpu_wait_timeout_ms} ms");
-    }
-
-    private void warnOnce(string message)
-    {
-        if (warned)
+        if (WaitForSingleObjectEx(fenceEvent, gpu_wait_timeout_ms, false) != wait_timeout)
+        {
+            timeoutsInARow = 0;
             return;
+        }
 
-        warned = true;
-        Logger.Warning($"Direct3D11 low latency: {message}. Said once.");
+        if (++timeoutsInARow >= LowLatencyFallback.TIMEOUTS_BEFORE_GIVING_UP)
+            fallBack($"the GPU didn't finish a frame within {gpu_wait_timeout_ms} ms, {timeoutsInARow} times in a row");
     }
 
     /// <summary>

@@ -96,7 +96,9 @@ public interface IRenderer
 
     /// <summary>
     /// What carries the low latency mode on this device, once a frame has been drawn with it on;
-    /// <see cref="Rendering.LowLatencyProvider.None"/> before that, with it off, and on renderers that can't carry it.
+    /// <see cref="Rendering.LowLatencyProvider.None"/> before that, and on renderers that can't carry it. It changes during
+    /// the run if what carried it stops working: the driver's own falls back to waiting for the GPU, and a wait that keeps
+    /// timing out to none.
     /// </summary>
     LowLatencyProvider LowLatencyProvider => LowLatencyProvider.None;
 

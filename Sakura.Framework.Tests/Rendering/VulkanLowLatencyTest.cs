@@ -1,6 +1,8 @@
 // This code is part of the Sakura framework project. Licensed under the MIT License.
 // See the LICENSE file for full license text.
 
+using System.Collections.Generic;
+using System.Linq;
 using NUnit.Framework;
 using Sakura.Framework.Graphics.Rendering;
 using Sakura.Framework.Graphics.Rendering.Vulkan;
@@ -8,6 +10,7 @@ using Sakura.Framework.IO;
 using Sakura.Framework.Platform;
 using Sakura.Framework.Statistic;
 using Sakura.Framework.Timing;
+using Vortice.Vulkan;
 
 namespace Sakura.Framework.Tests.Rendering;
 
@@ -61,6 +64,42 @@ public class VulkanLowLatencyTest
         }
 
         Assert.That(stat_validation_messages.Value - validationBefore, Is.Zero, "validation messages (the log has them)");
+    }
+
+    [Test]
+    public unsafe void AWaitThatNeverEndsIsGivenUp()
+    {
+        if (!VulkanRenderer.IsSupportedOffscreen())
+            Assert.Ignore("No Vulkan driver here.");
+
+        using var device = new VulkanDevice(null, out _);
+
+        // Never submitted, so it never signals: a GPU that stopped, as far as the wait can tell.
+        var fenceInfo = new VkFenceCreateInfo();
+        VkFence fence;
+        Assert.That(device.Api.vkCreateFence(&fenceInfo, null, &fence), Is.EqualTo(VkResult.Success));
+
+        try
+        {
+            using var lowLatency = new VulkanLowLatency(device, 1_000_000);
+            var seen = new List<LowLatencyProvider>();
+
+            for (int i = 0; i < LowLatencyFallback.TIMEOUTS_BEFORE_GIVING_UP + 1; i++)
+            {
+                lowLatency.Sleep(LowLatencyMode.On, null, fence);
+                seen.Add(lowLatency.Provider);
+            }
+
+            var expected = Enumerable.Repeat(LowLatencyProvider.GpuWait, LowLatencyFallback.TIMEOUTS_BEFORE_GIVING_UP - 1)
+                                     .Append(LowLatencyProvider.None)
+                                     .Append(LowLatencyProvider.None);
+
+            Assert.That(seen, Is.EqualTo(expected), "the provider after each frame");
+        }
+        finally
+        {
+            device.Api.vkDestroyFence(fence, null);
+        }
     }
 
     private static VulkanRenderer createRenderer(LowLatencyMode mode)
