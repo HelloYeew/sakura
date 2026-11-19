@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using Sakura.Framework.Utilities;
 
 namespace Sakura.Framework.Graphics.Text;
 
@@ -30,6 +31,12 @@ public readonly struct FontVariation : IEquatable<FontVariation>
     private readonly (uint Tag, float Value)[]? axes;
 
     private static readonly (uint Tag, float Value)[] empty = Array.Empty<(uint, float)>();
+
+    /// <summary>
+    /// What <see cref="ForWeight"/> hands out. Declared after the axis tags and <see cref="empty"/>, which building it reads:
+    /// static fields are set in the order they're written.
+    /// </summary>
+    private static readonly FontVariation[] named_weights = createNamedWeights();
 
     /// <summary>
     /// The axis coordinates, sorted by tag. Empty when this is <see cref="None"/>.
@@ -110,6 +117,36 @@ public readonly struct FontVariation : IEquatable<FontVariation>
         if (italic)
             v = v.With(ITALIC_AXIS, 1f);
         return v;
+    }
+
+    /// <summary>
+    /// The <c>wght</c> axis alone, as <c>None.With(WEIGHT_AXIS, weight)</c> gives it, but shared rather than built for the
+    /// nine named weights (100 to 900). Every text usage without axis overrides of its own resolves to one of them, once
+    /// for every string shaped.
+    /// </summary>
+    internal static FontVariation ForWeight(float weight)
+    {
+        int index = (int)MathF.Round(weight / 100f) - 1;
+
+        if (index >= 0 && index < named_weights.Length && Precision.AlmostEquals(weight, (index + 1) * 100f))
+            return named_weights[index];
+
+        return None.With(WEIGHT_AXIS, weight);
+    }
+
+    /// <summary>
+    /// Builds the variations of the nine named weights, Thin (100) to Black (900), in order.
+    /// </summary>
+    private static FontVariation[] createNamedWeights()
+    {
+        var weights = new FontVariation[9];
+
+        for (int i = 0; i < weights.Length; i++)
+        {
+            weights[i] = None.With(WEIGHT_AXIS, (i + 1) * 100f);
+        }
+
+        return weights;
     }
 
     public bool Equals(FontVariation other)

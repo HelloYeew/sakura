@@ -305,6 +305,45 @@ public class FrameAllocationTest
     }
 
     /// <summary>
+    /// A score whose text is new every frame, beside a label that never changes. The score's strings are made before
+    /// the frames, as the game's own formatting isn't the tree's cost.
+    /// </summary>
+    [Test]
+    public void AFrameOfAChangingScoreAllocatesNothing()
+    {
+        using var textureManager = new HeadlessTextureManager();
+        using var store = new RendererFontStore(new HeadlessRenderer(textureManager));
+
+        var fonts = new EmbeddedResourceStorage(typeof(TestApp).Assembly, "Sakura.Framework.Tests.Resources").GetStorageForDirectory("Fonts");
+        store.AddFont(fonts, "Comfortaa-Regular.ttf", alias: "Score");
+        root.Provide(store);
+
+        // Enough for the warm-up and two measured windows, each frame's score new.
+        string[] scores = new string[warm_up_frames + measured_frames * 2];
+
+        for (int i = 0; i < scores.Length; i++)
+        {
+            scores[i] = (12345678 + i * 7).ToString("D8");
+        }
+
+        var score = new SpriteText
+        {
+            Text = scores[0],
+            Font = FontUsage.Default.With(family: "Score", size: 32f)
+        };
+
+        root.Add(score);
+        root.Add(new SpriteText
+        {
+            Text = "Score",
+            Font = FontUsage.Default.With(family: "Score", size: 16f),
+            Y = 40
+        });
+
+        assertNothingAllocated(allocatedOverFrames(frame => score.Text = scores[frame]));
+    }
+
+    /// <summary>
     /// Adds <paramref name="columns"/> containers of <paramref name="rows"/> boxes across the root.
     /// </summary>
     /// <returns>Every box added.</returns>
