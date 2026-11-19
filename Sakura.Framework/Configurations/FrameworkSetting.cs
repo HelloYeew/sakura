@@ -30,5 +30,6 @@ public enum FrameworkSetting
     SafeAreaPreview,
     ShowLogOverlay,
     AudioDevice,
-    AudioExclusiveMode
+    AudioExclusiveMode,
+    LowLatencyMode
 }

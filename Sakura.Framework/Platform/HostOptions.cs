@@ -96,6 +96,14 @@ public class HostOptions
     public bool UseLateLatch { get; set; }
 
     /// <summary>
+    /// The low latency mode an install starts with, before the player has chosen one
+    /// (<see cref="Configurations.FrameworkSetting.LowLatencyMode"/>). Off unless asked for: it reaches into the graphics
+    /// driver's NVIDIA Reflex or AMD Anti-Lag 2 where it can. <c>SAKURA_LOW_LATENCY</c> overrides the setting for comparing:
+    /// <c>off</c>, <c>on</c> or <c>boost</c>.
+    /// </summary>
+    public LowLatencyMode DefaultLowLatencyMode { get; set; } = LowLatencyMode.Off;
+
+    /// <summary>
     /// Linux only. Whether to ask Feral's GameMode for the user's game settings (the CPU governor, I/O priority, the GPU's
     /// performance mode, a screensaver inhibit, their own scripts) while the game is in play, and give it back otherwise.
     /// Needs GameMode installed, and since 1.8 the user in the <c>gamemode</c> group for the CPU governor. Only applies to

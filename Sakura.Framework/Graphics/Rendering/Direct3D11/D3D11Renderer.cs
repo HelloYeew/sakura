@@ -128,6 +128,11 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     // Requested by the frame limiter from its own thread through SetVSync; applied by StartFrame on the
     // draw thread, the only one that may touch the swapchain.
     private volatile bool vsyncRequested = true;
+
+    // Requested by the host from any thread through SetLowLatencyMode; applied by SleepForLowLatency on the draw thread.
+    private volatile LowLatencyMode lowLatencyRequested;
+
+    private D3D11LowLatency? lowLatency;
     private bool vsyncApplied = true;
 
     private nint windowHandle;
@@ -309,6 +314,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
         enableMultithreadProtection();
         gpuTimer = new D3D11GpuTimer(device, context);
+        lowLatency = new D3D11LowLatency(device, context);
 
         // Before the first texture, which reads it to decide whether to have a mip chain.
         D3D11Texture.MipGenerationSupported = (device.CheckFormatSupport(D3D11Texture.TEXTURE_FORMAT) & FormatSupport.MipAutogen) != 0;
@@ -705,6 +711,21 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         }
     }
 
+    /// <inheritdoc/>
+    public void SetLowLatencyMode(LowLatencyMode mode) => lowLatencyRequested = mode;
+
+    /// <inheritdoc/>
+    public void SleepForLowLatency()
+    {
+        if (device == null || swapChain == null)
+            return;
+
+        lowLatency?.Sleep(lowLatencyRequested);
+    }
+
+    /// <inheritdoc/>
+    public LowLatencyProvider LowLatencyProvider => lowLatency?.Provider ?? LowLatencyProvider.None;
+
     public void StartFrame()
     {
         latencyWaitMilliseconds = 0;
@@ -844,6 +865,10 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
         if (device == null || swapChain == null)
             return;
 
+        // The update to draw was taken just before this.
+        lowLatency?.Mark(NvLatencyMarker.SimulationEnd);
+        lowLatency?.Mark(NvLatencyMarker.RenderSubmitStart);
+
         stat_draw_calls.CompleteFrame();
         stat_vertices_drawn.CompleteFrame();
         stat_slot_exhaustion_flushes.CompleteFrame();
@@ -867,6 +892,9 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
 
         // VSync -> sync interval 1, no flags. Uncapped -> interval 0, tear (if the output supports it)
         // rather than stall on a flip-model swapchain. AllowTearing is illegal with interval > 0.
+        lowLatency?.Mark(NvLatencyMarker.RenderSubmitEnd);
+        lowLatency?.Mark(NvLatencyMarker.PresentStart);
+
         long blockStart = Stopwatch.GetTimestamp();
 
         if (presentSyncInterval == 0)
@@ -875,6 +903,9 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
             swapChain.Present(1, PresentFlags.None);
 
         presentMilliseconds += Stopwatch.GetElapsedTime(blockStart).TotalMilliseconds;
+
+        lowLatency?.Mark(NvLatencyMarker.PresentEnd);
+        lowLatency?.FramePresented();
 
         stat_latency_wait.Value = latencyWaitMilliseconds;
         stat_present.Value = presentMilliseconds;
@@ -1349,6 +1380,7 @@ public sealed class D3D11Renderer : ID3D11Renderer, IDisposable
     public void Dispose()
     {
         gpuTimer?.Dispose();
+        lowLatency?.Dispose();
         mainShader?.Dispose();
         (WhitePixel?.BackendTexture as D3D11Texture)?.Dispose();
 

@@ -22,12 +22,13 @@ public class FrameworkConfigManager : ConfigManager<FrameworkSetting>
 
     /// <param name="storage">Where <c>framework.ini</c> is kept.</param>
     /// <param name="pacing">Picks the defaults that differ between a game and an application, and on a phone.</param>
-    internal FrameworkConfigManager(Storage storage, FramePacing pacing) : base(storage)
+    /// <param name="defaultLowLatencyMode">The low latency mode before the player has chosen one (<see cref="HostOptions.DefaultLowLatencyMode"/>).</param>
+    internal FrameworkConfigManager(Storage storage, FramePacing pacing, LowLatencyMode defaultLowLatencyMode = LowLatencyMode.Off) : base(storage)
     {
-        initializeDefaults(pacing);
+        initializeDefaults(pacing, defaultLowLatencyMode);
     }
 
-    private void initializeDefaults(FramePacing pacing)
+    private void initializeDefaults(FramePacing pacing, LowLatencyMode defaultLowLatencyMode)
     {
         Get(FrameworkSetting.FrameLimiter, pacing.DefaultFrameLimiter);
         Get(FrameworkSetting.ShowFpsGraph, PerformanceOverlayState.Hidden);
@@ -60,5 +61,6 @@ public class FrameworkConfigManager : ConfigManager<FrameworkSetting>
         // WASAPI's exclusive mode on Windows: the lowest delay, but every other app goes silent while it plays (voice chat
         // too) and the system's effects are skipped, so it's for the player to turn on.
         Get(FrameworkSetting.AudioExclusiveMode, false);
+        Get(FrameworkSetting.LowLatencyMode, defaultLowLatencyMode);
     }
 }

@@ -80,6 +80,13 @@ public abstract class AppHost : IDisposable
     public Reactive<ExecutionMode> ExecutionMode { get; set; }
 
     /// <summary>
+    /// Whether each frame starts just in time for the GPU, through NVIDIA Reflex or AMD Anti-Lag 2 where the device has
+    /// them. Saved as <see cref="FrameworkSetting.LowLatencyMode"/>; <see cref="HostOptions.DefaultLowLatencyMode"/> is
+    /// where an install starts. What carries it is <see cref="IRenderer.LowLatencyProvider"/>.
+    /// </summary>
+    public Reactive<LowLatencyMode> LowLatencyMode { get; private set; }
+
+    /// <summary>
     /// Whether the display stays on while the app runs, rather than dimming and sleeping on the system's timer. On
     /// for a game, which is often watched without being touched, and off for an application. Either can change it:
     /// an application while it plays a video, say, or a game only during play.
@@ -313,6 +320,28 @@ public abstract class AppHost : IDisposable
         "0" => false,
         _ => null
     };
+
+    // Sets the low latency mode (off, on or boost) whatever the setting says, for comparing.
+    private const string low_latency_variable = "SAKURA_LOW_LATENCY";
+
+    private static readonly LowLatencyMode? low_latency_asked = ParseLowLatencyMode(Environment.GetEnvironmentVariable(low_latency_variable));
+
+    /// <summary>
+    /// Reads <c>SAKURA_LOW_LATENCY</c>'s value: <c>off</c>, <c>on</c> or <c>boost</c>, in any case, or null for anything
+    /// else, which leaves the setting in charge.
+    /// </summary>
+    internal static LowLatencyMode? ParseLowLatencyMode(string value) => value?.Trim().ToLowerInvariant() switch
+    {
+        "off" => Platform.LowLatencyMode.Off,
+        "on" => Platform.LowLatencyMode.On,
+        "boost" => Platform.LowLatencyMode.Boost,
+        _ => null
+    };
+
+    /// <summary>
+    /// The low latency mode the renderer follows: <c>SAKURA_LOW_LATENCY</c>'s where it's set, else the setting's.
+    /// </summary>
+    private LowLatencyMode effectiveLowLatencyMode => low_latency_asked ?? LowLatencyMode?.Value ?? Platform.LowLatencyMode.Off;
     private DrawNode currentFrameDrawNode;
 
     private ThreadRunner threadRunner;
@@ -713,7 +742,7 @@ public abstract class AppHost : IDisposable
     {
         Logger.Storage = GetLogStorage();
 
-        FrameworkConfigManager = new FrameworkConfigManager(Storage, Options.AppType);
+        FrameworkConfigManager = new FrameworkConfigManager(Storage, pacing, Options.DefaultLowLatencyMode);
         FrameworkConfigManager.Load();
     }
 
@@ -798,6 +827,16 @@ public abstract class AppHost : IDisposable
             }
 
             FrameLimiter = FrameworkConfigManager.Get<FrameSync>(FrameworkSetting.FrameLimiter);
+            LowLatencyMode = FrameworkConfigManager.Get<LowLatencyMode>(FrameworkSetting.LowLatencyMode);
+            LowLatencyMode.ValueChanged += e =>
+            {
+                Logger.Verbose($"Low latency mode changed from {e.OldValue} to {e.NewValue}");
+
+                if (low_latency_asked is { } asked)
+                    Logger.Verbose($"{low_latency_variable}={asked.ToString().ToLowerInvariant()} keeps it at {asked} for this run.");
+
+                Renderer?.SetLowLatencyMode(effectiveLowLatencyMode);
+            };
             updateTargetUpdateHz();
             FrameLimiter.ValueChanged += e =>
             {
@@ -1303,6 +1342,9 @@ public abstract class AppHost : IDisposable
             {
                 Window.Create();
                 onFrameLimiterChanged(new ValueChangedEvent<FrameSync>(default, FrameLimiter.Value));
+
+                // Before the renderer makes its device: Vulkan's latency extensions are asked for only then.
+                Renderer.SetLowLatencyMode(effectiveLowLatencyMode);
                 SetupRenderer();
                 return;
             }
@@ -1587,6 +1629,9 @@ public abstract class AppHost : IDisposable
         // It's the display's shortest interval, not the limiter's slightly longer period: presents held for as long as
         // frames take to draw would fall behind with every late one, and queue.
         Renderer?.SetMinimumPresentInterval(limiter == FrameSync.VariableRefresh ? 1 / getDisplayHz() : 0);
+
+        // First in the frame, so the update taken below is the newest one once the frame can start just in time for the GPU.
+        Renderer?.SleepForLowLatency();
 
         Renderer?.Clear();
         Renderer?.StartFrame();
