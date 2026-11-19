@@ -87,6 +87,14 @@ public class AppThread
     public Func<string, double, IFrameWorkHint?>? CreateWorkHint { get; set; }
 
     /// <summary>
+    /// Whether the frame action itself waits for the next frame, as a draw that blocks on the display does under VSync, so
+    /// this thread's own timer would only be a second clock beating against it. Asked after every frame: when true, the next
+    /// frame starts as soon as this one ends. The target rate still sets each frame's budget and work interval. Defaults to
+    /// never.
+    /// </summary>
+    public Func<bool> PacedByFrameAction { get; set; } = static () => false;
+
+    /// <summary>
     /// Optional. Run on this thread when <see cref="Wake"/> cuts its wait for the next frame short, after which it waits out
     /// the rest of that wait. For work that shouldn't wait for the next frame, such as input to dispatch.
     /// </summary>
@@ -340,7 +348,7 @@ public class AppThread
 
             workHint?.ReportFrame(targetFrameTimeMs, workMilliseconds);
 
-            if (currentHz > 0)
+            if (currentHz > 0 && !PacedByFrameAction())
             {
                 long targetTicks = (long)(targetFrameTimeMs / ms_per_tick);
 

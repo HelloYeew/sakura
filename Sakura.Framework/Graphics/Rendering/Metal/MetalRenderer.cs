@@ -324,6 +324,14 @@ public sealed class MetalRenderer : IMetalRenderer
     // The layer's own count, three, until set otherwise, so a renderer that never asks for two never calls the library.
     private int appliedDrawables = 3;
 
+    // Two frames in flight where asked for, with SAKURA_METAL_FRAMES_IN_FLIGHT=2, while it's measured against the library's
+    // three: the CPU starts a frame only once the GPU has finished the one two before it. 0 leaves the library's own.
+    private const string frames_in_flight_variable = "SAKURA_METAL_FRAMES_IN_FLIGHT";
+
+    private static readonly int frames_in_flight_asked = Environment.GetEnvironmentVariable(frames_in_flight_variable) == "2" ? 2 : 0;
+
+    private int appliedFramesInFlight;
+
     public void SetVSync(bool enabled)
     {
         vsyncOn = enabled;
@@ -387,26 +395,30 @@ public sealed class MetalRenderer : IMetalRenderer
     }
 
     /// <summary>
-    /// Has the layer keep two drawables or three, as VSync and <see cref="QueueMoreFrames"/> have it, from the next frame.
+    /// Has the layer keep two drawables or three, as VSync and <see cref="QueueMoreFrames"/> have it, and the frames in flight
+    /// asked for, from the next frame.
     /// </summary>
     private void applyDrawables()
     {
         int count = vsyncOn ? vsyncDrawables : 3;
 
-        if (device == nint.Zero || count == appliedDrawables)
+        if (device == nint.Zero || count == appliedDrawables && frames_in_flight_asked == appliedFramesInFlight)
             return;
 
         try
         {
-            // Frames in flight stay the library's three.
-            SakuraMetalNative.sakura_metal_set_frame_latency(device, 0, count);
+            SakuraMetalNative.sakura_metal_set_frame_latency(device, frames_in_flight_asked, count);
             appliedDrawables = count;
-            Logger.Verbose($"Metal keeps {count} drawables{(vsyncOn ? " under VSync" : string.Empty)}.");
+            appliedFramesInFlight = frames_in_flight_asked;
+
+            string framesInFlight = frames_in_flight_asked > 0 ? $" and {frames_in_flight_asked} frames in flight" : string.Empty;
+            Logger.Verbose($"Metal keeps {count} drawables{(vsyncOn ? " under VSync" : string.Empty)}{framesInFlight}.");
         }
         catch (EntryPointNotFoundException)
         {
-            // A library from before the control: the layer's own three.
+            // A library from before the control: the layer's own three of each.
             appliedDrawables = count;
+            appliedFramesInFlight = frames_in_flight_asked;
         }
     }
 

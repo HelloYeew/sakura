@@ -101,4 +101,26 @@ public class FramePacingTest
     [Test]
     public void PhoneGameAudioFollowsTheDisplayWhenPlaybackDoesNotWait()
         => Assert.That(new FramePacing(AppType.Game, true).AudioHz(120, playbackWaitsForUpdate: false), Is.EqualTo(120));
+
+    /// <summary>
+    /// A timed present is only ever asked for under the two limiters that pace frames by the display, and the paced one
+    /// under VSync only when it's asked for.
+    /// </summary>
+    [TestCase(FrameSync.VariableRefresh, false, 1 / 120.0)]
+    [TestCase(FrameSync.VariableRefresh, true, 1 / 120.0)]
+    [TestCase(FrameSync.VSync, false, 0)]
+    [TestCase(FrameSync.VSync, true, 0.5 / 120)]
+    [TestCase(FrameSync.Limit2x, true, 0)]
+    [TestCase(FrameSync.Unlimited, true, 0)]
+    public void MinimumPresentInterval(FrameSync limiter, bool pacedPresent, double expected)
+        => Assert.That(FramePacing.MinimumPresentInterval(limiter, 120, pacedPresent), Is.EqualTo(expected).Within(1e-12));
+
+    [TestCase(FrameSync.VSync, true, false, true)]
+    [TestCase(FrameSync.VSync, false, false, false, Description = "unfocused frames come by the 60 Hz timer")]
+    [TestCase(FrameSync.VSync, true, true, false, Description = "a headless renderer never blocks")]
+    [TestCase(FrameSync.Limit2x, true, false, false)]
+    [TestCase(FrameSync.VariableRefresh, true, false, false, Description = "VRR presents unsynced, so only the timer paces it")]
+    [TestCase(FrameSync.Unlimited, true, false, false)]
+    public void OnlyVSyncLeavesTheDrawToTheDisplay(FrameSync limiter, bool focused, bool headless, bool expected)
+        => Assert.That(FramePacing.DisplayPacesDraws(limiter, focused, headless), Is.EqualTo(expected));
 }

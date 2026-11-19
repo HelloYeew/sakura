@@ -344,6 +344,18 @@ public abstract class AppHost : IDisposable
         _ => null
     };
 
+    // Under VSync, keeps each frame on screen for half a refresh through Metal's timed present (1), for comparing with the plain
+    // present.
+    private const string paced_present_variable = "SAKURA_METAL_PACED_PRESENT";
+
+    private static readonly bool paced_present_asked = Environment.GetEnvironmentVariable(paced_present_variable) == "1";
+
+    // Under VSync and focused, leaves the draw thread to the display alone, without its own timer (0), for comparing with the
+    // two clocks.
+    private const string draw_timer_variable = "SAKURA_DRAW_TIMER";
+
+    private static readonly bool draw_timer_off = Environment.GetEnvironmentVariable(draw_timer_variable) == "0";
+
     // Sets the low latency mode (off, on or boost) whatever the setting says, for comparing.
     private const string low_latency_variable = "SAKURA_LOW_LATENCY";
 
@@ -999,8 +1011,13 @@ public abstract class AppHost : IDisposable
                 UseMultimediaClassScheduler = useMultimediaClassScheduler,
                 GetBlockedMilliseconds = () => lastPresentMilliseconds,
                 GetDeadlineMilliseconds = GetPresentationDeadlineMs,
+                PacedByFrameAction = () => draw_timer_off && FramePacing.DisplayPacesDraws(effectiveFrameLimiter, !windowInactive, IsHeadless),
                 CreateWorkHint = createWorkHint
             };
+
+            if (draw_timer_off)
+                Logger.Verbose("The display alone paces the draw thread under VSync while focused (SAKURA_DRAW_TIMER=0).");
+
             audioThread = new AppThread("AudioThread", PerformSoundUpdate, getAudioTargetHz)
             {
                 GetDeadlineMilliseconds = GetPresentationDeadlineMs,
@@ -1651,9 +1668,7 @@ public abstract class AppHost : IDisposable
         }
 
         // A frame that comes sooner than the display can refresh again is held until it can, so frames are shown evenly.
-        // It's the display's shortest interval, not the limiter's slightly longer period: presents held for as long as
-        // frames take to draw would fall behind with every late one, and queue.
-        Renderer?.SetMinimumPresentInterval(limiter == FrameSync.VariableRefresh ? 1 / getDisplayHz() : 0);
+        Renderer?.SetMinimumPresentInterval(FramePacing.MinimumPresentInterval(limiter, getDisplayHz(), paced_present_asked));
 
         // First in the frame, so the update taken below is the newest one once the frame can start just in time for the GPU.
         Renderer?.SleepForLowLatency();

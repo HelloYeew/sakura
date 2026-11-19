@@ -63,10 +63,12 @@ public interface IRenderer
     void SetDisplaySync(bool enabled) { }
 
     /// <summary>
-    /// Sets how long each frame stays on screen at the least, in seconds, or 0 for no minimum. The host sets a frame's period
-    /// under <see cref="FrameSync.VariableRefresh"/> on a display whose refresh varies, so frames are shown evenly at the
-    /// limiter's rate, and 0 under every other limiter. Metal maps it to a timed present; the other backends leave this a
-    /// no-op, since their displays vary their refresh to meet a present without being asked.
+    /// Sets how long each frame stays on screen at the least, in seconds, or 0 for no minimum. The host sets the display's
+    /// shortest interval under <see cref="FrameSync.VariableRefresh"/> on a display whose refresh varies, so frames are shown
+    /// evenly, half a refresh under <see cref="FrameSync.VSync"/> where <c>SAKURA_METAL_PACED_PRESENT=1</c> asks for a timed
+    /// present to compare, and 0 otherwise (<see cref="Platform.FramePacing.MinimumPresentInterval"/>). Metal maps it to a
+    /// timed present; the other backends leave this a no-op, since their displays vary their refresh to meet a present
+    /// without being asked.
     /// </summary>
     void SetMinimumPresentInterval(double seconds) { }
 

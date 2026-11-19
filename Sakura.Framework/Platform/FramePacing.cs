@@ -82,6 +82,35 @@ internal readonly record struct FramePacing(AppType AppType, bool Mobile)
     public static bool RefreshStepped(double stepSeconds) => stepSeconds > VARIABLE_REFRESH_MARGIN_SECONDS;
 
     /// <summary>
+    /// How long each frame stays on screen at the least, in seconds, or 0 for a plain present
+    /// (<see cref="Graphics.Rendering.IRenderer.SetMinimumPresentInterval"/>). Under <see cref="FrameSync.VariableRefresh"/>,
+    /// the display's shortest interval, so frames are shown evenly: not the limiter's slightly longer period, since presents held
+    /// for as long as frames take to draw would fall behind with every late one, and queue. Under <see cref="FrameSync.VSync"/>,
+    /// half a refresh when <paramref name="pacedPresent"/> is asked for, which sends each present through the timed path
+    /// Godot uses, for comparing with the plain one.
+    /// </summary>
+    /// <param name="limiter">The limiter the loops follow (<see cref="EffectiveFrameLimiter"/>).</param>
+    /// <param name="displayHz">The display's refresh rate, in Hz.</param>
+    /// <param name="pacedPresent">Whether a timed present was asked for under VSync.</param>
+    public static double MinimumPresentInterval(FrameSync limiter, double displayHz, bool pacedPresent) => limiter switch
+    {
+        FrameSync.VariableRefresh => 1 / displayHz,
+        FrameSync.VSync when pacedPresent => 0.5 / displayHz,
+        _ => 0
+    };
+
+    /// <summary>
+    /// Whether the display alone can pace the draw thread: under <see cref="FrameSync.VSync"/>, focused, with a renderer that
+    /// blocks until the display can take another frame (Metal's next drawable, D3D11's waitable object, Vulkan's FIFO
+    /// acquire, OpenGL's swap). There the draw thread's own timer is a second clock beating against the display's.
+    /// Unfocused, frames come at 60 Hz by the timer.
+    /// </summary>
+    /// <param name="limiter">The limiter the loops follow (<see cref="EffectiveFrameLimiter"/>).</param>
+    /// <param name="focused">Whether the window is focused.</param>
+    /// <param name="headless">Whether the renderer draws nowhere, and so never blocks.</param>
+    public static bool DisplayPacesDraws(FrameSync limiter, bool focused, bool headless) => limiter == FrameSync.VSync && focused && !headless;
+
+    /// <summary>
     /// The draw rate under <see cref="FrameSync.VariableRefresh"/>: the display's top rate with
     /// <see cref="VARIABLE_REFRESH_MARGIN_SECONDS"/> added to each frame.
     /// </summary>
