@@ -104,4 +104,35 @@ public class TextShapingAllocationTest
 
         Assert.That(perString, Is.LessThan(400), $"{perString:N0} B a string");
     }
+
+    /// <summary>
+    /// A string asked for once is shaped for its caller alone, over the result the caller hands back, so text that
+    /// changes every update allocates nothing at all.
+    /// </summary>
+    [Test]
+    public void ShapingANewStringOverAHandedBackResultAllocatesNothing()
+    {
+        var own = store.Shape(usage, scores[0], 1f);
+
+        for (int i = 1; i < strings_measured; i++)
+        {
+            own = store.Shape(usage, scores[i], 1f, own);
+        }
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+
+        for (int i = strings_measured; i < scores.Length; i++)
+        {
+            own = store.Shape(usage, scores[i], 1f, own);
+        }
+
+        // Read before asserting: the assertions' own delegate would be counted.
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(allocated, Is.Zero);
+            Assert.That(own.Glyphs, Has.Count.EqualTo(8));
+        });
+    }
 }

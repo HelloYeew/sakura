@@ -439,6 +439,21 @@ public class Font : IDisposable
     }
 
     /// <summary>
+    /// Shapes <paramref name="text"/> as <see cref="ProcessText"/> does, over <paramref name="target"/>'s glyphs and bounds
+    /// instead of into a new result.
+    /// </summary>
+    /// <param name="target">A result made for one caller alone (<see cref="ShapedText.Refillable"/>), which nothing reads now.</param>
+    internal void ProcessTextInto(ShapedText target, string text, float fontSize, float dpiScale, IFontFallbackSource? fallbacks, FontVariation variation,
+                                  FontScript? languageHint)
+    {
+        var glyphs = target.GlyphList;
+
+        glyphs.Clear();
+        glyphs.EnsureCapacity(text.Length);
+        target.BoundingBox = shape(text, fontSize, dpiScale, fallbacks, variation, languageHint, glyphs);
+    }
+
+    /// <summary>
     /// Shapes <paramref name="text"/> onto the end of <paramref name="glyphs"/>, as <see cref="ProcessText"/> describes.
     /// </summary>
     /// <returns>The text's bounds, in logical pixels.</returns>
@@ -1043,24 +1058,56 @@ public struct TextGlyph
 /// <summary>
 /// The result of shaping one string: its glyphs and their measured bounds.
 /// </summary>
+/// <remarks>
+/// The font store shares a result between every caller asking for the same text, or makes one for a single caller when
+/// the text hasn't been asked for recently. That caller can hand its result back to be shaped over at its next text, so a
+/// result of that kind changes under anything else still holding it.
+/// </remarks>
 public class ShapedText
 {
-    /// <summary>
-    /// The shaped glyphs, in visual order. Exposed read-only because instances are shared.
-    /// </summary>
-    public IReadOnlyList<TextGlyph> Glyphs { get; }
+    private readonly List<TextGlyph> glyphList;
 
-    public Vector2 BoundingBox { get; }
+    /// <summary>
+    /// The shaped glyphs, in visual order. Read-only, because the store may share this result with every caller showing
+    /// the same text.
+    /// </summary>
+    public IReadOnlyList<TextGlyph> Glyphs => glyphList;
+
+    public Vector2 BoundingBox { get; internal set; }
+
+    /// <summary>
+    /// Whether this result was made for one caller alone, which may hand it back to the store to shape its next text over
+    /// (<see cref="IFontStore.Shape(FontUsage, string, float, ShapedText)"/>). A result the store shares never is.
+    /// </summary>
+    internal bool Refillable { get; }
+
+    /// <summary>
+    /// The glyphs, for <see cref="Font.ProcessTextInto"/> to shape over.
+    /// </summary>
+    internal List<TextGlyph> GlyphList => glyphList;
 
     /// <summary>
     /// The result of shaping nothing
     /// </summary>
     public static ShapedText Empty { get; } = new ShapedText(new List<TextGlyph>(), Vector2.Zero);
 
+    /// <summary>
+    /// A result of <paramref name="glyphs"/>, which it keeps rather than copies.
+    /// </summary>
     public ShapedText(List<TextGlyph> glyphs, Vector2 bounds)
     {
-        Glyphs = glyphs;
+        glyphList = glyphs;
         BoundingBox = bounds;
+    }
+
+    /// <summary>
+    /// An empty result for one caller, to be shaped into (<see cref="Refillable"/>).
+    /// </summary>
+    /// <param name="capacity">The glyphs to make room for.</param>
+    internal ShapedText(int capacity)
+    {
+        glyphList = new List<TextGlyph>(capacity);
+        Refillable = true;
     }
 
     /// <summary>

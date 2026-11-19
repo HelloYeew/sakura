@@ -24,6 +24,7 @@ public class ShapedTextCacheTest
 
     private static long textShapes => GlobalStatistics.Get<long>("Fonts", "Text Shapes").Value;
     private static long hits => GlobalStatistics.Get<long>("Fonts", "Shape Cache Hits").Value;
+    private static int entries => GlobalStatistics.Get<int>("Fonts", "Shaped Text Entries").Value;
 
     [SetUp]
     public void SetUp()
@@ -46,24 +47,128 @@ public class ShapedTextCacheTest
 
     private static FontUsage usage(float size = 16f) => FontUsage.Default.With(family: "Cached", size: size);
 
+    /// <summary>
+    /// Asks for <paramref name="text"/> twice, so it's shaped into the cache.
+    /// </summary>
+    private ShapedText shapeShared(string text, float size = 16f)
+    {
+        store.Shape(usage(size), text, 1f);
+        return store.Shape(usage(size), text, 1f);
+    }
+
+    /// <summary>
+    /// The first ask is shaped for its caller alone, the second is shaped into the cache, and every ask after that is
+    /// a hit.
+    /// </summary>
     [Test]
-    public void RepeatedShapingOfTheSameTextShapesOnce()
+    public void RepeatedTextIsShapedTwiceThenShared()
     {
         long before = textShapes;
 
         for (int i = 0; i < 20; i++)
             store.Shape(usage(), "hello", 1f);
 
-        Assert.That(textShapes - before, Is.EqualTo(1), "twenty layouts of unchanged text is one shape");
+        Assert.That(textShapes - before, Is.EqualTo(2), "twenty layouts of unchanged text is two shapes");
     }
 
     [Test]
     public void AHitReturnsTheSameInstance()
     {
-        var first = store.Shape(usage(), "hello", 1f);
-        var second = store.Shape(usage(), "hello", 1f);
+        var shared = shapeShared("hello");
+        var hit = store.Shape(usage(), "hello", 1f);
 
-        Assert.That(second, Is.SameAs(first));
+        Assert.That(hit, Is.SameAs(shared));
+    }
+
+    /// <summary>
+    /// Text asked for once, such as a score that changes every update, is shaped for its caller and kept out of the
+    /// cache, so the cache doesn't fill with entries nothing reads again.
+    /// </summary>
+    [Test]
+    public void TextAskedForOnceIsNotShared()
+    {
+        var once = store.Shape(usage(), "once", 1f);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(once.Refillable, Is.True);
+            Assert.That(once.Glyphs, Has.Count.EqualTo(4));
+            Assert.That(entries, Is.Zero);
+        });
+    }
+
+    /// <summary>
+    /// A text shaped for one caller is shaped over the result that caller hands back, and comes out as a new result
+    /// would.
+    /// </summary>
+    [Test]
+    public void AOneOffShapeIsShapedOverTheResultHandedBack()
+    {
+        var own = store.Shape(usage(), "first", 1f);
+        var next = store.Shape(usage(), "two", 1f, own);
+
+        var font = store.Get(usage());
+        var fresh = font.ProcessText("two", 16f, 1f, store.GetFallbackSource(usage()), store.GetVariation(usage()));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(next, Is.SameAs(own));
+            Assert.That(next.Glyphs, Is.EqualTo(fresh.Glyphs));
+            Assert.That(next.BoundingBox, Is.EqualTo(fresh.BoundingBox));
+        });
+    }
+
+    /// <summary>
+    /// A shared result is read by every caller showing its text, so it's never shaped over, whoever hands it back.
+    /// </summary>
+    [Test]
+    public void ASharedResultHandedBackIsLeftAlone()
+    {
+        var shared = shapeShared("shared");
+        var other = store.Shape(usage(), "other", 1f, shared);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(other, Is.Not.SameAs(shared));
+            Assert.That(shared.Glyphs, Has.Count.EqualTo(6));
+            Assert.That(store.Shape(usage(), "shared", 1f), Is.SameAs(shared));
+        });
+    }
+
+    /// <summary>
+    /// Each font usage remembers its own misses: one whose text changes all the time can't push out another's before
+    /// it's asked for again.
+    /// </summary>
+    [Test]
+    public void EachFontUsageRemembersItsOwnMisses()
+    {
+        store.Shape(usage(24f), "label", 1f);
+
+        for (int i = 0; i < 200; i++)
+        {
+            store.Shape(usage(), $"{i:D8}", 1f);
+        }
+
+        var second = store.Shape(usage(24f), "label", 1f);
+
+        Assert.That(store.Shape(usage(24f), "label", 1f), Is.SameAs(second), "the second ask was shared");
+    }
+
+    /// <summary>
+    /// A usage remembers only its latest misses, so text that comes round again only after many others is shaped
+    /// for its caller again.
+    /// </summary>
+    [Test]
+    public void AMissPastAUsagesLatestIsForgotten()
+    {
+        store.Shape(usage(), "label", 1f);
+
+        for (int i = 0; i < 200; i++)
+        {
+            store.Shape(usage(), $"{i:D8}", 1f);
+        }
+
+        Assert.That(store.Shape(usage(), "label", 1f).Refillable, Is.True);
     }
 
     /// <summary>
@@ -73,7 +178,7 @@ public class ShapedTextCacheTest
     public void AHitAllocatesNothing()
     {
         // Warm both the entry and everything on the hit path (statistics objects, the LinkedList node).
-        store.Shape(usage(), "hello", 1f);
+        shapeShared("hello");
         store.Shape(usage(), "hello", 1f);
 
         // Built outside the measured loop deliberately: FontUsage.With allocates ~24 bytes a call, which
@@ -141,9 +246,11 @@ public class ShapedTextCacheTest
         store.ShapeCacheSize = 8;
 
         for (int i = 0; i < 100; i++)
-            store.Shape(usage(), $"text {i}", 1f);
+        {
+            shapeShared($"text {i}");
+        }
 
-        Assert.That(GlobalStatistics.Get<int>("Fonts", "Shaped Text Entries").Value, Is.EqualTo(8));
+        Assert.That(entries, Is.EqualTo(8));
     }
 
     /// <summary>
@@ -156,15 +263,15 @@ public class ShapedTextCacheTest
     {
         store.ShapeCacheSize = 3;
 
-        store.Shape(usage(), "keep", 1f);
-        store.Shape(usage(), "a", 1f);
-        store.Shape(usage(), "b", 1f);
+        shapeShared("keep");
+        shapeShared("a");
+        shapeShared("b");
 
         // Keep "keep" in use while the others age out.
         for (int i = 0; i < 5; i++)
         {
             store.Shape(usage(), "keep", 1f);
-            store.Shape(usage(), $"churn {i}", 1f);
+            shapeShared($"churn {i}");
         }
 
         long before = textShapes;
@@ -180,17 +287,18 @@ public class ShapedTextCacheTest
     [Test]
     public void ClearingCachesDropsShapedResults()
     {
-        store.Shape(usage(), "hello", 1f);
+        var shared = shapeShared("hello");
 
         store.ClearCaches();
 
         long before = textShapes;
-        store.Shape(usage(), "hello", 1f);
+        var after = store.Shape(usage(), "hello", 1f);
 
         Assert.Multiple(() =>
         {
             Assert.That(textShapes - before, Is.EqualTo(1), "the result must have been re-shaped, not reused");
-            Assert.That(GlobalStatistics.Get<int>("Fonts", "Shaped Text Entries").Value, Is.EqualTo(1));
+            Assert.That(after, Is.Not.SameAs(shared));
+            Assert.That(entries, Is.EqualTo(1), "text that came round before is shared again at once");
         });
     }
 
@@ -201,7 +309,7 @@ public class ShapedTextCacheTest
     [Test]
     public void ChangingTheFallbackChainDropsShapedResults()
     {
-        store.Shape(usage(), "hello", 1f);
+        shapeShared("hello");
 
         store.AddFallbackFamily("Cached");
 
@@ -214,7 +322,7 @@ public class ShapedTextCacheTest
     [Test]
     public void RegisteringAFontDropsShapedResults()
     {
-        store.Shape(usage(), "hello", 1f);
+        shapeShared("hello");
 
         // A newly registered font can make a previously unresolvable family resolvable.
         store.AddFont(fonts, "Comfortaa-Bold.ttf", alias: "LateArrival");

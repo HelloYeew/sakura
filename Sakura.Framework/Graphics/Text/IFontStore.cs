@@ -137,6 +137,23 @@ public interface IFontStore : IDisposable
     ShapedText Shape(FontUsage usage, string text, float dpiScale);
 
     /// <summary>
+    /// Shapes <paramref name="text"/> as <see cref="Shape(FontUsage, string, float)"/> does, but may shape it over
+    /// <paramref name="reuse"/> instead of making a new result, when the result is the caller's alone.
+    /// </summary>
+    /// <param name="usage">The font to shape with.</param>
+    /// <param name="text">The text to shape.</param>
+    /// <param name="dpiScale">Physical pixels per logical pixel.</param>
+    /// <param name="reuse">
+    /// A result this caller was given and no longer reads, or null. Only one made for this caller alone is shaped over; a
+    /// shared one is left as it is.
+    /// </param>
+    /// <remarks>
+    /// Text that changes every update, such as a score, allocates nothing this way. This default ignores
+    /// <paramref name="reuse"/>.
+    /// </remarks>
+    ShapedText Shape(FontUsage usage, string text, float dpiScale, ShapedText? reuse) => Shape(usage, text, dpiScale);
+
+    /// <summary>
     /// Physical pixels per logical pixel for the display the window is currently on
     /// </summary>
     float DpiScale { get; }

@@ -45,6 +45,16 @@ public partial class SpriteText : Drawable
     /// </remarks>
     private ShapedText? vertexShapedText;
 
+    /// <summary>
+    /// A shaping of this sprite's own that <see cref="shapedText"/> replaced, for the font store to shape the next text over.
+    /// </summary>
+    /// <remarks>
+    /// Text the store doesn't share, such as a score that changes every update, is shaped for this sprite alone
+    /// (<see cref="ShapedText.Refillable"/>), and can be shaped over once nothing reads it. <see cref="vertexShapedText"/>
+    /// is read until the vertices are built again, so two shapings take turns: the one the vertices came from, and this.
+    /// </remarks>
+    private ShapedText? spareShapedText;
+
     private int lastCacheVersion = -1;
 
     /// <summary>
@@ -347,7 +357,11 @@ public partial class SpriteText : Drawable
             lastDpiScaleVersion = fontStore.DpiScaleVersion;
             layoutInvalidated = true;
             MarkSizesChanged();
+
+            var previous = shapedText;
             shapedText = null;
+            keepSpare(previous);
+
             Invalidate(InvalidationFlags.DrawInfo);
         }
 
@@ -376,8 +390,10 @@ public partial class SpriteText : Drawable
 
             // Shaped through the store rather than by resolving a Font and calling ProcessText: the store
             // caches the result, and only it knows when one has been invalidated by a font being
-            // registered, a fallback family changing, or the glyph atlas being cleared. The result is
+            // registered, a fallback family changing, or the glyph atlas being cleared. The result may be
             // shared with every other drawable showing the same text at the same size, so it is read-only.
+            var previous = shapedText;
+
             if (truncate)
             {
                 // Measures the full text first and only re-shapes when it overflows, so a sprite that
@@ -389,10 +405,12 @@ public partial class SpriteText : Drawable
             }
             else
             {
-                shapedText = fontStore.Shape(fontUsage, Text, dpiScale);
+                shapedText = fontStore.Shape(fontUsage, Text, dpiScale, reusableShaping());
                 displayedText = Text;
                 isTruncated = false;
             }
+
+            keepSpare(previous);
 
             // Assign the backing field directly; the ContentSize getter forces layout, which we're
             // already inside of (guarded by computingLayout).
@@ -414,6 +432,31 @@ public partial class SpriteText : Drawable
         {
             computingLayout = false;
         }
+    }
+
+    /// <summary>
+    /// A shaping of this sprite's own that nothing reads now, for the store to shape over, or null for none.
+    /// </summary>
+    private ShapedText? reusableShaping()
+    {
+        if (isReusable(shapedText))
+            return shapedText;
+
+        return isReusable(spareShapedText) ? spareShapedText : null;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="shaped"/> is this sprite's own and the vertices weren't built from it.
+    /// </summary>
+    private bool isReusable(ShapedText? shaped) => shaped is { Refillable: true } && !ReferenceEquals(shaped, vertexShapedText);
+
+    /// <summary>
+    /// Keeps <paramref name="previous"/> as the spare, if it's this sprite's own and the layout replaced it.
+    /// </summary>
+    private void keepSpare(ShapedText? previous)
+    {
+        if (previous is { Refillable: true } && !ReferenceEquals(previous, shapedText))
+            spareShapedText = previous;
     }
 
     protected override void GenerateVertices()

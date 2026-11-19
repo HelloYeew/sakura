@@ -336,7 +336,8 @@ public class TextTruncationTest
     [Test]
     public void FittingCostsALogarithmicNumberOfShapings()
     {
-        // Warm the cache for the full text so only fitting is measured.
+        // Warm the cache for the full text so only fitting is measured: text is cached from its second ask.
+        store.Shape(usage(), long_text, 1f);
         store.Shape(usage(), long_text, 1f);
 
         long before = Sakura.Framework.Statistic.GlobalStatistics.Get<long>("Fonts", "Text Shapes").Value;

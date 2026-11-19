@@ -1064,6 +1064,22 @@ public class RendererFontStore : IFontStore
     private static readonly GlobalStatistic<long> stat_shape_bytes = GlobalStatistics.Get<long>("Fonts", "Shaped Text Bytes", StatisticKind.Gauge, StatisticUnit.Bytes);
 
     /// <summary>
+    /// Misses shaped for their caller alone and kept out of the cache, as their text hadn't been asked for recently.
+    /// </summary>
+    private static readonly GlobalStatistic<long> stat_one_off_shapes = GlobalStatistics.Get<long>("Fonts", "One-off Shapes", StatisticKind.Cumulative);
+
+    /// <summary>
+    /// How many of a font usage's latest misses are remembered, for a second miss among them to share its text.
+    /// </summary>
+    private const int misses_per_usage = 64;
+
+    /// <summary>
+    /// How many font usages have their misses remembered before all of them are forgotten. A size animated every frame is
+    /// a new usage every frame, and this keeps its memory bounded.
+    /// </summary>
+    private const int max_remembered_usages = 128;
+
+    /// <summary>
     /// Everything about a request that changes the shaped output. <see cref="FontUsage"/> carries family,
     /// size, weight, italics and the variation axes; <c>dpiScale</c> is separate because it comes from the
     /// window rather than the usage.
@@ -1081,7 +1097,23 @@ public class RendererFontStore : IFontStore
 
     private long shapeBytes;
 
-    public ShapedText Shape(FontUsage usage, string text, float dpiScale)
+    /// <summary>
+    /// The latest misses of each font usage, which decide what text is shared (<see cref="askedForRecently"/>).
+    /// </summary>
+    private readonly Dictionary<FontUsage, RecentMisses> recentMisses = new Dictionary<FontUsage, RecentMisses>();
+
+    public ShapedText Shape(FontUsage usage, string text, float dpiScale) => Shape(usage, text, dpiScale, null);
+
+    /// <summary>
+    /// Shapes <paramref name="text"/>, sharing the result through the cache once the text is asked for a second time in
+    /// a while, and shaping it for this caller alone, over <paramref name="reuse"/> where that's one of the caller's own,
+    /// until then.
+    /// </summary>
+    /// <remarks>
+    /// A string asked for once, such as a score that changes every update, would fill the cache with entries nothing
+    /// reads again. They'd live long enough to be promoted, and die in an older generation.
+    /// </remarks>
+    public ShapedText Shape(FontUsage usage, string text, float dpiScale, ShapedText reuse)
     {
         if (string.IsNullOrEmpty(text))
             return ShapedText.Empty;
@@ -1105,6 +1137,16 @@ public class RendererFontStore : IFontStore
         if (font.IsNull())
             return ShapedText.Empty;
 
+        if (!askedForRecently(key))
+        {
+            var own = reuse is { Refillable: true } ? reuse : new ShapedText(text.Length);
+
+            font.ProcessTextInto(own, text, usage.Size, dpiScale, GetFallbackSource(usage), GetVariation(usage), usage.Script);
+            stat_one_off_shapes.Value++;
+
+            return own;
+        }
+
         var shaped = font.ProcessText(text, usage.Size, dpiScale, GetFallbackSource(usage), GetVariation(usage), usage.Script);
 
         var node = shapeLru.AddFirst((key, shaped));
@@ -1124,6 +1166,27 @@ public class RendererFontStore : IFontStore
         return shaped;
     }
 
+    /// <summary>
+    /// Whether <paramref name="key"/>'s text is among its font usage's latest misses. If it isn't, it's remembered in place
+    /// of the oldest.
+    /// </summary>
+    /// <remarks>
+    /// Each usage remembers its own misses, so one whose text changes every update can't push out the misses of another
+    /// before they come round again. They're kept when the cache is dropped: text that came round before still will.
+    /// </remarks>
+    private bool askedForRecently(in ShapeKey key)
+    {
+        if (!recentMisses.TryGetValue(key.Usage, out var misses))
+        {
+            if (recentMisses.Count >= max_remembered_usages)
+                recentMisses.Clear();
+
+            recentMisses[key.Usage] = misses = new RecentMisses();
+        }
+
+        return misses.Recall(HashCode.Combine(key.Text, key.DpiScale));
+    }
+
     private void updateShapeStatistics()
     {
         stat_shape_entries.Value = shapeCache.Count;
@@ -1140,6 +1203,32 @@ public class RendererFontStore : IFontStore
         shapeBytes = 0;
 
         updateShapeStatistics();
+    }
+
+    /// <summary>
+    /// The hashes of one font usage's latest misses, in a ring.
+    /// </summary>
+    private sealed class RecentMisses
+    {
+        private readonly int[] hashes = new int[misses_per_usage];
+        private int count;
+        private int next;
+
+        /// <summary>
+        /// Whether <paramref name="hash"/> is among the misses remembered. If it isn't, it's remembered in place of the
+        /// oldest.
+        /// </summary>
+        public bool Recall(int hash)
+        {
+            if (hashes.AsSpan(0, count).Contains(hash))
+                return true;
+
+            hashes[next] = hash;
+            next = (next + 1) % hashes.Length;
+            count = Math.Min(count + 1, hashes.Length);
+
+            return false;
+        }
     }
 
     #endregion
