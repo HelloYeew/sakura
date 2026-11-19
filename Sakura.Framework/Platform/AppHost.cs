@@ -187,6 +187,28 @@ public abstract class AppHost : IDisposable
         public GamepadDisconnectedEvent GamepadDisconnected;
     }
 
+    /// <summary>
+    /// Queues a press or a release, and wakes the update thread to dispatch it now rather than at its next update, so a
+    /// handler that answers a press, such as a game's judgement and its hit sound, runs as soon as the press arrives.
+    /// </summary>
+    private void queuePress(in PendingInput input)
+    {
+        inputQueue.Enqueue(input);
+        updateThread?.Wake();
+    }
+
+    /// <summary>
+    /// Dispatches what's queued, in the order it came. On the update thread: at the start of each update, and whenever a
+    /// press wakes it between updates, when the tree is as the last update left it, as it is at the start of the next.
+    /// </summary>
+    private void dispatchQueuedInput()
+    {
+        while (inputQueue.TryDequeue(out var input))
+        {
+            dispatchInput(in input);
+        }
+    }
+
     private void dispatchInput(in PendingInput input)
     {
         if (audioInterrupted && input.Type is PendingInputType.KeyDown or PendingInputType.MouseDown or PendingInputType.TouchDown or PendingInputType.GamepadButtonDown
@@ -857,23 +879,25 @@ public abstract class AppHost : IDisposable
             Window.Title = Options.FriendlyAppName;
             Window.ApplicationName = Name;
             Window.KeepScreenOn = KeepScreenOn.Value;
-            KeepScreenOn.ValueChanged += e => mainThreadActions.Enqueue(() => Window.KeepScreenOn = e.NewValue);
+            KeepScreenOn.ValueChanged += e => ScheduleToMainThread(() => Window.KeepScreenOn = e.NewValue);
 
-            Window.OnKeyDown += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.KeyDown, Key = e });
-            Window.OnKeyUp += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.KeyUp, Key = e });
-            Window.OnTouchDown += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.TouchDown, Touch = e });
+            // A press or a release wakes the update thread to dispatch it at once. Moves, scrolls and text wait for its next
+            // update, or for the next press, which takes everything queued before it in order.
+            Window.OnKeyDown += e => queuePress(new PendingInput { Type = PendingInputType.KeyDown, Key = e });
+            Window.OnKeyUp += e => queuePress(new PendingInput { Type = PendingInputType.KeyUp, Key = e });
+            Window.OnTouchDown += e => queuePress(new PendingInput { Type = PendingInputType.TouchDown, Touch = e });
             Window.OnTouchMove += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.TouchMove, Touch = e });
-            Window.OnTouchUp += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.TouchUp, Touch = e });
-            Window.OnMouseDown += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.MouseDown, MouseButton = e });
-            Window.OnMouseUp += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.MouseUp, MouseButton = e });
+            Window.OnTouchUp += e => queuePress(new PendingInput { Type = PendingInputType.TouchUp, Touch = e });
+            Window.OnMouseDown += e => queuePress(new PendingInput { Type = PendingInputType.MouseDown, MouseButton = e });
+            Window.OnMouseUp += e => queuePress(new PendingInput { Type = PendingInputType.MouseUp, MouseButton = e });
             Window.OnMouseMove += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.MouseMove, Mouse = e });
             Window.OnScroll += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.Scroll, Scroll = e });
             Window.OnDragDropFile += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.DragDropFile, DragDropFile = e });
             Window.OnDragDropText += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.DragDropText, DragDropText = e });
             Window.OnTextInput += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.TextInput, TextInput = e });
             Window.OnTextEditing += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.TextEditing, TextEditing = e });
-            Window.OnGamepadButtonDown += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.GamepadButtonDown, GamepadButton = e });
-            Window.OnGamepadButtonUp += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.GamepadButtonUp, GamepadButton = e });
+            Window.OnGamepadButtonDown += e => queuePress(new PendingInput { Type = PendingInputType.GamepadButtonDown, GamepadButton = e });
+            Window.OnGamepadButtonUp += e => queuePress(new PendingInput { Type = PendingInputType.GamepadButtonUp, GamepadButton = e });
             Window.OnGamepadAxisMotion += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.GamepadAxisMotion, GamepadAxis = e });
             Window.OnGamepadConnected += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.GamepadConnected, GamepadConnected = e });
             Window.OnGamepadDisconnected += e => inputQueue.Enqueue(new PendingInput { Type = PendingInputType.GamepadDisconnected, GamepadDisconnected = e });
@@ -955,6 +979,7 @@ public abstract class AppHost : IDisposable
 
             updateThread = new AppThread("UpdateThread", PerformUpdate, getUpdateTargetHz)
             {
+                OnWake = dispatchQueuedInput,
                 GetDeadlineMilliseconds = GetPresentationDeadlineMs,
                 Priority = ThreadPriority.AboveNormal,
                 GetActivity = () => threadActivity.For(ThreadRole.Update),
@@ -1009,7 +1034,7 @@ public abstract class AppHost : IDisposable
 
             ExecutionMode.ValueChanged += e =>
             {
-                mainThreadActions.Enqueue(() =>
+                ScheduleToMainThread(() =>
                 {
                     if (e.NewValue == Threading.ExecutionMode.MultiThread)
                     {
@@ -1056,7 +1081,7 @@ public abstract class AppHost : IDisposable
 
             FrameworkConfigManager.Get<WindowMode>(FrameworkSetting.WindowMode).ValueChanged += e =>
             {
-                mainThreadActions.Enqueue(() =>
+                ScheduleToMainThread(() =>
                 {
                     Window.WindowMode = e.NewValue;
                 });
@@ -1072,8 +1097,8 @@ public abstract class AppHost : IDisposable
                 while (executionState == ExecutionState.Running)
                 {
                     // In single-threaded mode the main loop drives everything at the update rate.
-                    // In multi-threaded mode it only drives input, so it follows the input target Hz
-                    // (which throttles to 60 when the window is inactive, like the other threads).
+                    // In multi-threaded mode it only drives input, so it waits for events for at most the input
+                    // target Hz's frame: a refresh, or 60 Hz's when the window is inactive, like the other threads.
                     //
                     // Read before the body rather than after it because the single-threaded frame needs
                     // the budget to record against. A focus change arriving in this iteration's
@@ -1129,10 +1154,10 @@ public abstract class AppHost : IDisposable
                         threadRunner.RunSingleThreadedFrame(mainBudgetMs, deadlineMs);
                     }
 
-                    if (currentHz > 0 && Window != null && ExecutionMode.Value == Threading.ExecutionMode.MultiThread && pacing.InputWaitsForEvents)
+                    if (currentHz > 0 && Window != null && ExecutionMode.Value == Threading.ExecutionMode.MultiThread)
                     {
-                        // Woken by the next event, or after a frame to act on what other threads asked of this
-                        // one (text input, cursor changes, scheduled actions).
+                        // Woken by the next event, or by another thread that asks something of this one (text input, cursor
+                        // changes, scheduled actions), else after a refresh.
                         Window.WaitForEvents(mainBudgetMs);
                         nextMainFrameTime = Stopwatch.GetTimestamp();
                     }
@@ -1147,9 +1172,8 @@ public abstract class AppHost : IDisposable
                         if (now > nextMainFrameTime)
                             nextMainFrameTime = now;
 
-                        // Multi-threaded, this loop only polls input, and the events carry their own timestamps,
-                        // so it waits plainly. Single-threaded it drives every frame, so it follows the update
-                        // thread: precise for a focused game in play.
+                        // Single-threaded it drives every frame, so it follows the update thread: precise for a focused game
+                        // in play.
                         bool mainPreciseTiming = ExecutionMode.Value == Threading.ExecutionMode.SingleThread
                                                  && threadActivity.For(ThreadRole.Update) == ThreadActivity.Tight;
                         mainWaiter.WaitUntil(nextMainFrameTime, mainPreciseTiming);
@@ -1263,6 +1287,7 @@ public abstract class AppHost : IDisposable
     public virtual void Exit()
     {
         executionState = ExecutionState.Stopping;
+        Window?.WakeEventThread();
     }
 
     protected virtual void OnKeyDown(KeyEvent e)
@@ -1424,7 +1449,8 @@ public abstract class AppHost : IDisposable
     }
 
     /// <summary>
-    /// This method is called at a fixed 1000Hz for precise input handling.
+    /// Runs each time the input loop wakes: multi-threaded, on an event, a request from another thread, or once a refresh;
+    /// single-threaded, once a frame.
     /// </summary>
     protected virtual void PerformInput()
     {
@@ -1439,6 +1465,7 @@ public abstract class AppHost : IDisposable
         if (action != null)
         {
             mainThreadActions.Enqueue(action);
+            Window?.WakeEventThread();
         }
     }
 
@@ -1578,10 +1605,7 @@ public abstract class AppHost : IDisposable
         // Before anything reads a clock: this is the moment the frame's drawn as of.
         long updateTime = Stopwatch.GetTimestamp();
 
-        while (inputQueue.TryDequeue(out var input))
-        {
-            dispatchInput(in input);
-        }
+        dispatchQueuedInput();
 
         stat_uptime.Value = UpdateClock.CurrentTime;
         stat_target_update_hz.Value = targetUpdateHz;
@@ -1770,7 +1794,7 @@ public abstract class AppHost : IDisposable
 
     private bool windowInactive => Window != null && !Window.IsActive;
 
-    private double getInputTargetHz() => windowInactive ? 60 : pacing.InputHz(getDisplayHz());
+    private double getInputTargetHz() => windowInactive ? 60 : getDisplayHz();
     private double getAudioTargetHz() => windowInactive ? 60 : pacing.AudioHz(getDisplayHz(), AudioManager?.PlaybackWaitsForUpdate ?? true);
 
     private double getDrawTargetHz()

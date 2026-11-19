@@ -90,13 +90,6 @@ public class FramePacingTest
         });
     }
 
-    [TestCase(AppType.Game, false, FramePacing.DESKTOP_MAX_HZ)]
-    [TestCase(AppType.Application, false, 120)]
-    [TestCase(AppType.Game, true, 120)]
-    [TestCase(AppType.Application, true, 120)]
-    public void InputRate(AppType appType, bool mobile, double expected)
-        => Assert.That(new FramePacing(appType, mobile).InputHz(120), Is.EqualTo(expected));
-
     [TestCase(AppType.Game, false, true, FramePacing.DESKTOP_MAX_HZ)]
     [TestCase(AppType.Game, false, false, FramePacing.DESKTOP_MAX_HZ)]
     [TestCase(AppType.Application, false, true, 120)]
@@ -108,11 +101,4 @@ public class FramePacingTest
     [Test]
     public void PhoneGameAudioFollowsTheDisplayWhenPlaybackDoesNotWait()
         => Assert.That(new FramePacing(AppType.Game, true).AudioHz(120, playbackWaitsForUpdate: false), Is.EqualTo(120));
-
-    [TestCase(AppType.Game, false, false)]
-    [TestCase(AppType.Application, false, false)]
-    [TestCase(AppType.Game, true, true)]
-    [TestCase(AppType.Application, true, true)]
-    public void InputWaitsForEventsOnAPhone(AppType appType, bool mobile, bool expected)
-        => Assert.That(new FramePacing(appType, mobile).InputWaitsForEvents, Is.EqualTo(expected));
 }

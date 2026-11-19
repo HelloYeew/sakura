@@ -31,14 +31,18 @@ public class FrameWaiterTest
             lateTicks = ticks(lateMicroseconds);
         }
 
-        public bool Sleep(TimeSpan duration)
+        public SleepResult Sleep(TimeSpan duration)
         {
             long until = Stopwatch.GetTimestamp() + (long)(duration.Ticks * Stopwatch.Frequency / (double)TimeSpan.TicksPerSecond) + lateTicks;
 
             while (Stopwatch.GetTimestamp() < until)
                 Thread.SpinWait(1);
 
-            return true;
+            return SleepResult.Slept;
+        }
+
+        public void Wake()
+        {
         }
 
         public void Dispose()
@@ -59,10 +63,14 @@ public class FrameWaiterTest
             this.succeeds = succeeds;
         }
 
-        public bool Sleep(TimeSpan duration)
+        public SleepResult Sleep(TimeSpan duration)
         {
             RequestedMicroseconds.Add(duration.TotalMicroseconds);
-            return succeeds;
+            return succeeds ? SleepResult.Slept : SleepResult.Failed;
+        }
+
+        public void Wake()
+        {
         }
 
         public void Dispose()
@@ -235,6 +243,152 @@ public class FrameWaiterTest
 
             return false;
         }
+    }
+
+    /// <summary>
+    /// A wake from another thread ends a two-second wait at once, on this platform's own sleeps, and the shortened sleep
+    /// teaches the guard nothing.
+    /// </summary>
+    [TestCase(false)]
+    [TestCase(true)]
+    [FlakyTest]
+    public void AWakeEndsAWaitEarly(bool precise)
+    {
+        using var waiter = new FrameWaiter("TestWakeThread");
+        double guardBefore = waiter.GuardTicks;
+        long wokenAt = 0;
+
+        var waker = new Thread(() =>
+        {
+            Thread.Sleep(50);
+            Interlocked.Exchange(ref wokenAt, Stopwatch.GetTimestamp());
+            waiter.Wake();
+        });
+
+        long start = Stopwatch.GetTimestamp();
+        waker.Start();
+        bool reachedDeadline = waiter.WaitUntil(start + ticks(2_000_000), precise);
+        long returnedAt = Stopwatch.GetTimestamp();
+        waker.Join();
+
+        Assert.That(reachedDeadline, Is.False);
+        Assert.That(microseconds(returnedAt - start), Is.GreaterThanOrEqualTo(50_000), "returned before the wake");
+        Assert.That(microseconds(returnedAt - Interlocked.Read(ref wokenAt)), Is.LessThan(100_000), "the wait ended long after the wake");
+        Assert.That(waiter.GuardTicks, Is.EqualTo(guardBefore));
+    }
+
+    /// <summary>
+    /// A wake that comes while the thread is busy, before it waits, ends its next wait.
+    /// </summary>
+    [Test]
+    public void AWakeBeforeTheWaitIsNotLost()
+    {
+        using var waiter = new FrameWaiter("TestWakeThread");
+
+        waiter.Wake();
+
+        long start = Stopwatch.GetTimestamp();
+        Assert.That(waiter.WaitUntil(start + ticks(2_000_000), precise: false), Is.False);
+        Assert.That(microseconds(Stopwatch.GetTimestamp() - start), Is.LessThan(1_000_000));
+    }
+
+    /// <summary>
+    /// Two wakes before a wait end only that one. The wake both platform sleeps were given stays with the one that wasn't
+    /// sleeping, and the next wait sleeps through it to its deadline.
+    /// </summary>
+    [TestCase(false)]
+    [TestCase(true)]
+    public void AWaitAfterAWokenOneLastsToItsDeadline(bool precise)
+    {
+        using var waiter = new FrameWaiter("TestWakeThread");
+
+        waiter.Wake();
+        waiter.Wake();
+        Assert.That(waiter.WaitUntil(Stopwatch.GetTimestamp() + ticks(2_000_000), precise), Is.False);
+
+        long deadline = Stopwatch.GetTimestamp() + ticks(50_000);
+        Assert.That(waiter.WaitUntil(deadline, precise), Is.True);
+        Assert.That(Stopwatch.GetTimestamp(), Is.GreaterThanOrEqualTo(deadline));
+    }
+
+    /// <summary>
+    /// A precise sleep that returns at once leaves the whole wait to the spin, which a wake ends too.
+    /// </summary>
+    [Test]
+    [FlakyTest]
+    public void AWakeEndsTheSpin()
+    {
+        using var waiter = new FrameWaiter(new RecordingSleep(), new RecordingSleep());
+
+        var waker = new Thread(() =>
+        {
+            Thread.Sleep(50);
+            waiter.Wake();
+        });
+
+        long start = Stopwatch.GetTimestamp();
+        waker.Start();
+        bool reachedDeadline = waiter.WaitUntil(start + ticks(2_000_000), precise: true);
+        double waitedMicroseconds = microseconds(Stopwatch.GetTimestamp() - start);
+        waker.Join();
+
+        Assert.That(reachedDeadline, Is.False);
+        Assert.That(waitedMicroseconds, Is.LessThan(1_000_000));
+    }
+
+    /// <summary>
+    /// The sleeps a frame thread gets on macOS, Linux and Windows can be woken: a wake ends a sleep of either kind.
+    /// </summary>
+    [TestCase(false)]
+    [TestCase(true)]
+    public void ThePlatformsSleepsCanBeWoken(bool precise)
+    {
+        Assume.That(OperatingSystem.IsMacOS() || OperatingSystem.IsLinux() || OperatingSystem.IsWindows(), "only these three are checked");
+
+        using var sleep = precise ? FrameWaiter.CreatePreciseSleep() : FrameWaiter.CreateNativeSleep();
+        Assume.That(sleep, Is.Not.Null, "the platform has no sleep of this kind");
+
+        sleep!.Wake();
+
+        long start = Stopwatch.GetTimestamp();
+        Assert.That(sleep.Sleep(TimeSpan.FromSeconds(2)), Is.EqualTo(SleepResult.Woken));
+        Assert.That(microseconds(Stopwatch.GetTimestamp() - start), Is.LessThan(1_000_000));
+    }
+
+    /// <summary>
+    /// A woken sleep's timer would otherwise still fire at its old time, into whichever sleep comes next, and end that one
+    /// early.
+    /// </summary>
+    [TestCase(false)]
+    [TestCase(true)]
+    public void AWokenSleepLeavesNoTimerForTheNext(bool precise)
+    {
+        Assume.That(OperatingSystem.IsMacOS() || OperatingSystem.IsLinux() || OperatingSystem.IsWindows(), "only these three are checked");
+
+        using var sleep = precise ? FrameWaiter.CreatePreciseSleep() : FrameWaiter.CreateNativeSleep();
+        Assume.That(sleep, Is.Not.Null, "the platform has no sleep of this kind");
+
+        sleep!.Wake();
+        Assert.That(sleep.Sleep(TimeSpan.FromMilliseconds(30)), Is.EqualTo(SleepResult.Woken));
+
+        // Past the first sleep's deadline, so its timer, were it still set, would already have fired.
+        Thread.Sleep(60);
+
+        long start = Stopwatch.GetTimestamp();
+        Assert.That(sleep.Sleep(TimeSpan.FromMilliseconds(100)), Is.EqualTo(SleepResult.Slept));
+        Assert.That(microseconds(Stopwatch.GetTimestamp() - start), Is.GreaterThanOrEqualTo(95_000));
+    }
+
+    /// <summary>
+    /// A wake can come from another thread as the waiting thread's loop ends and closes the waiter.
+    /// </summary>
+    [Test]
+    public void AWakeAfterDisposeDoesNothing()
+    {
+        var waiter = new FrameWaiter("TestWakeThread");
+        waiter.Dispose();
+
+        Assert.DoesNotThrow(() => waiter.Wake());
     }
 
     /// <summary>

@@ -13,8 +13,8 @@ namespace Sakura.Framework.Threading;
 /// Waits for a frame deadline by sleeps through the bulk of the wait with the platform's
 /// <see cref="INativeSleep"/>, then busy-spins the last stretch (the guard) so the frame lands on time.
 /// A precise wait sleeps with the platform's most precise timer: on Apple platforms a kernel timer that
-/// the system may not delay to save power (<see cref="DarwinCriticalSleep"/>), which shrinks the guard
-/// from about a millisecond to about a tenth of one.
+/// the system may not delay to save power (<see cref="DarwinTimerSleep"/>), which shrinks the guard
+/// from about a millisecond to about a tenth of one. Another thread can end a wait early with <see cref="Wake"/>.
 /// </summary>
 /// <remarks>
 /// The guard is learned per thread rather than fixed, because how late the OS wakes a sleeping thread
@@ -65,6 +65,19 @@ internal sealed class FrameWaiter : IDisposable
     private GlobalStatistic<double>? statGuard;
 
     /// <summary>
+    /// 1 from a <see cref="Wake"/> until a wait returns early for it.
+    /// </summary>
+    private int wakeRequested;
+
+    /// <summary>
+    /// Held while a wake reaches the sleeps and while they're closed, so a wake from another thread never reaches a closed
+    /// handle, or a number the system has since given to something else.
+    /// </summary>
+    private readonly object wakeLock = new object();
+
+    private bool disposed;
+
+    /// <summary>
     /// How much of each precise wait is left to the spin, in stopwatch ticks.
     /// </summary>
     internal double GuardTicks { get; private set; }
@@ -93,7 +106,8 @@ internal sealed class FrameWaiter : IDisposable
     }
 
     /// <summary>
-    /// Blocks until <paramref name="deadline"/>, a <see cref="Stopwatch.GetTimestamp"/> value.
+    /// Blocks until <paramref name="deadline"/>, a <see cref="Stopwatch.GetTimestamp"/> value, or until <see cref="Wake"/>
+    /// ends the wait.
     /// </summary>
     /// <param name="deadline">The timestamp to return at.</param>
     /// <param name="precise">
@@ -102,30 +116,65 @@ internal sealed class FrameWaiter : IDisposable
     /// leave the guard alone: they come from a thread that never spins, or from an inactive window whose
     /// timers may be throttled and are not the ones a focused window will see.
     /// </param>
-    public void WaitUntil(long deadline, bool precise)
+    /// <returns>False if a wake ended the wait before the deadline: one that came during it, or before it began.</returns>
+    public bool WaitUntil(long deadline, bool precise)
     {
+        if (takeWake())
+            return false;
+
         long now = Stopwatch.GetTimestamp();
 
         if (!precise || !allowSpinning)
-        {
-            if (deadline > now)
-                sleep(deadline - now, precise);
-
-            return;
-        }
+            return deadline <= now || sleepUntil(deadline, precise);
 
         long sleepTicks = deadline - now - (long)GuardTicks;
 
         if (sleepTicks > 0)
         {
-            sleep(sleepTicks, true);
-            RecordOvershoot(Stopwatch.GetTimestamp() - (now + sleepTicks));
+            long sleepEnd = now + sleepTicks;
+
+            // Woken, it didn't sleep as long as asked, so its lateness says nothing about the timer's.
+            if (!sleepUntil(sleepEnd, true))
+                return false;
+
+            RecordOvershoot(Stopwatch.GetTimestamp() - sleepEnd);
         }
 
         // Thread.SpinWait issues a CPU pause hint without yielding, which would overshoot a
         // sub-millisecond deadline.
         while (Stopwatch.GetTimestamp() < deadline)
+        {
+            if (Volatile.Read(ref wakeRequested) != 0 && takeWake())
+                return false;
+
             Thread.SpinWait(1);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Ends the wait under way early, or the next one if none is, which then returns at once. Several wakes before a wait
+    /// end only that one. Safe to call from any thread, and after the waiter is disposed, when it does nothing.
+    /// </summary>
+    /// <remarks>
+    /// A sleep that can't be woken (<see cref="Thread.Sleep(TimeSpan)"/>, where the platform has no sleep of its own) still
+    /// sleeps to its end, and the wait returns then.
+    /// </remarks>
+    public void Wake()
+    {
+        Interlocked.Exchange(ref wakeRequested, 1);
+
+        lock (wakeLock)
+        {
+            if (disposed)
+                return;
+
+            // Both: the wait may be in either. The other keeps the wake for its next sleep, which sees no wake asked for and
+            // sleeps on.
+            nativeSleep?.Wake();
+            preciseSleep?.Wake();
+        }
     }
 
     /// <summary>
@@ -150,25 +199,80 @@ internal sealed class FrameWaiter : IDisposable
 
     public void Dispose()
     {
+        lock (wakeLock)
+            disposed = true;
+
         nativeSleep?.Dispose();
         preciseSleep?.Dispose();
     }
 
-    private void sleep(long ticks, bool precise)
+    /// <summary>
+    /// Takes the wake asked for, if there is one.
+    /// </summary>
+    private bool takeWake() => Interlocked.Exchange(ref wakeRequested, 0) != 0;
+
+    /// <summary>
+    /// Sleeps until <paramref name="until"/>, a <see cref="Stopwatch.GetTimestamp"/> value, unless a wake ends it. A sleep
+    /// ended by a wake that an earlier wait already returned for sleeps on to the same moment.
+    /// </summary>
+    /// <returns>False if a wake ended it.</returns>
+    private bool sleepUntil(long until, bool precise)
+    {
+        while (true)
+        {
+            long remaining = until - Stopwatch.GetTimestamp();
+
+            if (remaining <= 0)
+                return !takeWake();
+
+            var result = sleep(remaining, precise);
+
+            if (takeWake())
+                return false;
+
+            if (result != SleepResult.Woken)
+                return true;
+        }
+    }
+
+    /// <summary>
+    /// Sleeps for <paramref name="ticks"/> stopwatch ticks with the sleep asked for, falling back to the plain one and then
+    /// to <see cref="Thread.Sleep(TimeSpan)"/> where a sleep fails.
+    /// </summary>
+    private SleepResult sleep(long ticks, bool precise)
     {
         var duration = TimeSpan.FromTicks((long)(ticks * timespan_ticks_per_stopwatch_tick));
 
-        if (precise && preciseSleep?.Sleep(duration) == true)
-            return;
+        if (precise && preciseSleep != null)
+        {
+            var preciseResult = preciseSleep.Sleep(duration);
 
-        if (nativeSleep?.Sleep(duration) != true)
-            Thread.Sleep(duration);
+            if (preciseResult != SleepResult.Failed)
+                return preciseResult;
+        }
+
+        var result = nativeSleep?.Sleep(duration) ?? SleepResult.Failed;
+
+        if (result != SleepResult.Failed)
+            return result;
+
+        Thread.Sleep(duration);
+        return SleepResult.Slept;
     }
 
+    /// <summary>
+    /// The platform's sleep for plain waits, one that can be woken where the platform has one.
+    /// </summary>
     internal static INativeSleep? CreateNativeSleep()
     {
         if (OperatingSystem.IsWindows())
             return new WindowsNativeSleep();
+
+        if (DarwinTimerSleep.IsAvailable && DarwinTimerSleep.Create(critical: false) is DarwinTimerSleep darwin)
+            return darwin;
+
+        if (LinuxFutexSleep.IsAvailable)
+            return new LinuxFutexSleep();
 
         return UnixNativeSleep.IsAvailable ? new UnixNativeSleep() : null;
     }
@@ -176,5 +280,5 @@ internal sealed class FrameWaiter : IDisposable
     /// <summary>
     /// The platform's precise sleep, where it has one that's more precise than <see cref="CreateNativeSleep"/>'s.
     /// </summary>
-    internal static INativeSleep? CreatePreciseSleep() => DarwinCriticalSleep.IsAvailable ? DarwinCriticalSleep.Create() : null;
+    internal static INativeSleep? CreatePreciseSleep() => DarwinTimerSleep.IsAvailable ? DarwinTimerSleep.Create(critical: true) : null;
 }

@@ -238,7 +238,10 @@ public class SDLWindow : IWindow
             relativeMouseMode = value;
 
             if (initialized)
+            {
                 pendingRelativeModeChange = true;
+                WakeEventThread();
+            }
         }
     }
 
@@ -554,6 +557,8 @@ public class SDLWindow : IWindow
             pendingTextInputState = true;
             pendingTextInputType = type;
         }
+
+        WakeEventThread();
     }
 
     public void StopTextInput()
@@ -562,8 +567,14 @@ public class SDLWindow : IWindow
         {
             pendingTextInputState = false;
         }
+
+        WakeEventThread();
     }
 
+    /// <remarks>
+    /// Doesn't wake the event thread: a focused field sends its caret every update, which would wake it as often, and the
+    /// caret's area only places an IME's candidate list. It's applied at the event thread's next wake, within a refresh.
+    /// </remarks>
     public void SetTextInputRect(RectangleF rect)
     {
         lock (textInputLock)
@@ -606,7 +617,11 @@ public class SDLWindow : IWindow
         Logger.Verbose($"SDL Revision: {SDL_GetRevision()}");
         Logger.Verbose($"SDL Video Driver: {SDL_GetCurrentVideoDriver()}");
 
-        CursorState.ValueChanged += _ => pendingCursorChange = true;
+        CursorState.ValueChanged += _ =>
+        {
+            pendingCursorChange = true;
+            WakeEventThread();
+        };
 
         eventThreadId = Environment.CurrentManagedThreadId;
         initialized = true;
@@ -1826,6 +1841,15 @@ public class SDLWindow : IWindow
         }
     }
 
+    /// <summary>
+    /// Pushes SDL an event nothing handles, which ends its wait for events. Does nothing until SDL is initialized.
+    /// </summary>
+    public void WakeEventThread()
+    {
+        if (initialized)
+            wakeEventThread();
+    }
+
     // An event nothing handles, to bring the event thread out of a wait for events.
     private static unsafe void wakeEventThread()
     {
@@ -2267,6 +2291,7 @@ public class SDLWindow : IWindow
 
             // Set where the cursor's shape is, on the event thread; this is set from the update thread.
             pendingCursorChange = true;
+            WakeEventThread();
         }
     }
 

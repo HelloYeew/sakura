@@ -209,10 +209,20 @@ public interface IWindow : IDisposable
     void PollEvents();
 
     /// <summary>
-    /// Sleeps until an event is waiting for <see cref="PollEvents"/>, or <paramref name="timeoutMilliseconds"/> has
-    /// passed. Takes no event out of the queue. Called on the thread that calls <see cref="PollEvents"/>.
+    /// Sleeps until an event is waiting for <see cref="PollEvents"/>, <see cref="WakeEventThread"/> is called, or
+    /// <paramref name="timeoutMilliseconds"/> has passed. Takes no event out of the queue. Called on the thread that calls
+    /// <see cref="PollEvents"/>.
     /// </summary>
     void WaitForEvents(double timeoutMilliseconds);
+
+    /// <summary>
+    /// Ends the <see cref="WaitForEvents"/> under way, or the next one, so the event thread acts at once on what another
+    /// thread just asked of it rather than when the wait times out. Safe to call from any thread. Does nothing by default,
+    /// for a window whose wait is short enough without it.
+    /// </summary>
+    void WakeEventThread()
+    {
+    }
 
     void SwapBuffers();
 

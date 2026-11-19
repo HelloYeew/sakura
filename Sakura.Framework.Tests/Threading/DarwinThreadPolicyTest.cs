@@ -90,7 +90,7 @@ public class DarwinThreadPolicyTest
         {
             DarwinThreadPolicy.SetOwnPriority(47);
 
-            using var sleep = DarwinCriticalSleep.Create();
+            using var sleep = DarwinTimerSleep.Create(critical: true);
             Assert.That(sleep, Is.Not.Null);
 
             var slept = new List<double>();
@@ -98,7 +98,7 @@ public class DarwinThreadPolicyTest
             for (int i = 0; i < 50; i++)
             {
                 long start = Stopwatch.GetTimestamp();
-                Assert.That(sleep!.Sleep(TimeSpan.FromMilliseconds(1)), Is.True);
+                Assert.That(sleep!.Sleep(TimeSpan.FromMilliseconds(1)), Is.EqualTo(SleepResult.Slept));
                 slept.Add(Stopwatch.GetElapsedTime(start).TotalMicroseconds);
             }
 
@@ -122,7 +122,7 @@ public class DarwinThreadPolicyTest
             DarwinThreadPolicy.SetOwnPriority(DarwinThreadPolicy.PriorityFor(ThreadRole.Draw, ThreadActivity.Tight));
 
             using var plain = FrameWaiter.CreateNativeSleep();
-            using var critical = DarwinCriticalSleep.Create();
+            using var critical = DarwinTimerSleep.Create(critical: true);
             var lines = new List<string>
             {
                 "lateness in microseconds   p50     p90     p99     max",
@@ -151,7 +151,7 @@ public class DarwinThreadPolicyTest
 
             foreach ((string name, bool useCritical) in new[] { ("plain sleep + spin", false), ("critical timer + spin", true) })
             {
-                using var waiter = new FrameWaiter(FrameWaiter.CreateNativeSleep(), useCritical ? DarwinCriticalSleep.Create() : null);
+                using var waiter = new FrameWaiter(FrameWaiter.CreateNativeSleep(), useCritical ? DarwinTimerSleep.Create(critical: true) : null);
                 var late = new List<double>();
                 long period = Stopwatch.Frequency / 120;
                 long next = Stopwatch.GetTimestamp();

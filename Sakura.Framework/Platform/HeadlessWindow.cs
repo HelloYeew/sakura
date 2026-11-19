@@ -61,8 +61,38 @@ public class HeadlessWindow : IWindow
         Update?.Invoke();
     }
 
-    // No events ever arrive here.
-    public void WaitForEvents(double timeoutMilliseconds) => Thread.Sleep(TimeSpan.FromMilliseconds(Math.Max(0, timeoutMilliseconds)));
+    /// <summary>
+    /// Whether <see cref="WakeEventThread"/> was called since the last wait ended. Guarded by <see cref="wakeLock"/>.
+    /// </summary>
+    private bool wakeRequested;
+
+    private readonly object wakeLock = new object();
+
+    /// <summary>
+    /// No events ever arrive here, so only a wake or the timeout ends the wait.
+    /// </summary>
+    public void WaitForEvents(double timeoutMilliseconds)
+    {
+        lock (wakeLock)
+        {
+            if (!wakeRequested)
+                Monitor.Wait(wakeLock, TimeSpan.FromMilliseconds(Math.Max(0, timeoutMilliseconds)));
+
+            wakeRequested = false;
+        }
+    }
+
+    /// <summary>
+    /// Ends the wait under way, or the next one.
+    /// </summary>
+    public void WakeEventThread()
+    {
+        lock (wakeLock)
+        {
+            wakeRequested = true;
+            Monitor.Pulse(wakeLock);
+        }
+    }
 
     public void SwapBuffers()
     {
