@@ -17,11 +17,56 @@ public abstract partial class Button : ClickableContainer, ITabStop
 
     public virtual int TabOrder => 0;
 
+    /// <summary>
+    /// Whether <see cref="OnHovered"/> has run with no <see cref="OnHoverLost()"/> after it, so the hover look is on.
+    /// </summary>
+    private bool hoverShown;
+
     protected override void LoadComplete()
     {
         base.LoadComplete();
 
-        Enabled.ValueChanged += e => OnEnabledChanged(e.NewValue);
+        Enabled.ValueChanged += e => updateEnabled(e.NewValue);
+    }
+
+    /// <summary>
+    /// Applies an enabled state, with the hover look going with it: a button turned off under the pointer drops its hover
+    /// look before its disabled look goes on, and one turned back on under the pointer shows it again, since the pointer
+    /// won't hover it anew.
+    /// </summary>
+    private void updateEnabled(bool enabled)
+    {
+        if (!enabled)
+            hideHover();
+
+        OnEnabledChanged(enabled);
+
+        if (enabled && IsHovered)
+            showHover();
+    }
+
+    /// <summary>
+    /// Puts the hover look on, unless it's on already.
+    /// </summary>
+    private void showHover()
+    {
+        if (hoverShown)
+            return;
+
+        hoverShown = true;
+        OnHovered();
+    }
+
+    /// <summary>
+    /// Takes the hover look off, unless it's off already.
+    /// </summary>
+    private void hideHover()
+    {
+        if (!hoverShown)
+            return;
+
+        hoverShown = false;
+        OnHoverLost();
     }
 
     public override bool OnKeyDown(KeyEvent e)
@@ -53,26 +98,29 @@ public abstract partial class Button : ClickableContainer, ITabStop
         if (!Enabled.Value)
             return false;
 
-        OnHovered();
+        showHover();
         return base.OnHover(e);
     }
 
     public override bool OnHoverLost(MouseEvent e)
     {
+        hideHover();
+
         if (!Enabled.Value)
             return false;
 
-        OnHoverLost();
         return base.OnHoverLost(e);
     }
 
     /// <summary>
-    /// Called when the button is hovered and enabled. Override to apply hover visuals.
+    /// Called when the button is hovered and enabled, or turned on while the pointer is over it. Override to apply hover
+    /// visuals.
     /// </summary>
     protected virtual void OnHovered() { }
 
     /// <summary>
-    /// Called when hover ends and button is enabled. Override to revert hover visuals.
+    /// Called when hover ends, or when the button is turned off while hovered, so a disabled button never keeps its hover
+    /// look. Runs once for each <see cref="OnHovered"/>. Override to revert hover visuals.
     /// </summary>
     protected new virtual void OnHoverLost() { }
 
